@@ -13,6 +13,11 @@ from pydantic_clai2.ui.rendering.splash import Splash
 from pydantic_clai2.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic_clai2.config import Settings
+    from pydantic_clai2.config.project_settings import ProjectSettings
+    from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.worktrees import Worktree
 
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
@@ -75,7 +80,6 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
-        from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
         from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
@@ -95,12 +99,9 @@ def run(*, splash: Splash | None = None) -> None:
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
-        overrides = store.overrides() | project.overrides
-        if model := args.model or os.getenv('CLAI_MODEL'):
-            overrides['model'] = model
-        if args.request_limit is not None:
-            overrides['run.request_limit'] = args.request_limit
-        settings = resolve_settings(overrides)
+        model = args.model or os.getenv('CLAI_MODEL')
+        settings_for = _settings_for(store, model=model, request_limit=args.request_limit)
+        settings = settings_for(project)
         if agent is not None and agent.model is not None and not model:
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
             settings = settings.model_copy(update={'model': None})
@@ -129,7 +130,7 @@ def run(*, splash: Splash | None = None) -> None:
 
             asyncio.run(
                 run_web(
-                    settings=settings,
+                    settings_for=settings_for,
                     store=store,
                     project=project,
                     console=Console(force_terminal=False, highlight=False),
@@ -181,6 +182,23 @@ def run(*, splash: Splash | None = None) -> None:
     except KeyboardInterrupt:
         if args.prompt is not None or args.web:
             raise SystemExit(130) from None
+
+
+def _settings_for(
+    store: 'SettingsStore', *, model: str | None, request_limit: int | None
+) -> 'Callable[[ProjectSettings], Settings]':
+    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags."""
+    from pydantic_clai2.config import resolve_settings
+
+    def settings_for(project: 'ProjectSettings') -> 'Settings':
+        overrides = store.overrides() | project.overrides
+        if model:
+            overrides['model'] = model
+        if request_limit is not None:
+            overrides['run.request_limit'] = request_limit
+        return resolve_settings(overrides)
+
+    return settings_for
 
 
 def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':

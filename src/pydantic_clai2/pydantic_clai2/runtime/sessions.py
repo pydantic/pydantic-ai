@@ -72,9 +72,24 @@ class Sessions(Generic[DepsT, OutputT]):
         )
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
+        self.relocate: Callable[[str], Awaitable[None]] | None = None
+        """Moves CLAI into a directory, so `/resume ID` continues a session where it was saved; set by `clai2 --web` only."""
+
+    @property
+    def follows_workspace(self) -> bool:
+        """Whether `/resume ID` moves CLAI into the session's own directory rather than refusing another one."""
+        return self.relocate is not None
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
-        """Restore a saved session, then show its history."""
+        """Restore a saved session, then show its history.
+
+        With `relocate`, CLAI first moves into the directory the session was saved in, unless the
+        `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
+        """
+        if self.relocate is not None and not allow_other_workspace:
+            workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+            if workspace != self.session.workspace:
+                await self.relocate(workspace)
         notice = await self.session.resume(conversation_id, allow_other_workspace=allow_other_workspace)
         await self.show_resumed()
         return notice

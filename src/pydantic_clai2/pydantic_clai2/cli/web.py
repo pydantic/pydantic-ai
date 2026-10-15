@@ -1,5 +1,7 @@
 """`clai2 --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
+from collections.abc import Callable
+
 from anyio import CancelScope, create_task_group, get_cancelled_exc_class
 from rich.console import Console
 
@@ -10,6 +12,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionEndReason
 from pydantic_clai2.runtime.imported_sessions import ImportSource
+from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 
 WEB = 'web'
 """The built-in plugin `--web` loads for this session, whether or not it is enabled."""
@@ -17,7 +20,7 @@ WEB = 'web'
 
 async def run_web(
     *,
-    settings: Settings,
+    settings_for: Callable[[ProjectSettings], Settings],
     store: SettingsStore,
     project: ProjectSettings,
     console: Console,
@@ -30,9 +33,14 @@ async def run_web(
 
     `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
+
+    `project` is the launch directory's project file and `settings_for` the settings CLAI starts with
+    beside a project file. Each session runs in its own directory: `/resume ID` moves there, and
+    `/workspace DIRECTORY` starts a new session in another one (see `SessionWorkspace`).
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
+    settings = settings_for(project)
     agent = create_stock_agent()
     shell = create_shell(
         agent,
@@ -46,6 +54,15 @@ async def run_web(
         project=project,
         headless=True,
     )
+    SessionWorkspace(
+        session=shell.session,
+        context=shell.context,
+        loader=shell.loader,
+        status=shell.status,
+        settings=settings_for,
+        keep=WEB,
+        busy=lambda: any(record.status == 'running' for record in shell.forks.records),
+    ).attach(sessions=shell.sessions, commands=shell.commands)
     reason: SessionEndReason = 'error'
     async with agent, create_task_group() as workers:
         workers.start_soon(shell.sessions.namer.run)
