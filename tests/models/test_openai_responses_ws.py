@@ -1406,6 +1406,15 @@ async def test_client_default_headers(
         assert len(sockets.opened[0].sent) == 1
 
 
+async def test_connection_authorization_header(allow_model_requests: None, sockets: SocketHarness):
+    """An `Authorization` header configured on the connection authenticates the handshake and matches requests."""
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='client-key'))
+    request_settings: OpenAIResponsesModelSettings = {'extra_headers': {'Authorization': 'Bearer connection-key'}}
+    async with source.connect(extra_headers={'Authorization': 'Bearer connection-key'}) as connected:
+        assert (await Agent(connected, model_settings=request_settings).run('hello')).output == 'ready'
+    assert sockets.authorization_headers == ['Bearer connection-key']
+
+
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
     settings: OpenAIResponsesModelSettings = {
         'openai_service_tier': 'priority',
