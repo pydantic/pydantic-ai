@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "512"
+      - "542"
       content-type:
       - application/json
       host:
@@ -19,11 +19,12 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-4o
+        model: gpt-6-luna
         stream: false
         messages:
         - role: user
           content: Return the name 'okay' and values [1, 2, 3, 4].
+        reasoning_effort: none
         response_format:
           type: json_schema
           json_schema:
@@ -63,7 +64,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "683"
+      - "708"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -73,10 +74,10 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-EYb7sumeBNOkIYWKm68UKsW1418Pq
+        id: chatcmpl-EZJJfzyu3YyAZoQCAZHJUszct4NyG
         object: chat.completion
-        created: 1791914572
-        model: gpt-4o-2024-08-06
+        created: 1792084439
+        model: gpt-6-luna
         choices:
         - index: 0
           message:
@@ -84,14 +85,14 @@ interactions:
             content: "{\"name\":\"okay\",\"values\":[1,2,3,4]}"
             refusal: null
             annotations: []
-          logprobs: null
           finish_reason: stop
         usage:
-          prompt_tokens: 85
-          completion_tokens: 15
-          total_tokens: 100
+          prompt_tokens: 80
+          completion_tokens: 22
+          total_tokens: 102
           prompt_tokens_details:
             cached_tokens: 0
+            cache_write_tokens: 0
             audio_tokens: 0
           completion_tokens_details:
             reasoning_tokens: 0
@@ -99,5 +100,5 @@ interactions:
             accepted_prediction_tokens: 0
             rejected_prediction_tokens: 0
         service_tier: default
-        system_fingerprint: fp_6a23e70e3e
-  recorded_at: 2026-10-13T18:02:53.512326+00:00
+        system_fingerprint: null
+  recorded_at: 2026-10-15T17:13:59.719983+00:00

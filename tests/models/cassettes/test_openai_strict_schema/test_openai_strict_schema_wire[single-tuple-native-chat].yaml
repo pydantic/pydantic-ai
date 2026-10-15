@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "410"
+      - "440"
       content-type:
       - application/json
       host:
@@ -19,11 +19,12 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-4o
+        model: gpt-6-luna
         stream: false
         messages:
         - role: user
           content: Return values as the one-element array containing the string '7'.
+        reasoning_effort: none
         response_format:
           type: json_schema
           json_schema:
@@ -55,7 +56,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "454"
+      - "756"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -65,10 +66,10 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-EYcd5a3hkz4JPk12gx84PnqdrMVlI
+        id: chatcmpl-EZJJVlOaVVqOgv6Pm4QZP37JT1Ekk
         object: chat.completion
-        created: 1791920351
-        model: gpt-4o-2024-08-06
+        created: 1792084429
+        model: gpt-6-luna
         choices:
         - index: 0
           message:
@@ -76,14 +77,14 @@ interactions:
             content: "{\"values\":[7]}"
             refusal: null
             annotations: []
-          logprobs: null
           finish_reason: stop
         usage:
-          prompt_tokens: 58
-          completion_tokens: 5
-          total_tokens: 63
+          prompt_tokens: 52
+          completion_tokens: 13
+          total_tokens: 65
           prompt_tokens_details:
             cached_tokens: 0
+            cache_write_tokens: 0
             audio_tokens: 0
           completion_tokens_details:
             reasoning_tokens: 0
@@ -91,5 +92,5 @@ interactions:
             accepted_prediction_tokens: 0
             rejected_prediction_tokens: 0
         service_tier: default
-        system_fingerprint: fp_2a68371a58
-  recorded_at: 2026-10-13T19:39:11.488190+00:00
+        system_fingerprint: null
+  recorded_at: 2026-10-15T17:13:50.126465+00:00

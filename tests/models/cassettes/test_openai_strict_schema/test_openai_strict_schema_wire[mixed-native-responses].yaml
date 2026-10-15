@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "493"
+      - "591"
       content-type:
       - application/json
       host:
@@ -19,11 +19,16 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-4o
+        model: gpt-6-luna
         stream: false
+        include:
+        - reasoning.encrypted_content
         input:
         - role: user
           content: Return the name 'okay' and values [1, 2, 3, 4].
+        reasoning:
+          effort: none
+          context: all_turns
         text:
           format:
             type: json_schema
@@ -63,7 +68,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "749"
+      - "1137"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -73,25 +78,25 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0771bd6c77fa38cb006ace724dbb7087d28d7ecd16ef2db2fb
+        id: resp_058e4a71bc3be81b006ad109d7e8a487d2b116f93e72dc3001
         object: response
-        created_at: 1791914573
+        created_at: 1792084439
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1791914574
+        completed_at: 1792084440
         error: null
         frequency_penalty: 0.0
         incomplete_details: null
         instructions: null
         max_output_tokens: null
         max_tool_calls: null
-        model: gpt-4o-2024-08-06
+        model: gpt-6-luna
         moderation: null
         output:
-        - id: msg_0771bd6c77fa38cb006ace724e415487d2a567f13969023cc2
+        - id: msg_058e4a71bc3be81b006ad109d8b17c87d2bf34bd83769c2e10
           type: message
           status: completed
           content:
@@ -99,15 +104,17 @@ interactions:
             annotations: []
             logprobs: []
             text: "{\"name\":\"okay\",\"values\":[1,2,3,4]}"
+          phase: final_answer
           role: assistant
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
         prompt_cache_key: null
-        prompt_cache_retention: in_memory
+        prompt_cache_retention: 24h
         reasoning:
-          context: null
-          effort: null
+          context: all_turns
+          effort: none
+          mode: standard
           summary: null
         safety_identifier: null
         service_tier: default
@@ -156,17 +163,17 @@ interactions:
             num_requests: 0
         tools: []
         top_logprobs: 0
-        top_p: 1.0
+        top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 78
+          input_tokens: 76
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
-          output_tokens: 16
+          output_tokens: 23
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 94
+          total_tokens: 99
         user: null
         metadata: {}
-  recorded_at: 2026-10-13T18:02:54.551224+00:00
+  recorded_at: 2026-10-15T17:14:01.112790+00:00

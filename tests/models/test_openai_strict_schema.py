@@ -328,9 +328,9 @@ async def test_openai_strict_schema_wire(
     """
     provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     model = (
-        OpenAIChatModel('gpt-4o', provider=provider)
+        OpenAIChatModel('gpt-6-luna', provider=provider)
         if case.api == 'chat'
-        else OpenAIResponsesModel('gpt-4o', provider=provider)
+        else OpenAIResponsesModel('gpt-6-luna', provider=provider)
     )
 
     if case.schema_kind == 'length':
@@ -344,7 +344,7 @@ async def test_openai_strict_schema_wire(
         prompt = "Return the name 'okay' and values [1, 2, 3, 4]."
 
     output = ToolOutput(output_type) if case.output_mode == 'tool' else NativeOutput(output_type)
-    result = await Agent(model, output_type=output).run(prompt)
+    result = await Agent(model, output_type=output).run(prompt, model_settings={'thinking': False})
     if case.schema_kind == 'length':
         assert isinstance(result.output, LengthOutput)
         assert 2 <= len(result.output.name) <= 5
@@ -405,9 +405,9 @@ async def test_openai_strict_tuple_guard_runs_before_request(
     """An explicit strict request with tuple output fails before any provider request is sent."""
     provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     model = (
-        OpenAIChatModel('gpt-4o', provider=provider)
+        OpenAIChatModel('gpt-6-luna', provider=provider)
         if api == 'chat'
-        else OpenAIResponsesModel('gpt-4o', provider=provider)
+        else OpenAIResponsesModel('gpt-6-luna', provider=provider)
     )
     output = ToolOutput(MixedOutput, strict=True) if output_mode == 'tool' else NativeOutput(MixedOutput, strict=True)
 
