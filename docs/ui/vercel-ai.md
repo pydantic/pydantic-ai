@@ -243,6 +243,10 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
+## MCP Apps
+
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.
+
 ## Tool Approval
 
 !!! note
