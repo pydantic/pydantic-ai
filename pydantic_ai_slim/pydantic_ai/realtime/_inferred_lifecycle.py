@@ -6,7 +6,14 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..messages import BinaryContent, FinishReason, PartStartEvent, RealtimeResponseInterruptedEvent
+from ..messages import (
+    BinaryContent,
+    FinishReason,
+    PartStartEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeResponseInterruptedEvent,
+)
 from ._lifecycle import (
     InputAdded,
     InputId,
@@ -22,6 +29,7 @@ from ._lifecycle import (
 )
 from .codec import (
     AudioDelta,
+    CommitAudio,
     CreateResponse,
     InputTranscript,
     OutputTranscript,
@@ -100,6 +108,8 @@ class InferredLifecycle:
         self._open: str | None = None
         """The response under way."""
         self._open_named = False
+        self._cut_off = False
+        """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`), so more output is another."""
         """Whether the provider named the response under way, by the `response_id` of its content."""
         self._deferred: ResponseDone | None = None
         """The terminal of a response the model said the exchange continues past (`interaction_status=IN_PROGRESS`):
@@ -136,6 +146,10 @@ class InferredLifecycle:
         if isinstance(content, BinaryContent) and content.is_audio:
             self._audio_since_reply = True
             return input_id
+        if isinstance(content, CommitAudio):
+            # The audio sent since the last turn is one now: it joins the conversation as the commit arrives.
+            self._commit_turn()
+            return input_id
         if self._reply_owed():
             # It reaches the provider while the model works on a reply, which it follows. (A response that answers
             # it places it ahead of itself, should that come first.)
@@ -146,6 +160,18 @@ class InferredLifecycle:
         if isinstance(content, (str, ToolResult, CreateResponse)):
             self._unanswered.append(input_id)
         return input_id
+
+    def _commit_turn(self) -> None:
+        turn = self._turn
+        if turn is None or turn.joined:
+            if not self._audio_since_reply:
+                return
+            self._turns += 1
+            turn = self._turn = _Turn(f'pydantic_ai_user_turn_{self._turns}')
+            self._pending.append(UserTurnStarted(turn_id=turn.id))
+        self._audio_since_reply = False
+        turn.joined = True
+        self._pending.append(UserTurnEnded(turn_id=turn.id))
 
     def input_failed(self, input_id: InputId) -> None:
         """The input never went out (its send raised): forget it."""
@@ -233,12 +259,19 @@ class InferredLifecycle:
             # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
         if output:
             named = event.response_id if isinstance(event, (AudioDelta, OutputTranscript, ToolCall)) else None
-            if named is not None and self._open is not None and self._open_named and named != self._open:
+            if self._open is not None and self._cut_off:
+                # More output after the response under way was cut off: a response of its own.
+                self._end(before, status='cancelled')
+            elif named is not None and self._open is not None and self._open_named and named != self._open:
                 # Content of a response the provider names differently: the one under way is over.
                 self._end(before, status='completed')
             self._ensure_response(before, named=named)
-            if isinstance(event, ToolCall) and event.response_usage_follows:
-                self._calls_awaiting_usage = True
+            if isinstance(event, ToolCall):
+                if event.response_usage_follows:
+                    self._calls_awaiting_usage = True
+                elif not self._calls_awaiting_usage:
+                    # No usage report closes its response: the call does, as the answer comes once its result is in.
+                    self._end(after, status='completed', finish_reason='tool_call')
         elif isinstance(event, SessionUsage):
             # Usage reported between responses doesn't start one: it is the next response's (see `_response_done`).
             if event.response_scoped and self._calls_awaiting_usage:
@@ -250,8 +283,13 @@ class InferredLifecycle:
         elif isinstance(event, RealtimeResponseInterruptedEvent):
             # The user (or a tool result) cut in: what was sent meanwhile follows what the model had said, and so
             # does the speech that cut in, a turn of its own.
+            self._cut_off = self._open is not None
             self._close_turn(after)
             self._place_held(after)
+        elif isinstance(event, RealtimeInputSpeechStartEvent):
+            self._speech_started(event, before)
+        elif isinstance(event, RealtimeInputSpeechEndEvent):
+            self._speech_ended(event, after)
         elif isinstance(event, ResponseDone):
             self._response_done(event, before, after)
         # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost to a
@@ -276,6 +314,28 @@ class InferredLifecycle:
             finish_reason=event.finish_reason,
             provider_details=event.provider_details,
         )
+
+    def _speech_started(self, event: RealtimeInputSpeechStartEvent, before: list[LifecycleEvent]) -> None:
+        """The provider heard the user start speaking: a spoken turn starts, named by its item id if it has one."""
+        turn = self._turn
+        if turn is not None and not turn.joined:
+            return
+        self._turns += 1
+        identified = event.item_id is not None and event.item_id not in self._identified
+        turn = self._turn = _Turn(event.item_id if identified else f'pydantic_ai_user_turn_{self._turns}')
+        if identified:
+            turn.identified = True
+            self._identified.add(turn.id)
+        before.append(UserTurnStarted(turn_id=turn.id))
+
+    def _speech_ended(self, event: RealtimeInputSpeechEndEvent, after: list[LifecycleEvent]) -> None:
+        """The provider heard the user stop: the turn joins the conversation, as the provider commits it now."""
+        turn = self._turn
+        if turn is None or turn.joined or (event.item_id is not None and turn.identified and turn.id != event.item_id):
+            return
+        turn.joined = True
+        self._audio_since_reply = False
+        after.append(UserTurnEnded(turn_id=turn.id))
 
     def _input_transcript(self, event: InputTranscript, before: list[LifecycleEvent]) -> None:
         turn = self._turn
@@ -345,12 +405,14 @@ class InferredLifecycle:
         """The spoken turn the starting response replies to joins the conversation ahead of it."""
         if self._transcribes:
             turn = self._turn
-            if turn is None or turn.joined:
+            if turn is None or (turn.joined and turn.final):
                 return None
-            turn.joined = True
-            events.append(UserTurnEnded(turn_id=turn.id))
+            if not turn.joined:
+                turn.joined = True
+                events.append(UserTurnEnded(turn_id=turn.id))
             if turn.final:
                 self._turn = None
+            # (A turn that joined already, at its speech end or commit, is the one this replies to all the same.)
             return turn.id
         if not (self._audio_since_reply and replying):
             return None
@@ -372,6 +434,7 @@ class InferredLifecycle:
         response_id = self._open
         assert response_id is not None
         self._open = None
+        self._cut_off = False
         self._unprompted_reply = None
         self._deferred = None
         self._calls_awaiting_usage = False
