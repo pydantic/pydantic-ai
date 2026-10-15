@@ -92,7 +92,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]
 
-    async def wrap_run_event_stream(
+    async def wrap_run_event_stream(  # noqa: C901
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -174,9 +174,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                                         await handler_task
 
                         # A plain await would forward a cancel of this task into the pull natively, and
-                        # `asyncio.shield` reports the pull's later exception to the loop on Python 3.14+.
-                        # Teardown cancels the pull through `next_scope`, which its shielded cleanup survives.
-                        await asyncio.wait((next_task,))
+                        # `asyncio.shield` reports the pull's later exception to the loop on CPython 3.14 and
+                        # 3.15 releases without python/cpython#156321. Teardown cancels the pull through
+                        # `next_scope`, which its shielded cleanup survives. `asyncio.wait` always suspends,
+                        # so skip it once the pull is done.
+                        if not next_task.done():
+                            await asyncio.wait((next_task,))
                         try:
                             event = next_task.result()
                         except StopAsyncIteration:
@@ -201,6 +204,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
             # A plain `await handler_task` would forward a cancel of this task into the handler as a
             # native cancel, which interrupts even its shielded cleanup. `handler_scope` below owns that.
+            # `asyncio.shield` would report the handler's later exception to the loop, as above.
             await asyncio.wait((handler_task,))
             handler_task.result()
         except BaseException:
