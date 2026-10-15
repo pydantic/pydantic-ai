@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -742,16 +743,24 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     configs = compiled_awf_configs(lock)
     assert len(configs) == 2
     for config in configs:
-        assert config['apiProxy']['providers']
-        assert config['apiProxy']['defaultAiCreditsPricing']
-        assert {
-            'logfire-api.pydantic.dev',
-            'logfire-eu.pydantic.dev',
-            'logfire-us.pydantic.dev',
-            'logfire-api.pydantic.info',
-            'logfire-eu.pydantic.info',
-            'logfire-us.pydantic.info',
-        } <= set(config['network']['allowDomains'])
+        proxy = config['apiProxy']
+        assert isinstance(proxy, dict)
+        assert proxy['providers']
+        assert proxy['defaultAiCreditsPricing']
+        network: dict[str, object] = TypeAdapter(dict[str, object]).validate_python(config['network'])
+        domains = network['allowDomains']
+        assert isinstance(domains, list)
+        assert all(
+            host in domains
+            for host in (
+                'logfire-api.pydantic.dev',
+                'logfire-eu.pydantic.dev',
+                'logfire-us.pydantic.dev',
+                'logfire-api.pydantic.info',
+                'logfire-eu.pydantic.info',
+                'logfire-us.pydantic.info',
+            )
+        )
     assert check_ai_credits_accounting(lock) == []
 
 
