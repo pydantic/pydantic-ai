@@ -1071,42 +1071,69 @@ def _done_mock_client() -> AsyncOpenAI:
     return MockOpenAI.create_mock(completion)
 
 
+_TASK = 'Summarize the incident report in one sentence. ' + 'The service returned 503 for a while. ' * 150
+"""A first user prompt long enough for Anthropic to cache, so the moved breakpoint shows up as a cache write."""
+
+
 @pytest.mark.parametrize(
-    'tail',
-    [
-        pytest.param([], id='after-user-prompt'),
-        pytest.param(
-            [
-                ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')]),
-                ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='c1')]),
-            ],
-            id='after-tool-result',
-        ),
-    ],
+    'after_tool_result', [pytest.param(False, id='after-user-prompt'), pytest.param(True, id='after-tool-result')]
 )
 async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
-    allow_model_requests: None, tail: list[ModelMessage]
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette, after_tool_result: bool
 ) -> None:
     """A `CachePoint` opening a later user message caches up to the end of the previous user message.
 
     This is the shape of a tail reminder appended after the conversation (the harness `Planning` and
     `SystemReminders` capabilities), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
-    attach the breakpoint to the previous message. A mocked client: no recording of this request exists yet.
+    attach the breakpoint to the previous message. A tool result in between doesn't carry it, since OpenRouter
+    doesn't document `cache_control` on tool messages. The recorded cache write shows OpenRouter's Anthropic
+    route honoring the moved breakpoint.
     """
-    mock_client = _done_mock_client()
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
-    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Do the task')]), *tail]
-    if tail:
-        history.append(ModelResponse(parts=[TextPart('Working on it.')]))
+    agent = Agent(
+        openrouter_model('anthropic/claude-sonnet-4.6'),
+        model_settings=OpenRouterModelSettings(openrouter_provider={'only': ['anthropic']}),
+    )
 
-    await Agent(model).run([CachePoint(ttl='1h'), '<reminder>'], message_history=history)
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover - only replayed from history
+        return 'result'
 
-    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
-    assert messages[0] == {
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(_TASK)])]
+    if after_tool_result:
+        history += [
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='toolu_01')]),
+            ModelRequest(parts=[ToolReturnPart('lookup', 'No errors in the last hour.', tool_call_id='toolu_01')]),
+        ]
+    history.append(ModelResponse(parts=[TextPart('Working on it.')]))
+
+    result = await agent.run([CachePoint(), 'Reply with just the word done.'], message_history=history)
+
+    first, *rest = single_request_body(vcr)['messages']
+    assert first == {
         'role': 'user',
-        'content': [{'type': 'text', 'text': 'Do the task', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}],
+        'content': [{'type': 'text', 'text': _TASK, 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
     }
-    assert messages[-1] == {'role': 'user', 'content': [{'type': 'text', 'text': '<reminder>'}]}
+    if after_tool_result:
+        assert rest[:-2] == snapshot(
+            [
+                {
+                    'role': 'assistant',
+                    'content': None,
+                    'tool_calls': [
+                        {'id': 'toolu_01', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}
+                    ],
+                },
+                {'role': 'tool', 'tool_call_id': 'toolu_01', 'content': 'No errors in the last hour.'},
+            ]
+        )
+    assert rest[-2:] == snapshot(
+        [
+            {'role': 'assistant', 'content': 'Working on it.'},
+            {'role': 'user', 'content': [{'text': 'Reply with just the word done.', 'type': 'text'}]},
+        ]
+    )
+    # Both cases read the prefix the breakpoint marks back from cache: the second recording reused the first's.
+    assert (result.usage.cache_read_tokens, result.usage.cache_write_tokens) == snapshot((2046, 0))
 
 
 @pytest.mark.parametrize(
@@ -1114,48 +1141,83 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
     [pytest.param('1h', '5m', id='keeps-1h-already-there'), pytest.param('5m', '1h', id='raises-5m-to-1h')],
 )
 async def test_openrouter_leading_cache_point_keeps_the_longer_ttl(
-    allow_model_requests: None, existing_ttl: Literal['5m', '1h'], leading_ttl: Literal['5m', '1h']
+    allow_model_requests: None,
+    openrouter_model: OpenRouterModelFactory,
+    vcr: Cassette,
+    existing_ttl: Literal['5m', '1h'],
+    leading_ttl: Literal['5m', '1h'],
 ) -> None:
-    """A `CachePoint` moved onto a block that already ends a breakpoint leaves the longer of the two TTLs.
+    """A `CachePoint` moved onto a block that already ends a breakpoint leaves the longer of the two TTLs."""
+    agent = Agent(
+        openrouter_model('anthropic/claude-sonnet-4.6'),
+        model_settings=OpenRouterModelSettings(openrouter_provider={'only': ['anthropic']}),
+    )
+    task = UserPromptPart(['Summarize the incident report in one sentence.', CachePoint(ttl=existing_ttl)])
+    history: list[ModelMessage] = [ModelRequest(parts=[task]), ModelResponse(parts=[TextPart('Working on it.')])]
 
-    A mocked client, like the other placement tests here: no recording of this request exists yet.
-    """
-    mock_client = _done_mock_client()
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(['Do the task', CachePoint(ttl=existing_ttl)])]),
-        ModelResponse(parts=[TextPart('Working on it.')]),
-    ]
+    await agent.run([CachePoint(ttl=leading_ttl), 'Reply with just the word done.'], message_history=history)
 
-    await Agent(model).run([CachePoint(ttl=leading_ttl), '<reminder>'], message_history=history)
-
-    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
-    assert messages[0]['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+    assert single_request_body(vcr)['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Summarize the incident report in one sentence.',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '1h'},
+                    }
+                ],
+            },
+            {'role': 'assistant', 'content': 'Working on it.'},
+            {'role': 'user', 'content': [{'text': 'Reply with just the word done.', 'type': 'text'}]},
+        ]
+    )
 
 
 async def test_openrouter_leading_cache_point_without_earlier_user_message_is_dropped(
-    allow_model_requests: None,
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """With only instructions, a tool call and its result before it, a leading `CachePoint` is dropped.
 
     A tool message's `cache_control` isn't documented for OpenRouter, and nothing earlier can carry it, so
     the request goes out without the breakpoint rather than raising. An `instructions`-only run whose
-    `Planning` reminder follows a tool result has this shape. A mocked client: no recording exists yet.
+    `Planning` reminder follows a tool result has this shape.
     """
-    mock_client = _done_mock_client()
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        openrouter_model('anthropic/claude-sonnet-4.6'),
+        instructions='Summarize the incident report in one sentence.',
+        model_settings=OpenRouterModelSettings(openrouter_provider={'only': ['anthropic']}),
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover - only replayed from history
+        return 'result'
+
     history: list[ModelMessage] = [
-        ModelRequest(parts=[], instructions='Do the task.'),
-        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')]),
-        ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='c1')]),
+        ModelRequest(parts=[], instructions='Summarize the incident report in one sentence.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='toolu_01')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'No errors in the last hour.', tool_call_id='toolu_01')]),
         ModelResponse(parts=[TextPart('Working on it.')]),
     ]
 
-    await Agent(model, instructions='Do the task.').run([CachePoint(), '<reminder>'], message_history=history)
+    await agent.run([CachePoint(), 'Reply with just the word done.'], message_history=history)
 
-    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
-    assert 'cache_control' not in str(messages)
-    assert messages[-1] == {'role': 'user', 'content': [{'type': 'text', 'text': '<reminder>'}]}
+    assert single_request_body(vcr)['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Summarize the incident report in one sentence.'},
+            {
+                'role': 'assistant',
+                'content': None,
+                'tool_calls': [
+                    {'id': 'toolu_01', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}
+                ],
+            },
+            {'role': 'tool', 'tool_call_id': 'toolu_01', 'content': 'No errors in the last hour.'},
+            {'role': 'assistant', 'content': 'Working on it.'},
+            {'role': 'user', 'content': [{'text': 'Reply with just the word done.', 'type': 'text'}]},
+        ]
+    )
 
 
 async def test_openrouter_lone_leading_cache_point_still_raises(allow_model_requests: None) -> None:
