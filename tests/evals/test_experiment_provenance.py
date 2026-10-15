@@ -169,6 +169,29 @@ async def test_github_pull_request(capfire: CaptureLogfire, monkeypatch: pytest.
 
 
 @pytest.mark.usefixtures('pull_request_env')
+async def test_github_pull_request_target(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """`pull_request_target` checks out the base branch by default, so the head SHA isn't reported as the commit under test."""
+    event_path = tmp_path / 'event.json'
+    event_path.write_text(
+        json.dumps(
+            {'pull_request': {'number': 42, 'head': {'ref': 'feature-x', 'sha': 'head-sha'}, 'base': {'ref': 'main'}}}
+        )
+    )
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'pull_request_target')
+    monkeypatch.setenv('GITHUB_SHA', 'base-tip-sha')
+
+    assert await _provenance(capfire) == snapshot(
+        {
+            'logfire.experiment.ci.run_url': 'https://github.com/acme/widgets/actions/runs/1234567890',
+            'logfire.experiment.git.branch': 'feature-x',
+            'logfire.experiment.git.base_branch': 'main',
+            'logfire.experiment.ci.pull_request': 42,
+        }
+    )
+
+
+@pytest.mark.usefixtures('pull_request_env')
 @pytest.mark.parametrize('event_file', ['missing', 'not json', '{"pull_request": {"number": "not a number"}}'])
 async def test_github_pull_request_unreadable_event(
     capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, event_file: str

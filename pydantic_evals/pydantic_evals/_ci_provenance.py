@@ -77,7 +77,9 @@ def _github_actions_attributes(env: Mapping[str, str]) -> dict[str, str | int]:
     if pull_request is not None:
         # On pull request events, `GITHUB_SHA` and `GITHUB_REF_NAME` point at the synthetic merge commit
         # (`refs/pull/<number>/merge`), so the PR head commit and branch come from the event payload.
-        commit_sha = pull_request.head.sha
+        # `pull_request_target` runs check out the base branch by default, so whether the head commit
+        # is the code under test is unknown, and the SHA is omitted rather than possibly misreported.
+        commit_sha = pull_request.head.sha if env.get('GITHUB_EVENT_NAME') != 'pull_request_target' else None
         branch = pull_request.head.ref or env.get('GITHUB_HEAD_REF')
         base_branch = pull_request.base.ref or env.get('GITHUB_BASE_REF')
         number = pull_request.number
