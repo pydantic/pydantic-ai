@@ -137,6 +137,7 @@ async def test_xai_grok_45_unified_thinking_reasoning_effort(
 @pytest.mark.parametrize(
     ('thinking', 'expected_reasoning_effort'),
     [
+        # `thinking=False` is silently ignored: grok-4.7 is always-on, so no `reasoning_effort` is sent.
         (False, None),
         # `True` uses Grok 4.7's documented high default by omitting `reasoning_effort`.
         (True, None),
