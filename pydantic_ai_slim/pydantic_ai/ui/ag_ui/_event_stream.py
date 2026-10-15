@@ -13,11 +13,13 @@ from uuid import uuid4
 
 from pydantic_core import to_json
 
+from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import now_utc
 from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    CustomEvent,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -36,6 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._adapter import compaction_payload
+from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
@@ -58,6 +61,7 @@ from ._utils import (
 try:
     from ag_ui.core import (
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         EventType,
         RunAgentInput,
         RunErrorEvent,
@@ -143,6 +147,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _reasoning_started: bool = False
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
+    _started_message_id: str | None = None
+    """The message ID a `TEXT_MESSAGE_START` has been emitted for.
+
+    Compared against `message_id` rather than cleared per response: `before_response` mints a new ID,
+    so a value left over from an earlier response can never read as started.
+    """
     _error: bool = False
     _cancelled_run: bool = False
 
@@ -266,6 +276,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
+            self._started_message_id = message_id
             yield TextMessageStartEvent(message_id=message_id)
 
         if part.content:  # pragma: no branch
@@ -286,7 +297,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self._reasoning_started = False
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_start as _impl
+            from ._thinking_0_11 import handle_thinking_start as _impl
         else:
             from ._thinking_0_10 import handle_thinking_start as _impl
         async for event in _impl(self, part):
@@ -301,7 +312,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_delta as _impl
+            from ._thinking_0_11 import handle_thinking_delta as _impl
         else:
             from ._thinking_0_10 import handle_thinking_delta as _impl
         async for event in _impl(self, delta):
@@ -313,7 +324,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_end as _impl
+            from ._thinking_0_11 import handle_thinking_end as _impl
         else:
             from ._thinking_0_10 import handle_thinking_end as _impl
         async for event in _impl(self, part):
@@ -336,12 +347,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         tool_call_id = tool_call_id or part.tool_call_id
         parent_message_id = self.message_id
 
+        if self._started_message_id != parent_message_id:
+            # `handle_text_start` is the only other site that starts a message, so a response with
+            # no text before its first tool call would name a parent no event in the stream carries.
+            # A client can still synthesize that message for itself, but its ID then matches nothing
+            # the server emitted, so a conversation echoed back can't be told apart from new input.
+            # The message carries no text, so it is closed straight away: the AG-UI client's event
+            # verifier rejects `RUN_FINISHED` while a text message is still open.
+            self._started_message_id = parent_message_id
+            yield TextMessageStartEvent(message_id=parent_message_id)
+            yield TextMessageEndEvent(message_id=parent_message_id)
+
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
         )
         if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
             # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
-            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            # streaming-built histories. The event is 0.1.11+, hence the gated import.
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(
@@ -360,6 +382,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
         tool_call_id = delta.tool_call_id
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+        if delta.args_delta is None:
+            # ID-only update: nothing to append to the argument text, so no argument event is
+            # emitted. Identity check, not truthiness: a genuine `'null'` fragment must pass through.
+            return
         if tool_call_id in self._builtin_tool_call_ids:
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolCallArgsEvent(
@@ -423,6 +449,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         async for e in self._handle_tool_result(event.part):
             yield e
 
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
+        # An `ag_ui.core.BaseEvent` payload is passed through verbatim, mirroring the tool-return metadata passthrough.
+        payload = event.to_payload()
+        if isinstance(payload, BaseEvent):
+            yield payload
+        else:
+            # The value is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield AGUICustomEvent(name=event.name, value=payload)
+
     async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):
             output = result.model_response()
@@ -447,6 +485,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if isinstance(result, ToolReturnPart):
             async for event in self._handle_tool_return_outcome(result, message_id):
                 yield event
+
+            if (
+                parse_ag_ui_version(self.ag_ui_version) >= ACTIVITY_EVENTS_VERSION
+                and (app := get_mcp_app_tool_result(result.metadata)) is not None
+            ):
+                from ag_ui.core import ActivitySnapshotEvent
+
+                yield ActivitySnapshotEvent(
+                    message_id=str(uuid4()), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+                )
 
             # Check for AG-UI events returned by tool calls.
             possible_event = result.metadata or result.content

@@ -8,11 +8,15 @@
         - JsonSchemaTransformer
         - InlineDefsJsonSchemaTransformer
         - merge_profile
+        - prompt_cache_outlook
+        - PromptCacheOutlook
         - DEFAULT_PROFILE
         - DEFAULT_PROMPTED_OUTPUT_TEMPLATE
         - DEFAULT_THINKING_TAGS
 
 ::: pydantic_ai.profiles.openai
+
+::: pydantic_ai.profiles.openai_codex
 
 ::: pydantic_ai.profiles.anthropic
 
@@ -33,3 +37,5 @@
 ::: pydantic_ai.profiles.groq
 
 ::: pydantic_ai.profiles.zai
+
+::: pydantic_ai.profiles.decision

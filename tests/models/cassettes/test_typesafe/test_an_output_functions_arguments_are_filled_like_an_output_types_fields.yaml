@@ -1,0 +1,86 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1015'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        Ticket.urgent:
+          instructions:
+            field: urgent
+            premise: 'If the user''s request calls for Ticket: Triage a support ticket.'
+            question: Does this need a reply within the hour?
+          type: noul
+        route:
+          criteria:
+            Ticket: Triage a support ticket.
+            route_to_team: Hand the ticket to the specialist team that handles it.
+          instructions: Which of these does this call for?
+          type: choice
+        route_to_team.team:
+          criteria:
+            billing: null
+            legal: null
+            technical: null
+          instructions:
+            field: team
+            premise: 'If the user''s request calls for route_to_team: Hand the ticket to the specialist team that handles
+              it.'
+          type: choice
+        route_to_team.urgent:
+          instructions:
+            field: urgent
+            premise: 'If the user''s request calls for route_to_team: Hand the ticket to the specialist team that handles
+              it.'
+          type: noul
+      state: I have contacted you four times about being double charged and I am about to call my lawyer.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '481'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        Ticket.urgent:
+          noul: 0.84
+          type: noul
+        route:
+          choice: route_to_team
+          confidence: 0.62
+          probabilities:
+            Ticket: 0.19
+            route_to_team: 0.81
+          type: choice
+        route_to_team.team:
+          choice: billing
+          confidence: 0.73
+          probabilities:
+            billing: 0.82
+            legal: 0.18
+            technical: 0.0
+          type: choice
+        route_to_team.urgent:
+          noul: 0.78
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 507
+        output_tokens: 113
+    status:
+      code: 200
+      message: OK
+version: 1

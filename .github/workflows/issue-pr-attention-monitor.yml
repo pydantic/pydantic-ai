@@ -9,6 +9,9 @@ on:
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
         required: true
+      # Optional: callers without a Logfire project simply skip telemetry.
+      LOGFIRE_TRIAGE_WRITE_TOKEN:
+        required: false
 
 permissions: {}
 
@@ -34,10 +37,15 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Reconcile active attention items
         id: reconcile
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
         run: python .github/scripts/issue_pr_attention_monitor.py reconcile
 
   notify:
@@ -59,11 +67,16 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Revalidate attention notices immediately before delivery
         id: prepare
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.reconcile.outputs.notice_items }}}'
           GITHUB_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
         run: python .github/scripts/issue_pr_attention_monitor.py prepare
       - name: Post actionable attention digest to the triage channel
         if: ${{ steps.prepare.outputs.has_notices == 'true' }}
@@ -89,6 +102,10 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: these jobs hold write-scoped tokens, so a
+        # compromised new release must never reach them.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Finalize delivered attention notices
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.notify.outputs.notice_items }}}'
@@ -119,11 +136,23 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Install pinned script dependencies
+        # pydantic is required (the typed boundary); logfire is telemetry and
+        # stays best-effort — a registry outage must not stop the GitHub write
+        # path. Exact pins keep a compromised new release away from jobs
+        # holding write-scoped tokens.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Count repository-wide attention coverage
         id: census
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PYDANTIC_AI_TRIAGE_SLACK_MENTIONS: ${{ vars.PYDANTIC_AI_TRIAGE_SLACK_MENTIONS }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
+          # Self-hosted Logfire; resolves from the calling repository's
+          # variables, and empty keeps the token's own routing.
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
         run: python .github/scripts/issue_pr_attention_monitor.py census
       - name: Post the daily coverage heartbeat to the triage channel
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3

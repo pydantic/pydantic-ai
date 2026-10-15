@@ -1,75 +1,52 @@
 <!-- braindump: rules extracted from PR review patterns -->
 
-# docs/ Guidelines
+# `docs/` guidelines
 
-## Documentation
+Follow the general [documentation guidance](../agent_docs/documentation.md). These rules cover published Markdown under `docs/`.
 
-<!-- rule:232 -->
-- Link all concepts, features, and API elements to their docs/reference pages using anchor fragments (`#section-name`) for specific sections — Improves discoverability and reduces user friction by providing direct navigation to relevant documentation context
-- Pin an explicit `{#custom-id}` on a heading as soon as anything links to it and its generated id would surprise the person writing that link — unpinned, `github-slugger` drops punctuation and turns every space into its own dash, so `## Tools & native abilities` would generate `#tools--native-abilities` (doubled, the `&` vanishing between two spaces) and `## SIP/telephony bridge` generates `#siptelephony-bridge` (glued, the `/` vanishing inside a word); a literal `-` is kept rather than dropped and compounds it, so `## Agentic Chat - Code` would generate `#agentic-chat---code` — An explicit id is stable across slugifier changes and reads better than the generated one, but it also *replaces* the generated id, so pin before a link exists rather than after: `SIP/telephony bridge` is left unpinned precisely because nothing links to it yet. `.github/workflows/ci.yml` fails the build on an unresolvable anchor in `docs/`, `examples/`, or a root `*.md`, though not on one inside a docstring
-<!-- rule:66 -->
-- Use reference-style links for API elements: `[ElementName][module.path.ElementName]` — enables hover docs and navigation on the published documentation site — Provides interactive documentation features like tooltips and jump-to-definition that plain backticks cannot support
-<!-- rule:714 -->
-- Omit deprecated features from user-facing docs — document only current approaches — Prevents users from learning outdated patterns and reduces confusion about the recommended way forward
-<!-- rule:82 -->
-- Write project name as `Pydantic AI` (two words) in docs — not `Pydantic-AI`, `PydanticAI`, or `pAI` — Maintains consistent brand identity and prevents confusion across documentation
-<!-- rule:359 -->
-- Structure code examples as: context/intro → code block → caveats/details (never code before context) — Ensures readers understand purpose and usage before seeing code, making docs more learnable and preventing confusion
-<!-- rule:93 -->
-- Hide implementation details from user docs unless they affect user decisions — focus on what users can control, not how it works internally — Keeps documentation clean and maintainable by separating user-facing APIs from implementation that may change
-<!-- rule:52 -->
-- Structure docs with progressive disclosure: concept → capabilities → examples (standalone first) → config → edge cases — Helps readers build mental models incrementally, reducing cognitive load and making features easier to adopt
-<!-- rule:152 -->
-- In docs, show the **recommended approach first**, then introduce alternatives with explicit relational language ("In addition to...", "As an alternative to...") using specific feature names — Prevents users from adopting legacy or suboptimal patterns by ensuring they encounter the best practice first
-<!-- rule:109 -->
-- Remove docs content describing features "working as expected" — focus only on integration-specific concerns, limitations, or deviations — Reduces cognitive load and maintenance burden by eliminating noise; prevents documentation staleness from trivial statements
-<!-- rule:67 -->
-- Keep provider-specific config/features in `docs/models/{provider}.md` and `docs/api/models/{provider}.md`; general docs stay provider-agnostic with one minimal example + links — Prevents duplication, keeps general feature docs clean and maintainable, ensures users find provider-specific details in one canonical location rather than scattered across multiple pages
-<!-- rule:941 -->
-- Avoid `test="skip"` in code examples unless unavoidable (external services, credentials, non-deterministic behavior) — use mocks or fixtures instead — Testable documentation examples prove the code works and prevent docs from drifting out of sync with actual behavior
-<!-- rule:727 -->
-- Link to canonical sources rather than duplicating lists or summaries maintained elsewhere — Prevents docs from becoming outdated when the source of truth changes
-<!-- rule:808 -->
-- Focus docs on user tasks and public APIs, defer implementation details to docstrings — Task-oriented guides help users accomplish goals faster, while keeping advanced/internal details in API reference prevents overwhelming users with complexity when sensible defaults exist
-<!-- rule:301 -->
-- In docs, consolidate examples showing parameter variations into one block with notes — split only for mutually exclusive params or distinct use cases — Reduces cognitive load and makes docs more scannable by avoiding repetitive boilerplate for simple parameter alternatives
-<!-- rule:58 -->
-- In docs examples, demonstrate realistic use cases that show *why* the feature matters — prevents misleading users with toy scenarios or debugging code that obscure actual value — Well-crafted examples help users understand when to apply features and avoid implementing unnecessary patterns for problems solvable with simpler approaches
-<!-- rule:54 -->
-- Use fence-level `{test="skip" lint="skip"}` instead of inline suppressions in doc examples — keeps code clean and reader-focused — Documentation code should model best practices; fence-level skip directives separate tooling concerns from the example itself, while inline `# noqa` or `# type: ignore` pollutes pedagogical code with implementation details
-<!-- rule:151 -->
-- Cross-reference alternatives and explain trade-offs when documenting overlapping features — Prevents users from missing better-suited options or implementing duplicate functionality when multiple approaches exist (e.g., `UsageLimits` vs rate-limiting, provider-specific implementations)
-<!-- rule:1112 -->
-- Document default behavior and use cases for all configurable features — helps users decide when to override defaults — Users can't make informed configuration choices without knowing what happens by default and when alternatives are appropriate
-- When docs contrast prior and current Pydantic AI behavior, name the first version with the current behavior. Do not repeat a version already supplied by the page or section. Do not add historical prose when current behavior alone is sufficient.
-<!-- rule:135 -->
-- Use actual, currently available model names in documentation examples — prevents user confusion and copy-paste errors with non-existent models — Ensures users can run documentation examples without modification and avoids frustration from referencing models that don't exist yet or are hypothetical
-<!-- rule:508 -->
-- Verify rendered documentation through a unified-docs preview before merging — catches broken internal/external references early — Prevents documentation drift and broken links from reaching users, especially after code refactoring
-<!-- rule:283 -->
-- Use admonitions (`!!! note`, `!!! warning`) for callouts, not blockquotes (`>`) or GitHub alerts (`> [!NOTE]`) — Ensures consistent rendering and prevents callouts from cluttering the table of contents
-<!-- rule:618 -->
-- Nest subtopics, examples, and config details within parent sections — improves discoverability and reduces redundant context — Hierarchical organization makes documentation easier to navigate and understand by grouping related content together rather than scattering it across top-level sections or separate files.
-<!-- rule:298 -->
-- In provider feature support tables, use a `Notes` or `Provider Support Notes` column for variations, limitations, and special values — keeps table structure clean and constraints discoverable — Centralizes provider-specific exceptions in one scannable location instead of scattering them across config examples or inline parentheticals, making cross-provider differences easier to find
-<!-- rule:634 -->
-- In provider feature tables, use standard labels (`Full feature support`, `Limited parameter support`) and move unsupported variants to `Unsupported` column, not inline exceptions — Ensures consistent, scannable documentation structure where users can quickly identify exact support boundaries across providers
-<!-- rule:168 -->
-- When documenting alternative approaches, explain tradeoffs (limitations, requirements, benefits, use-cases) and warn about conflicts when combining them — Helps users make informed decisions and avoid subtle bugs from conflicting configurations
+## Links and structure
+
+- Use reference-style links for API elements: `[ElementName][module.path.ElementName]`. They provide hover documentation and API navigation on the published site.
+- Write the project name as `Pydantic AI`.
+- Use admonitions (`!!! note`, `!!! warning`) for callouts, not blockquotes or GitHub alerts.
+- Keep provider-specific configuration and behavior in `docs/models/{provider}.md` and `docs/api/models/{provider}.md`. General guides use a minimal provider-agnostic example and link to the provider page.
+- In provider feature tables, use a `Notes` or `Provider Support Notes` column for variations, limitations, and special values. Use the standard labels `Full feature support` and `Limited parameter support`, and put unsupported variants in the `Unsupported` column.
+
+## Examples
+
+- Keep code examples executable unless they require external services, credentials, or non-deterministic behavior. Use mocks or fixtures when they keep the example representative.
+- Put example-level exclusions on the fence, such as `{test="skip" lint="skip"}`, rather than adding tooling suppressions to pedagogical code. Examples that are linted are also type-checked with pyright; opt one out with `typecheck="skip - <reason>"` only when no natural fix exists, such as a deliberate type error or an uninstalled dependency.
+- Use `{gateway_toggle="skip"}` for examples that use features unavailable through Pydantic AI Gateway. Keep the marker on unsupported examples even when the renderer does not automatically toggle explicit provider constructors; see the [renderer contract](https://github.com/pydantic/unified-docs/blob/877c3a80f635bd100b86599c76e1873f3983ec57/README.md#gateway-toggle-examples).
+- Check Google examples against Google Cloud support before allowing Gateway variants. Mark Gemini API-only examples with `{gateway_toggle="skip"}`. Link to [Google model guidance](models/google.md) when documenting Gateway support.
+- Keep `gateway_toggle` separate from `test` and `lint` metadata. The flag controls rendered Gateway variants and does not suppress example checks.
+- Combine parameter variations when one example plus notes preserves every meaningful difference. Split examples when use cases, prerequisites, or constraints differ.
+- Use examples that demonstrate a credible user task or decision without introducing complexity unrelated to the feature.
+
+## Review
+
+- On a Pydantic AI pull request, apply `trigger:docs-preview` to dispatch navigation validation to unified-docs. Dispatch removes the label; re-add it after source changes.
+- Read the result and verify its reported SHA matches the current Pydantic AI pull request head. This workflow validates navigation; it does not render HTML.
+- Before merging, have a maintainer arrange a rendered preview pinned to the current Pydantic AI source head. Verify the preview's reported SHA. Navigation validation and the rendered preview are separate gates.
+- On a unified-docs renderer pull request, use its separate `trigger:docs` label for Docs Self-Preview. It builds the site and posts its rendered URL.
 
 <!-- /braindump -->
 
-## Plain language
+# Front pages: `docs/index.md` and `README.md`
 
-Use "shape" only for concrete structure or wire representation. Otherwise name the concept, such as configuration, signature, setup, or sequence.
+The docs index and repository README tell the same story on two surfaces. Keep their shared wording and code examples synchronized while preserving the markup each renderer needs:
 
-# Front pages: docs/index.md and README.md sync contract
+- `docs/index.md` uses relative links, tabs (`=== "..."`), numbered annotations (`(1)!`), and MkDocs-only markup.
+- `README.md` uses absolute documentation links, `###` sections instead of tabs, and plain one-line `#` comments instead of annotations.
+- Mirrored code examples remain code-identical; only comments, annotations, link forms, and fence attributes may differ.
+- README snippets that cannot run in the documentation test environment are excluded by `tests/test_examples.py`, not by fence attributes, so README fences remain compatible with GitHub rendering.
+- When the shared tagline or Harness framing changes, check `docs/harness/index.md` and `src/pydantic_ai_harness/README.md` too.
 
-The docs index and the repository README are one story on two surfaces. Whenever one changes, mirror the other in the same PR (enforced by `tests/test_docs_parity.py`):
+# Model names
 
-- `docs/index.md` uses relative links, tabs (`=== "..."`), numbered annotations (`(1)!`), and MkDocs-only markup. `README.md` uses absolute links (`https://pydantic.dev/docs/ai/...`), `###` sections instead of tabs, and plain one-line `#` comments instead of annotations (GitHub renders annotation markers literally).
-- The mirrored code examples (coding agent, data extraction, realtime voice, image generation, embeddings, `bank_support.py`) must stay code-identical across both surfaces; only comments/annotations and fence attributes may differ.
-- `README.md` is included in `tests/test_examples.py`'s `find_examples`, so its snippets are tested and linted. Snippets that cannot run here (`pydantic_ai_harness` imports, interactive realtime sessions) are excluded by content match in `find_filter_examples`, not by fence attributes, so README fences stay bare for GitHub rendering.
-- Wording that appears on both surfaces (paragraph one, the whatever-you-came-to-build line, the Why bullets, section intros) must match word for word modulo link form.
-- No em dashes anywhere in these files; use colons, semicolons, commas, parentheses, or sentence breaks instead.
-- The harness repo's front pages (`pydantic/pydantic-ai-harness` `docs/index.md` + `README.md`) carry the same positioning: when the tagline or Harness framing changes here, check those too (see `agent_docs/docs-conventions.md` in that repo).
+- Name models with an alias from [`model_aliases/aliases.json`](model_aliases/aliases.json), never a model ID. Chat models use `<provider>:<tier>`, with the tiers `small`, `medium`, `large`, and `xlarge`; every chat provider defines all four. Realtime, image generation, and embedding models use `<provider>:realtime`, `<provider>:image`, and `<provider>:embedding`.
+- Pick a chat tier by the model's role in the example: `medium` for a generic example, `small` for a cheap side task such as a simple judge, and `large` or `xlarge` when the example needs a more capable model.
+- `{{ openai:medium }}` resolves to the full model string, as in `Agent('{{ openai:medium }}')` or `gateway/{{ openai:medium }}`. `{{ openai:medium.name }}` resolves to the bare model name, as in `OpenAIResponsesModel('{{ openai:medium.name }}')`, `openai-chat:{{ openai:medium.name }}`, or `model_name='{{ openai:medium.name }}'` in example output.
+- Aliases stand only for models served under their provider's own IDs. Third-party catalogs, such as OpenRouter, Snowflake, or Heroku, keep their own model IDs.
+- Don't name or describe the aliased model in prose, labels, or comments, since the alias can move. Write "an OpenAI model", not the model's name.
+- The exceptions are pages about specific models or versions, such as provider pages under `models/` or the changelog. `tests/test_docs_model_aliases.py` fails on model IDs anywhere else; register an exception in its `EXEMPT_PAGES` or `EXEMPT_DIRS`, with the reason.
+- To move the docs to a new model, edit only `model_aliases/aliases.json`, following [`model_aliases/AGENTS.md`](model_aliases/AGENTS.md), then run `make update-examples` to refresh example output that depends on the model, such as costs; it keeps the aliases. The docs site and `tests/test_examples.py` resolve the aliases. The READMEs that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` compare with docs pages keep concrete model IDs, since GitHub can't resolve aliases; update them when those tests fail.

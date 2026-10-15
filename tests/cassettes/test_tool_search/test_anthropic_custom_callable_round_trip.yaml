@@ -1,138 +1,8 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1829'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the USD to EUR exchange rate?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up the current exchange rate between two currencies.
-        input_schema:
-          additionalProperties: false
-          properties:
-            from_currency:
-              type: string
-            to_currency:
-              type: string
-          required:
-          - from_currency
-          - to_currency
-          type: object
-        name: get_exchange_rate
-      - defer_loading: true
-        description: Look up stock price by ticker symbol.
-        input_schema:
-          additionalProperties: false
-          properties:
-            symbol:
-              type: string
-          required:
-          - symbol
-          type: object
-        name: stock_lookup
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '782'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-fd2e157e4c568a1141aa81f660708203-bda031a756cf9dde-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: I'll search for a tool that can help with currency exchange rates.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01FWrycbhCvuTogJufWKj2Mu
-        input:
-          queries:
-          - currency exchange rate USD EUR
-          - exchange rate converter
-          - foreign exchange
-        name: search_tools
-        type: tool_use
-      id: msg_01WNhxeiWj9zshXETo91jBLt
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 759
-        output_tokens: 83
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
@@ -141,310 +11,603 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2351'
+      - "1713"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the USD to EUR exchange rate?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help with currency exchange rates.
-          type: text
-        - id: toolu_01FWrycbhCvuTogJufWKj2Mu
-          input:
-            queries:
-            - currency exchange rate USD EUR
-            - exchange rate converter
-            - foreign exchange
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: get_exchange_rate
-            type: tool_reference
-          is_error: false
-          tool_use_id: toolu_01FWrycbhCvuTogJufWKj2Mu
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up the current exchange rate between two currencies.
-        input_schema:
-          additionalProperties: false
-          properties:
-            from_currency:
-              type: string
-            to_currency:
-              type: string
-          required:
-          - from_currency
-          - to_currency
-          type: object
-        name: get_exchange_rate
-      - defer_loading: true
-        description: Look up stock price by ticker symbol.
-        input_schema:
-          additionalProperties: false
-          properties:
-            symbol:
-              type: string
-          required:
-          - symbol
-          type: object
-        name: stock_lookup
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
-                type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '777'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-4a10837616300428ea75edf14844ce3e-7b93204e2c71cdf3-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: Great! I found a tool to get exchange rates. Let me check the current USD to EUR exchange rate for you.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01NKR8AepojeiSr76aFLLTiL
-        input:
-          from_currency: USD
-          to_currency: EUR
-        name: get_exchange_rate
-        type: tool_use
-      id: msg_01RZ1YJKW5JWC51ZKmYR19sf
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 950
-        output_tokens: 101
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '2851'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the USD to EUR exchange rate?
-          type: text
-        role: user
-      - content:
-        - text: I'll search for a tool that can help with currency exchange rates.
-          type: text
-        - id: toolu_01FWrycbhCvuTogJufWKj2Mu
-          input:
-            queries:
-            - currency exchange rate USD EUR
-            - exchange rate converter
-            - foreign exchange
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: get_exchange_rate
-            type: tool_reference
-          is_error: false
-          tool_use_id: toolu_01FWrycbhCvuTogJufWKj2Mu
-          type: tool_result
-        role: user
-      - content:
-        - text: Great! I found a tool to get exchange rates. Let me check the current USD to EUR exchange rate for you.
-          type: text
-        - id: toolu_01NKR8AepojeiSr76aFLLTiL
-          input:
-            from_currency: USD
-            to_currency: EUR
-          name: get_exchange_rate
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 1 USD = 0.92 EUR
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the USD to EUR exchange rate?
             type: text
-          is_error: false
-          tool_use_id: toolu_01NKR8AepojeiSr76aFLLTiL
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-      - defer_loading: true
-        description: Look up the current exchange rate between two currencies.
-        input_schema:
-          additionalProperties: false
-          properties:
-            from_currency:
-              type: string
-            to_currency:
-              type: string
-          required:
-          - from_currency
-          - to_currency
-          type: object
-        name: get_exchange_rate
-      - defer_loading: true
-        description: Look up stock price by ticker symbol.
-        input_schema:
-          additionalProperties: false
-          properties:
-            symbol:
-              type: string
-          required:
-          - symbol
-          type: object
-        name: stock_lookup
-      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
-          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
-          do not retry.
-        input_schema:
-          additionalProperties: false
-          properties:
-            queries:
-              description: List of search queries to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                matches across queries are unioned.
-              items:
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
                 type: string
-              type: array
-          required:
-          - queries
-          type: object
-        name: search_tools
-    uri: https://api.anthropic.com/v1/messages?beta=true
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '596'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-bd4b79f2a6ed91903b64f01cc82002b3-b324959f1927d69d-01
+      - 00-2adb5ab4a065052a964ce93d7dfc0ef4-b96b97810a8a4488-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          The current exchange rate is **1 USD = 0.92 EUR**.
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3cX9ffJqcG2GFA8Uyb","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":747,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}  }
 
-          This means that 1 US Dollar equals 0.92 Euros.
-        type: text
-      id: msg_01UYbgzyKYYrRWYcWDirCAZL
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 1073
-        output_tokens: 38
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll search"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for a"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tool"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" can help"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you get"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currency"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" exchange"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rates."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_013BANvNptN8Nn7L2oqRX4uS","name":"search_tools","input":{},"caller":{"type":"direct"}}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"queri"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"es\": [\""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"currenc"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"y excha"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nge rat"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"e\",\"USD"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" EUR\",\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"foreign"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" exchan"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ge\",\"fo"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"rex\"]}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":747,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":84}}
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-09-29T16:28:08.117903+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2190"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the USD to EUR exchange rate?
+            type: text
+        - role: assistant
+          content:
+          - text: I'll search for a tool that can help you get currency exchange rates.
+            type: text
+          - id: toolu_013BANvNptN8Nn7L2oqRX4uS
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - currency exchange rate
+              - USD EUR
+              - foreign exchange
+              - forex
+        - role: user
+          content:
+          - tool_use_id: toolu_013BANvNptN8Nn7L2oqRX4uS
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-db26736f7c0631f90ffbd00dcba6dbc2-3032251bff64b5de-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3ch2VGadPuV1NstQxE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":939,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Great"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! I"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" found a tool to"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" get exchange"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rates. Let"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me get the current USD to EUR exchange"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rate for"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01E9Ko1WsZM11J7rPZYN4WBt","name":"get_exchange_rate","input":{},"caller":{"type":"direct"}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"from_"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"currenc"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"y\": \"US"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"D\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"to_c"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"urrency"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"EUR"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":939,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":101}          }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:28:10.261709+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2656"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the USD to EUR exchange rate?
+            type: text
+        - role: assistant
+          content:
+          - text: I'll search for a tool that can help you get currency exchange rates.
+            type: text
+          - id: toolu_013BANvNptN8Nn7L2oqRX4uS
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - currency exchange rate
+              - USD EUR
+              - foreign exchange
+              - forex
+        - role: user
+          content:
+          - tool_use_id: toolu_013BANvNptN8Nn7L2oqRX4uS
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - text: >-
+              Great! I found a tool to get exchange rates. Let me get the current USD to EUR
+              exchange rate for you.
+            type: text
+          - id: toolu_01E9Ko1WsZM11J7rPZYN4WBt
+            type: tool_use
+            name: get_exchange_rate
+            input:
+              from_currency: USD
+              to_currency: EUR
+        - role: user
+          content:
+          - tool_use_id: toolu_01E9Ko1WsZM11J7rPZYN4WBt
+            type: tool_result
+            content:
+            - text: 1 USD = 0.92 EUR
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: get_exchange_rate
+          description: Look up the current exchange rate between two currencies.
+          input_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          defer_loading: true
+        - name: stock_lookup
+          description: Look up stock price by ticker symbol.
+          input_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          defer_loading: true
+        - name: search_tools
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          input_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-04a73bb7020f7629b7048b53f5184b84-c449fbe48a042331-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3cqxWSjS3uTBcZMPSE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1062,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}    }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" exchange"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rate is"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"1 USD = 0.92"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" EUR**. "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nThis means"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 1 US"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Dollar"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" equal to 0.92 "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Euros."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1062,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":42}          }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-09-29T16:28:12.077004+00:00

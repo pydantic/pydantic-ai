@@ -1,0 +1,1101 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 34c60c8d-c392-4c02-8721-dec8b13dd34c
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "32844"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Here are some notes about Python, for a wide turn. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability.
+          - cachePoint:
+              type: default
+        system:
+        - text: You are a concise Python assistant.
+        - cachePoint:
+            type: default
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+          - cachePoint:
+              type: default
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1275"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 6319
+        output:
+          message:
+            content:
+            - text: |-
+                I've received your notes! You've certainly emphasized the point very clearly: **Python favors readability**.
+
+                This is indeed one of Python's core design principles, famously captured in "The Zen of Python" (PEP 20) with lines like:
+                - "Readability counts."
+                - "Beautiful is better than ugly."
+                - "Explicit is better than implicit."
+
+                Some ways Python favors readability include:
+
+                ```python
+                # Clean, readable syntax with meaningful indentation
+                for item in collection:
+                    if item.is_valid():
+                        process(item)
+
+                # Descriptive variable names are encouraged
+                total_price = quantity * unit_price
+
+                # List comprehensions for clarity
+                squares = [x**2 for x in range(10)]
+
+                # Clear function/method names
+                data.sort()
+                text.upper()
+                list.append(item)
+                ```
+
+                Is there anything specific about Python's readability features you'd like to discuss or work on?
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheDetails:
+          - inputTokens: 7746
+            ttl: 5m
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 7746
+          cacheWriteInputTokens: 7746
+          inputTokens: 3
+          outputTokens: 219
+          serverToolUsage: {}
+          totalTokens: 7968
+  recorded_at: 2026-10-05T19:42:00.543559+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - d8f699b3-8f8e-4868-9501-8d376116b619
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "35003"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Here are some notes about Python, for a wide turn. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability.
+          - cachePoint:
+              type: default
+        - role: assistant
+          content:
+          - text: Checking the weather.
+          - toolUse:
+              toolUseId: call_0
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_1
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_2
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_3
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_4
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_5
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_6
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_7
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_8
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_9
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_10
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_11
+              name: get_weather
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_0
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_1
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_2
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_3
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_4
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_5
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_6
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_7
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_8
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_9
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_10
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_11
+              content:
+              - text: Sunny
+              status: success
+          - cachePoint:
+              type: default
+        system:
+        - text: You are a concise Python assistant.
+        - cachePoint:
+            type: default
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+          - cachePoint:
+              type: default
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1014"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 5474
+        output:
+          message:
+            content:
+            - text: |-
+                Thank you for the note! You're absolutely right - **Python favors readability**. This is one of Python's core design principles, famously captured in "The Zen of Python" (PEP 20):
+
+                > "Readability counts."
+
+                Some ways Python demonstrates this philosophy:
+
+                - **Clean syntax**: Uses indentation instead of braces
+                - **Descriptive keywords**: `in`, `is`, `not`, `and`, `or` instead of symbols
+                - **Clear naming conventions**: PEP 8 style guide promotes readable code
+                - **Simple is better**: Encourages straightforward solutions over clever tricks
+
+                Oh, and the weather is **Sunny** today! ☀️
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheDetails:
+          - inputTokens: 584
+            ttl: 5m
+          cacheReadInputTokenCount: 7746
+          cacheReadInputTokens: 7746
+          cacheWriteInputTokenCount: 584
+          cacheWriteInputTokens: 584
+          inputTokens: 7
+          outputTokens: 156
+          serverToolUsage: {}
+          totalTokens: 8493
+  recorded_at: 2026-10-05T19:42:06.143957+00:00

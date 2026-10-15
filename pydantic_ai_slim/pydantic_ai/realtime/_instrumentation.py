@@ -25,6 +25,7 @@ from .._instrumentation import (
     model_metric_attributes,
     model_request_parameters_attributes,
     provider_attributes,
+    record_exception,
     redact_binary_content,
     response_attributes,
     response_price_calculation,
@@ -170,10 +171,12 @@ class SessionInstrumentation:
         final_result: str | None,
         audio_chunks_dropped: int,
         transcript_items_dropped: int,
+        queue_dropped_deltas: int,
+        queue_dropped_structural: int,
     ) -> str | None:
         """Finalize and end the session span, returning its traceparent (for `AgentRunResult`).
 
-        Attaches cumulative usage, run context, and the conversation to the span, mirroring the
+        Attaches the session's own usage, run context, and the conversation to the span, mirroring the
         classic agent-run span's end-of-run contract. No-op (returning `None`) when instrumentation
         is disabled or no span was started.
         """
@@ -183,7 +186,7 @@ class SessionInstrumentation:
             return None
         if error is not None:
             self.record_error(span, error)
-        # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
+        # Report the session's own usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
         # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
         # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
         attributes: dict[str, Any] = {
@@ -191,6 +194,8 @@ class SessionInstrumentation:
             **settings.system_instructions_attributes(self.instructions),
             'pydantic_ai.audio_chunks_dropped': audio_chunks_dropped,
             'pydantic_ai.transcript_items_dropped': transcript_items_dropped,
+            'pydantic_ai.queue_dropped_deltas': queue_dropped_deltas,
+            'pydantic_ai.queue_dropped_structural': queue_dropped_structural,
         }
         schema_properties: dict[str, Any] = {}
         if 'gen_ai.system_instructions' in attributes:
@@ -361,6 +366,20 @@ class SessionInstrumentation:
         if self.chat_span is not None:
             self.chat_span.set_attribute('gen_ai.output.type', output_type)
 
+    def set_conversation_id(self, conversation_id: str) -> None:
+        """Adopt an id the session minted after this helper was constructed.
+
+        A session opened without a `conversation_id` mints one the first time its `conversation` is
+        taken, which can happen after the session span is already open. The span has to carry the
+        same id the session's messages do, or the spoken conversation can't be correlated with the
+        text runs that continue it.
+        """
+        self.conversation_id = conversation_id
+        if self.session_span is not None:
+            self.session_span.set_attribute('gen_ai.conversation.id', conversation_id)
+        if self._session_span_attributes is not None:
+            self._session_span_attributes['gen_ai.conversation.id'] = conversation_id
+
     def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
         """OTel attribute *values* for the request config the session was opened with.
 
@@ -386,7 +405,11 @@ class SessionInstrumentation:
             attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
         if settings.include_model_request_parameters:
             if self.model_request_parameters is not None:
-                attributes.update(model_request_parameters_attributes(self.model_request_parameters))
+                attributes.update(
+                    model_request_parameters_attributes(
+                        self.model_request_parameters, include_content=settings.include_content
+                    )
+                )
             if self.model_settings:
                 attributes['model_settings'] = safe_to_json(serialize_any(self.model_settings)).decode()
         if self.model_settings and (max_tokens := self.model_settings.get('max_tokens')) is not None:
@@ -450,8 +473,15 @@ class SessionInstrumentation:
             name, context=self.context, attributes=span_attributes, kind=SpanKind.INTERNAL
         ).end()
 
-    @staticmethod
-    def record_error(span: Span, error: BaseException) -> None:
+    def record_error(self, span: Span, error: BaseException) -> None:
+        """Record `error` on `span` as an escaped exception and mark the span ERROR.
+
+        Session and provider errors carry the same content-bearing messages the classic spans
+        withhold -- a realtime `ModelHTTPError` puts the provider's error body in its message,
+        and a `RealtimeError` relays the provider's own error text -- so the event follows
+        `include_content`. The status is set without a description either way.
+        """
         if span.is_recording():
-            span.record_exception(error, escaped=True)
+            settings = self.settings
+            record_exception(span, error, include_content=settings is not None and settings.include_content)
             span.set_status(StatusCode.ERROR)

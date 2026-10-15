@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent web search with the WebSearch capability, using the provider's native search when available and a local fallback such as DuckDuckGo."
+---
+
 # Web Search
 
 The [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](overview.md) gives your agent web search. Like all [provider-adaptive tools](overview.md#provider-adaptive-tools), it uses the provider's native web search when the model supports it and can fall back to a local implementation on other models.

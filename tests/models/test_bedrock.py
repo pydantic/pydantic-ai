@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
+import io
 import json
 import os
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from itertools import count
 from threading import Barrier, Lock
@@ -64,31 +65,46 @@ from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
     from botocore.client import BaseClient
-    from botocore.exceptions import ClientError
+    from botocore.eventstream import ParserError as EventStreamParserError
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        EndpointConnectionError,
+        ParamValidationError,
+        ReadTimeoutError,
+    )
     from botocore.hooks import HierarchicalEmitter
+    from cassetter import Cassette
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
-    from vcr.cassette import Cassette
+    from urllib3 import HTTPConnectionPool, HTTPResponse
+    from urllib3.exceptions import ProtocolError as Urllib3ProtocolError, ReadTimeoutError as Urllib3ReadTimeoutError
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelName,
+        BedrockModelSettings,
+        _support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -96,7 +112,7 @@ pytestmark = [
 class _StubBedrockClient:
     """Minimal Bedrock client that always raises the provided error."""
 
-    def __init__(self, error: ClientError):
+    def __init__(self, error: ClientError | BotoCoreError):
         self._error = error
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
@@ -149,7 +165,7 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
 
 
 async def test_bedrock_model_blocks_requests_when_disabled():
-    model = _bedrock_model_with_client_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
+    model = _bedrock_model_with_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
     model_request_parameters = ModelRequestParameters()
 
@@ -164,7 +180,7 @@ async def test_bedrock_model_blocks_requests_when_disabled():
         await model.count_tokens(messages, None, model_request_parameters)
 
 
-def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
+def _bedrock_model_with_error(error: ClientError | BotoCoreError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
         'us.amazon.nova-micro-v1:0',
@@ -219,6 +235,55 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'us.openai.gpt-5.6-sol',
+        'us.openai.gpt-5.6-luna',
+        'us.openai.gpt-5.6-terra',
+        'global.openai.gpt-6-sol',
+        'global.openai.gpt-6-luna',
+        'global.openai.gpt-6-astra',
+    ],
+)
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_openai_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+):
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    result = await Agent(model).run('Reply with exactly the word: OK')
+
+    assert result.output == snapshot('OK')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == model_name
+    assert response.finish_reason == 'stop'
+
+
+@pytest.mark.parametrize(
+    'model_name', ['global.openai.gpt-5.6-sol', 'global.openai.gpt-5.6-luna', 'global.openai.gpt-5.6-terra']
+)
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_gateway_bedrock_gpt_5_6_converse(
+    allow_model_requests: None, gateway_api_key: str | None, model_name: str
+):
+    provider = gateway_provider(
+        'bedrock',
+        api_key=gateway_api_key or 'test-api-key',
+        base_url=os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.info/proxy'),
+    )
+    model = BedrockConverseModel(model_name, provider=provider)
+    result = await Agent(model).run('Reply with exactly the word: OK', model_settings={'max_tokens': 32})
+
+    assert result.output == snapshot('OK')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == model_name
+    assert response.finish_reason == 'stop'
+
+
 @pytest.mark.vcr()
 async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
@@ -270,6 +335,25 @@ def _capture_bedrock_request_headers(
 
     def capture(request: Any, **_: Any) -> None:
         captured.update(request.headers.items())
+
+    event = f'before-send.bedrock-runtime.{operation}'
+    model.client.meta.events.register_last(event, capture)
+    try:
+        yield captured
+    finally:
+        model.client.meta.events.unregister(event, capture)
+
+
+@contextmanager
+def _capture_bedrock_request_bodies(
+    model: BedrockConverseModel, operation: Literal['Converse', 'ConverseStream'] = 'Converse'
+) -> Generator[list[dict[str, Any]]]:
+    """Record final Converse request bodies, unregistering after the request."""
+    captured: list[dict[str, Any]] = []
+
+    def capture(request: Any, **_: Any) -> None:
+        body = request.body.decode() if isinstance(request.body, bytes) else request.body
+        captured.append(json.loads(body))
 
     event = f'before-send.bedrock-runtime.{operation}'
     model.client.meta.events.register_last(event, capture)
@@ -604,11 +688,50 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+    assert exc_info.value.hint is None
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_bedrock_data_retention_error_hint(allow_model_requests: None, stream: bool):
+    """A mock is required because reproducing this error requires an account without the required retention mode."""
+    error = ClientError(
+        {
+            'Error': {
+                'Code': 'ValidationException',
+                'Message': "data retention mode 'default' is not available for this model",
+            },
+            'ResponseMetadata': {
+                'RequestId': 'test-request-id',
+                'HostId': '',
+                'HTTPStatusCode': 400,
+                'HTTPHeaders': {},
+                'RetryAttempts': 0,
+            },
+        },
+        'converse_stream' if stream else 'converse',
+    )
+    model = _bedrock_model_with_error(error)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello'):
+                pass
+        else:
+            await agent.run('hello')
+
+    exc = exc_info.value
+    assert exc.status_code == 400
+    assert exc.body == error.response
+    assert str(exc) == snapshot(
+        "status_code: 400, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'ValidationException', 'Message': \"data retention mode 'default' is not available for this model\"}, 'ResponseMetadata': {'RequestId': 'test-request-id', 'HostId': '', 'HTTPStatusCode': 400, 'HTTPHeaders': {}, 'RetryAttempts': 0}}. Bedrock rejected this model under the account's data retention mode for this Region. Models that require human review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy `provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
+    )
+    assert exc.hint is not None and str(exc).endswith(f'. {exc.hint}')
 
 
 async def test_bedrock_request_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -621,7 +744,7 @@ async def test_bedrock_request_non_http_error(allow_model_requests: None):
 
 async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -630,6 +753,44 @@ async def test_bedrock_count_tokens_non_http_error(allow_model_requests: None):
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+async def test_bedrock_request_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+    assert exc_info.value.model_name == 'us.amazon.nova-micro-v1:0'
+    assert exc_info.value.__cause__ is error
+
+
+async def test_bedrock_count_tokens_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = ReadTimeoutError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot('Read timeout on endpoint URL: "https://bedrock.stub"')
+
+
+async def test_bedrock_request_param_validation_error_not_wrapped(allow_model_requests: None):
+    """Only transport failures become `ModelAPIError`; client-side botocore errors still surface as themselves.
+
+    Not a VCR test: a real request never raises a client-side botocore error on demand.
+    """
+    error = ParamValidationError(report='bad params')
+    model = _bedrock_model_with_error(error)
+
+    with pytest.raises(ParamValidationError):
+        await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
 
 
 def _bedrock_arn(resource: str) -> str:
@@ -755,7 +916,7 @@ async def test_bedrock_count_tokens_tool_config(
 
 async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     params = ModelRequestParameters()
 
     with pytest.raises(ModelAPIError) as exc_info:
@@ -766,10 +927,24 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     assert 'broken connection' in exc_info.value.message
 
 
+async def test_bedrock_stream_transport_error(allow_model_requests: None):
+    """Not a VCR test: a cassette replays a recorded response, it cannot make botocore time out or fail to connect."""
+    error = EndpointConnectionError(endpoint_url='https://bedrock.stub')
+    model = _bedrock_model_with_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    assert exc_info.value.message == snapshot('Could not connect to the endpoint URL: "https://bedrock.stub"')
+
+
 async def test_stub_provider_properties():
     # tests the test utility itself...
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'test'}}, 'converse')
-    model = _bedrock_model_with_client_error(error)
+    model = _bedrock_model_with_error(error)
     provider = model._provider  # pyright: ignore[reportPrivateUsage]
 
     assert provider.name == 'bedrock-stub'
@@ -809,10 +984,10 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 parts=[
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -827,7 +1002,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 ],
                 usage=RequestUsage(input_tokens=571, output_tokens=22, cost=Decimal('0.000023065')),
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
@@ -841,10 +1016,10 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_name='temperature',
                         content='30°C',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -917,10 +1092,10 @@ The temperature in London on 1st January 2022 was 30°C.\
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1286,6 +1461,116 @@ async def test_bedrock_stream_usage_with_cached_tokens(
             cost=Decimal('0.000650595'),
         )
     )
+
+
+_BEDROCK_GUARDRAIL_TRACE: dict[str, Any] = {'guardrail': {'modelOutput': ['blocked']}}
+_BEDROCK_EMPTY_TRACE: dict[str, Any] = {}
+
+
+@pytest.mark.parametrize('trace', [_BEDROCK_GUARDRAIL_TRACE, _BEDROCK_EMPTY_TRACE])
+async def test_bedrock_trace(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    trace: dict[str, Any],
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'guardrail_intervened',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'trace': trace,
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    result = await agent.run('hello')
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': trace,
+    }
+    assert message.finish_reason == 'content_filter'
+
+
+@pytest.mark.parametrize('trace', [_BEDROCK_GUARDRAIL_TRACE, _BEDROCK_EMPTY_TRACE])
+async def test_bedrock_trace_streamed(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    trace: dict[str, Any],
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'guardrail_intervened'}}
+        yield {
+            'metadata': {
+                'usage': {'inputTokens': 1, 'outputTokens': 1},
+                'trace': trace,
+            }
+        }
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': trace,
+    }
+    assert message.finish_reason == 'content_filter'
+
+
+async def test_bedrock_trace_streamed_metadata_before_stop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Mocked because a guardrail trace requires a guardrail-configured Bedrock account."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {
+            'metadata': {
+                'usage': {'inputTokens': 1, 'outputTokens': 1},
+                'trace': _BEDROCK_GUARDRAIL_TRACE,
+            }
+        }
+        yield {'messageStop': {'stopReason': 'guardrail_intervened'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {
+        'stream': _stream(),
+        'ResponseMetadata': {'RequestId': 'stub'},
+    }
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    message = cast(ModelResponse, result.all_messages()[-1])
+    assert message.provider_details == {
+        'finish_reason': 'guardrail_intervened',
+        'trace': _BEDROCK_GUARDRAIL_TRACE,
+    }
+    assert message.finish_reason == 'content_filter'
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1742,8 +2027,8 @@ def _bedrock_tool_result_media_kinds(cassette: Cassette) -> set[str]:
     sibling-splitting it (a placeholder `text` in the `toolResult` plus a separate file block).
     """
     kinds: set[str] = set()
-    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        data: dict[str, Any] = json.loads(request.body)  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
+    for request in cassette.requests:
+        data: dict[str, Any] = request_json(request)
         messages: list[dict[str, Any]] = data.get('messages', [])
         for message in messages:
             content: list[dict[str, Any]] = message.get('content', [])
@@ -1796,8 +2081,8 @@ async def test_bedrock_media_kind_delivered_in_tool_result(
 
     # The file rode inside the `toolResult`, and no sibling-split placeholder was emitted.
     assert file_kind in _bedrock_tool_result_media_kinds(vcr)
-    for request in vcr.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        assert 'See file' not in json.dumps(json.loads(request.body))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    for request in vcr.requests:
+        assert 'See file' not in json.dumps(request_json(request))
 
 
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -2308,6 +2593,59 @@ Would you like detail on any specific method?\
     )
 
 
+@pytest.mark.parametrize(
+    'model_name,stream',
+    [
+        pytest.param('us.anthropic.claude-sonnet-5', False, id='sonnet-5'),
+        pytest.param('us.anthropic.claude-sonnet-5', True, id='sonnet-5-stream'),
+        pytest.param('us.anthropic.claude-sonnet-4-6', False, id='sonnet-4-6'),
+    ],
+)
+async def test_bedrock_adaptive_thinking_keeps_tool_output_unforced(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: str, stream: bool
+) -> None:
+    """An explicit `ToolOutput` with adaptive thinking offers the output tool without forcing it.
+
+    Claude accepts a forced `toolChoice` alongside adaptive thinking but answers it without thinking.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(int), model_settings={'thinking': True})
+
+    with _capture_bedrock_request_bodies(model, 'ConverseStream' if stream else 'Converse') as sent_requests:
+        if stream:
+            async with agent.run_stream('Return the number 42.') as result:
+                output = await result.get_output()
+        else:
+            output = (await agent.run('Return the number 42.')).output
+
+    assert len(sent_requests) == 1
+    sent = sent_requests[0]
+    assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
+    assert sent['toolConfig']['toolChoice'] == {'auto': {}}
+    assert output == 42
+
+
+@pytest.mark.parametrize('model_settings', [{'thinking': True}, {}], ids=['explicit', 'implicit'])
+async def test_bedrock_opus_5_thinking_offers_output_tool_unforced(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_settings: ModelSettings
+) -> None:
+    """Claude Opus 5 thinks whether adaptive thinking is explicit or the model's default, so the output tool isn't
+    forced. Bedrock doesn't offer native structured output for it, so a bare `output_type` keeps Tool Output."""
+    model = BedrockConverseModel('us.anthropic.claude-opus-5', provider=bedrock_provider)
+    agent = Agent(model, output_type=int)
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('Return the number 42.', model_settings=model_settings)
+
+    assert len(sent_requests) == 1
+    sent = sent_requests[0]
+    assert sent.get('additionalModelRequestFields', {}) == (
+        {'thinking': {'type': 'adaptive'}} if model_settings else {}
+    )
+    assert sent['toolConfig']['toolChoice'] == {'auto': {}}
+    assert result.output == 42
+
+
 async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -2803,7 +3141,8 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=UTC),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2886,60 +3225,53 @@ Mexico City is an important cultural, financial, and political center for the co
     )
 
 
-@pytest.mark.parametrize(
-    'thinking_field',
-    [
-        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, id='enabled'),
-        pytest.param({'type': 'adaptive'}, id='adaptive'),
-    ],
-)
-async def test_bedrock_output_tool_with_thinking_raises(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, thinking_field: dict[str, Any]
+async def test_bedrock_output_tool_with_extended_thinking_is_unforced(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
 ):
-    """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
+    """Extended thinking rejects a forced `toolChoice`, so an explicit `ToolOutput` offers the tool unforced.
 
     Uses the legacy `bedrock_additional_model_requests_fields` form. See
-    `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
-    Fixes https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and
-    https://github.com/pydantic/pydantic-ai/issues/5650 (`adaptive`).
+    `test_bedrock_output_tool_with_unified_extended_thinking_is_unforced` for the unified `thinking` field.
+    Covers https://github.com/pydantic/pydantic-ai/issues/3092.
     """
     m = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=bedrock_provider,
-        settings=BedrockModelSettings(bedrock_additional_model_requests_fields={'thinking': thinking_field}),
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        ),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
 
-    with pytest.raises(
-        UserError,
-        match='Bedrock does not support thinking and output tools at the same time',
-    ):
-        await agent.run('What is 3 + 3?')
+    with _capture_bedrock_request_bodies(m) as sent_requests:
+        result = await agent.run('What is 3 + 3?')
+    assert sent_requests[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert result.output == 6
 
 
-async def test_bedrock_output_tool_with_unified_thinking_raises(
+async def test_bedrock_output_tool_with_unified_extended_thinking_is_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Sibling of `test_bedrock_output_tool_with_thinking_raises` for the unified `thinking` field.
+    """Sibling of `test_bedrock_output_tool_with_extended_thinking_is_unforced` for the unified `thinking` field.
 
     `Model.prepare_request` strips unified `thinking` into `ModelRequestParameters.thinking`, so
-    `_is_thinking_enabled` must inspect both pre-strip (settings) and post-strip (params) state to
+    the effective-thinking check must inspect both pre-strip (settings) and post-strip (params) state to
     catch the conflict regardless of which form the user picked.
     """
     m = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=bedrock_provider,
         settings=BedrockModelSettings(thinking=True),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
 
-    with pytest.raises(
-        UserError,
-        match='Bedrock does not support thinking and output tools at the same time',
-    ):
-        await agent.run('What is 3 + 3?')
+    with _capture_bedrock_request_bodies(m) as sent_requests:
+        result = await agent.run('What is 3 + 3?')
+    assert sent_requests[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert result.output == 6
 
 
 async def test_bedrock_tool_choice_required_with_thinking(
@@ -2989,7 +3321,28 @@ async def test_bedrock_unified_thinking_with_tool_forcing_raises(
 
     settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
 
-    with pytest.raises(UserError, match='Bedrock does not support forcing specific tools with thinking mode'):
+    with pytest.raises(UserError, match="Extended thinking doesn't support forcing tool use"):
+        await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
+
+
+async def test_bedrock_extended_thinking_with_tool_forcing_suggests_adaptive(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """On a model that supports adaptive thinking, the extended-thinking forcing error names the alternative."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+        'tool_choice': ['get_weather'],
+    }
+
+    with pytest.raises(
+        UserError,
+        match=r"Extended thinking doesn't support forcing tool use\. Disable thinking or use `tool_choice='auto'`\. "
+        r"Alternatively, `bedrock_additional_model_requests_fields=\{'thinking': \{'type': 'adaptive'\}\}` supports forcing\.$",
+    ):
         await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
@@ -3587,7 +3940,7 @@ async def test_bedrock_thinking_high_qwen_variant(
     # `<think>` tags, leaving empty visible text and triggering pydantic-ai's
     # output-validation retry — the cassette captures two recorded interactions. We
     # only need to assert on the wire shape of the first one.
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = request_json(vcr.requests[0])
     assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
     # Loose response-shape pin: at least one ThinkingPart survives the
     # validation-retry roundtrip and reaches the final response.
@@ -3617,6 +3970,41 @@ async def test_bedrock_thinking_true_qwen_variant(
 
     sent = single_request_body(vcr)
     assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+
+
+async def test_bedrock_qwen_stream_whitespace_text_blocks(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """A Qwen stream's whitespace-only text blocks, which `Converse` leaves out, build no parts.
+
+    Ahead of a tool call, `ConverseStream` sends a text block of `''` before the reasoning and one of `'\\n\\n'` after
+    it, while `Converse` returns only the reasoning and the tool call. The profile's
+    `ignore_streamed_leading_whitespace` drops the two blocks, so both build the same parts.
+    """
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_weather',
+                description='Get the weather for a city',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                },
+            )
+        ]
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the weather in Paris?')]
+    settings = ModelSettings(thinking='high')
+
+    response = await model.request(messages, settings, params)
+    async with model.request_stream(messages, settings, params) as stream:
+        async for _ in stream:
+            pass
+
+    assert [type(part).__name__ for part in response.parts] == snapshot(['ThinkingPart', 'ToolCallPart'])
+    assert [type(part).__name__ for part in stream.get().parts] == snapshot(['ThinkingPart', 'ToolCallPart'])
 
 
 async def test_bedrock_top_k_anthropic_variant(
@@ -3851,6 +4239,81 @@ async def test_bedrock_stream_whitespace_only_leading_delta(
     assert output == expected_output
 
 
+@pytest.mark.parametrize('error_kind', ['read-timeout', 'connection-reset'])
+async def test_bedrock_stream_transport_error_mid_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, error_kind: str
+):
+    """botocore reads an event stream straight from the urllib3 response, so a connection that breaks off mid-stream
+    raises the raw urllib3 error; it surfaces as `ModelAPIError`.
+
+    Not a VCR test: a cassette can't replay a broken-off connection.
+    """
+    error = (
+        Urllib3ReadTimeoutError(HTTPConnectionPool('localhost'), '', 'Read timed out.')
+        if error_kind == 'read-timeout'
+        else Urllib3ProtocolError('Connection broken: reset')
+    )
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Hello'}}}
+        raise error
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.__cause__ is error
+
+
+async def test_bedrock_stream_cancel_suppresses_urllib3_error(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """`cancel()` closing the event stream mid-read can make the next read raise a raw urllib3 error; it cancels cleanly.
+
+    Not a VCR test: a cassette can't replay a connection torn down mid-read.
+    """
+
+    class _EventStream:
+        def __init__(self) -> None:
+            self.closed = False
+            self._events = iter(
+                [
+                    {'messageStart': {'role': 'assistant'}},
+                    {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Hello'}}},
+                ]
+            )
+
+        def __iter__(self) -> _EventStream:
+            return self
+
+        def __next__(self) -> dict[str, Any]:
+            if self.closed:
+                raise Urllib3ProtocolError('Connection broken: closed')
+            return next(self._events)
+
+        def close(self) -> None:
+            self.closed = True
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _EventStream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as stream:
+        iterator = stream.__aiter__()
+        await iterator.__anext__()
+        await stream.cancel()
+        async for _ in iterator:
+            pass
+
+    assert stream.get().state == 'interrupted'
+
+
 @pytest.mark.vcr()
 async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""
@@ -3971,6 +4434,164 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     assert second_usage == snapshot(
         RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1, cost=Decimal('0.00052536'))
     )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'cache,expected_cache_point,expected_usage',
+    [
+        pytest.param(
+            True,
+            # No `ttl`, matching what `bedrock_cache_instructions=True` sends.
+            {'cachePoint': {'type': 'default'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8172,
+                        output_tokens=5,
+                        cache_write_5m_tokens=8172,
+                        input_tokens=8259,
+                        cost=Decimal('0.0227194'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cache_read_tokens=8172,
+                        cost=Decimal('0.00204424'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='default',
+        ),
+        pytest.param(
+            '1h',
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8175,
+                        cache_write_1h_tokens=8175,
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cost=Decimal('0.0362164'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cache_read_tokens=8175,
+                        cost=Decimal('0.0020449'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
+async def test_unified_cache_writes_then_reads_real_api(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    cache: Literal[True, '1h'],
+    expected_cache_point: dict[str, Any],
+    expected_usage: tuple[RunUsage, RunUsage],
+):
+    """The unified `cache` setting places cache points after the tool definitions and the instructions,
+    with the requested TTL, and Bedrock accepts them.
+
+    The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
+        + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=cache),
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Sunny in {city}'
+
+    prompt = 'Name one Python web framework, in one word.'
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await agent.run(prompt)
+        second = await agent.run(prompt)
+
+    assert [
+        {
+            'system': [block for block in body['system'] if 'cachePoint' in block],
+            'tools': [tool for tool in body['toolConfig']['tools'] if 'cachePoint' in tool],
+        }
+        for body in sent_requests
+    ] == [{'system': [expected_cache_point], 'tools': [expected_cache_point]}] * 2
+    assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_unified_cache_reads_history_after_wide_turn_real_api(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """With `cache=True`, a direct `model.request()` caches the conversation, and the next request reads it
+    back even after a turn with 12 parallel tool calls.
+
+    Bedrock looks back only about 20 content blocks from a cache breakpoint for an earlier cache entry, and the
+    wide turn adds 25, so the end of the previous request gets its own breakpoint
+    (https://github.com/pydantic/pydantic-ai/issues/9404).
+    """
+    # Claude Sonnet 4.5 on Bedrock reads nothing back after this turn without the extra breakpoint.
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    )
+    first_request = ModelRequest(
+        parts=[
+            UserPromptPart('Here are some notes about Python, for a wide turn. ' + 'Python favors readability. ' * 1200)
+        ],
+        instructions='You are a concise Python assistant.',
+    )
+    tool_calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    history: list[ModelMessage] = [
+        first_request,
+        ModelResponse(parts=[TextPart('Checking the weather.'), *tool_calls]),
+        ModelRequest(
+            parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in tool_calls]
+        ),
+    ]
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await model.request([first_request], ModelSettings(cache=True), params)
+        second = await model.request(history, ModelSettings(cache=True), params)
+
+    def cache_point_positions(body: dict[str, Any]) -> list[tuple[int, int]]:
+        return [
+            (message_index, block_index)
+            for message_index, message in enumerate(body['messages'])
+            for block_index, block in enumerate(message['content'])
+            if 'cachePoint' in block
+        ]
+
+    # Instructions, tools, and the end of the conversation; after the wide turn, also the end of the first request.
+    assert [cache_point_positions(body) for body in sent_requests] == snapshot([[(0, 1)], [(0, 1), (2, 12)]])
+    assert [
+        ('cachePoint' in body['system'][-1], 'cachePoint' in body['toolConfig']['tools'][-1]) for body in sent_requests
+    ] == [(True, True)] * 2
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RequestUsage(input_tokens=7749, cache_write_tokens=7746, cache_write_5m_tokens=7746, output_tokens=219),
+            RequestUsage(
+                input_tokens=8337,
+                cache_read_tokens=7746,
+                cache_write_tokens=584,
+                cache_write_5m_tokens=584,
+                output_tokens=156,
+            ),
+        )
+    )
+    assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
 
 
 @pytest.mark.vcr()
@@ -4713,6 +5334,69 @@ async def test_bedrock_cache_skipped_for_unsupported_models(
     assert bedrock_messages[0]['content'] == snapshot([{'text': 'User message.'}])
 
 
+async def test_unified_cache_places_stable_boundary_points(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The unified `cache` setting flows through `prepare_request` into cache points at the stable
+    prompt boundaries; `cache=True` emits no explicit `ttl`, matching `bedrock_cache_*=True`."""
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool_one')])
+    settings, params = model.prepare_request(ModelSettings(cache=True), params)
+    bedrock_settings = cast(BedrockModelSettings, settings or {})
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert system_prompt == snapshot([{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}])
+
+    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
+
+
+async def test_bedrock_cache_messages_keeps_existing_previous_request_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """After a wide turn, a previous request that already ends in a `CachePoint` doesn't get a second one."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Check the weather everywhere.', CachePoint()])]),
+        ModelResponse(parts=[TextPart('Checking.'), *calls]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+
+    assert [[next(iter(block)) for block in message['content']][-2:] for message in bedrock_messages] == [
+        ['text', 'cachePoint'],
+        ['toolUse', 'toolUse'],
+        ['toolResult', 'cachePoint'],
+    ]
+
+
+async def test_unified_cache_tool_points_skipped_for_nova(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """On Nova (prompt caching without tool caching), the unified setting caches instructions while
+    the injected tool-definitions setting is dropped by the profile gate."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool_one')])
+    settings, params = model.prepare_request(ModelSettings(cache=True), params)
+    bedrock_settings = cast(BedrockModelSettings, settings or {})
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert system_prompt[-1] == {'cachePoint': {'type': 'default'}}
+
+    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config and all('cachePoint' not in tool for tool in tool_config['tools'])
+
+
 async def test_bedrock_cache_tool_definitions_skipped_for_nova(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -4928,6 +5612,74 @@ async def test_bedrock_manual_cache_point_with_explicit_ttl(
             }
         ]
     )
+
+
+def _cache_point_ttls(converse: Mapping[str, Any]) -> list[str]:
+    """The TTL of every cache point in a Converse request, in the order Bedrock processes them: tools, system, messages."""
+    blocks = [*converse.get('toolConfig', {}).get('tools', []), *converse['system']]
+    for wire_message in converse['messages']:
+        blocks.extend(wire_message['content'])
+    return [block['cachePoint'].get('ttl', '5m') for block in blocks if 'cachePoint' in block]
+
+
+@pytest.mark.parametrize(
+    ('settings', 'cache_point_ttl', 'expected_ttls'),
+    [
+        # Plain dicts: parameters are built at collection time, also on installs without `bedrock`.
+        pytest.param(
+            {'bedrock_cache_tool_definitions': '5m', 'bedrock_cache_instructions': True},
+            '1h',
+            ['1h', '1h', '1h'],
+            id='5m-before-1h',
+        ),
+        pytest.param(
+            {'bedrock_cache_tool_definitions': '1h', 'bedrock_cache_instructions': '5m'},
+            '1h',
+            ['1h', '1h', '1h'],
+            id='5m-between-1h',
+        ),
+        pytest.param(
+            {'bedrock_cache_tool_definitions': '1h', 'bedrock_cache_messages': True},
+            '5m',
+            ['1h', '5m', '5m'],
+            id='shorter-after-longer-unchanged',
+        ),
+    ],
+)
+async def test_bedrock_earlier_cache_points_raised_to_later_longer_ttl(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    settings: BedrockModelSettings,
+    cache_point_ttl: Literal['5m', '1h'],
+    expected_ttls: list[str],
+):
+    """A five-minute cache point before a one-hour one is raised to an hour, in both the request and the
+    `count_tokens` request built like it: "Cache entries with longer TTL must appear before shorter TTLs"
+    (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html). A later five-minute cache point stays
+    as it is."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_count_tokens = mocker.patch.object(model.client, 'count_tokens', return_value={'inputTokens': 10})
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 5, 'totalTokens': 15},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    agent = Agent(model, instructions='System instructions.', model_settings=settings)
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(
+        ['Some context', CachePoint(ttl=cache_point_ttl), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    assert _cache_point_ttls(mock_converse.call_args.kwargs) == expected_ttls
+    assert _cache_point_ttls(mock_count_tokens.call_args.kwargs['input']['converse']) == expected_ttls
 
 
 async def test_bedrock_cache_messages_with_binary_content(
@@ -5693,6 +6445,108 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
     )
 
 
+async def test_bedrock_model_code_execution_tool_sandbox_timeout(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A Nova code-interpreter sandbox timeout round-trips as `content=None`.
+
+    Nova's interpreter returns one `json` block whenever the code runs, code errors included. The only other shape
+    seen live is a sandbox timeout: `status: 'error'` with empty `content`. Bedrock rejects that empty list when it's
+    sent back, so the `None` it parses to goes back as `[{'json': None}]`, which Bedrock accepts. Pinned so the
+    single-block normalization isn't reworked for content shapes Bedrock doesn't send:
+    https://github.com/pydantic/pydantic-ai/issues/8582
+    """
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    result1 = await agent.run(
+        'Use your code interpreter tool to execute exactly the following Python code, verbatim, once. '
+        'Do not modify it and do not retry it. Then report what happened.\n\n'
+        '```python\nimport time\nwhile True:\n    time.sleep(1)\n```',
+        model_settings={'temperature': 0.0},
+    )
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="""\
+Use your code interpreter tool to execute exactly the following Python code, verbatim, once. Do not modify it and do not retry it. Then report what happened.
+
+```python
+import time
+while True:
+    time.sleep(1)
+```\
+""",
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'snippet': """\
+import time
+while True:
+    time.sleep(1)\
+"""
+                        },
+                        tool_call_id='tooluse_pzqySiiYaDhuZz9jPLvwcQ',
+                        provider_name='bedrock',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content=None,
+                        tool_call_id='tooluse_pzqySiiYaDhuZz9jPLvwcQ',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'error'},
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=996, output_tokens=326, cost=Decimal('0.00122518')),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result2 = await agent.run(
+            'In one sentence: what did the code interpreter return?', message_history=result1.all_messages()
+        )
+    assert [
+        block['toolResult']
+        for message in sent_requests[0]['messages']
+        for block in message['content']
+        if 'toolResult' in block
+    ] == snapshot(
+        [
+            {
+                'toolUseId': 'tooluse_pzqySiiYaDhuZz9jPLvwcQ',
+                'content': [{'json': None}],
+                'type': 'nova_code_interpreter_result',
+                'status': 'error',
+            }
+        ]
+    )
+    assert result2.output == snapshot(
+        'The code interpreter returned an error because the provided code contains an infinite loop that never terminates, preventing execution.'
+    )
+
+
 async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
     agent = Agent(
@@ -6447,8 +7301,9 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad:'},
+                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6503,10 +7358,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad:'},
+                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': 'This is file d003ad:'},
+                    {'text': '</tool_result>'},
+                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6551,7 +7408,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': 'This is file 49d492:'},
+                    {'text': '<tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
                     {
                         'document': {
                             'name': 'Document 1',
@@ -6559,6 +7416,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
                         }
                     },
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6704,6 +7562,228 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 
 
+async def test_bedrock_specific_tool_choice_with_adaptive_thinking_runs(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """A supported model sends a specific tool choice with an explicit adaptive-thinking field."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    settings = BedrockModelSettings(
+        tool_choice=['get_weather'],
+        bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}},
+    )
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_weather',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                },
+            ),
+            ToolDefinition(name='get_time', parameters_json_schema={'type': 'object'}),
+        ],
+        allow_text_output=True,
+    )
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        response = await model.request(
+            [ModelRequest.user_text_prompt('What is the weather in Paris?')], settings, params
+        )
+
+    assert len(sent_requests) == 1
+    assert sent_requests[0]['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
+    assert sent_requests[0]['toolConfig']['toolChoice'] == {'tool': {'name': 'get_weather'}}
+    assert response.parts == [ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=IsStr())]
+
+
+@pytest.mark.parametrize('model_name', ['anthropic.claude-fable-5-1', 'anthropic.claude-mythos-5-1'])
+async def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, model_name: str
+) -> None:
+    """Pin the fallback payload locally: these restricted-access models cannot be recorded here."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 'tool_1', 'name': 'final_result', 'input': {'response': 42}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        },
+    )
+    agent = Agent(model, output_type=ToolOutput(int))
+
+    result = await agent.run('What is 6 * 7?')
+
+    assert result.output == 42
+    assert converse.call_args.kwargs['toolConfig']['toolChoice'] == {'auto': {}}
+
+
+@pytest.mark.parametrize(
+    'model_name,model_settings',
+    [
+        pytest.param(
+            'anthropic.claude-sonnet-4-6',
+            {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
+            id='manual-extended-thinking',
+        ),
+        pytest.param(
+            'anthropic.claude-sonnet-4-6',
+            {
+                'thinking': True,
+                'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            },
+            id='explicit-enabled-overrides-unified-adaptive',
+        ),
+        pytest.param('anthropic.claude-fable-5-1', {'thinking': True}, id='adaptive-model-without-tool-forcing'),
+        pytest.param('anthropic.claude-sonnet-4-6', {'thinking': True}, id='adaptive-thinking'),
+    ],
+)
+async def test_bedrock_agent_output_tool_with_thinking_is_unforced(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    model_settings: ModelSettings,
+) -> None:
+    """An explicit `ToolOutput` offers the output tool without forcing it when the request thinks.
+
+    Extended thinking and models that can't force reject a forced `toolChoice`; adaptive thinking accepts it
+    but answers without thinking. Mocked because extended thinking on these models and restricted-access models
+    can't all be recorded here.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 'tool_1', 'name': 'final_result', 'input': {'response': 42}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        },
+    )
+    agent = Agent(model, output_type=ToolOutput(int))
+
+    result = await agent.run('What is 6 * 7?', model_settings=model_settings)
+
+    assert result.output == 42
+    assert converse.call_args.kwargs['toolConfig']['toolChoice'] == {'auto': {}}
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_fields', 'expected_tool_choice'),
+    [
+        # Opus 5 thinks by default but can turn it off, and then the output tool is forced as usual.
+        pytest.param('us.anthropic.claude-opus-5', {'thinking': {'type': 'disabled'}}, {'any': {}}, id='opus-5'),
+        # Fable 5 and Opus 5.5 can't turn thinking off, so `thinking=False` is ignored and forcing gives way.
+        pytest.param('us.anthropic.claude-fable-5', None, {'auto': {}}, id='fable-5'),
+        pytest.param('us.anthropic.claude-opus-5-5', None, {'auto': {}}, id='opus-5-5'),
+    ],
+)
+async def test_bedrock_thinking_false_on_models_that_think_by_default(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    expected_fields: dict[str, Any] | None,
+    expected_tool_choice: dict[str, Any],
+) -> None:
+    """`thinking=False` sends `disabled` where omitting `thinking` would leave it on. Mocked because the payload is
+    the claim, and restricted-access models can't all be recorded here."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 'tool_1', 'name': 'final_result', 'input': {'response': 42}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        },
+    )
+
+    result = await Agent(model, output_type=ToolOutput(int)).run('What is 6 * 7?', model_settings={'thinking': False})
+
+    assert result.output == 42
+    assert converse.call_args.kwargs.get('additionalModelRequestFields') == expected_fields
+    assert converse.call_args.kwargs['toolConfig']['toolChoice'] == expected_tool_choice
+
+
+def test_bedrock_disabled_unified_thinking_takes_precedence_over_params(bedrock_provider: BedrockProvider) -> None:
+    """The unified `thinking=False` in settings wins over `params.thinking`, as in the base request preparation,
+    so the output tool can still be forced."""
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+        thinking=True,
+    )
+
+    profile = cast(BedrockModelProfile, model.profile)
+    assert _support_tool_forcing(model.model_name, profile, BedrockModelSettings(thinking=False), params)
+
+
+def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
+    bedrock_provider: BedrockProvider,
+) -> None:
+    """An Anthropic-shaped raw field does not hide Qwen's unified thinking setting from the guard."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+    settings = BedrockModelSettings(
+        thinking=True,
+        bedrock_additional_model_requests_fields={'thinking': {'type': 'disabled'}},
+    )
+
+    with pytest.raises(UserError, match='does not support thinking and output tools'):
+        model.prepare_request(settings, params)
+
+
+@pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])
+def test_bedrock_inactive_thinking_config_does_not_block_output_tools(
+    bedrock_provider: BedrockProvider, thinking_config: dict[str, str] | str
+) -> None:
+    """Disabled or malformed raw configs are not mistaken for active thinking."""
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+    settings = BedrockModelSettings(
+        thinking=True, bedrock_additional_model_requests_fields={'thinking': thinking_config}
+    )
+
+    _, prepared_params = model.prepare_request(settings, params)
+
+    assert prepared_params.output_mode == 'tool'
+
+
 async def test_bedrock_anthropic_message_history_starting_with_response(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -6744,3 +7824,269 @@ async def test_bedrock_anthropic_message_history_starting_with_response(
             ),
         ]
     )
+
+
+def test_bedrock_anthropic_5_api_rejects_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Bedrock itself rejects the sampling settings on a Claude 5 model, which is why they are dropped.
+
+    Sent through the raw client rather than the model, so this records the API's own behavior and
+    cannot drift with our filtering: cassettes are matched on the URL, not the body, so a recording
+    made through the model would keep replaying if the settings ever started riding along again.
+    `test_bedrock_anthropic_5_drops_sampling_settings` is what catches that by matching the newly
+    generated request body against its recording during playback.
+    """
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+
+    with pytest.raises(ClientError) as exc_info:
+        model.client.converse(
+            modelId='eu.anthropic.claude-opus-5',
+            messages=[{'role': 'user', 'content': [{'text': 'What is 2+2?'}]}],
+            inferenceConfig={'maxTokens': 16, 'temperature': 0.2},
+        )
+
+    # Asserted on the status and message rather than `Error.Code`: botocore derives the code from
+    # the `x-amzn-errortype` response header, which the cassette's header filtering does not keep,
+    # so on replay it falls back to the HTTP status. `response` is a `TypedDict` whose keys are all
+    # optional, so it is read as a plain mapping.
+    response = cast(dict[str, Any], exc_info.value.response)
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 400
+    assert response['Error']['Message'] == snapshot(
+        'The model returned the following errors: `temperature` is deprecated for this model.'
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_anthropic_5_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """A Claude 5 model on Bedrock warns and drops the sampling settings instead of failing with a 400.
+
+    Mirrors `AnthropicModel`, which honors the same `anthropic_disallows_sampling_settings` profile
+    flag. The body matcher makes playback fail if the newly generated request differs from the
+    recording; the snapshots keep the expected wire shape visible in the test. `temperature` and
+    `top_p` must not reach `inferenceConfig`, and unified `top_k` must not reach
+    `additionalModelRequestFields`.
+    """
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == snapshot(
+        [
+            "Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+            "'eu.anthropic.claude-opus-5'. These settings will be ignored."
+        ]
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16})
+    assert 'additionalModelRequestFields' not in sent
+    # Filtering happens on a copy, so the caller's own settings dict is left intact.
+    assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_non_flagged_model_keeps_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """The drop is gated on the profile flag: a model without it still receives the settings.
+
+    Without this, a filter that over-reached would look identical to a working one. `top_p` is left
+    out because the model rejects it alongside `temperature` with "`temperature` and `top_p` cannot
+    both be specified for this model"; all three settings travel the same path, so one of the pair is
+    enough to pin it (the same reason `test_anthropic_sampling_settings_reach_the_wire` omits it).
+    The body matcher proves the newly generated request still matches this expected wire shape.
+    """
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5)
+    model = BedrockConverseModel('eu.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    await agent.run('What is 2+2? Answer with the number only.')
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16, 'temperature': 0.2})
+    assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
+
+
+BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [
+    'us.openai.gpt-5.6-sol',
+    'us.openai.gpt-5.6-luna',
+    'us.openai.gpt-5.6-terra',
+    'global.openai.gpt-6-sol',
+    'global.openai.gpt-6-luna',
+    'global.openai.gpt-6-astra',
+]
+
+
+@pytest.mark.parametrize('model_name', BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS)
+def test_bedrock_openai_api_rejects_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: str
+):
+    """Bedrock rejects `temperature` on the OpenAI GPT-5.6 and GPT-6 models it serves on Converse.
+
+    Sent through the raw client for the same reason as `test_bedrock_anthropic_5_api_rejects_sampling_settings`:
+    it records the API's own behavior, which a recording made through the model could not.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+
+    with pytest.raises(ClientError) as exc_info:
+        model.client.converse(
+            modelId=model_name,
+            messages=[{'role': 'user', 'content': [{'text': 'What is 2+2?'}]}],
+            inferenceConfig={'maxTokens': 64, 'temperature': 0.2},
+        )
+
+    response = cast(dict[str, Any], exc_info.value.response)
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 400
+    assert response['Error']['Message'] == snapshot(
+        "This model doesn't support the temperature field. Remove temperature and try again."
+    )
+
+
+@pytest.mark.parametrize('model_name', BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS)
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_openai_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette, model_name: str
+):
+    """An OpenAI GPT-5.6 or GPT-6 model on Converse warns and drops the sampling settings instead of failing with a 400.
+
+    Same drop as `test_bedrock_anthropic_5_drops_sampling_settings`, gated on
+    `bedrock_disallows_sampling_settings` instead of the Anthropic flag.
+    """
+    settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == [
+        f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+        f"'{model_name}'. These settings will be ignored."
+    ]
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 64})
+    assert 'additionalModelRequestFields' not in sent
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_openai_gpt_oss_keeps_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`gpt-oss` accepts `temperature` and `top_p` on Converse, so it is left out of `bedrock_disallows_sampling_settings`.
+
+    Guards against the flag over-reaching to the other OpenAI models served on Converse, where dropping a
+    supported setting would silently change the model's behavior.
+    """
+    settings = BedrockModelSettings(max_tokens=256, temperature=0.2, top_p=0.3)
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 256, 'temperature': 0.2, 'topP': 0.3})
+
+
+class _CountTokensCapturingClient:
+    """Records the `count_tokens` params instead of calling Bedrock."""
+
+    def __init__(self):
+        self.calls: list[dict[str, Any]] = []
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+    def count_tokens(self, **kwargs: Any) -> dict[str, int]:
+        self.calls.append(kwargs)
+        return {'inputTokens': 3}
+
+
+async def test_bedrock_anthropic_5_count_tokens_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """`count_tokens` drops them too, because it routes through the same `prepare_request`.
+
+    Captured from a stub client rather than recorded: no model that sets the flag supports Bedrock's
+    CountTokens operation today (it answers "The provided model doesn't support counting tokens."),
+    so there is no live exchange to record. The profile still comes from the real provider.
+    """
+    client = _CountTokensCapturingClient()
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+    model.client = cast(Any, client)
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await model.count_tokens(
+            [ModelRequest.user_text_prompt('Hello, world!')], settings, ModelRequestParameters()
+        )
+
+    assert result.input_tokens == 3
+    assert 'additionalModelRequestFields' not in client.calls[0]['input']['converse']
+
+
+def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
+    bedrock_provider: BedrockProvider, recwarn: pytest.WarningsRecorder
+):
+    """A flagged model whose settings carry no sampling parameters is left alone, with no warning."""
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
+
+    prepared, _ = model.prepare_request(BedrockModelSettings(max_tokens=16), ModelRequestParameters())
+
+    assert prepared == snapshot({'max_tokens': 16})
+    assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]
+
+
+@pytest.mark.parametrize(
+    ('call', 'body', 'message'),
+    [
+        pytest.param('request', b'', "Response has no 'output' field", id='request'),
+        pytest.param('request', b'not json', "Response has no 'output' field", id='request-not-json'),
+        # At least botocore's 12-byte event stream prelude, since a shorter body parses to no events instead of failing.
+        pytest.param('stream', b' ' * 32, 'Failed to decode response as an event stream: ', id='stream'),
+        pytest.param('count_tokens', b'', "Response has no 'inputTokens' field", id='count_tokens'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, body: bytes, message: str
+):
+    """An empty or non-JSON 200 response body surfaces as `ModelAPIError`, not a `KeyError` or a botocore error.
+
+    The response is injected at `before-send` so botocore's own parser handles it, because no real endpoint returns such
+    a body on demand. https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=io.BytesIO(body), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', respond)  # pyright: ignore[reportArgumentType]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    with pytest.raises(ModelAPIError) as exc_info:
+        if call == 'count_tokens':
+            await model.count_tokens(messages, None, ModelRequestParameters())
+        elif call == 'stream':
+            async with Agent(model).run_stream('Hello'):
+                pass
+        else:
+            await model.request(messages, None, ModelRequestParameters())
+
+    assert exc_info.value.message.startswith(message)
+    if call == 'stream':
+        assert isinstance(exc_info.value.__cause__, EventStreamParserError)

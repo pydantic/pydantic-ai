@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
-from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import DeferredCapabilityLoaderToolset
@@ -53,7 +52,7 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
     # The cost of keeping the list stable is that a loaded capability still appears as
     # "loadable". That is intentional and cheap: the model rarely re-loads something whose
     # instructions and tools it can already see, and if it does, the loader tool bounces the
-    # redundant call with an "already available" ModelRetry. One occasional wasted retry is
+    # redundant call with an "already active" ModelRetry. One occasional wasted retry is
     # far cheaper than busting the prefix cache on every load.
     catalog = {
         cap_id: await _resolve_capability_description(cap.get_description(), ctx)
@@ -72,8 +71,9 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
     # surface or fail the run before this catalog matters. Both signals are authored, never
     # mutated mid-run, so the chosen variant is as byte-stable across the run as the rest of
     # this catalog.
-    has_search_surface = TOOL_SEARCH_FUNCTION_TOOL_NAME in ctx.tools or any(
-        tool_def.defer_loading and tool_def.capability_id is None for tool_def in ctx.tools.values()
+    has_search_surface = any(
+        tool_def.tool_kind == 'tool-search' or (tool_def.defer_loading and tool_def.capability_id is None)
+        for tool_def in ctx.tools.values()
     )
     prefix = (
         DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH if has_search_surface else DEFERRED_CAPABILITY_CATALOG_PREFIX

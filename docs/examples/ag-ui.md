@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI agents in the AG-UI Dojo example app to see the AG-UI protocol in action, with tools, shared state and human-in-the-loop interactions."
+---
+
 # Agent User Interaction (AG-UI)
 
 Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) example app.
@@ -20,7 +24,7 @@ you will need two command line windows.
 
 ### Pydantic AI AG-UI backend
 
-Setup your OpenAI API Key
+Set up your OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY=<your api key>
@@ -42,13 +46,21 @@ Next run the AG-UI Dojo example frontend.
     git clone https://github.com/ag-ui-protocol/ag-ui.git
     ```
 
-2. Change into to the `ag-ui/typescript-sdk` directory
+2. Follow the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup) to install the prerequisites, then install dependencies and build the project from the repository root:
 
     ```shell
-    cd ag-ui/sdks/typescript
+    cd ag-ui
+    pnpm i
+    pnpm build --projects=demo-viewer
     ```
 
-3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup)
+3. Change to the `apps/dojo` directory and run the Dojo app:
+
+    ```shell
+    cd apps/dojo
+    pnpm dev
+    ```
+
 4. Visit <http://localhost:3000/pydantic-ai>
 5. Select View `Pydantic AI` from the sidebar
 
@@ -166,7 +178,7 @@ Demonstrates how to use the shared state between the UI and the agent.
 
 State sent to the agent is detected by a function based instruction. This then
 validates the data using a custom pydantic model before using to create the
-instructions for the agent to follow and send to the client using a AG-UI tool.
+instructions for the agent to follow and send to the client using an AG-UI tool.
 
 If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/shared_state>.
 
@@ -185,7 +197,7 @@ If you've [run the example](#running-the-example), you can view it at <http://lo
 
 ### Tool Based Generative UI
 
-Demonstrates customised rendering for tool output with used confirmation.
+This example demonstrates customised rendering for tool output with user confirmation.
 
 If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui>.
 

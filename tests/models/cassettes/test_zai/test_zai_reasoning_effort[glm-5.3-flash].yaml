@@ -1,0 +1,533 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '189'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      reasoning_effort: low
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '453'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 0b35ae0570d044b50823fc603873f364
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          role: assistant
+      created: 1788043297
+      id: 202608300641363444230499a2471a
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 202608300641363444230499a2471a
+      usage:
+        completion_tokens: 9
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 29
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '189'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      reasoning_effort: low
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '453'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 0017265942d828b55aa30506fe9c9366
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          role: assistant
+      created: 1788043298
+      id: 202608300641377b08d24b23e446ec
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 202608300641377b08d24b23e446ec
+      usage:
+        completion_tokens: 9
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 29
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      reasoning_effort: high
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '453'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 5c6d76780fa48fba3f4bbc866c329de1
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          role: assistant
+      created: 1788043299
+      id: 2026083006413894f74080a85e496f
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 2026083006413894f74080a85e496f
+      usage:
+        completion_tokens: 9
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 29
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      reasoning_effort: high
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '587'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - f6f9a1d9992e0369c4e1e0947564849f
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            2 + 2 = **4**
+
+            This is one of the most basic arithmetic facts -- adding two and two gives four. Is there anything else you'd like help with?
+          role: assistant
+      created: 1788043301
+      id: 20260830064140e480699cbc5e4e55
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 20260830064140e480699cbc5e4e55
+      usage:
+        completion_tokens: 37
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 57
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '189'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      reasoning_effort: max
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '869'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 942ec6fadeb59a00f512a0609e6be155
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            This is a very simple arithmetic question: 2 + 2 = 4.
+
+            The user is asking a basic math question. The answer is straightforward. I should give a concise, direct answer. There's no need for elaborate explanation, though a brief response is appropriate.
+
+            The format should be short and to the point. No need for headers, bullet points, or lengthy explanations for such a simple question.
+          role: assistant
+      created: 1788043304
+      id: 202608300641415b04153eac2a4b27
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 202608300641415b04153eac2a4b27
+      usage:
+        completion_tokens: 91
+        completion_tokens_details:
+          reasoning_tokens: 82
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 111
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '162'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '840'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 2baf532cc18d5f6adc120e499689c642
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            The user is asking a very simple arithmetic question: What is 2 + 2?
+
+            This is trivially easy. The answer is 4.
+
+            This is a simple factual question that deserves a simple, direct answer. No need for headers, bullet points, or lengthy explanation. Just answer directly.
+
+            Format: One short sentence or even just the number. Keep it conversational and brief.
+          role: assistant
+      created: 1788043307
+      id: 20260830064144b8bbc0b671744dfa
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 20260830064144b8bbc0b671744dfa
+      usage:
+        completion_tokens: 87
+        completion_tokens_details:
+          reasoning_tokens: 78
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 107
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '143'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.3-flash
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '865'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - d16c6e2ccfc19a4294a609404fe44bf5
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            The user is asking a simple arithmetic question: 2 + 2. This is a very basic math question that anyone can answer quickly.
+
+            The answer is 4.
+
+            This requires no tools, no complex reasoning, just a direct answer. The response should be brief and to the point since it's such a simple question. I shouldn't over-explain or add unnecessary caveats. A short, direct answer is best here.
+          role: assistant
+      created: 1788043311
+      id: 20260830064148b29510fe1a624a9f
+      model: glm-5.3-flash
+      object: chat.completion
+      request_id: 20260830064148b29510fe1a624a9f
+      usage:
+        completion_tokens: 95
+        completion_tokens_details:
+          reasoning_tokens: 86
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 115
+    status:
+      code: 200
+      message: OK
+version: 1

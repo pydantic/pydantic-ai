@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from pydantic import ValidationError
 
-from . import messages as _messages
+from . import _usage_attribution, messages as _messages
+from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -44,6 +45,9 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
+
+InlineDeferredRequestsHandler = Callable[[DeferredToolRequests], Awaitable[None]]
+"""Internal callback for observing a deferred call before a capability handler is asked to resolve it."""
 
 InlineDeferredResultHandler = Callable[[DeferredToolRequests, DeferredToolResults], Awaitable[None]]
 """Internal callback for observing a deferred call that a capability resolved inline."""
@@ -166,6 +170,25 @@ class ToolManager(Generic[AgentDepsT]):
     """
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    resolved_capability_ids: frozenset[str] | None = None
+    """Snapshot of the capability-activity set the cached `tools` were resolved against.
+
+    Availability is an input to tool *resolution*, not just to the execution gate: a deferred
+    capability only has its `prepare_tools` dispatched once it's active, so a tool set resolved
+    while its owner was inactive is ungoverned by that capability's filter. Caching on `run_step`
+    alone would hand that ungoverned set to a dispatch that has since become available — a
+    permission filter that silently doesn't run. Comparing this against the incoming context makes
+    `for_run_step` re-resolve when availability moved mid-step instead.
+
+    Availability moves two ways within a step, and both have to be in the key: history processing
+    rewrites the loaded set feeding
+    [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids], and dispatch
+    anchors its evidence to the provider that served the response, which can see a load the
+    conservative window dropped. So this snapshots the union the execution gate itself authorizes
+    from, not `active_capability_ids` alone.
+
+    `None` before the manager has been prepared for a run step.
+    """
 
     @classmethod
     @contextmanager
@@ -185,25 +208,43 @@ class ToolManager(Generic[AgentDepsT]):
             _parallel_execution_mode_ctx_var.reset(token)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
-        """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
+        """Build a new tool manager for the next run step, carrying over the retries from the current run step.
+
+        Re-resolves within a step as well, when capability availability moved since the cached tools
+        were resolved (see `resolved_capability_ids`), so a capability that became active mid-step
+        still gets its `prepare_tools` say over its own tools.
+        """
+        resolved_capability_ids = frozenset(ctx._dispatch_active_capability_ids)  # pyright: ignore[reportPrivateUsage]
+        same_step = False
         if self.ctx is not None:
             if ctx.run_step == self.ctx.run_step:
-                return self
+                if resolved_capability_ids == self.resolved_capability_ids:
+                    return self
 
-            retries = {
-                tool_name: count
-                for tool_name, count in self.ctx.retries.items()
-                if tool_name not in self.succeeded_tools
-            }
-            retries.update(
-                {
-                    failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
-                    for failed_tool_name in self.failed_tools
+                # Same step, so the retry carry-over below must not run again: it increments every
+                # failed tool's count, and doing that twice within one step would burn two units of
+                # a tool's budget for a single failure. The step's counts stand as they are.
+                same_step = True
+                ctx = replace(ctx, retries=self.ctx.retries)
+            else:
+                retries = {
+                    tool_name: count
+                    for tool_name, count in self.ctx.retries.items()
+                    if tool_name not in self.succeeded_tools
                 }
-            )
-            ctx = replace(ctx, retries=retries)
+                retries.update(
+                    {
+                        failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
+                        for failed_tool_name in self.failed_tools
+                    }
+                )
+                ctx = replace(ctx, retries=retries)
 
-        toolset = await self.toolset.for_run_step(ctx)
+        # `AbstractToolset.for_run_step` marks a step boundary, not a re-resolution: `DynamicToolset`
+        # exits and re-enters its inner toolset there, re-running the factory and discarding whatever
+        # state the entered toolset held. Within a step we reuse the already-transitioned instance and
+        # only re-run `get_tools`, which is what re-runs `prepare_tools`.
+        toolset = self.toolset if same_step else await self.toolset.for_run_step(ctx)
 
         new_tm = self.__class__(
             toolset=toolset,
@@ -212,6 +253,11 @@ class ToolManager(Generic[AgentDepsT]):
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
             availability_refused=self.availability_refused,
+            resolved_capability_ids=resolved_capability_ids,
+            # Per-step accumulators: they belong to the step being rebuilt, and dropping them would
+            # under-count the retries the next step's carry-over derives from them.
+            failed_tools=self.failed_tools if same_step else set[str](),
+            succeeded_tools=self.succeeded_tools if same_step else set[str](),
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -294,6 +340,11 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         return replace(
             self.ctx,
+            # The manager executing the call, not the one carried by `self.ctx`: a wrapper that
+            # dispatches hidden tools through its own nested `ToolManager` (e.g. a sandbox's
+            # `run_code`) inherits a `ctx` whose manager only knows the model-visible tools, and
+            # `RunContext.emit` resolves a tool's owning capability through `tool_manager.tools`.
+            tool_manager=self,
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),
@@ -355,75 +406,75 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool,
     ) -> dict[str, Any]:
-        """Run validation with before/wrap/after tool_validate hooks."""
+        """Run validation with `wrap_tool_validate` around the complete validation lifecycle."""
         cap = self.root_capability
         handler_validated_args: dict[str, Any] | None = None
-
-        async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
-            nonlocal handler_validated_args
-            # Update call.args with the (possibly modified) args before validation
-            validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
-            # Recorded so that a `wrap_tool_validate` hook deferring *after* it called the handler
-            # can be told apart from one deferring before: only the former has validated arguments.
-            handler_validated_args = validated
-            return validated
 
         # Output tools are internal — they don't fire user-facing tool hooks, matching how
         # `WrapperToolset` and `prepare_tools` exclude them.
         if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
-            # before_tool_validate runs before the arguments have been validated, so it can't defer.
-            raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            try:
-                raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
-            except (CallDeferred, ApprovalRequired) as e:
-                raise _validate_hook_deferral_error('before_tool_validate', e) from e
+            async def lifecycle(args: str | dict[str, Any]) -> dict[str, Any]:
+                nonlocal handler_validated_args
+                handler_validated_args = None
 
-            # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
-            deferral: _ValidationDeferral | None = None
+                try:
+                    raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
+                except (CallDeferred, ApprovalRequired) as e:
+                    raise _validate_hook_deferral_error('before_tool_validate', e) from e
+
+                deferral: _ValidationDeferral | None = None
+                try:
+                    validated_args = await self._validate_tool_args(
+                        call, tool, ctx, allow_partial=allow_partial, args_override=raw_args
+                    )
+                except _ValidationDeferral as e:
+                    # Hold validator deferrals until the policy gate has accepted the validated args.
+                    deferral = e
+                    validated_args = e.validated_args
+                except (ValidationError, ModelRetry) as e:
+                    try:
+                        validated_args = await cap.on_tool_validate_error(
+                            ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                        )
+                    except (CallDeferred, ApprovalRequired) as hook_deferral:
+                        raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
+
+                try:
+                    validated_args = await cap.after_tool_validate(
+                        ctx, call=call, tool_def=tool_def, args=validated_args
+                    )
+                except (CallDeferred, ApprovalRequired) as e:
+                    raise _ValidationDeferral(e, validated_args) from e
+
+                if deferral is not None:
+                    raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
+
+                # A wrap deferral is valid only after its most recent handler call completed.
+                handler_validated_args = validated_args
+                return validated_args
+
             try:
                 validated_args = await cap.wrap_tool_validate(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
+                    ctx,
+                    call=call,
+                    tool_def=tool_def,
+                    args=call.args if call.args is not None else {},
+                    handler=lifecycle,
                 )
-            except _ValidationDeferral as e:
-                # The `args_validator` deferred the call. Hold the deferral rather than letting it
-                # escape: `after_tool_validate` is a policy gate on validated arguments and has to
-                # run — and keep the ability to reject — before a call is queued for approval or
-                # external execution.
-                deferral = e
-                validated_args = e.validated_args
             except (CallDeferred, ApprovalRequired) as e:
-                # Whether this hook may defer depends on where it raised: after its `handler(args)`
-                # returned, the arguments are validated and the deferral is honored like an
-                # `args_validator`'s; before that, there's nothing valid to defer.
                 if handler_validated_args is None:
                     raise _validate_hook_deferral_error('wrap_tool_validate', e) from e
-                deferral = _ValidationDeferral(e, handler_validated_args)
-                validated_args = handler_validated_args
-            except (ValidationError, ModelRetry) as e:
-                try:
-                    validated_args = await cap.on_tool_validate_error(
-                        ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                    )
-                except (CallDeferred, ApprovalRequired) as hook_deferral:
-                    # Only reached because validation failed, so there are no validated arguments.
-                    raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
-
-            # after_tool_validate gates validated arguments, so it runs even when the call has
-            # already been deferred, and may still reject or defer it itself.
-            try:
-                validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
-            except (CallDeferred, ApprovalRequired) as e:
-                # This hook ran last and is the policy layer, so its deferral replaces a held one.
-                raise _ValidationDeferral(e, validated_args) from e
-
-            if deferral is not None:
-                # The hook accepted the call, so the held deferral stands. It carries the hook's
-                # args: they're what a call that wasn't deferred would have proceeded with.
-                raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
+                raise _ValidationDeferral(e, handler_validated_args) from e
         else:
-            validated_args = await do_validate(call.args if call.args is not None else {})
+            validated_args = await self._validate_tool_args(
+                call,
+                tool,
+                ctx,
+                allow_partial=allow_partial,
+                args_override=call.args if call.args is not None else {},
+            )
 
         return validated_args
 
@@ -434,7 +485,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Run execution with before/wrap/after tool_execute hooks."""
+        """Run execution with `wrap_tool_execute` around the complete execution lifecycle."""
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -454,15 +505,11 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            try:
-                # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
+            async def lifecycle(args: dict[str, Any]) -> Any:
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
-                # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
                 try:
-                    tool_result = await cap.wrap_tool_execute(
-                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                    )
+                    tool_result = await do_execute(args)
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
                 except (ToolFailed, ModelRetry):
@@ -470,9 +517,11 @@ class ToolManager(Generic[AgentDepsT]):
                 except Exception as e:
                     tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
 
-                # after_tool_execute
-                tool_result = await cap.after_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+                return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
+
+            try:
+                tool_result = await cap.wrap_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=validated.validated_args, handler=lifecycle
                 )
             except (ValidationError, ModelRetry) as e:
                 # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
@@ -524,7 +573,7 @@ class ToolManager(Generic[AgentDepsT]):
         concluding the tool does not exist — and the resulting search/load exchange restores the
         history that justifies the call, which is what keeps a compacted history coherent.
 
-        Both requirements apply to a capability-owned tool: an available capability is what makes
+        Both requirements apply to a capability-owned tool: an active capability is what makes
         its tools *eligible* to be shown, not proof that any of them were. An always-on capability
         can own search-gated tools, and loading a deferred one reveals its tools through the same
         availability delta everything else uses — so discovery stays the single answer to "has the
@@ -534,10 +583,10 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx.is_tool_available(tool_def):
             return None
         # `is_tool_available` makes the decision, so introspection and execution cannot disagree;
-        # the rest only picks which way to point the model. An unavailable capability is named
+        # the rest only picks which way to point the model. An inactive capability is named
         # because loading it is the action to take — searching would not help until it is active.
         if (capability_id := tool_def.capability_id) is not None and (
-            capability_id not in self.ctx.available_capability_ids
+            capability_id not in self.ctx.active_capability_ids
         ):
             return (
                 f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
@@ -981,7 +1030,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated, usage=usage, wrap_validation_errors=wrap_validation_errors
             )
         except SkipToolExecution as e:
-            usage.tool_calls += 1
+            _usage_attribution.record_tool_call(usage)
             tool_result = e.result
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
@@ -1022,7 +1071,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        usage.tool_calls += 1
+        _usage_attribution.record_tool_call(usage)
 
         return tool_result
 
@@ -1033,6 +1082,7 @@ class ToolManager(Generic[AgentDepsT]):
         approved: bool = False,
         metadata: Any = None,
         wrap_validation_errors: bool = True,
+        on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
         on_validate: ToolValidationHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
@@ -1056,6 +1106,8 @@ class ToolManager(Generic[AgentDepsT]):
                 retry-budget state is left untouched — useful for nested callers (e.g.
                 sandboxed tool dispatch) where the call shouldn't consume the agent's
                 retry budget and the raw exception is what the caller wants to surface.
+            on_deferred_requests: Internal callback invoked with a deferred call's requests before the
+                capability handler is asked to resolve it.
             on_inline_deferred: Internal callback invoked when a capability resolves a deferred call inline.
             on_validate: Internal callback invoked with the argument-validation outcome before execution.
 
@@ -1125,6 +1177,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call,
                 exc,
                 wrap_validation_errors=wrap_validation_errors,
+                on_deferred_requests=on_deferred_requests,
                 on_inline_deferred=on_inline_deferred,
             )
 
@@ -1143,7 +1196,8 @@ class ToolManager(Generic[AgentDepsT]):
         """
         if self.root_capability is None or self.ctx is None:
             return None
-        return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        results = await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        return filter_deferred_results(requests, results) if results is not None else None
 
     async def _resolve_single_deferred(
         self,
@@ -1151,6 +1205,7 @@ class ToolManager(Generic[AgentDepsT]):
         exc: CallDeferred | ApprovalRequired,
         *,
         wrap_validation_errors: bool = True,
+        on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
@@ -1195,6 +1250,10 @@ class ToolManager(Generic[AgentDepsT]):
             calls=[call] if isinstance(exc, CallDeferred) else [],
             metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
         )
+        if on_deferred_requests is not None:
+            # Before the handler, as the graph emits `DeferredToolRequestsEvent`: a handler may take a
+            # while (e.g. awaiting a person), and the caller can surface the pending request meanwhile.
+            await on_deferred_requests(requests)
         deferred_results = await self.resolve_deferred_tool_calls(requests)
         if deferred_results is None:
             raise exc

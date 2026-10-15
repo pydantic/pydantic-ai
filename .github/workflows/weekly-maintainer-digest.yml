@@ -34,8 +34,12 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
-          sparse-checkout: .github/scripts/issue_pr_attention_monitor.py
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/triage_models.py
           sparse-checkout-cone-mode: false
+      - name: Install the typed-boundary dependency
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
       - name: Build the bounded maintainer digest
         id: digest
         env:

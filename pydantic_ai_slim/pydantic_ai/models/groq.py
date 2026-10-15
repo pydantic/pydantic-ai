@@ -5,11 +5,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, assert_never, cast, overload
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -63,7 +62,9 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
@@ -78,6 +79,10 @@ except ImportError as _import_error:
         'Please install `groq` to use the Groq model, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+# Below the guard on purpose: `groq` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 @contextmanager
@@ -101,6 +106,14 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except APIError as e:
+        # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
+        # been received, so there is no status code to report.
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx.TransportError as e:
+        # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx` error.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 ProductionGroqModelNames = Literal[
@@ -259,7 +272,7 @@ class GroqModel(Model[AsyncGroq]):
                     finish_reason='error',
                 )
             raise
-        model_response = self._process_response(response)
+        model_response = self._process_response(check_json_response(self.model_name, response))
         return model_response
 
     @asynccontextmanager
@@ -387,7 +400,7 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
@@ -459,7 +472,7 @@ class GroqModel(Model[AsyncGroq]):
         peekable_response: _utils.PeekableAsyncStream[
             chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -718,7 +731,7 @@ class GroqStreamedResponse(StreamedResponse):
                 reasoning = False
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
-                async for chunk in self._response:
+                async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                     self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
                     if chunk.id:  # pragma: no branch

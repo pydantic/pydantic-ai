@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Restate, journaling model calls and tool steps so a crashed agent replays and resumes, via the Restate SDK's RestateAgent."
+---
+
 # Durable Execution with Restate
 
 [Restate](https://restate.dev) is a lightweight durable execution runtime with first-class support for AI agents. The Pydantic AI integration is provided via the [Restate Python SDK](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic).
@@ -44,7 +48,7 @@ A durable agent has three building blocks:
       [External APIs, services, databases, etc.]
 ```
 
-See the [Restate documentation](https://docs.restate.dev/ai/patterns/durable-agents) for more information.
+See [Restate's durable-agent documentation](https://docs.restate.dev/ai/patterns/durable-agents).
 
 ## Durable Agent
 
@@ -64,8 +68,8 @@ from pydantic_ai import Agent, RunContext
 from restate.ext.pydantic import RestateAgent, restate_context
 
 weather_agent = Agent(  # (1)!
-    'openai:gpt-5.2',
-    system_prompt='You are a helpful agent that provides weather updates.',
+    '{{ openai:medium }}',
+    instructions='You are a helpful agent that provides weather updates.',
 )
 
 

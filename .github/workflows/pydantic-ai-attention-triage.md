@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
   workflow_call:
     secrets:
-      MINIMAX_API_KEY:
+      ZAI_API_KEY:
         required: true
-if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
+if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') }}
 permissions:
   contents: read
   checks: read
@@ -24,9 +24,10 @@ network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.z.ai
 tools:
   bash: []
+  cli-proxy: false
   github: false
 safe-outputs:
   footer: false
@@ -35,9 +36,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-attention-decision:
       description: "Classify one bounded candidate for deterministic host-side policy."
@@ -76,8 +80,14 @@ safe-outputs:
             repository: ${{ job.workflow_repository }}
             ref: ${{ job.workflow_sha }}
             persist-credentials: false
-            sparse-checkout: .github/scripts/issue_pr_attention_monitor.py
+            sparse-checkout: |
+              .github/scripts/issue_pr_attention_monitor.py
+              .github/scripts/triage_models.py
             sparse-checkout-cone-mode: false
+        - name: Install the typed-boundary dependency
+          # Pinned exactly: this job holds a write-scoped token, so a
+          # compromised new release must never reach it.
+          run: python3 -m pip install --quiet 'pydantic==2.13.4'
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
@@ -112,6 +122,8 @@ pre-agent-steps:
     run: bash .github/scripts/install-sandbox-tools.sh
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
+  - name: Install the typed-boundary dependency
+    run: python3 -m pip install --quiet 'pydantic==2.13.4'
   - name: Build bounded attention snapshot
     env:
       GITHUB_TOKEN: ${{ github.token }}
@@ -127,9 +139,12 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 # Decide who must act next
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from vcr.record_mode import RecordMode
+from cassetter import Cassette, RecordMode
 
 from .cassette_utils import (
     canonical_prefix_blocks,
@@ -30,14 +31,16 @@ def prefix_moving_cassette(tmp_path: Path) -> Path:
                     'method': 'POST',
                     'uri': 'https://api.openai.com/v1/chat/completions',
                     'parsed_body': {'tools': [{'type': 'function', 'function': {'name': 'first'}}], 'messages': []},
-                }
+                },
+                'response': {'status': {'code': 200, 'message': 'OK'}},
             },
             {
                 'request': {
                     'method': 'POST',
                     'uri': 'https://api.openai.com/v1/chat/completions',
                     'parsed_body': {'tools': [{'type': 'function', 'function': {'name': 'changed'}}], 'messages': []},
-                }
+                },
+                'response': {'status': {'code': 200, 'message': 'OK'}},
             },
         ]
     }
@@ -69,6 +72,20 @@ def test_check_cache_prefix_stability_fails_unmarked(
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
 
+def test_check_cache_prefix_stability_reads_loaded_cassette(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    """Playback checks the interactions cassetter already parsed instead of reading the file again."""
+    cassette = Cassette(prefix_moving_cassette, record_mode=RecordMode.NONE)
+    cassette.load()
+    assert list(iter_cassette_prefix_violations(cassette)) == list(
+        iter_cassette_prefix_violations(prefix_moving_cassette)
+    )
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match=rf'{re.escape(str(prefix_moving_cassette))} \[openai-chat\]'):
+        check_cache_prefix_stability(node, cassette)
+
+
 @pytest.mark.moves_cache_prefix(reason='unit test covers the deliberate exemption')
 def test_check_cache_prefix_stability_allows_marked(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
@@ -93,9 +110,18 @@ def test_check_cache_prefix_stability_allows_clean(request: pytest.FixtureReques
 )
 def test_cache_prefix_fixture_skips_uncheckable_cassettes(call_report: Any, cassette_path: str) -> None:
     """Failed tests and missing cassette files must not produce a second teardown failure."""
-    node = SimpleNamespace(rep_setup=SimpleNamespace(skipped=False, failed=False), rep_call=call_report)
+
+    def get_closest_marker(name: str) -> None:
+        return None
+
+    node = SimpleNamespace(
+        rep_setup=SimpleNamespace(skipped=False, failed=False),
+        rep_call=call_report,
+        get_closest_marker=get_closest_marker,
+    )
     request = SimpleNamespace(node=node)
-    vcr = SimpleNamespace(record_mode=RecordMode.NONE, _path=cassette_path)
+    vcr = Cassette(cassette_path, record_mode=RecordMode.NONE)
+    vcr.load()
     fixture = cast(Callable[[Any, Any], Iterator[None]], getattr(fail_cache_prefix_violations, '__wrapped__'))
     iterator = fixture(cast(Any, request), cast(Any, vcr))
 

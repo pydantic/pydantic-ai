@@ -158,14 +158,22 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
     assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
     assert anthropic_profile.get('bedrock_supports_effort', False) is True
+    # The downstream Anthropic flag survives the merge, so `thinking='xhigh'` passes through on Bedrock too.
+    assert anthropic_profile.get('anthropic_supports_xhigh_effort', False) is True
 
     # These models support structured output directly, but not through Bedrock Converse.
-    for model_name in ('claude-sonnet-5', 'claude-fable-5'):
+    for model_name in ('claude-sonnet-5', 'claude-haiku-5-5', 'claude-fable-5'):
         anthropic_profile = provider.model_profile(f'global.anthropic.{model_name}')
         anthropic_model_profile_mock.assert_called_with(model_name)
         assert isinstance(anthropic_profile, dict)
         assert anthropic_profile.get('supports_json_schema_output', False) is False
         assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-haiku-5-5')
+    anthropic_model_profile_mock.assert_called_with('claude-haiku-5-5')
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
@@ -195,6 +203,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(anthropic_profile, dict)
     assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
     assert anthropic_profile.get('bedrock_supports_effort', False) is True
+    # Bedrock rejects `xhigh` on Opus 4.6, so the unified level must keep mapping to `max` here.
+    assert anthropic_profile.get('anthropic_supports_xhigh_effort', False) is False
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')

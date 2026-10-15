@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '730'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Production is down for every customer.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Set the priority of the ticket.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: set_priority
+          parameters_json_schema:
+            $defs:
+              TicketPriority:
+                description: |-
+                  How urgent the ticket is.
+                  low: Can wait a week.
+                  high: Needs attention today.
+                enum:
+                - low
+                - high
+                type: string
+            additionalProperties: false
+            properties:
+              priority:
+                $ref: '#/$defs/TicketPriority'
+            required:
+            - priority
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1061'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=983
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                priority: high
+              name: set_priority
+            thoughtSignature: CoQDAWkUfRNx5ySU5G9xcHJforRYm7ieUVKwQI7vFpA7MoWIEa8aJPbQDdZyOTcPFXD6lmPZfd4eMUqT+46KeeN2pcXKWeOMp5uHyV3yyvPMYZy6N/JLDDQz/OIgZEXsS9AoATubbsiQggajZ7r6chCQP/Mci6sEqaHYiOk2VgTctYv7udIzo7VyPE54pEifboM51qyS68qxQSzfNbXOPdLOHGUJakqnePoq9RFZYb6Qu1+1xKqszzDq4jtVkp2/UGdddw4jEmeOT8Lg1vwGgz4/DhbLeXiNc4Px+3S4m1beCP/hUnFFCRzDRbYOU7fj/rwYs50gKUrDF/mLNvutbsZfG+5BIRCGMQscQp4INbYyPwVJZ7H4GP41x6khaTR0EE5jxEao0LhIfbttsKDIUJBuLIuy2jT4DBhVvNLyawMY3W/8O2E4W8acVVguRMp2bA5F9I9toBQ3qqH2OmC+BD4+MGmA08dKHpRp/s2mRtLk7O08myWWD/+9uT8anEyLxSb9IhJgfg==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: baisapmyD4P7qtsP-N7tuQ0
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 75
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 75
+        serviceTier: standard
+        thoughtsTokenCount: 80
+        totalTokenCount: 170
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1612'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Production is down for every customer.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              priority: high
+            id: pyd_ai_bc63a9b3b2ce442d9f496980223a9783
+            name: set_priority
+          thoughtSignature: CoQDAWkUfRNx5ySU5G9xcHJforRYm7ieUVKwQI7vFpA7MoWIEa8aJPbQDdZyOTcPFXD6lmPZfd4eMUqT-46KeeN2pcXKWeOMp5uHyV3yyvPMYZy6N_JLDDQz_OIgZEXsS9AoATubbsiQggajZ7r6chCQP_Mci6sEqaHYiOk2VgTctYv7udIzo7VyPE54pEifboM51qyS68qxQSzfNbXOPdLOHGUJakqnePoq9RFZYb6Qu1-1xKqszzDq4jtVkp2_UGdddw4jEmeOT8Lg1vwGgz4_DhbLeXiNc4Px-3S4m1beCP_hUnFFCRzDRbYOU7fj_rwYs50gKUrDF_mLNvutbsZfG-5BIRCGMQscQp4INbYyPwVJZ7H4GP41x6khaTR0EE5jxEao0LhIfbttsKDIUJBuLIuy2jT4DBhVvNLyawMY3W_8O2E4W8acVVguRMp2bA5F9I9toBQ3qqH2OmC-BD4-MGmA08dKHpRp_s2mRtLk7O08myWWD_-9uT8anEyLxSb9IhJgfg==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_bc63a9b3b2ce442d9f496980223a9783
+            name: set_priority
+            response:
+              return_value: Priority set to high.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Set the priority of the ticket.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: set_priority
+          parameters_json_schema:
+            $defs:
+              TicketPriority:
+                description: |-
+                  How urgent the ticket is.
+                  low: Can wait a week.
+                  high: Needs attention today.
+                enum:
+                - low
+                - high
+                type: string
+            additionalProperties: false
+            properties:
+              priority:
+                $ref: '#/$defs/TicketPriority'
+            required:
+            - priority
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '408'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=443
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The priority has been set to high.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: bqisaouvCaSVmtkP3YvS0A4
+      usageMetadata:
+        candidatesTokenCount: 8
+        promptTokenCount: 111
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 111
+        serviceTier: standard
+        totalTokenCount: 119
+    status:
+      code: 200
+      message: OK
+version: 1
