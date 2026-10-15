@@ -58,6 +58,7 @@ from pydantic_ai.realtime._lifecycle import (
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
+    StaleEvent,
     UserTurnDiscarded,
     UserTurnEnded,
     UserTurnStarted,
@@ -99,6 +100,7 @@ def feed(session_core: SessionCore, *items: CoreInput) -> SessionCore:
 def lifecycle_message(tracker: InferredLifecycle, session_core: SessionCore, *codec: RealtimeCodecEvent) -> None:
     """Apply what the tracker makes of one provider message to the core."""
     for event in tracker.message(list(codec)):
+        assert not isinstance(event, StaleEvent)
         session_core.apply(event)
 
 

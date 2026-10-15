@@ -309,7 +309,8 @@ class InferredLifecycle:
         try:
             async for event in iterator:
                 yield self.message([event])
-            yield self.connection_lost()
+            lost: RealtimeFrame = [*self.connection_lost()]
+            yield lost
         finally:
             if isinstance(iterator, AsyncGenerator):
                 await iterator.aclose()
