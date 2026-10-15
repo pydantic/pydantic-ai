@@ -210,6 +210,12 @@ Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_
 supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
 suspension budget in place; suspensions cannot be unlimited.
 
+Nested tool calls also count toward the run's [`tool_calls_limit`](../agent.md#usage-limits), together
+with the `run_code` call that makes them. Each nested call is checked before it runs, counting the calls
+still pending, and one that would exceed the limit ends the run with
+[`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], as a top-level tool call does. Catching
+the error inside the snippet does not prevent this.
+
 When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_secs`, including an
 explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put

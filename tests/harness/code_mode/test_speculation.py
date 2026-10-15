@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityEvent,
@@ -41,7 +42,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.code_mode import (
     CodeMode,
     CodeModeToolset,
@@ -867,6 +868,21 @@ class TestSpeculationEdgeCases:
         assert result.output == 'done'
         assert capability.speculation_stats.launched == 2
         assert log.calls.count(('search', 'a')) + log.calls.count(('search', 'b')) == 2
+
+    async def test_launches_count_toward_tool_calls_limit(self):
+        """An early call is checked against `tool_calls_limit` when it launches, and claiming one refused there ends the run."""
+        log = ToolLog()
+        capability = CodeMode[None](speculate=['search'])
+        code = padded(
+            'a = await search(query="a")\nb = await search(query="b")\nc = await search(query="c")\nprint(a, b, c)'
+        )
+        agent = build_agent(log, code, capability)
+
+        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
+            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert capability.speculation_stats.launched == 3
+        assert log.calls == [('search', 'a'), ('search', 'b')]
 
     async def test_odd_literal_arguments_key_without_crashing_and_stay_distinct(self):
         """Literal keys the sandbox could never dispatch still stream past the text scanner.

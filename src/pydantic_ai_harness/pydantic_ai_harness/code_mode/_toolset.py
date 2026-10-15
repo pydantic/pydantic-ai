@@ -21,7 +21,7 @@ from typing_extensions import TypedDict, TypeIs
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -641,7 +641,18 @@ class NestedCallOutcome:
 
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
+    ctx = tool_manager.ctx
+    assert ctx is not None, 'the nested `ToolManager` is built with the run context'
+    usage_limits = ctx.usage_limits
+    # Under a `tool_calls_limit`, a pending call counts toward the limit until it settles: calls
+    # started together with `asyncio.gather` would otherwise all pass the check before any of them
+    # is counted. Core counts the call again when it succeeds, so the reservation is always released.
+    reserved = int(usage_limits is not None and usage_limits.tool_calls_limit is not None)
+    ctx.usage.tool_calls += reserved
     try:
+        if usage_limits is not None:
+            # The enclosing `run_code` call is counted too, once it succeeds.
+            usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 1))
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
     except (CallDeferred, ApprovalRequired) as e:
         # No handler resolved the deferral. The sandbox can't round-trip to the caller, so the
@@ -656,6 +667,8 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         return NestedCallOutcome(error=error)
     except Exception as e:
         return NestedCallOutcome(error=e)
+    finally:
+        ctx.usage.tool_calls -= reserved
 
     if isinstance(result, ToolDenied):
         # Surfacing `ToolDenied` to the user's script would let it masquerade as a string tool
@@ -686,6 +699,8 @@ class RunCodeExecution:
     budget_exhausted: bool = False
     nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
+    # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
+    usage_limit_exceeded: UsageLimitExceeded | None = None
 
     def next_tool_call_id(self, *, max_tool_calls: int) -> str:
         """Reserve nested-call budget and return the next stable child call ID."""
@@ -710,6 +725,8 @@ class RunCodeExecution:
                 outcome='denied',
             )
         if outcome.error is not None:
+            if isinstance(outcome.error, UsageLimitExceeded):
+                self.usage_limit_exceeded = outcome.error
             raise outcome.error
         self.nested_returns[tool_call_id] = ToolReturnPart(
             tool_name=call_part.tool_name,
@@ -1289,6 +1306,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     'Check the calls already started before continuing, and do not replay '
                     'completed side effects.'
                 )
+            if execution.usage_limit_exceeded is not None:
+                raise execution.usage_limit_exceeded
             raise ModelRetry(message) from e
         except MontyCrashedError as e:
             # The worker died mid-feed (e.g. the code exhausted its memory or hit the
@@ -1330,6 +1349,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f'{started_calls()}'
             ) from e
 
+        if execution.usage_limit_exceeded is not None:
+            raise execution.usage_limit_exceeded
         result = completed.output
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
