@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolsetClient
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.day_ai import DayAI
@@ -140,3 +141,13 @@ async def test_read_only_selects_by_the_server_annotations_under_a_prefix(
         TestModel(), deps_type=type(None), capabilities=[capability(client=server, tool_prefix='work', read_only=True)]
     )
     assert (await agent.run('Use the tools')).output == '{"work_read":"read"}'
+
+
+@pytest.mark.parametrize('capability', ALL, ids=lambda capability: capability.__name__)
+def test_two_that_differ_under_one_id_point_at_tool_prefix(server: FastMCP, capability: HostedMCP) -> None:
+    with pytest.raises(UserError, match=r"disagree on 'tool_prefix'\. Give each its own `id` and `tool_prefix`"):
+        Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[capability(client=server, tool_prefix='work'), capability(client=server, tool_prefix='oss')],
+        )

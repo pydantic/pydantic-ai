@@ -45,7 +45,7 @@ All classes except `StackOne` take the same keyword-only fields:
   (`'github'`, `'linear'`, `'logfire'`, `'grain'`, `'day_ai'`, `'posthog'`, `'pylon'`), so `get_me` reaches
   the model as `github_get_me`. `Notion`, `Slack`, and `Ordinal` default to `None`, since their servers
   already name tools after the service (`notion-search`, `slack_send_message`). `None` keeps the server's
-  names, as releases before the prefix did. Filters on `get_toolset()` see the prefixed names; `read_only`,
+  names, which is what releases before the prefix used for every class except `LogfireMCP`. Filters on `get_toolset()` see the prefixed names; `read_only`,
   GitHub `toolsets`, and PostHog `features` select before the prefix applies.
 - `id`, `description`, `defer_loading` from `AbstractCapability`. The default `id` is fixed
   (`'github'`, `'linear'`, `'notion'`, `'slack'`, `'logfire-mcp'`, `'ordinal'`, `'grain'`, `'day_ai'`,
