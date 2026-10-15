@@ -2691,6 +2691,40 @@ Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
 
+### Ask for one line under printed output: `read_line`
+
+A sign-in often prints a URL and then asks for something to paste back, such as
+the address the browser ended on. Print with `host.console`, then ask with
+`read_line` from `pydantic_clai2.ui.prompt.line_input`:
+
+```python
+from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.ui.prompt.line_input import read_line
+
+
+async def sign_in(host: PluginHost, authorization_url: str) -> str:
+    host.console.print(authorization_url, markup=False, highlight=False)
+    pasted = await read_line('Or paste the address your browser ended on (Esc cancels): ', console=host.console)
+    if pasted is None:
+        return 'Sign-in cancelled.'
+    ...
+```
+
+The prompt and the typed answer are pinned under the transcript, the way
+`ask_user` shows its questions, so the URL stays on screen above them. It returns
+the answer when the user presses Enter, and `None` on Esc or Ctrl-C. Pasting
+works, and pasted line breaks are dropped. Pass `hidden=True` to show how many
+characters were typed instead of the text, for an answer that carries a secret
+such as an authorization code. Cancelling the task that awaits it, because the
+browser's callback won the race, closes the prompt. A slash command or
+`/login` handler can call it directly; a tool or hook asking mid-run takes the
+screen first, inside `async with host.full_screen()`. Without the live editor it
+is a plain terminal prompt.
+
+Do not draw a prompt yourself from a `run_worker` operation. `run_worker` opens
+full-screen widgets: it takes the live panel, and the transcript with your URL,
+off the screen while the operation runs.
+
 ### Several accounts: `resolve_profile` and `profile_handler`
 
 Users can sign in to more than one account per provider. An account other than

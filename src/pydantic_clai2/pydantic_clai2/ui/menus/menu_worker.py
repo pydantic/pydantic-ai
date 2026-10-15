@@ -37,8 +37,10 @@ def holding_output(hold: Hold) -> Generator[None]:
 
     The live editor sets this to its panel's hold for as long as it is open, so a menu
     gets the screen to itself and output, such as a streaming turn's, waits in the
-    transcript until the menu closes. Only the widget is held: anything the command
-    prints outside `run_worker`, such as a login URL, still appears as it happens.
+    transcript until the menu closes. Between workers, what a command prints appears
+    as it happens. A full-screen worker takes the panel off the screen, so it does not
+    show what was printed before it either: a prompt that must stay under a printed
+    login URL is `line_input.read_line`, which paints through the panel inline.
     """
     token = _HOLD.set(hold)
     try:
