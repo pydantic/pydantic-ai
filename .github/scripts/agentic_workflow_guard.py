@@ -29,10 +29,9 @@ budget before anyone noticed, documented in #6766:
   #8041 moved gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
   binary rejected the v0.27.44 config (`config.apiProxy.providers is not supported`).
   The agent job died before the model started, on every workflow using the shim.
-- `ai_credits_accounting` — `apiProxy.providers` is the API proxy's AI-credits pricing
-  table, not a reporting field, and AWF caps a run at 10,000 credits with nothing in
-  frontmatter able to lift it. Pricing `MiniMax-M3` there made one ordinary request cost
-  tens of thousands, so every agent job 403'd on its first call.
+- `ai_credits_accounting` — provider overlays use USD per token, unlike default
+  pricing's USD per million. Confusing those units exhausted the fixed firewall
+  credit cap on one request. Only the verified GLM overlay is allowed here.
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -636,33 +635,54 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
     ]
 
 
-def check_ai_credits_accounting(lock: Path) -> list[Violation]:
-    """No lock may price a model into the API proxy's AI-credits table.
+def compiled_awf_configs(lock: Path) -> list[Mapping[str, object]]:
+    """Read emitted AWF configurations, excluding informational environment values."""
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    configs: list[Mapping[str, object]] = []
+    for raw_job in _as_mapping(workflow.get('jobs')).values():
+        steps = _as_mapping(raw_job).get('steps')
+        for raw_step in steps if _is_object_sequence(steps) else ():
+            run = _as_mapping(raw_step).get('run')
+            for command in shell_commands(run) if isinstance(run, str) else ():
+                if command[0] != 'printf':
+                    continue
+                for argument in command[1:]:
+                    if not argument.startswith('{'):
+                        continue
+                    try:
+                        value: object = json.loads(argument)
+                    except json.JSONDecodeError:
+                        # Older detector configurations quote JSON one level deeper.
+                        try:
+                            value = json.loads(argument.replace('\\"', '"'))
+                        except json.JSONDecodeError:
+                            continue
+                    config = _as_mapping(value)
+                    if config.get('apiProxy'):
+                        configs.append(config)
+    return configs
 
-    `models.providers` in a source compiles to `apiProxy.providers`, which AWF reads as
-    the pricing table for AI-credits accounting rather than as reporting metadata. A
-    priced model gets charged, and AWF caps a run at 10,000 credits — a limit no
-    frontmatter field lifts, since `max-ai-credits` only drops gh-aw's own budget. The
-    weekly spend report reads token counts from each run's artifact, so nothing here
-    needs the overlay.
-    """
-    # The AWF config is a single-line JSON string inside a `printf`, quoted bare in the
-    # agent job and backslash-escaped where it is nested one level deeper. Match the two
-    # keys on the same line so the informational `GH_AW_INFO_MODEL_COSTS` env var, which
-    # carries the same overlay but configures nothing, is not mistaken for the config.
-    if not any(
-        'apiProxy' in line and ('"providers":' in line or '\\"providers\\":' in line)
-        for line in lock.read_text(encoding='utf-8').splitlines()
-    ):
-        return []
+
+def check_ai_credits_accounting(lock: Path) -> list[Violation]:
+    """Allow verified GLM prices in USD per token, never per-million overlay values."""
+    expected: dict[str, object] = {
+        'anthropic': {
+            'models': {'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.00000050}}}
+        }
+    }
+    fallback: dict[str, float] = {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
     return [
         Violation(
             str(lock),
             'ai-credits-accounting',
-            "the AWF config carries `apiProxy.providers`, which prices a model into the API proxy's "
-            'AI-credits accounting. AWF then rejects the run at its 10,000-credit cap, which no '
-            'frontmatter field can raise. Drop `models.providers` from the source and recompile.',
+            '`models.providers` must use the verified GLM-5.3-Flash USD-per-token rates; '
+            'per-million values incorrectly exhaust the fixed AWF credit cap. '
+            '`models.default-ai-credits-pricing` must use the same rates in USD per million tokens.',
         )
+        for config in compiled_awf_configs(lock)
+        for proxy in [_as_mapping(config.get('apiProxy'))]
+        if (proxy.get('providers') is not None and proxy.get('providers') != expected)
+        or (proxy.get('defaultAiCreditsPricing') is not None and proxy.get('defaultAiCreditsPricing') != fallback)
     ]
 
 

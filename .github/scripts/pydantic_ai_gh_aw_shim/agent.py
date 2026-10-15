@@ -141,7 +141,7 @@ def build_agent() -> Agent[None, str]:
         name='github-workflow',
         instructions=[cli.request_budget_notice, cli.time_budget_notice],
         retries={'output': cli.NO_SAFE_OUTPUT_RETRIES},
-        tools=[Tool(cli.task, name='Task')],
+        tools=[] if os.environ.get('GITHUB_WORKFLOW') == cli.ATTENTION_WORKFLOW else [Tool(cli.task, name='Task')],
         capabilities=[
             ResolveModelId(workflow_model),
             WorkflowPolicy(),

@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import RunContext
-from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -123,14 +122,26 @@ async def test_attention_request_limit_is_enforced_and_reported(
     """Attention's smaller request budget produces typed health failure metadata."""
     monkeypatch.setenv('GITHUB_WORKFLOW', cli.ATTENTION_WORKFLOW)
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(tmp_path / 'safeoutputs.jsonl'))
+    requests = 0
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del messages, info
+        nonlocal requests
+        del messages
+        requests += 1
+        assert 'Task' not in {tool.name for tool in info.function_tools}
         return ModelResponse(parts=[ToolCallPart('list_files', {'path': '.'})])
 
     agent = workflow.build_agent()
-    with agent.override(model=streaming_model(respond)), pytest.raises(UsageLimitExceeded):
-        await agent.run('Keep investigating', usage_limits=UsageLimits(request_limit=50))
+    with agent.override(model=streaming_model(respond)):
+        exit_code = await run_headless(
+            text='Keep investigating',
+            settings=Settings(request_limit=cli.run_request_limit(), code_mode=False),
+            store=SettingsStore(tmp_path / 'clai2.db'),
+            project=ProjectSettings(),
+            agent=agent,
+        )
+    assert exit_code == 1
+    assert requests == 50
     artifact = tmp_path / 'agent-stdio.log'
     artifact.write_text(capsys.readouterr().err)
     result = health.parse_run_result(artifact)

@@ -63,13 +63,6 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
-# Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
-# active — it is not, and no `models.providers` entry accompanies it. See
-# `shared/engine-zai.md` for why pricing the configured model there can stop the agent.
-models:
-  default-ai-credits-pricing:
-    input: 0.6
-    output: 2.4
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 imports:
   - shared/network-vendor-domains.md

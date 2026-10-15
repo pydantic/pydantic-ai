@@ -272,7 +272,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
 | `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy or Z.ai credential exclusion | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
 | `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
-| `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | Provider overlays charge actual AI credits; they are not reporting-only metadata. AWF retains a 10,000-credit hard cap even with negative configurable budgets. The token-based weekly report needs no pricing overlay, so these workflows retain their no-overlay policy. |
+| `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
 Run it locally before pushing:

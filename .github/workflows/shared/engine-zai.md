@@ -26,17 +26,24 @@ imports:
   - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@29bc2db4d2e109740999d3572c626b8919153ddc
 runtimes:
   uv: {}
-# Do not add a `models.providers` pricing overlay. gh-aw compiles that block into
-# `apiProxy.providers`, which is the AWF API proxy's *AI-credits accounting* table rather
-# than a reporting field: pricing a model there starts charging it credits. AWF then
-# enforces a hard cap of 10,000 credits per run that nothing in this
-# frontmatter can lift — `max-ai-credits` only omits gh-aw's own budget, and the schema
-# types it `exclusiveMinimum: 0`. Negative configurable caps do not remove that
-# firewall cap. Leave provider pricing unchanged for this migration.
-#
-# Nothing here needs that overlay: the weekly spend report reads token counts from each
-# run's `agent_usage.json` artifact, never a pricing table.
+# Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
+# Pricing here measures API-equivalent usage, not Coding Plan quota or charges.
 max-ai-credits: -1
+models:
+  # USD per million tokens: https://docs.z.ai/guides/overview/pricing (2026-10-15).
+  default-ai-credits-pricing:
+    input: 0.15
+    cache_read: 0.03
+    output: 0.50
+  providers:
+    anthropic:
+      models:
+        glm-5.3-flash:
+          # Provider overlays use USD per token for actual AWF credit accounting.
+          cost:
+            input: 0.00000015
+            cache_read: 0.00000003
+            output: 0.00000050
 sandbox:
   agent:
     token-steering: false
@@ -58,7 +65,7 @@ engine:
     GH_AW_HARNESS_MAX_RETRIES: "0"
 safe-outputs:
   threat-detection:
-    # Detection has an independent budget and the same unknown-model constraint.
+    # Detection has an independent budget and uses the same verified model pricing.
     max-ai-credits: -1
     # Detection uses the stateful Claude CLI, so it retains normal recovery.
     engine:

@@ -8,6 +8,7 @@ shapes. The final test asserts the live repository is clean.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ from agentic_workflow_guard import (
     check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
+    compiled_awf_configs,
     run_checks,
 )
 
@@ -725,7 +727,7 @@ def test_compiled_runner_contract_rejects_decoy_command_text(tmp_path: Path, com
 
 @pytest.mark.parametrize('lock', sorted((Path(__file__).parent.parent / 'workflows').glob('pydantic-ai-*.lock.yml')))
 def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
-    """Every GLM-producing job must receive the actual compiled OTLP configuration."""
+    """Every GLM producer receives compiled telemetry and verified accounting."""
     workflow = yaml.safe_load(lock.read_text(encoding='utf-8'))
     assert workflow['env']['OTEL_EXPORTER_OTLP_ENDPOINT']
     assert workflow['env']['OTEL_EXPORTER_OTLP_HEADERS']
@@ -737,6 +739,20 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     assert str(detector['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
     assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
+    configs = compiled_awf_configs(lock)
+    assert len(configs) == 2
+    for config in configs:
+        assert config['apiProxy']['providers']
+        assert config['apiProxy']['defaultAiCreditsPricing']
+        assert {
+            'logfire-api.pydantic.dev',
+            'logfire-eu.pydantic.dev',
+            'logfire-us.pydantic.dev',
+            'logfire-api.pydantic.info',
+            'logfire-eu.pydantic.info',
+            'logfire-us.pydantic.info',
+        } <= set(config['network']['allowDomains'])
+    assert check_ai_credits_accounting(lock) == []
 
 
 # --- AWF binary pin (the #8041 skew) ------------------------------------------
@@ -850,6 +866,32 @@ jobs:
 
 
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
+
+
+@pytest.mark.parametrize('per_million', [False, True])
+@pytest.mark.parametrize('stale_fallback', [False, True])
+def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_million: bool, stale_fallback: bool):
+    """The same published rates use different units in the two pricing settings."""
+    unit = 1 if per_million else 1_000_000
+    config: dict[str, object] = {
+        'apiProxy': {
+            'defaultAiCreditsPricing': {'input': 0.6, 'cachedInput': 0.03, 'output': 2.4}
+            if stale_fallback
+            else {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50},
+            'providers': {
+                'anthropic': {
+                    'models': {
+                        'glm-5.3-flash': {
+                            'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.50 / unit}
+                        }
+                    }
+                }
+            },
+        }
+    }
+    workflow: dict[str, object] = {'jobs': {'agent': {'steps': [{'run': f"printf '%s' '{json.dumps(config)}'"}]}}}
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback)
 
 
 def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):
