@@ -2423,8 +2423,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Args:
             extra_headers: Headers for the WebSocket handshake, overriding the model's default
                 `extra_headers`. Request headers must match the configured handshake headers. A request
-                `Authorization` header must be configured here or in the model's default `extra_headers`;
-                the client's own credentials don't count.
+                `Authorization` header must be configured here, in the model's default `extra_headers`, or in
+                `AsyncOpenAI(default_headers=...)`; the client's API key doesn't count.
             websocket_connection_options: Typed connection options passed to the OpenAI SDK.
                 The model's default `timeout` controls the handshake; each request's `timeout`
                 controls sending and receiving. SDK client timeouts apply when no setting is given.
