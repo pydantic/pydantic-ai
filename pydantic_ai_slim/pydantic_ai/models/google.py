@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, assert_never, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast, get_args, overload
 from uuid import UUID, uuid4
 
 import httpx2
@@ -134,6 +134,11 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+from . import _google_batch
+
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
@@ -440,6 +445,14 @@ def _map_api_error(
     return ModelAPIError(model_name=model_name, message=str(e))
 
 
+@contextmanager
+def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
+    try:
+        yield
+    except (errors.APIError, httpx2.TransportError) as e:
+        raise _map_api_error(e, model_name, model_id_namespace) from e
+
+
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
     """HTTP headers for Google Cloud Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
@@ -693,6 +706,36 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response, model_request_parameters)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        # Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery rather than the Gemini API's files.
+        if self._is_google_cloud:
+            return None
+        # The Gemini API limits a batch's input file to 2 GB rather than its number of requests.
+        return 100_000
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _google_batch.batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _google_batch.batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _google_batch.batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _google_batch.batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _google_batch.batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _google_batch.batch_decode(self, result, request)
 
     async def count_tokens(
         self,

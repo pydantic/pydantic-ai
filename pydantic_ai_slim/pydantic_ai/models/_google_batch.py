@@ -1,0 +1,266 @@
+"""The Gemini API Batch Mode used by `GoogleModel.batch_*` methods.
+
+A batch request carries the same `generateContent` request `GoogleModel` would send on its own, prepared by the same
+builder and converted to the API's JSON by the converters `google-genai` uses for inlined batch requests. Requests
+are uploaded as a JSONL file rather than inlined, so a batch can hold as much as the API's 2 GB file limit instead of
+its 20 MB inline limit, and results are read from the JSONL file the job writes.
+
+Google Cloud (Vertex AI) runs batch prediction jobs from Cloud Storage or BigQuery instead, so it isn't supported.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import warnings
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, NotRequired, cast
+
+from google.genai import Client
+from google.genai._common import (
+    convert_to_dict,
+    encode_unserializable_types,
+)
+from google.genai.batches import (
+    _GenerateContentResponse_from_mldev,  # pyright: ignore[reportPrivateUsage]
+    _InlinedRequest_to_mldev,  # pyright: ignore[reportPrivateUsage]
+)
+from google.genai.types import (
+    BatchJob,
+    CreateBatchJobConfigDict,
+    GenerateContentResponse,
+    HttpOptionsDict,
+    InlinedRequest,
+    JobState,
+    UploadFileConfigDict,
+)
+from pydantic import TypeAdapter
+from pydantic_core import to_json
+from typing_extensions import TypedDict
+
+from .._utils import is_str_dict, now_utc
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..messages import ModelResponse
+from . import check_allow_model_requests
+from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
+
+if TYPE_CHECKING:
+    from .google import GoogleModel, GoogleModelSettings
+
+_STATUSES: dict[JobState, BatchStatus] = {
+    JobState.JOB_STATE_UNSPECIFIED: 'in_progress',
+    JobState.JOB_STATE_QUEUED: 'in_progress',
+    JobState.JOB_STATE_PENDING: 'in_progress',
+    JobState.JOB_STATE_RUNNING: 'in_progress',
+    JobState.JOB_STATE_PAUSED: 'in_progress',
+    JobState.JOB_STATE_UPDATING: 'in_progress',
+    JobState.JOB_STATE_CANCELLING: 'canceling',
+    JobState.JOB_STATE_SUCCEEDED: 'ended',
+    JobState.JOB_STATE_PARTIALLY_SUCCEEDED: 'ended',
+    JobState.JOB_STATE_FAILED: 'ended',
+    JobState.JOB_STATE_CANCELLED: 'ended',
+    JobState.JOB_STATE_EXPIRED: 'ended',
+}
+
+# https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto
+_RPC_STATUS_CODES = {
+    1: 499,  # CANCELLED
+    2: 500,  # UNKNOWN
+    3: 400,  # INVALID_ARGUMENT
+    4: 504,  # DEADLINE_EXCEEDED
+    5: 404,  # NOT_FOUND
+    6: 409,  # ALREADY_EXISTS
+    7: 403,  # PERMISSION_DENIED
+    8: 429,  # RESOURCE_EXHAUSTED
+    9: 400,  # FAILED_PRECONDITION
+    10: 409,  # ABORTED
+    11: 400,  # OUT_OF_RANGE
+    12: 501,  # UNIMPLEMENTED
+    13: 500,  # INTERNAL
+    14: 503,  # UNAVAILABLE
+    15: 500,  # DATA_LOSS
+    16: 401,  # UNAUTHENTICATED
+}
+"""The HTTP status `generateContent` answers each `google.rpc.Code` with, so a batch error raises the same `ModelHTTPError`."""
+
+
+class _Group(TypedDict):
+    endpoint: str
+    credential: str
+    model: str
+
+
+class _ResultLine(TypedDict):
+    """A line of a job's results file: the response to the request with `key`, or the `google.rpc.Status` it failed with."""
+
+    key: str
+    response: NotRequired[dict[str, Any]]
+    error: NotRequired[dict[str, Any]]
+
+
+_RESULT_LINE_ADAPTER = TypeAdapter(_ResultLine)
+
+
+async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatchRequest:
+    prepared_settings, model_request_parameters = model.prepare_request(
+        request.model_settings, request.model_request_parameters
+    )
+    settings = cast('GoogleModelSettings', prepared_settings or {})
+    # A batch is created with one set of HTTP options, and its requests run long after, so neither can be honored.
+    if 'timeout' in settings:
+        raise UserError('Gemini batch requests do not support per-request `timeout`; configure the client instead.')
+    if 'extra_headers' in settings:
+        raise UserError('Gemini batch requests do not support per-request `extra_headers`; set them on the client.')
+    client = _batch_client(model)
+    contents, config = await model._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        request.messages, settings, model_request_parameters
+    )
+    # The converter leaves out `http_options`, as `batches.create` does for inlined requests.
+    converted = _InlinedRequest_to_mldev(
+        client._api_client,  # pyright: ignore[reportPrivateUsage]
+        InlinedRequest(contents=contents, config=config),  # pyright: ignore[reportArgumentType]
+    )
+    body = encode_unserializable_types(convert_to_dict(converted['request']))
+    return EncodedBatchRequest(custom_id=request.custom_id, group=_batch_group(model), body=to_json(body).decode())
+
+
+async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
+    check_allow_model_requests()
+    if not requests:
+        raise UserError('A batch must contain at least one request.')
+    group = requests[0].group
+    if any(request.group != group for request in requests):
+        raise UserError(
+            'Requests in one Gemini batch must share a `group`; these came from different client configurations or models.'
+        )
+    _validate_batch_group(model, group)
+    client = _batch_client(model)
+    lines = (
+        # The body is this provider's own `batch_encode` output.
+        to_json({'key': request.custom_id, 'request': json.loads(request.body)})
+        for request in requests
+    )
+    file = await client.aio.files.upload(
+        file=io.BytesIO(b'\n'.join(lines)),
+        config=UploadFileConfigDict(mime_type='application/jsonl', display_name='pydantic-ai-batch'),
+    )
+    assert file.name is not None
+    # Unlike the upload, the job can't be created twice safely: the first attempt may have created it.
+    no_retries = HttpOptionsDict(retry_options={'attempts': 1})
+    job = await client.aio.batches.create(
+        model=model.model_name,
+        src=file.name,
+        config=CreateBatchJobConfigDict(display_name='pydantic-ai-batch', http_options=no_retries),
+    )
+    return _to_batch(model, job, group, len(requests), {'input_file': file.name})
+
+
+async def batch_status(model: GoogleModel, batch: Batch) -> Batch:
+    check_allow_model_requests()
+    _validate_batch_group(model, batch.group)
+    job = await _batch_client(model).aio.batches.get(name=batch.id)
+    return _to_batch(model, job, batch.group, batch.request_count, batch.provider_details)
+
+
+async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
+    check_allow_model_requests()
+    if batch.status != 'ended':
+        raise UserError(f'Batch {batch.id!r} has not ended yet; check its status with `batch_status()` first.')
+    _validate_batch_group(model, batch.group)
+    client = _batch_client(model)
+    job = await client.aio.batches.get(name=batch.id)
+    if job.dest is None or job.dest.file_name is None:
+        # A job that expired, or was canceled or failed before it ran a request, writes no results.
+        return []
+    content = await client.aio.files.download(file=job.dest.file_name)
+    results: list[BatchResult] = []
+    for line in content.splitlines():
+        item = _RESULT_LINE_ADAPTER.validate_json(line)
+        if 'response' in item:
+            results.append(
+                BatchResult(custom_id=item['key'], status='succeeded', body=to_json(item['response']).decode())
+            )
+        else:
+            results.append(
+                BatchResult(custom_id=item['key'], status='errored', body=to_json(item.get('error')).decode())
+            )
+    return results
+
+
+async def batch_cancel(model: GoogleModel, batch: Batch) -> Batch:
+    check_allow_model_requests()
+    _validate_batch_group(model, batch.group)
+    client = _batch_client(model)
+    await client.aio.batches.cancel(name=batch.id)
+    job = await client.aio.batches.get(name=batch.id)
+    return _to_batch(model, job, batch.group, batch.request_count, batch.provider_details)
+
+
+def batch_decode(model: GoogleModel, result: BatchResult, request: BatchRequest) -> ModelResponse:
+    if result.status == 'succeeded':
+        assert result.body is not None
+        response = GenerateContentResponse._from_response(  # pyright: ignore[reportPrivateUsage]
+            response=_GenerateContentResponse_from_mldev(json.loads(result.body)), kwargs={}
+        )
+        with warnings.catch_warnings():
+            # `batch_encode` already warned about any setting the request dropped.
+            warnings.simplefilter('ignore')
+            _, model_request_parameters = model.prepare_request(
+                request.model_settings, request.model_request_parameters
+            )
+        model_response = model._process_response(response, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        # Selects batch prices when `genai-prices` calculates the response's cost.
+        model_response.provider_details = {**(model_response.provider_details or {}), 'processing': 'batch'}
+        return model_response
+    if result.status == 'errored':
+        assert result.body is not None
+        error = json.loads(result.body)
+        code = error.get('code') if is_str_dict(error) else None
+        raise ModelHTTPError(
+            status_code=_RPC_STATUS_CODES.get(code, 500) if isinstance(code, int) else 500,
+            model_name=model.model_name,
+            body={'error': error},
+        )
+    raise ModelAPIError(model.model_name, f'The batch request was {result.status} before the model ran it.')
+
+
+def _to_batch(
+    model: GoogleModel, job: BatchJob, group: str, request_count: int, provider_details: dict[str, Any] | None
+) -> Batch:
+    assert job.name is not None
+    state = job.state or JobState.JOB_STATE_UNSPECIFIED
+    return Batch(
+        id=job.name,
+        model_name=model.model_name,
+        provider_name=model.system,
+        group=group,
+        status=_STATUSES.get(state, 'in_progress'),
+        created_at=job.create_time or now_utc(),
+        request_count=request_count,
+        provider_details={**(provider_details or {}), 'state': state.value},
+    )
+
+
+def _batch_group(model: GoogleModel) -> str:
+    # The Gemini API authenticates with the API key alone; the SDK adds and changes its own headers as it goes.
+    api_key = _batch_client(model)._api_client.api_key or ''  # pyright: ignore[reportPrivateUsage]
+    group: _Group = {
+        'endpoint': hashlib.sha256(model.base_url.encode()).hexdigest(),
+        'credential': hashlib.sha256(api_key.encode()).hexdigest(),
+        'model': model.model_name,
+    }
+    return json.dumps(group, sort_keys=True)
+
+
+def _validate_batch_group(model: GoogleModel, group: str) -> None:
+    if group != _batch_group(model):
+        raise UserError(
+            'The Gemini client or model does not match the batch request group. Use the configuration that encoded the requests.'
+        )
+
+
+def _batch_client(model: GoogleModel) -> Client:
+    if model.batch_max_requests is None:
+        raise UserError('Gemini batch requests are only supported by the Gemini API, not Google Cloud (Vertex AI).')
+    return model.client
