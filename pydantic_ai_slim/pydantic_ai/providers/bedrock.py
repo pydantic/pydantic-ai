@@ -239,6 +239,21 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_tool_choice_none_variant: Literal['anthropic'] | None
+    """How `tool_choice='none'` is sent, given Converse's `toolChoice` has no `none` mode.
+
+    Converse rejects a request whose messages contain `toolUse`/`toolResult` blocks without a
+    `toolConfig`, so the tools are always kept once the history has a tool call:
+
+    - `'anthropic'`: the tools are kept, `toolChoice` is omitted, and
+      `{'tool_choice': {'type': 'none'}}` is sent in `additionalModelRequestFields`. Bedrock 400s
+      when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists. Tools are dropped from the request while the history has no
+      tool blocks, and kept (with no `toolChoice`, so the model may still call them) once it does.
+
+    Default: `None`.
+    """
+
     bedrock_disallows_sampling_settings: bool
     """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
 
@@ -280,6 +295,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
             bedrock_top_k_variant='anthropic',
+            bedrock_tool_choice_none_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
     )

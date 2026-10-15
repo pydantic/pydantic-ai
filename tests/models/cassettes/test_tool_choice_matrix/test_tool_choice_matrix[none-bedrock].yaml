@@ -1,57 +1,71 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}], "system": [], "inferenceConfig":
-      {}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        ZjU3NmM5MGMtOTYzMi00YTBlLTkxZWQtZDAxNGI2YWIzMDFm
+      - 750a75b4-2623-497f-a78b-73c630183cd0
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '124'
+      - "434"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Say hello
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties:
+                    city:
+                      type: string
+                  required:
+                  - city
+                  type: object
+              description: Get the current weather for a city.
+        additionalModelRequestFields:
+          tool_choice:
+            type: none
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
       content-length:
-      - '850'
+      - "388"
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 2396
-      output:
-        message:
-          content:
-          - text: |-
-              I don't have access to real-time weather data or the ability to browse the internet, so I can't tell you the current weather in Paris.
-
-              To get the current weather in Paris, you could:
-              - Check a weather website like weather.com, weather.gov, or accuweather.com
-              - Search "Paris weather" on Google or another search engine
-              - Use a weather app on your phone
-              - Ask a voice assistant with internet access like Siri, Google Assistant, or Alexa
-
-              Is there anything else I can help you with regarding Paris?
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 0
-        cacheWriteInputTokens: 0
-        inputTokens: 14
-        outputTokens: 124
-        serverToolUsage: {}
-        totalTokens: 138
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1697
+        output:
+          message:
+            content:
+            - text: Hello! 👋 How can I help you today?
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 567
+          outputTokens: 16
+          serverToolUsage: {}
+          totalTokens: 583
+  recorded_at: 2026-10-15T23:54:52.949721+00:00

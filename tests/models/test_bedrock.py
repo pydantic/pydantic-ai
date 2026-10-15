@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import io
 import json
 import os
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -53,7 +53,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -68,7 +68,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -3613,7 +3613,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Amazon Nova supports tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings(), [])  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -3634,7 +3634,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Anthropic supports tool_choice
     model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings(), [])  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -3655,7 +3655,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Other models don't support tool_choice
     model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings(), [])  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -3672,6 +3672,86 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
             ]
         }
     )
+
+
+class _NoToolsAfterFirstStep(AbstractCapability[Any]):
+    """Force a final answer after the first step, the docs' `tool_choice='none'` pattern."""
+
+    def get_model_settings(self) -> Callable[[RunContext[Any]], ModelSettings]:
+        return lambda ctx: ModelSettings(tool_choice='none') if ctx.run_step >= 2 else ModelSettings()
+
+
+@pytest.mark.vcr()
+async def test_bedrock_tool_choice_none_after_tool_call_claude(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`tool_choice='none'` after a tool call must keep `toolConfig`, which Converse requires alongside `toolUse` blocks.
+
+    Converse has no `toolChoice.none`, so Claude gets its native `tool_choice` via `additionalModelRequestFields`, which
+    stops it from calling the tool again and keeps the tools cache section intact.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, capabilities=[_NoToolsAfterFirstStep()])
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        """Look something up. Must be called twice."""
+        return 'partial; call lookup again with q="y" to get the answer'
+
+    result = await agent.run('Use lookup with q="x" and follow its instructions, then answer.')
+
+    assert [
+        part.tool_name for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+    ] == ['lookup']
+    first, second = (request_json(request) for request in vcr.requests)
+    assert 'toolChoice' not in second['toolConfig']
+    assert second['toolConfig']['tools'] == first['toolConfig']['tools']
+    assert second['additionalModelRequestFields'] == {'tool_choice': {'type': 'none'}}
+
+
+@pytest.mark.vcr()
+async def test_bedrock_tool_choice_none_after_tool_call_nova(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Without a native `none`, the tools are kept (unenforced) once history has a tool call, so Converse accepts it."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model, capabilities=[_NoToolsAfterFirstStep()])
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        """Look something up."""
+        return 'the answer is 42'
+
+    result = await agent.run('Use lookup with q="x", then tell me the answer.')
+
+    assert '42' in result.output
+    first, second = (request_json(request) for request in vcr.requests)
+    assert second['toolConfig'] == {'tools': first['toolConfig']['tools']}
+    assert 'additionalModelRequestFields' not in second
+
+
+async def test_bedrock_tool_choice_none_drops_tools_without_tool_history(bedrock_provider: BedrockProvider):
+    """Without a native `none`, tools are only dropped while history has no tool blocks, which Converse then accepts."""
+    tool_def = ToolDefinition(name='my_tool', parameters_json_schema={'type': 'object', 'properties': {}})
+    params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+    settings = BedrockModelSettings(tool_choice='none')
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    user_turn: MessageUnionTypeDef = {'role': 'user', 'content': [{'text': 'hi'}]}
+
+    assert model._map_tool_config(params, settings, [user_turn]) is None  # pyright: ignore[reportPrivateUsage]
+    assert model._build_additional_model_request_fields(settings, params) is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_tool_choice_none_claude_respects_user_tool_choice_field(bedrock_provider: BedrockProvider):
+    """A `tool_choice` the user put in `bedrock_additional_model_requests_fields` wins over the native `none`."""
+    tool_def = ToolDefinition(name='my_tool', parameters_json_schema={'type': 'object', 'properties': {}})
+    params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+    settings = BedrockModelSettings(
+        tool_choice='none', bedrock_additional_model_requests_fields={'tool_choice': {'type': 'auto'}}
+    )
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+
+    assert model._build_additional_model_request_fields(settings, params) == {'tool_choice': {'type': 'auto'}}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: BedrockProvider):
@@ -3701,7 +3781,7 @@ async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: Bedr
     )
     _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
 
-    tool_config = model._map_tool_config(prepared, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(prepared, BedrockModelSettings(), [])  # type: ignore[reportPrivateUsage]
     assert tool_config == snapshot(
         {
             'tools': [
@@ -5350,7 +5430,7 @@ async def test_unified_cache_places_stable_boundary_points(
     system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
     assert system_prompt == snapshot([{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}])
 
-    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, bedrock_settings, [])  # pyright: ignore[reportPrivateUsage]
     assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
 
 
@@ -5393,7 +5473,7 @@ async def test_unified_cache_tool_points_skipped_for_nova(
     system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
     assert system_prompt[-1] == {'cachePoint': {'type': 'default'}}
 
-    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, bedrock_settings, [])  # pyright: ignore[reportPrivateUsage]
     assert tool_config and all('cachePoint' not in tool for tool in tool_config['tools'])
 
 
@@ -5412,6 +5492,7 @@ async def test_bedrock_cache_tool_definitions_skipped_for_nova(
     tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
         params,
         BedrockModelSettings(bedrock_cache_tool_definitions=True),
+        [],
     )
     # Nova doesn't support tool caching, so no cachePoint should be added
     assert tool_config and len(tool_config['tools']) == 2
@@ -5430,6 +5511,7 @@ async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedroc
     tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
         params,
         BedrockModelSettings(bedrock_cache_tool_definitions=True),
+        [],
     )
     assert tool_config and len(tool_config['tools']) == 3
     assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default'}}
@@ -5583,6 +5665,7 @@ async def test_bedrock_cache_tool_definitions_with_explicit_ttl(
     tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
         params,
         BedrockModelSettings(bedrock_cache_tool_definitions='1h'),
+        [],
     )
     assert tool_config and len(tool_config['tools']) == 3
     assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}

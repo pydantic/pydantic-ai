@@ -255,7 +255,9 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str, xai_provider: An
             return 'any'
         elif 'tool' in tool_choice:
             return tool_choice['tool'].get('name')
-        return None
+        # Converse has no `toolChoice.none`; Claude's native `tool_choice` rides in `additionalModelRequestFields`.
+        native_tool_choice: dict[str, Any] = body.get('additionalModelRequestFields', {}).get('tool_choice', {})
+        return native_tool_choice.get('type')
     else:
         return body.get('tool_choice')
 
@@ -362,7 +364,7 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('google', 'none_with_output'): snapshot('ANY'),
     ('google', 'tools_plus_output'): snapshot('ANY'),
     ('bedrock', 'auto'): snapshot('auto'),
-    ('bedrock', 'none'): snapshot(None),
+    ('bedrock', 'none'): snapshot('none'),
     ('bedrock', 'required'): snapshot('any'),
     ('bedrock', 'list_single'): snapshot('get_weather'),
     ('bedrock', 'none_with_output'): snapshot('final_result'),
@@ -449,7 +451,8 @@ async def test_tool_choice_matrix(
     elif scenario == 'none':
         agent = Agent(model, tools=[get_weather])
         settings = {'tool_choice': 'none'}
-        prompt = 'Say hello' if provider == 'anthropic' else "What's the weather in Paris?"
+        # Claude answers a tool-shaped question under native `tool_choice: none` with an empty response.
+        prompt = 'Say hello' if provider in ('anthropic', 'bedrock') else "What's the weather in Paris?"
         await agent.run(prompt, model_settings=settings, usage_limits=UsageLimits(output_tokens_limit=5000))
 
     elif scenario == 'required':
@@ -488,7 +491,10 @@ async def test_tool_choice_matrix(
     actual_tool_choice = get_tool_choice_from_cassette(vcr, provider, xai_provider)
     assert actual_tool_choice == expected_tool_choice
 
-    if provider == 'bedrock' and scenario == 'list_single':
+    if provider == 'bedrock' and scenario == 'none':
+        # The tools stay on the wire (no client-side drop), so the tools cache section survives `'none'`.
+        assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather']
+    elif provider == 'bedrock' and scenario == 'list_single':
         assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'get_time']
     elif provider == 'bedrock' and scenario == 'none_with_output':
         # `tool_choice='none'` + output tool with no direct output resolves to ('required', {final_result}),

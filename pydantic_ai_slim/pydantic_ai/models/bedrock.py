@@ -963,7 +963,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
         # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
         # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
-        tool_config = self._map_tool_config(model_request_parameters, settings)
+        tool_config = self._map_tool_config(model_request_parameters, settings, bedrock_messages)
         if tool_config:
             converse['toolConfig'] = tool_config
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
@@ -1114,6 +1114,15 @@ class BedrockConverseModel(Model[BaseClient]):
                 if isinstance(inference_config, dict) and 'topK' not in inference_config:
                     existing['inferenceConfig'] = {**inference_config, 'topK': top_k}
 
+        if (
+            profile.get('bedrock_tool_choice_none_variant') == 'anthropic'
+            and 'tool_choice' not in existing
+            and model_request_parameters.declared_tool_defs
+            and resolve_tool_choice(model_settings, model_request_parameters) == 'none'
+        ):
+            # Converse has no `toolChoice.none`; Claude honors its native field when the Converse one is omitted.
+            existing['tool_choice'] = {'type': 'none'}
+
         thinking = model_request_parameters.thinking
         if thinking is None:
             return existing or None
@@ -1178,7 +1187,7 @@ class BedrockConverseModel(Model[BaseClient]):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters, settings)
+        tool_config = self._map_tool_config(model_request_parameters, settings, bedrock_messages)
         if tool_config:
             params['toolConfig'] = tool_config
 
@@ -1250,6 +1259,7 @@ class BedrockConverseModel(Model[BaseClient]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
+        bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> ToolConfigurationTypeDef | None:
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
@@ -1257,15 +1267,20 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
 
-        tool_choice: ToolChoiceTypeDef
+        tool_choice: ToolChoiceTypeDef | None
         if resolved_tool_choice == 'auto':
             tool_choice = {'auto': {}}
         elif resolved_tool_choice == 'required':
             tool_choice = {'any': {}} if supports else {'auto': {}}
         elif resolved_tool_choice == 'none':
-            # Bedrock doesn't support a native 'none' mode, so we don't send tools
-            # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
-            return None
+            # Converse's `toolChoice` has no 'none' mode
+            # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), but it rejects
+            # `toolUse`/`toolResult` blocks without a `toolConfig`, so the tools must stay once history has a tool call.
+            # Anthropic models get a native `none` via `additionalModelRequestFields` instead (see
+            # `_build_additional_model_request_fields`), which keeps the tools cache section intact.
+            if profile.get('bedrock_tool_choice_none_variant') is None and not _has_tool_blocks(bedrock_messages):
+                return None
+            tool_choice = None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
@@ -2166,6 +2181,13 @@ def _support_tool_forcing(
         model_settings,
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
+    )
+
+
+def _has_tool_blocks(bedrock_messages: Sequence[MessageUnionTypeDef]) -> bool:
+    """Whether any message has a `toolUse` or `toolResult` block, which Converse only accepts with a `toolConfig`."""
+    return any(
+        'toolUse' in block or 'toolResult' in block for message in bedrock_messages for block in message['content']
     )
 
 
