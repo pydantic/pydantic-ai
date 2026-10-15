@@ -1777,16 +1777,6 @@ async def test_adapter_server_mode_with_deferred_agent_reinjector():
     assert [p.content for p in sys_parts] == ['Server prompt']
 
 
-def _system_prompts(messages: Sequence[ModelMessage]) -> list[str]:
-    return [
-        part.content
-        for m in messages
-        if isinstance(m, ModelRequest)
-        for part in m.parts
-        if isinstance(part, SystemPromptPart)
-    ]
-
-
 def _steering_agent(**kwargs: Any) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
     """An agent whose first model turn calls a tool that enqueues a mid-run `SystemPromptPart`."""
     requests: list[list[ModelMessage]] = []
@@ -1815,6 +1805,7 @@ def _steering_agent(**kwargs: Any) -> tuple[Agent[None, str], list[list[ModelMes
 
 
 def _contents(messages: Sequence[ModelMessage]) -> list[str]:
+    """The text of each system and user prompt part in `messages`, in order."""
     return [
         part.content
         for m in messages
@@ -1835,9 +1826,8 @@ async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
     result = await agent.run('Go', message_history=history)
 
     assert len(requests) == 2
-    assert 'Client prompt' not in str(requests[1])
-    assert any('Mid-run steering' in content for content in _contents(requests[1]))
-    assert _system_prompts(result.all_messages()) == snapshot(['Server prompt', 'Mid-run steering'])
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Hi', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Hi', 'Go', 'Mid-run steering'])
 
 
 async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplicate():
@@ -1846,8 +1836,10 @@ async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplic
 
     result = await agent.run('Go')
 
-    assert [_system_prompts(request) for request in requests] == snapshot([['Server prompt'], ['Server prompt']])
-    assert _system_prompts(result.all_messages()) == snapshot(['Server prompt', 'Mid-run steering'])
+    assert [_contents(request) for request in requests] == snapshot(
+        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system>Mid-run steering</system>']]
+    )
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Go', 'Mid-run steering'])
 
 
 async def test_reinject_system_prompt_replace_rerendered_dynamic_prompt_does_not_duplicate():
@@ -1870,7 +1862,7 @@ async def test_reinject_system_prompt_replace_rerendered_dynamic_prompt_does_not
 
     result = await agent.run('Go', message_history=history)
 
-    assert _system_prompts(result.all_messages()) == snapshot(['Dynamic server prompt'])
+    assert _contents(result.all_messages()) == snapshot(['Dynamic server prompt', 'Hi', 'Again', 'Go'])
 
 
 async def test_adapter_server_mode_keeps_mid_run_system_prompts():
@@ -1890,8 +1882,10 @@ async def test_adapter_server_mode_keeps_mid_run_system_prompts():
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 
     assert len(requests) == 2
-    assert any('Mid-run steering' in content for content in _contents(requests[1]))
-    assert _system_prompts(run_result_event.result.all_messages()) == snapshot(['Server prompt', 'Mid-run steering'])
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(run_result_event.result.all_messages()) == snapshot(
+        ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']
+    )
 
 
 def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
