@@ -62,9 +62,9 @@ Cancelling a run that's waiting abandons its request. Pydantic AI cancels the pr
 
 ### Durable execution
 
-Under [durable execution](durable_execution/overview.md) with Temporal, DBOS or Prefect, `BatchModel` needs no extra setup. Submitting a request and every check on its batch run as separate durable steps, so a run that's interrupted while its batch is processed, for example by a deployment, continues from the same batch when it's recovered. Under Temporal, the waits between checks are durable timers too. Requests are collected into batches per worker process.
+Under [durable execution](durable_execution/overview.md) with Temporal, DBOS or Prefect, `BatchModel` needs no extra setup. Submitting a request and every check on its batch run as separate durable steps, so a run that's interrupted while its batch is processed, for example by a deployment, continues from the same batch when it's recovered. Under Temporal and DBOS, the waits between checks are durable too. Requests are collected into batches per worker process.
 
-A request waits for its batch to be submitted inside its durable step, so keep `max_wait` well below the step's timeout (under Temporal, the model activity's `start_to_close_timeout`), or a slow submission can time out and be retried, submitting the request again. For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.models.batch.BatchModel.flush] can't be called from workflow code.
+A request waits for its batch to be submitted inside its durable step, so keep `max_wait` well below the step's timeout (for example, the Temporal model activity's `start_to_close_timeout`), or a slow submission can time out and be retried, submitting the request again. For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.models.batch.BatchModel.flush] can't be called from workflow code.
 
 ## Direct batch requests
 
