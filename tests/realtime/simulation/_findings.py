@@ -76,7 +76,8 @@ def _inserted_user_speech(sim: Simulation, violation: InvariantViolation) -> boo
 
 ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
-LEGACY_CORE = ALL - OPENAI_PROTOCOL
+GEMINI = frozenset({'gemini'})
+LEGACY_CORE = frozenset({'gpt-live'})
 """The providers whose sessions still run the current session core: the new one (`_core.py`) fixed the finding for
 the others."""
 
@@ -166,7 +167,8 @@ LOST_RESPONSE_RESERVATION = Finding(
     tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
-    providers=ALL,
+    # Fixed for Gemini by its lifecycle tracker: a drop loses every reply still owed.
+    providers=OPENAI_PROTOCOL | {'gpt-live'},
     matches=lambda sim, violation: (
         any(response.lost and response.answers for response in sim.truth.responses.values())
         or any(input_.answer_lost for input_ in sim.truth.inputs)
@@ -274,6 +276,25 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
     # stretch of audio a turn of its own (each `send_audio` is one here), though the provider may commit several
     # stretches as one turn and this one later.
     return sum(before_reply(operation) for operation in sim.operations) > len(earlier)
+
+
+UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
+    id='SIM-39',
+    title=(
+        'Gemini Live neither acknowledges an input nor says when a response starts, so an input that asks for no '
+        'reply (context, an image), sent while a reply is owed but before any of its content arrived, is placed '
+        'after that reply: the server may have had it before it started'
+    ),
+    tracked_by=(
+        "the Gemini lifecycle tracker's documented inference: an input sent while the model owes a reply reached it "
+        'while it was working on that reply'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.order'}),
+    providers=GEMINI,
+    matches=_sent_before_reply_content,
+    accepted=True,
+)
 
 
 SPEAKING_ORDER = Finding(
@@ -387,9 +408,6 @@ def _parallel_calls(sim: Simulation, violation: InvariantViolation) -> bool:
 
 def _gemini_behavior(sim: Simulation, name: str) -> bool:
     return bool(getattr(getattr(sim, 'behavior', None), name, False))
-
-
-GEMINI = frozenset({'gemini'})
 
 
 def _cut_off_by_the_input(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -617,45 +635,6 @@ PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
 )
 
 
-def _pair_answered_with_the_turn_that_cut_it_off(sim: Simulation) -> bool:
-    """Two calls whose turn a user turn (typed or spoken) cut off, answered by one response together with that turn."""
-    truth = sim.truth
-    for cut in truth.responses.values():
-        if len(cut.tool_calls) != 2 or cut.status != 'cancelled':
-            continue
-        # (A spoken turn is committed after it cut the response off, so only its start bounds it.)
-        turns = {
-            input_.key for input_ in truth.inputs if input_.kind in ('text', 'speech') and input_.seq > cut.seq_start
-        }
-        if any(
-            set(cut.tool_calls) <= set(answer.answers) and turns & set(answer.answers)
-            for answer in truth.responses.values()
-        ):
-            return True
-    return False
-
-
-ASYNC_BATCH_OF_THREE = Finding(
-    id='SIM-19',
-    title=(
-        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, a `tool_call` message of three or more calls leaves '
-        'a reservation after the model answered the batch, so `wait_for_reply()` hangs (two calls are fine, unless a '
-        'user turn, typed or spoken, cut their turn off and one answer covers both with it; no '
-        'recording has an async batch, so the fake answering one once may be what is wrong)'
-    ),
-    tracked_by='one reply per batch (#8765) also for asynchronous calls; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: (
-        _gemini_behavior(sim, 'talks_through_tool_calls')
-        and (
-            any(len(response.tool_calls) > 2 for response in sim.truth.responses.values())
-            or _pair_answered_with_the_turn_that_cut_it_off(sim)
-        )
-    ),
-)
-
 LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
@@ -668,20 +647,6 @@ LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
     providers=frozenset({'gpt-live'}),
     matches=_reply_continued_across_a_round,
-)
-
-EXTENDED_THINKING_PARALLEL_CALLS = Finding(
-    id='SIM-17',
-    title=(
-        'on `gemini-3.8-live-extended-thinking` (which runs every call asynchronously), a batch of parallel calls '
-        'leaves a reservation after the model answered it, so `wait_for_reply()` hangs (no recording has an async '
-        'batch: the fake answers one once, after its last result, where the adapter expects an answer per result)'
-    ),
-    tracked_by='#8765 follow-up (one reply per batch, also for async calls); found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: _gemini_behavior(sim, 'stalls_in_progress') and _parallel_calls(sim, violation),
 )
 
 
@@ -959,9 +924,7 @@ KNOWN_FINDINGS.extend(
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
-        EXTENDED_THINKING_PARALLEL_CALLS,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
-        ASYNC_BATCH_OF_THREE,
         LIVE_BATCH_RESERVATIONS,
         LIVE_QUEUED_TEXT_RESERVATIONS,
         LIVE_RAW_CLOSE_ERROR,
@@ -975,6 +938,7 @@ KNOWN_FINDINGS.extend(
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
+        UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
     ]
 )
 

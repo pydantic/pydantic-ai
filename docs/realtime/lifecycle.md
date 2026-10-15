@@ -59,7 +59,7 @@ from pydantic_ai import Agent
 
 agent = Agent()
 realtime = agent.realtime(
-    'openai:gpt-realtime',
+    '{{ openai:realtime }}',
     model_settings={'reconnect': {'max_attempts': 5}},
 )
 ```
@@ -142,7 +142,7 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [OpenAI session behavior](openai.md#feature-support-and-limitations)
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
-- [xAI session behavior](xai.md#feature-support-and-limitations)
+- [xAI session length](xai.md#session-length)
 - [ElevenLabs session behavior](elevenlabs.md#feature-support-and-limitations)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
@@ -182,7 +182,7 @@ async def close_after(session: RealtimeSession, seconds: float) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         watchdog = asyncio.create_task(close_after(session, 300))
         try:
             async for event in session:

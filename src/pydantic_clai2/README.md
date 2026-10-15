@@ -228,7 +228,8 @@ Rewinding removes the selected prompt and all later messages from the saved
 conversation, then restores that prompt and its image attachments to the editor.
 This replaces any unsent draft and its attachments; cancel the menu to keep them.
 Edit the restored prompt and press Enter when ready. It does **not** undo file changes or other
-tool side effects, replay tools, or erase the terminal scrollback. Only prompts
+tool side effects, roll back code mode's saved sandbox state (the model can pass
+`restart: true` to clear it), replay tools, or erase the terminal scrollback. Only prompts
 still present in the retained history are available. Prompts predating retained
 rewritten context, such as a compaction summary, are disabled even if compaction
 kept a copy of the prompt. That summary can contain later facts, so the original
@@ -254,19 +255,28 @@ Done (0.1s)
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory with the terminal's input. Stdout
-and stderr are captured separately and displayed as they arrive. Because output
-is piped, programs that require a terminal for their output, such as full-screen
-editors, may not work. CLAI reports `Done` or the exit code with the elapsed time.
+available. It runs in CLAI's working directory. Stdout and stderr are captured
+separately and displayed as they arrive. CLAI reports `Done` or the exit code
+with the elapsed time.
+
+When CLAI runs on a terminal on macOS or Linux, the command runs on a
+pseudo-terminal of its own, as it would in your shell. What you type while it
+runs goes to it and, as in a shell, is echoed into its output, so prompts such as
+`read`, `rm -i`, or a `sudo` password work.
+Programs see a terminal: CLAI sets `PAGER` and `GIT_PAGER` to `cat` so `git log`
+prints instead of paging, and drops colours and other terminal control sequences
+from the transcript. Elsewhere, such as on Windows or with input piped into CLAI,
+the command's stdout and stderr are pipes and it reads the terminal's input
+directly.
+
 Ctrl-C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
 on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
-should redirect stdout and stderr: CLAI stops collecting their output after the
-shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
-or `ssh` password prompts, cannot read your input. On Windows the console
+should redirect stdout and stderr: CLAI stops collecting their output shortly
+after the shell exits. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. The command, stdout, stderr, and completion status are saved in the
 conversation for the model's next turn, including partial output from interrupted
@@ -276,8 +286,52 @@ Running a command does not request a model reply. This context survives
 `/resume` without re-running the command; `/new` starts without it. Do not use `!`
 for output you do not want saved or shared with the model.
 
-A bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
-order with other queued input. `/help` lists the syntax.
+### Full-screen and interactive commands
+
+A full-screen program, such as `!nano .env`, `!vim`, `!git log | less`, `!htop`,
+or the editor `!git commit` opens, gets the terminal to itself:
+
+```text
+> !nano .env
+$ nano .env
+Shell command and output saved for the next prompt
+Full-screen command: only its exit status is saved
+Done (12.4s)
+```
+
+CLAI needs no list of programs for this. Full-screen programs switch the
+terminal to its alternate screen when they start, and on the pseudo-terminal
+above CLAI sees that happen. At that moment CLAI takes its own display off the
+screen and passes the program's output and your keys, Ctrl-C included, straight
+through. Window size changes reach the program too. When it exits, CLAI redraws
+its screen. Output printed before the switch appears in the transcript; nothing
+is saved for the next prompt but the command and its exit status.
+
+A program that is interactive without a full screen, such as the `python` REPL
+or `ssh`, runs in the transcript, where line editing shows as redrawn text. Start
+it with `!!` to give it the terminal from the start: `!!python`, `!!ssh host`,
+`!!./install.sh`.
+
+```text
+> !!python
+$ python
+Interactive command: it has the terminal, and its output is not saved
+Done (42.0s)
+```
+
+CLAI leaves its screen, restores the terminal's normal input mode, and runs the
+command with its own input, output, and error streams, in CLAI's process group.
+The command gets Ctrl-C and window size changes itself; CLAI ignores Ctrl-C
+until it exits. When it exits, CLAI restores the terminal's modes and redraws
+its screen. Anything the command printed outside a full screen stays on the
+terminal's main screen, which CLAI covers again. Only the command and its exit
+status are saved. On Windows, the command shares CLAI's console in the same way.
+Without `!!`, a full-screen program on Windows cannot draw, because its output
+is a pipe.
+
+A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
+run in order with other queued input. `/help` lists the syntax.
+
 
 ## Prompt area
 
@@ -1524,6 +1578,8 @@ naming token counts separately; `/cost` remains retained foreground-history cost
 
 Conversations, metadata, and step records live in `sessions.db` beside the settings
 database. `--database` therefore also selects the directory for saved sessions.
+Code mode's saved sandbox state lives in `sessions.repl/`, one owner-only file
+per session, next to it.
 New conversation databases use owner-only file permissions where supported. The
 contents are **not encrypted**: prompts, replies, tool results, and media may
 contain secrets. Do not share the database between machines. An unfinished run
@@ -1586,8 +1642,8 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold, but it protects at most half the conversation, so it always has older
-messages to summarise. Add free text to say what the summary must keep, for example
+threshold, but it caps the protected tokens at half the conversation, so it usually has older
+messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
 You get one line with the message counts before and after and the tokens saved out
@@ -1777,6 +1833,43 @@ the managed task UI is not installed on them. Saved Coder `sub_agents: false`
 and declarations omitting that setting remain opt-outs. CLAI adds no tools when
 delegation is disabled.
 
+### Agent Skills
+
+The `coder` plugin loads [Agent Skills](https://agentskills.io/specification)
+(`<folder>/<skill>/SKILL.md`) from these folders, in this order:
+
+1. `.agents/skills` and `.claude/skills` in the project
+2. `~/.agents/skills` and `~/.claude/skills` in your home directory
+
+Folders that do not exist are skipped. Skills need a local workspace, so they
+are off on Windows. The model sees each skill's name and
+description and loads the instructions it needs, which tell it the skill's
+directory so it can follow references to `scripts/` or `references/`. Without
+any skills, nothing is added to the prompt and the model gets no extra tool.
+
+Each skill is also a command: `/code-review src/app.py` sends the
+`code-review` skill as your next prompt, with `src/app.py` in place of
+`$ARGUMENTS`, or appended as `ARGUMENTS: src/app.py` when the skill has no
+`$ARGUMENTS`. A skill named like a CLAI or plugin command, such as `model`,
+leaves that command alone and stays available to the model.
+
+When two folders have a skill with the same name, the earlier folder wins:
+project skills over personal ones, `.agents` over `.claude`. A skill reached
+twice, such as through a symlinked `.agents/skills`, or a byte-identical copy,
+counts once. CLAI prints one line for each skipped skill when it starts: a
+malformed `SKILL.md`, or a name another skill already has.
+
+The model's catalog is read at the start of every turn, so it lists a skill you
+add mid-session. Its `/command` arrives after `/reload` or
+`/plugins reload coder`. Choose different folders in `/plugins configure coder`
+under **Skill folders**, as a JSON list of paths; `~/` means your home directory
+and `[]` turns skills off. A folder CLAI cannot read turns skills off, with a
+notice, until the next `/reload`; the coding tools still load.
+
+Skill commands are read on this machine. With a plugin that runs the agent in a
+sandbox, the model's catalog is read from the sandbox's workspace instead, so the
+two can differ.
+
 ## Bring an agent
 
 ```python
@@ -1962,7 +2055,13 @@ updates replace the buffered line rather than printing control-code text; the la
 update appears at newline or tool completion. CRLF works across chunk boundaries.
 Long display lines are ellipsized to terminal width. The command itself wraps
 under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
-count summarizes any rows beyond that.
+count summarizes any rows beyond that. The command is highlighted as Bash, in the
+colours of fenced code but dimmed and without underlines, so it reads as secondary
+to the answer. Code inside it uses its own language: a heredoc body
+takes the language of the command reading it (`python - <<'EOF'`, `psql <<SQL`),
+of the file it is written to (`cat > probe.py <<'EOF'`), or of a delimiter such as
+`PYEOF`, and the quoted code of `python -c '...'` or `node -e '...'` is Python or
+JavaScript. A heredoc in an unknown language stays grey.
 Full output remains in the log; display formatting does not alter model results.
 
 ## Shell preview limit
@@ -2029,6 +2128,15 @@ native as `CodeMode` keeps them by default.
 `run_code` is a persistent Python sandbox with isolated environment variables,
 the host clock (through `datetime`), and no network. The model writes one snippet that calls many tools, and CLAI runs it while the model
 is still writing.
+
+The sandbox keeps its variables, functions, and imports from one prompt to the
+next. CLAI saves them with the session when each turn ends, so `/resume` and
+`--resume` bring them back with the history, and `--fork-session`, `/fork`, and
+resuming a busy session give the copy its own state. When the model passes
+`restart: true`, the turn saves the restarted sandbox instead. Deleting a session
+in the `/resume` browser deletes its state. Sub-agents start each task with an
+empty sandbox. A state Monty cannot load starts a fresh sandbox, and a state over
+32 MiB is not saved, so the next prompt starts with an empty sandbox.
 
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
 calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's
@@ -2292,7 +2400,7 @@ Other errors CLAI shows you and recovers from are sent the same way: a failed tu
 fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
 handler that fails. Usage errors, such as a mistyped command, are not sent. An error
 inside the agent run is already on the run's span, so it is not sent twice. With
-`include_content` off, these records and load failures keep only the exception's type.
+`include_content` off, the default, these records and load failures keep only the exception's type.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
@@ -2344,26 +2452,32 @@ is only queried with this choice; a missing email leaves the tag out), and
 Everything CLAI records itself (session roots, UI records, and plugin load
 failures) uses the `clai2` instrumentation scope.
 
-Prompts, responses, tool arguments/results, and binary image attachments are
-included by default, including retained history used by later turns. This can
-send source code, file contents, and screenshots to the configured telemetry
-destination. Review that destination before supplying
-credentials. Keep tokens out of plugin settings, which are saved as plaintext.
+Prompts, responses, tool arguments/results, and binary content such as image
+attachments are left out by default, so a Logfire token, even one set up for
+another project, only receives timing, token usage, model and tool names, and the
+type of each error. To record them, set **Message content** (`include_content`)
+and **Binary content** (`include_binary_content`) to included in
+`/plugins configure observability`. They then cover retained history used by later
+turns too, which can send source code, file contents, and screenshots to the
+configured telemetry destination, so review that destination first. Settings saved
+before these options defaulted to off, and that never set them, now leave content
+out as well; turn them on again to keep it. Keep tokens out of plugin settings,
+which are saved as plaintext.
 
 ```text
 /plugins configure observability
 /plugins disable observability
 /plugins enable observability
 /plugins reload observability
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 `/plugins configure observability`, or `c` on `observability` in `/plugins`, opens
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
-`service_name` (default `pydantic-clai2`), `include_content` (default `true`),
-`include_binary_content` (default `true`), `httpx` (default `false`), and `send_to_logfire` (either
+`service_name` (default `pydantic-clai2`), `include_content` (default `false`),
+`include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
@@ -2373,10 +2487,18 @@ scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made wit
 Logfire also captures HTTP headers and request and response bodies; with it off,
 those are not captured. HTTP instrumentation is process-wide, unlike agent tracing.
 
-Two more options choose where telemetry goes and what it covers. `token` names a
+More options choose where telemetry goes, what it covers, and what it reads. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
+rather than falling back. `variables_key` names a `/keys` entry holding a Logfire
+API key with the `project:read_variables` scope (write tokens cannot read
+variables), which the plugin's Logfire instance then reads
+[managed variables](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/)
+with instead of `LOGFIRE_API_KEY`. Nothing reads them unless a capability asks the
+instance for one, so the key is only used then. A missing key is reported, and
+the SDK falls back to `LOGFIRE_API_KEY` as if none were chosen. CLAI's own agent
+is named `clai2`, so its runs are `invoke_agent clai2` spans and Logfire Agent
+Control can address it by that name. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or
@@ -2422,9 +2544,8 @@ UI events are recorded by default. If you previously turned them off, set
 
 using the key name the setup menu printed (Esc closes the menu that `/plugins add`
 opens). Run the setup menu again to go back to your personal project. Agent spans
-still include content by default; add `"include_content": false,
-"include_binary_content": false` if you'd rather share only UX telemetry and
-timing with the team.
+leave content out by default, so the team gets UX telemetry and timing; turn on
+**Message content** only if you mean to share your prompts and results with it.
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.

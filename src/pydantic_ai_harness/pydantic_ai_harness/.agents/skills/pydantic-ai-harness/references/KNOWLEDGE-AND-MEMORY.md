@@ -18,7 +18,8 @@ demand). Only `Skills` needs an extra.
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part.
+of other files is injected into each request as a delimited user-role part, attached to the request
+that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
 ```python
 from pydantic_ai import Agent
@@ -267,12 +268,11 @@ Gotchas:
 
 ## PydanticAIDocs
 
-Adds one tool, `read_pyai_docs(topic)`, returning a Pydantic AI docs page verbatim, plus a short
-cache-stable instruction to read docs before writing capabilities, hooks, tools, or toolsets. It
-serves only these six Pydantic AI pages (`PydanticAIDocsTopic`), not your own docs: `capabilities`,
-`hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`. The `capabilities` topic maps to
-`docs/capabilities.md`, which the docs no longer have (the page is now `docs/capabilities/overview.md`),
-so that topic only works from a local path that provides the file.
+Adds one tool, `read_pyai_docs(topic)`, returning a Pydantic AI docs page with its model aliases
+replaced by the models they name, plus a short cache-stable instruction to read docs before writing
+capabilities, hooks, tools, or toolsets. It serves only these six Pydantic AI pages
+(`PydanticAIDocsTopic`), not your own docs: `capabilities`, `hooks`, `tools`, `tools-advanced`,
+`toolsets`, `agent`.
 
 ```python
 from pydantic_ai import Agent

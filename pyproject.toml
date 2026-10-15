@@ -219,19 +219,14 @@ anthropic = "2026-10-08T03:42:01.588842Z"
 # OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
 # TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
 openai = "2026-10-06T21:31:20Z"
-# google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
-# TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
-google-genai = "2026-09-22T17:23:02Z"
-# First releases with cp315 wheels, so Python 3.15 CI installs them instead of compiling from source.
-# rpds-py 2026.9.1 is its first cp315 wheel built against the frozen 3.15 ABI (3.15.0rc1); earlier ones
-# were built against betas, which broke greenlet's on 3.15.0.
-# Each admits that release's artifacts through one second after its last upload.
-# TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, when the last of these (asyncpg) leaves the cooldown,
-# then run `uv lock` and `uv lock --script .github/scripts/pydantic-ai-runner`.
-aiohttp = "2026-10-05T17:43:49Z"
+# google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
+# TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
+google-genai = "2026-10-13T00:38:20Z"
+# asyncpg 0.32.0 is the first release with cp315 wheels, so Python 3.15 CI installs it instead of compiling
+# from source. This admits its artifacts through one second after the last upload.
+# TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
 asyncpg = "2026-10-06T20:32:41Z"
-fastavro = "2026-10-05T22:24:00Z"
-rpds-py = "2026-10-04T16:32:38Z"
 
 [dependency-groups]
 dev = [
@@ -406,6 +401,7 @@ banned-module-level-imports = [
     "prefect",
     "sentence_transformers",
     "sklearn",
+    "smol",
     "temporalio",
     "torch",
     "transformers",
@@ -451,6 +447,7 @@ quote-style = "single"
 "tests/durable_exec/**/*.py" = ["TID253"]
 "tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
+"tests/harness/smol_sandbox/*.py" = ["TID253"]
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -507,6 +504,7 @@ markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "smol_live: boots real smolvm VMs; needs a host that can run them",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",

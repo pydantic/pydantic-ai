@@ -880,8 +880,8 @@ class OpenAILiveConnection(RealtimeConnection):
         since the last report, all of them on a short call, would never be recorded. Called once the session
         has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
 
-        A backend response still finishing meanwhile has no reply left to land on, so its tokens are yielded
-        as session usage: counted in the session's total, attributed to no response.
+        A backend response still finishing meanwhile has no reply left to land on: its report is yielded as
+        it is, counted in the session's total (with the request it was) and attributed to no response.
         """
         if self._closed:
             return
@@ -905,7 +905,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 break
             for event in self._map_frame(raw):
                 if isinstance(event, SessionUsage):
-                    yield event if not event.response_scoped else SessionUsage(event.usage, response_scoped=False)
+                    yield event
             # Any final usage `session.closed` held back was just yielded.
             self._session_end.unclaimed = []
 
@@ -1482,6 +1482,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 model_name=response.model,
                 provider_api_url=self._provider_url,
                 provider_name=self._provider_name,
+                price_context={'service_tier': response.service_tier} if response.service_tier else None,
             )
         ) is not None:
             mapped.cost = price.total_price
