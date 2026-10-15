@@ -11,7 +11,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC
 from decimal import Decimal
@@ -3063,12 +3063,16 @@ async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usag
 
 
 @pytest.mark.parametrize(
-    'limits',
-    [UsageLimits(request_limit=0), UsageLimits(per_request_input_tokens_limit=5)],
-    ids=['request_limit', 'per_request_input_tokens_limit'],
+    ('limits', 'exceeded'),
+    [
+        (UsageLimits(request_limit=0), True),
+        (UsageLimits(per_request_input_tokens_limit=5), True),
+        (UsageLimits(request_limit=1), False),
+    ],
+    ids=['request_limit', 'per_request_input_tokens_limit', 'within_limits'],
 )
 async def test_a_backend_request_reported_while_closing_is_held_to_the_request_limits(
-    model: OpenAILiveModel, limits: UsageLimits
+    model: OpenAILiveModel, limits: UsageLimits, exceeded: bool
 ) -> None:
     """A backend response that ends as the session closes is a request like any other: one over a limit fails `close()`."""
 
@@ -3093,7 +3097,7 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
     ws = _BackendFinishingSocket([started], closed_seconds=1)
     sessions: list[RealtimeSession] = []
     readings: list[asyncio.Future[Any]] = []
-    with _patched_connect(ws), pytest.raises(UsageLimitExceeded):
+    with _patched_connect(ws), pytest.raises(UsageLimitExceeded) if exceeded else nullcontext():
         async with Agent().realtime(model, usage_limits=limits).session() as session:
             sessions.append(session)
             readings.append(asyncio.ensure_future(anext(aiter(session))))
