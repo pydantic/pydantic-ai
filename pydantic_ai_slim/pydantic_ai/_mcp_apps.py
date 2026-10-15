@@ -1,4 +1,4 @@
-"""The MCP Apps (SEP-1865) record `MCPToolset` attaches to a tool return, and its UI wire payload.
+"""The MCP Apps (SEP-1865) record `MCPToolset` attaches to a tool return.
 
 This module has no `mcp` dependency, so the UI adapters can read the record without the `mcp` extra.
 """
@@ -14,9 +14,6 @@ from ._utils import is_str_dict
 
 MCP_APP_METADATA_KEY: Final = 'mcp_app'
 """Key under which the record sits in `ToolReturnPart.metadata`."""
-
-MCP_APPS_UI_TYPE: Final = 'mcp-apps'
-"""Name of the UI event that carries the record: the AG-UI activity type and the Vercel AI `data-*` suffix."""
 
 
 class MCPAppToolResult(TypedDict):
@@ -79,21 +76,3 @@ def _redact_wire_block(block: Any) -> Any:
             return {**block, 'resource': {key: value for key, value in resource.items() if key != 'blob'}}
         case _:
             return block
-
-
-def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:
-    """Build the payload UI adapters send for an MCP App tool call.
-
-    The keys match the `mcp-apps` activity content of the AG-UI MCP Apps middleware, so frontends can
-    share one renderer across protocols. The middleware identifies the server by both `serverId` and
-    `serverHash` (a digest of its connection config), and renderers such as CopilotKit's require
-    `serverHash`, so the toolset ID fills both.
-    """
-    payload: dict[str, Any] = {
-        'resourceUri': app['resource_uri'],
-        'toolInput': app['tool_input'],
-        'result': app['result'],
-    }
-    if app['toolset_id'] is not None:
-        payload['serverId'] = payload['serverHash'] = app['toolset_id']
-    return payload

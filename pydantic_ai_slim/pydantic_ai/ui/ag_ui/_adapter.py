@@ -19,7 +19,7 @@ from typing import (
 from pydantic import ValidationError
 
 from ... import ExternalToolset, ToolDefinition
-from ..._mcp_apps import MCP_APPS_UI_TYPE, get_mcp_app_tool_result, mcp_app_ui_payload
+from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
@@ -64,7 +64,7 @@ from .._adapter import (
     compaction_payload,
     tool_availability_delta_from_payload,
 )
-from .._utils import get_ui_message_id, set_ui_message_id
+from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
 try:
     from ag_ui.core import (

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from pydantic_core import to_json
 
-from ..._mcp_apps import MCP_APPS_UI_TYPE, get_mcp_app_tool_result, mcp_app_ui_payload
+from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import now_utc
 from ..._uuid import uuid7
 from ...exceptions import RunCancelled
@@ -38,6 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._adapter import compaction_payload
+from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
