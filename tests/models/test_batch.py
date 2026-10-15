@@ -60,7 +60,7 @@ def test_batch_size_is_capped_by_the_provider_limit() -> None:
 
 async def test_concurrent_runs_share_a_batch() -> None:
     wrapped = SlowBatchTestModel(pending_checks=2)
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3}))
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3, 'max_wait': None}))
 
     results = await asyncio.gather(*(agent.run(f'Hello {i}') for i in range(3)))
 
@@ -332,7 +332,9 @@ async def test_a_failed_submission_reaches_every_request_in_the_batch() -> None:
         async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
             raise ModelHTTPError(status_code=500, model_name='test', body='batch creation failed')
 
-    agent = Agent(BatchModel(FailingBatchModel(), batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2}))
+    agent = Agent(
+        BatchModel(FailingBatchModel(), batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None})
+    )
     results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
 
     assert [type(result).__name__ for result in results] == ['ModelHTTPError', 'ModelHTTPError']
@@ -358,7 +360,7 @@ async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
             return await super().batch_create([replace(request, body=next(tokens)) for request in requests])
 
     wrapped = ConstantBodyModel()
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3}))
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3, 'max_wait': None}))
 
     results = await asyncio.gather(*(agent.run('Hello') for _ in range(3)))
 
@@ -367,9 +369,9 @@ async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
     assert wrapped.custom_ids == [base_id, f'{base_id}-1', f'{base_id}-2']
 
 
-async def test_requests_cancelled_before_the_deadline_submit_nothing() -> None:
+async def test_requests_cancelled_before_submission_submit_nothing() -> None:
     wrapped = SlowBatchTestModel()
-    model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
     run = asyncio.create_task(Agent(model).run('Hello'))
     while not any(model._queues.values()):  # pyright: ignore[reportPrivateUsage]
         await asyncio.sleep(0)
@@ -383,7 +385,7 @@ async def test_requests_cancelled_before_the_deadline_submit_nothing() -> None:
 
 async def test_abandoning_some_requests_keeps_the_batch_running() -> None:
     wrapped = SlowBatchTestModel(pending_checks=1000)
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2})
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None})
     first, _ = await asyncio.gather(_pending_response(model), _pending_response(model))
 
     await model.cancel_suspended_response(first)
@@ -405,7 +407,7 @@ async def test_results_are_shared_by_the_requests_of_a_batch(monkeypatch: pytest
 
     wrapped = CountingResultsModel()
     wrapped.result_fetches = 0
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2}))
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None}))
 
     await asyncio.gather(agent.run('one'), agent.run('two'))
     await asyncio.gather(agent.run('three'), agent.run('four'))
@@ -430,7 +432,7 @@ async def test_a_request_checked_after_the_results_arrived_reads_them_from_memor
 
     wrapped = CountingResultsModel()
     wrapped.result_fetches = 0
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2})
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None})
     first, second = await asyncio.gather(_pending_response(model), _pending_response(model))
     prompt = ModelRequest(parts=[UserPromptPart('Hello')])
 
