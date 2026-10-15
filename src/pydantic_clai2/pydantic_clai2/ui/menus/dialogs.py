@@ -5,6 +5,7 @@ import threading
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
+from anyio import to_thread
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.plugins.menus import Action, Option, SettingsMenu
@@ -163,8 +164,10 @@ async def run_settings_menu(menu: SettingsMenu, runners: Runners | None = None) 
         return lambda: action(dialogs)
 
     with full_terminal():
+        # Building the list reads the rows, which may read the keyring or `/keys`: off the loop, as each step is.
+        fields = await to_thread.run_sync(partial(FieldMenu, menu.source, searchable=menu.searchable))
         return await run_flow_async(
-            FieldMenu(menu.source, searchable=menu.searchable),
+            fields,
             runners,
             submenus={key: opens(action) for key, action in menu.actions.items()},
         )
