@@ -128,9 +128,12 @@ def _retry_policy_type(error: ModelAPIError) -> str:
 
     An error with a category reports the class it was before categories existed, `ModelHTTPError` if it came with
     an HTTP status and `ModelAPIError` otherwise, so a retry policy matches exactly what it matched before. Any other
-    error reports its own class name, which is what Temporal would have used for the raw exception. The workflow
-    still rebuilds the error as its own class.
+    error, including a subclass of a category defined outside `pydantic_ai.exceptions` (like the OpenAI adapter's
+    `WebSocketTransportError`), reports its own class name, which is what Temporal would have used for the raw
+    exception. The workflow still rebuilds the error as its own class.
     """
+    if type(error).__module__ != ModelAPIError.__module__:
+        return type(error).__name__
     if isinstance(error, ModelHTTPError):
         return 'ModelHTTPError'
     if isinstance(error, _ERROR_CATEGORIES):

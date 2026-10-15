@@ -210,6 +210,9 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as websocket_imports_successful:
+    from pydantic_ai.models._openai_responses_websocket import WebSocketTransportError
+
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
 # rather than globally in `pyproject.toml`. The `pytestmark` entry below covers warnings
@@ -3171,6 +3174,7 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
         pytest.param(
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
         ),
+        pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
         pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
@@ -3183,6 +3187,19 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert raised.value.type == type_name
     rebuilt = _crossed(error)
     assert type(rebuilt) is type(error)
+
+
+@pytest.mark.skipif(not websocket_imports_successful(), reason='websockets not installed')
+def test_a_category_subclass_from_an_adapter_keeps_its_own_type():
+    """A subclass of a category defined outside `pydantic_ai.exceptions` crossed under its own name before
+    categories existed, so a retry policy still sees that name rather than the category's legacy one."""
+    error = WebSocketTransportError('gpt-test', 'socket closed', phase='read')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert raised.value.type == 'WebSocketTransportError'
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is WebSocketTransportError
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
