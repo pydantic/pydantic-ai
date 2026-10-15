@@ -29,6 +29,7 @@ export function App() {
   const [sidebar, setSidebar] = useState(true)
   const [preview, setPreview] = useState<Saved | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
 
@@ -135,6 +136,8 @@ export function App() {
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      draft={draft}
+      onDraft={setDraft}
       onError={showError}
     />
   )
