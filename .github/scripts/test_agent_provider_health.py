@@ -1479,12 +1479,15 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
 
 
 def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Scheduled recovery closes elapsed windows but leaves future and unknown resets."""
+    """Scheduled recovery closes elapsed windows but leaves future ones, however old the incident."""
     elapsed = _issue(1, health.IncidentMarker('provider', 'zai', 'rate_limit', '1', '2026-09-30T00:00:00Z'))
-    future = _issue(2, health.IncidentMarker('provider', 'zai', 'quota_exhausted', '2', '2026-12-01T00:00:00Z'))
-    unknown = _issue(3, health.IncidentMarker('provider', 'zai', 'quota_unknown', None, None))
+    future = _issue(
+        2,
+        health.IncidentMarker('provider', 'zai', 'quota_exhausted', '2', '2026-12-01T00:00:00Z'),
+        created_at='2026-09-29T00:00:00Z',
+    )
     retired = _issue(4, health.IncidentMarker('provider', 'minimax', 'rate_limit', '4', '2026-09-30T00:00:00Z'))
-    client = FakeGitHub([elapsed, future, unknown, retired])
+    client = FakeGitHub([elapsed, future, retired])
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc))
@@ -1503,7 +1506,11 @@ def test_scheduled_recovery_closes_null_reset_incident_after_cool_down(
     undated = _issue(3, health.IncidentMarker('provider', 'zai', kind, '3', None))
     client = FakeGitHub([aged, young, undated])
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
-    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def fetch_healthy(*_args: object) -> health.Quota:
+        return health.Quota('healthy')
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
     monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
@@ -1523,7 +1530,11 @@ def test_scheduled_recovery_keeps_aged_null_reset_incident_while_unhealthy(
     client = FakeGitHub([incident])
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: quota)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def fetch_unhealthy(*_args: object) -> health.Quota:
+        return quota
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unhealthy)
     monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
@@ -1543,7 +1554,11 @@ def test_scheduled_recovery_leaves_credential_and_scoped_incidents_open(monkeypa
         ]
     )
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
-    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def fetch_healthy(*_args: object) -> health.Quota:
+        return health.Quota('healthy')
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
     monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0

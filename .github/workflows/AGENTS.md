@@ -242,9 +242,10 @@ It never closes another incident in the same run. A fresh health check must pass
 before the controller closes the named incident. The hourly scheduled run closes Z.ai
 rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
 once the recorded reset time has passed or, when none was recorded, once the incident
-is an hour old. Incidents closed within minutes of opening tended to reopen at once, so
-keep that cool-down. Credentials/configuration incidents and workflow/task incidents
-need operator attention rather than automatic recovery.
+is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
+and closes within minutes of opening were followed by a new incident within minutes.
+Credentials/configuration incidents and workflow/task incidents need operator attention
+rather than automatic recovery.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.

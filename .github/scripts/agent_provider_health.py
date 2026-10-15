@@ -25,7 +25,7 @@ MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
-NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
+_NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
 _RETIRED_PROVIDER_REASON = (
     'Workflow passes retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`; update the workflow from `main`'
 )
@@ -994,7 +994,7 @@ def _recover_issue(
             return False
     elif automatic and (
         issue.created_at is None
-        or now < dt.datetime.fromisoformat(issue.created_at.replace('Z', '+00:00')) + NULL_RESET_COOL_DOWN
+        or now < dt.datetime.fromisoformat(issue.created_at.replace('Z', '+00:00')) + _NULL_RESET_COOL_DOWN
     ):
         return False
     if dry_run:
