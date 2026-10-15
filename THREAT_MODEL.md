@@ -12,7 +12,7 @@ The same agent can run inside applications with different authority. Evaluate a 
 |---|---|
 | Server application using `Agent` | The application owns authentication, tenant identity, tool permissions, provider credentials, and access to stored state. |
 | Server application using a UI adapter | Client-submitted protocol messages cross an adapter boundary before reaching the agent. The hosting application still owns HTTP and session security. |
-| Realtime voice session | The server owns the session, tools, and credentials. On a browser WebRTC call, the browser is also a peer on the provider session. |
+| Realtime voice session | The server owns the session, tools, and provider credentials. A browser WebRTC call adds the browser as a peer on the provider session. |
 | Local CLI or harness tools | Python tools and local commands use the authority of the launching process unless a configured execution backend provides isolation. |
 | Sandboxed or remote workspace | The selected backend, provider, credentials, mounts, network settings, and lifetime define the execution boundary. |
 | Durable agent | The application and execution engine own access to persisted workflow state, queues, credentials, and replay infrastructure. |
@@ -57,11 +57,11 @@ The hosting application controls which clients may enter this flow. Adapters, to
 
 Protocol-derived history is client-controlled. UI adapters sanitize that input before execution. Direct `message_history` or `conversation` supplied to an entry point is an application-authored path; an application accepting either from a client must apply the corresponding validation and authorization.
 
-Review incoming fields that can select provider state, per-file provider options, instructions, uploaded files, download policy, tool calls, run identity, or a workspace. Review outgoing fields that can reveal server instructions, internal endpoints, provider details, or other users' state. Use explicit opt-in controls where an adapter supports trusting input or disclosing additional state.
+Review incoming fields that can select provider state, per-file provider options, instructions, uploaded files, download policy, tool calls, run identity, or a workspace. Review outgoing fields that can reveal server instructions, internal endpoints, provider details, MCP App tool results the model does not see, or other users' state. Use explicit opt-in controls where an adapter supports trusting input or disclosing additional state.
 
 Sanitization does not authenticate a client or prove that a submitted tool call or approval came from a genuine paused run. The application must authorize deferred actions and state access.
 
-Canonical guidance: [adapter trust model](docs/ui/overview.md), [deferred tools](docs/deferred-tools.md), and the [approval provenance follow-up](https://github.com/pydantic/pydantic-ai/issues/6452).
+Canonical guidance: [adapter trust model](docs/ui/overview.md), [deferred tools](docs/deferred-tools.md), [MCP Apps](docs/mcp/client.md#mcp-apps), and the [approval provenance follow-up](https://github.com/pydantic/pydantic-ai/issues/6452).
 
 ### HTTP and browser-origin security
 
@@ -73,13 +73,15 @@ Canonical guidance: [UI deployment](docs/ui/overview.md) and [web interface](doc
 
 ### Realtime sessions
 
-A realtime session runs on the server. On a browser WebRTC call, the browser is also a peer on the provider session: it can send provider-native control events and read the shared conversation, including seeded history and its tool results. Authorize tools against trusted dependencies, and seed a call only with history its participants may read.
+A browser on a WebRTC call can send provider-native control events and read the shared conversation, including seeded history and its tool results. A client-secret flow also gives it a short-lived provider credential. Authorize tools against trusted dependencies, and seed a call only with history its participants may read.
 
 Seeded `message_history` is trusted server-side state, as in a standard run, and history-processing capabilities do not run on it. Sanitize client-supplied history before seeding.
 
-A sideband does not own the call. Closing it detaches the server while the browser's call stays up, and billed, until the browser or the server hangs up. Retained session audio and images have their own bounds.
+A sideband does not own the call. Closing it detaches the server while the browser's call stays up, and billed, until the browser hangs up or, where the provider supports it, the server does.
 
-Canonical guidance: [browser WebRTC and sideband](docs/realtime/deployment.md#browser-webrtc-server-sideband), [seeding a session](docs/realtime/history.md#seeding-a-session), and [realtime usage and limits](docs/realtime/observability.md#usage-and-limits).
+Retained session audio and images are capped by default, and the caps can be removed.
+
+Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [seeding a session](docs/realtime/history.md#seeding-a-session), [retaining audio](docs/realtime/history.md#retaining-audio), and [realtime usage and limits](docs/realtime/observability.md#usage-and-limits).
 
 ### URL fetching and provider file references
 
@@ -117,7 +119,7 @@ Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](do
 
 The application must bind conversations, response identifiers, memory namespaces, deferred results, Code Mode REPL state, and workspace reattachment to the authorized user. An identifier supplied by a client is not proof of ownership.
 
-A `Conversation` also carries the running usage that usage limits count from, its `conversation_id`, and pending deferred tool requests; whoever supplies it controls those values. AG-UI maps the client's thread ID onto `conversation_id`, and conversation-scoped search keys on it, so pass an authenticated value. Monty does not authenticate a saved Code Mode REPL; load only state the application wrote to storage others cannot modify.
+A `Conversation` also carries the running usage that usage limits count from, its `conversation_id`, and pending deferred tool requests; whoever supplies it controls those values. UI adapters map a client-supplied ID (AG-UI's thread ID, Vercel AI's chat ID) onto `conversation_id`. Conversation-scoped search and stores keyed on that value trust it, so pass an authenticated one. Code Mode does not authenticate a saved REPL; load only state the application wrote to storage others cannot modify.
 
 Treat storage backends and durable execution infrastructure according to the deployment's trust assumptions. Durable execution does not add an integrity or tenant-authorization guarantee to an otherwise untrusted state store. Persistence also does not roll back an external side effect after a crash. An engine can expose model and tool steps as directly submittable tasks: Render Workflows callers with Workflow API access bypass the entry function's checks. Engine-retained task state can include prompts, tool arguments, results, and dependencies.
 
@@ -127,7 +129,7 @@ Canonical guidance: [message history](docs/message-history.md), [persistence](do
 
 Messages, tool arguments, results, files, and provider details can contain secrets. When instrumentation is enabled, its defaults include content. Text content, binary content, and model-request parameters have separate collection controls. Review redaction, access controls, and export destinations as part of the deployment.
 
-Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it finds a Logfire credential, including one in the environment, leaves prompts, results, and files out unless `include_content` is on, and traces every agent in the process while loaded.
+Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it finds a Logfire credential or OTLP exporter configuration, including in the environment, leaves prompts, results, and files out unless `include_content` is on, and traces every agent in the process while loaded.
 
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 
@@ -139,7 +141,7 @@ Review how untrusted input affects downloads, queued requests, model usage, tool
 
 Usage limits, timeouts, and concurrency limits control different resources. Evaluate normal completion, exceptions, cancellation, partial consumption, and recovery against the documented lifetime of each allocation. Scope the consequence to the affected pool, process, backend, or service.
 
-An output-length cap does not bound downloading, parsing, or conversion work performed before truncation. Review where each limit is applied. Per-run usage limits also do not establish tenant-wide admission or provider spend controls. `SpendLimits` refuses the next request once a recorded response spends a window; the crossing request and concurrent runs can exceed the ceiling.
+An output-length cap does not bound downloading, parsing, or conversion work performed before truncation. Review where each limit is applied. Per-run usage limits also do not establish tenant-wide admission or provider spend controls. `SpendLimits` refuses the next request once a recorded response spends a window; the crossing request and concurrent runs can exceed the ceiling, and an abandoned stream is not counted.
 
 Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeouts.md), [model concurrency](docs/models/overview.md), [spend limits](docs/harness/spend.md#what-the-gate-guarantees), and [background tools](docs/harness/background-tools.md).
 
@@ -149,22 +151,22 @@ Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeout
 |---|---|---|
 | File tools | Resolved-path checks and configured allow, deny, and read-only patterns. | These are tool-specific guardrails. The backend's path-resolution support and check/use races matter. Shell commands and Code Mode mounts can reach resources outside these checks. |
 | Shell tools | Workspace selection, command filters, timeouts, and output limits. | Command filters are not process isolation. Local execution uses the OS user's authority; detached jobs have a separate lifetime. |
-| Code Mode | A Monty sandbox with no host file, environment, or clock access by default, and per-snippet limits. | Nested calls run host tools with their authority. Mounts and OS access reach the agent's machine outside file-tool checks, even with a remote workspace. Eager and speculative execution start calls before `run_code` finishes streaming, so a control on `run_code` itself runs too late to stop them. |
-| Bubblewrap | Configured mounts, user namespace, temporary directory, and network restrictions. When the working directory contains the host home directory, the files an SSH login runs are mounted read-only. | By default, commands can read files and credentials available to the host user and signal other processes owned by that user. Files written in the working directory run unsandboxed when later used outside the sandbox. Over SSH, the login runs on the host before the sandbox starts, and other per-user configuration in a writable home stays writable. Give the sandbox a project working directory, hide sensitive directories, and use a separate OS user or cloud sandbox for untrusted agents. Mount and network configuration change exposure. |
+| Code Mode | A Monty sandbox with no host file, environment, or clock access by default, and per-snippet limits. | Nested calls run host tools with their authority. Mounts, and OS-access handlers that expose host resources, reach the agent's machine outside file-tool checks, even with a remote workspace. Eager and speculative execution start calls before `run_code` finishes streaming, so a control on `run_code` itself runs too late to stop them. |
+| Bubblewrap | Configured mounts, user namespace, temporary directory, and network restrictions. | By default, commands can read files and credentials available to the host user and signal other processes owned by that user. Files written in the working directory run unsandboxed when later used outside the sandbox. Over SSH, each connection's login runs on the host before the sandbox starts; with the home directory as the working directory, only the files a command connection runs are protected. Give the sandbox a project working directory, hide sensitive directories, and use a separate OS user or cloud sandbox for untrusted agents. Mount and network configuration change exposure. |
 | Local microVM | `SmolSandbox` runs a VM with its own kernel and filesystem, no host mounts, ports, or environment, and no network unless enabled. | The VM engine runs in the agent process with the OS user's authority, and its environment variables can turn off its own confinement. Enabled network access reaches whatever the host can, including local and metadata addresses. Any process of that OS user can attach to a VM by its ID, and VMs persist until deleted. |
 | SSH and cloud workspaces | Commands and file operations run through the configured remote account or provider. | An SSH workspace has the remote account's full authority, and its working directory does not contain commands. Its logins and timeout cleanup run on the host, outside any sandbox wrapping it. For cloud sandboxes, provider isolation, network access, credentials, and cleanup define the boundary. |
-| Plugins and MCP | CLAI 2 approves project plugin declarations and files, and trusts project MCP files by path and content. | Approved executable code and stdio servers run with the launching user's authority. Remote tools receive arguments and return untrusted content. |
-| CLAI 2 self-update | `/update` runs on request and installs from PyPI or, on the `main` channel, the `clai2-bleeding` prerelease built from `main`. | The install trusts that source and restarts CLAI into the new code. The environment, including `CLAI_BLEEDING_URL`, can change the source. |
+| Plugins and MCP | CLAI 2 approves each project plugin declaration and pins its file's absolute path, and trusts project MCP files by path and content. | Approved executable code and stdio servers run with the launching user's authority. Remote tools receive arguments and return untrusted content. |
+| CLAI 2 self-update | `/update` runs on request and installs from PyPI or, on the `main` channel, the `clai2-bleeding` prerelease built from `main`. | The install trusts that source and restarts CLAI 2 into the new code. The environment, including `CLAI_BLEEDING_URL`, can change the source. |
 | Capability creation | Runs require a writable local workspace. | Model-written Python is imported into the agent process. The host decides whether later runs load authored capabilities. |
 | Delegation and persistence | Child histories, tool selection, state snapshots, and effect records. | Separate histories do not isolate shared dependencies or workspaces. Recovery requires application decisions about unfinished external effects. |
 
 Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), and [step persistence](docs/harness/step-persistence.md).
 
-On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its default Coder has unrestricted file access and uses a local workspace unless configured otherwise. Stock CLAI 2 does not provide an agent workspace on Windows. Launching from a directory does not contain its commands or file access, and it trusts that directory and its parents:
+On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its default Coder has unrestricted file access and uses a local workspace unless configured otherwise. Stock CLAI 2 does not provide an agent workspace on Windows. Launching from a directory does not contain its commands or file access. Stock defaults that matter for review:
 
-- The nearest `.env` loads at startup without approval. It can change credentials, endpoints, CLAI settings, and the environment of the commands CLAI runs.
+- The nearest `.env`, searched from the launch directory up through its parents, loads at startup without approval. It can set any environment variable not already set, including credentials and endpoints, before CLAI 2 reads its settings or loads plugins.
 - Repository instructions, project skills, and project agent definitions reach the model by default. Agent definitions get no tools or model choice of their own.
-- Tools run through eager Code Mode by default, from `run_code` statements while the model is still writing. The REPL state is saved with the session.
+- Most tools, `shell` included, run through eager Code Mode by default, from `run_code` statements while the model is still writing. The REPL state is saved with the session.
 - `!` commands run in the host shell, not the agent workspace, and their output is saved for the next prompt.
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
