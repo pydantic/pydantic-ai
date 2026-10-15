@@ -248,6 +248,8 @@ After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stre
 To show the page with AI SDK UI's `experimental_MCPAppRenderer`, give it the resource URI as `toolMetadata.app` and the full result as `output`, both from the chunk. The tool part's own `output` is what the model saw, without the `structuredContent` and `_meta` the page needs:
 
 ```tsx
+import { experimental_MCPAppRenderer as MCPAppRenderer } from '@ai-sdk/react';
+
 type Message = UIMessage<unknown, { 'mcp-apps': { resourceUri: string; result: Record<string, unknown> } }>;
 
 const app = message.parts.find(p => p.type === 'data-mcp-apps' && p.id === part.toolCallId);

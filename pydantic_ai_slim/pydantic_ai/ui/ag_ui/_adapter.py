@@ -197,7 +197,7 @@ def _new_message_id() -> str:
 
 
 def _timestamp() -> int:
-    """The current time in milliseconds, as `AGUIEventStream` stamps the events of an agent run."""
+    """The current time in milliseconds, the unit of AG-UI event timestamps."""
     return int(now_utc().timestamp() * 1_000)
 
 
@@ -306,7 +306,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     Tool calls are limited to tools visible to apps and don't go through
     [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]; any resource on these servers can be read.
 
-    Defaults to no toolsets, which runs the agent for every request.
+    Only [`run_stream`][pydantic_ai.ui.UIAdapter.run_stream], and so `dispatch_request`, answers these runs;
+    `run_stream_native` still runs the agent. Defaults to no toolsets, which runs the agent for every request.
     """
 
     @classmethod
