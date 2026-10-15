@@ -215,7 +215,7 @@ Metadata describes the write that produced the file's current version:
 - A replayed operation returns its receipt without touching the file, which keeps the metadata of the write being replayed unless a later write replaced it. Metadata is not part of the operation fingerprint, so a replay that resolves different metadata is not a conflict.
 - Deleting a file deletes its metadata.
 
-Keys and values are strings. `PostgresMemoryStore` keeps them in a `metadata JSONB` column and `SqliteMemoryStore` in a `metadata TEXT` column, both added to existing tables on first use. `FileStore` keeps them in `.memory-metadata.json` beside the Markdown files, with the version each entry describes, so a file edited outside the store reads back without metadata.
+Keys and values are strings. `PostgresMemoryStore` keeps them in a `metadata JSONB` column and `SqliteMemoryStore` in a `metadata TEXT` column, both added to existing tables on first use. `FileStore` keeps them in `.memory-metadata.json` beside the Markdown files, with the content-hash version each entry describes. A file edited outside the store reads back without metadata, unless the edit restores the exact content the metadata was written with.
 
 `MemoryStore.write` takes `metadata`. `Memory` passes it only when `write_metadata` resolves a value, so a custom store written before the parameter existed keeps working until you set `write_metadata`.
 

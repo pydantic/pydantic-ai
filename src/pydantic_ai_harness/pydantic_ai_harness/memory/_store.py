@@ -516,7 +516,8 @@ class FileStore:
     edit made outside the store is seen as a change. Receipts for the most recent idempotent
     mutations are kept beside the files in `.memory-operations.json`, so a replayed tool call is
     not applied twice. Write metadata is kept in `.memory-metadata.json` with the version it
-    describes, so a file changed outside the store reads back without metadata.
+    describes, so a file changed outside the store reads back without metadata until it again
+    holds the content the metadata was written with.
 
     One writer per directory: one `FileStore` serializes its own operations, but two stores, or
     two processes, writing the same directory can lose updates. Use `SqliteMemoryStore` or

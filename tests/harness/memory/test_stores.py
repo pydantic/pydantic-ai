@@ -358,15 +358,20 @@ async def test_file_store_keeps_metadata_beside_the_markdown(tmp_path: Path) -> 
         await store.read('.memory-metadata.json', max_chars=1_000)
 
 
-async def test_file_store_metadata_does_not_survive_an_external_edit(tmp_path: Path) -> None:
+async def test_file_store_metadata_follows_the_content_it_was_written_with(tmp_path: Path) -> None:
     store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     await store.write('main.md', 'original', expected_version=None, metadata={'updated_by': 'ui'})
 
     (tmp_path / 'main.md').write_text('edited outside the store')
-
     file = await store.read('main.md', max_chars=1_000)
     assert file is not None
     assert file.metadata is None
+
+    # Versions are content hashes: restoring the exact content restores its version, and its metadata.
+    (tmp_path / 'main.md').write_text('original')
+    file = await store.read('main.md', max_chars=1_000)
+    assert file is not None
+    assert file.metadata == {'updated_by': 'ui'}
 
 
 async def test_file_store_reads_without_corrupt_metadata(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
