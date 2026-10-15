@@ -645,8 +645,7 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
     ctx = tool_manager.ctx
     assert ctx is not None, 'Code Mode builds every nested `ToolManager` with the run context'
     # Eager and speculative execution dispatch while the model is still streaming, possibly before a
-    # parallel input guard has decided. A prompt it does not allow ends the run before `run_code`
-    # returns, so this outcome never reaches the model.
+    # parallel input guard has decided.
     if not await input_guardrails_allow(ctx):
         return NestedCallOutcome(
             error=RuntimeError(

@@ -192,10 +192,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     prompt, whereas parallel mode has already started it — if the guard trips
     only after the model has responded, those tokens were still spent. Tool
     calls still wait for the verdict, including the nested ones `CodeMode`
-    starts while the model streams. Prefer
-    sequential for fast local guards. `replace` (redaction) is incompatible
-    with `parallel=True`, since the model call has already started with the
-    original prompt.
+    starts while the model streams. Prefer sequential for fast local guards.
+    `replace` (redaction) is incompatible with `parallel=True`, since the
+    model call has already started with the original prompt.
 
     Scope: the guard runs exactly once per run — on the first model request —
     and evaluates the original user prompt. Subsequent model requests in the
@@ -367,7 +366,14 @@ async def input_guardrails_allow(ctx: RunContext[object]) -> bool:
         if not verdict.done():
             # `asyncio.wait` rather than `await`: cancelling this waiter must not cancel the guard.
             await asyncio.wait({verdict})
-        if verdict.cancelled() or verdict.exception() is not None:
+            if verdict.cancelled():
+                # The model request ended before the guard decided, so the response this call came from is unused.
+                return False
+        elif verdict.cancelled():
+            # Normal tool dispatch doesn't wait for a guard that was cancelled undecided, as when the
+            # first model request is retried, so a call dispatched afterwards doesn't either.
+            continue
+        if verdict.exception() is not None:
             return False
     return True
 
