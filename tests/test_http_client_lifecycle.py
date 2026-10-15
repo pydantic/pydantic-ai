@@ -266,22 +266,26 @@ async def test_entered_agent_enters_model_its_selector_returns_once(provider_cli
     assert [client.is_closed for client in provider_clients] == [True]
 
     async with agent:
-        await agent.run('What is the capital of France?')
-        # Concurrent runs that are the first to select the model still enter it once.
         await asyncio.gather(
             agent.run('What is the capital of France?'),
             agent.run('What is the capital of France?'),
         )
+        await agent.run('What is the capital of France?')
         assert [client.is_closed for client in provider_clients] == [True, False]
     assert [client.is_closed for client in provider_clients] == [True, True]
 
 
-async def test_entered_agent_enters_model_selected_after_first_step_once(provider_clients: list[httpx2.AsyncClient]):
-    """A model a selector returns for a later step of a run is entered on the agent's exit stack too."""
-    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
+@pytest.mark.parametrize('select_by_name', [False, True])
+async def test_entered_agent_keeps_model_selected_after_first_step(
+    provider_clients: list[httpx2.AsyncClient], select_by_name: bool
+):
+    """A model a selector returns for a later step of a run stays open until the agent exits, too."""
+    model = None if select_by_name else OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
 
     def select(ctx: ModelSelectionContext[Any]) -> Model | str:
-        return model if ctx.run_step > 1 else 'test'
+        if ctx.run_step == 1:
+            return 'test'
+        return model or 'openai-chat:gpt-5.2'
 
     agent = Agent(capabilities=[SelectModel(select)])
 
@@ -352,6 +356,15 @@ def test_unentered_huggingface_model_gets_new_client_on_new_event_loop(
     assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
     assert provider.client is not hf_client
     assert transports[0] is not transports[1]
+
+    # While the agent, and with it the provider, is entered, the client stays.
+    async def run_entered() -> None:
+        async with agent:
+            entered_client = provider.client
+            await agent.run('What is the capital of France?')
+            assert provider.client is entered_client
+
+    asyncio.run(run_entered())
 
     # A client that was passed in is never replaced.
     provider = HuggingFaceProvider(hf_client=hf_client, api_key='test-key')

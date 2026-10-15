@@ -2039,7 +2039,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         model_resources = _RunModelResources(
             self._entered_model_ids.copy(),
-            # Like a model name, a selector's choice can depend on a `resolve_model_id` capability and the run's deps.
+            # As for model names, a `resolve_model_id` capability leaves the lifetime of each model to the run.
             enter_on_agent=None if run_capability.has_resolve_model_id else self._enter_selected_model,
         )
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
