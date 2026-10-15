@@ -405,7 +405,7 @@ _READINESS_WAIT_TIMEOUT = 5.0
 
 
 class _SlowReadPlanStore(InMemoryPlanStore):
-    """A plan store whose `get_item`, once a plan tool has emitted `last_event`, waits until it's handled.
+    """A plan store whose `get_item` waits, once a plan tool has emitted `last_event`, until it's handled.
 
     It stands in for a read slow enough that the event stream handler's steps for the tool's events
     all start while it is in flight. A replay returns the recorded read without calling the store.
@@ -415,17 +415,17 @@ class _SlowReadPlanStore(InMemoryPlanStore):
     def __init__(self, last_event: tuple[type[PlanStatusChangedEvent | PlanCompletedEvent], str]) -> None:
         super().__init__()
         self.last_event = last_event
-        self.handled: asyncio.Event | None = None
-        """Created when the tool emits `last_event`, inside the run's event loop, and set once it's handled."""
+        self.released = asyncio.Event()
+        """Cleared when the tool emits `last_event` and set again once the handler has handled it."""
+        self.released.set()
 
     def is_last_event(self, event: object) -> bool:
         event_type, task_id = self.last_event
         return isinstance(event, event_type) and event.item.id == task_id
 
     async def get_item(self, item_id: str) -> PlanItem | None:
-        if self.handled is not None:
-            with anyio.fail_after(_READINESS_WAIT_TIMEOUT):  # pragma: no cover
-                await self.handled.wait()
+        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+            await self.released.wait()
         return await super().get_item(item_id)
 
 
@@ -474,8 +474,8 @@ def _plan_event_agent(
 
     async def handle(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in events:
-            if store.handled is not None and store.is_last_event(event):
-                store.handled.set()
+            if store.is_last_event(event):
+                store.released.set()
 
     agent = Agent(
         FunctionModel(stream_function=stream),
@@ -511,7 +511,7 @@ _PLAN_EVENT_WORKFLOWS = {key: _workflow(agent) for key, (agent, _) in _PLAN_EVEN
 async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     scenario: str, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A plan tool emits its events as its last durable action, so their handler steps keep their order.
+    """A plan tool emits its events after its last store call, so their handler steps keep their order.
 
     DBOS runs a function tool in workflow code and starts a handler step for each event the tool
     emits while the tool is still running. Both draw step numbers from one counter. The first
@@ -520,12 +520,13 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     round trip live, a journal lookup on replay.
     """
     _, store = _PLAN_EVENT_AGENTS[scenario]
-    store.handled = None
+    # A replay re-emits `last_event` without rerunning the handler, so a previous run can leave it closed.
+    store.released.set()
     emit = RunContext.emit
 
     async def emit_marking_last_event(self: RunContext[None], event: CapabilityEvent, /) -> CapabilityEvent:
         if store.is_last_event(event):
-            store.handled = asyncio.Event()
+            store.released.clear()
         return await emit(self, event)
 
     monkeypatch.setattr(RunContext, 'emit', emit_marking_last_event)

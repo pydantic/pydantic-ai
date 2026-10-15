@@ -543,7 +543,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     async def _emit_changes(self, ctx: RunContext[AgentDepsT], before: list[PlanItem], after: list[PlanItem]) -> None:
         """Emit typed run events for the difference between two store snapshots.
 
-        Each plan tool that changes the plan calls this as its last durable action. Under an engine
+        Each plan tool that changes the plan calls this after its last store call. Under an engine
         that runs function tools in workflow code, like DBOS, the event stream handler's steps for
         these events start while the tool is still running and share its step counter, so store
         calls made after emitting could replay in a different order than they were recorded.
