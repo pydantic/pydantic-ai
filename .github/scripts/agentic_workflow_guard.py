@@ -604,8 +604,7 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
     if not bundled:
         bundled.update(re.findall(r'gh-aw-firewall/releases/download/(v[0-9.]+)/', lock.read_text(encoding='utf-8')))
 
-    # No install step means this lock does not use the shim, so there is no hand-written
-    # pin to drift.
+    # Without an install step there is no binary pin to compare.
     if not pinned:
         return []
     # A pin with nothing to compare it against is the check losing its reference, not a
@@ -617,7 +616,7 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
                 str(lock),
                 'awf-binary-version',
                 f'the AWF install step pins {", ".join(sorted(pinned))} but the lock declares no '
-                '`GH_AW_INFO_AWF_VERSION` to check it against. gh-aw stopped reporting the AWF '
+                '`GH_AW_INFO_AWF_VERSION` or AWF schema URL to check it against. gh-aw stopped reporting the AWF '
                 'version it bundles, so this check needs a new source before the pin can be trusted.',
             )
         ]
@@ -629,8 +628,8 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
             str(lock),
             'awf-binary-version',
             f'the AWF install step pins {", ".join(unexpected)} but gh-aw compiled this lock against '
-            f'{", ".join(sorted(bundled))}. Update the version in the `pre-steps` that re-run '
-            '`install_awf_binary.sh` and recompile; an older binary rejects the newer firewall config.',
+            f'{", ".join(sorted(bundled))}. Recompile with a gh-aw release that emits matching AWF installer '
+            'and schema versions; an older binary rejects the newer firewall config.',
         )
     ]
 

@@ -86,7 +86,7 @@ safe-outputs:
             const log = read(path.join(directory, 'detection.log'));
             const usage = read('/tmp/gh-aw/sandbox/firewall/logs/api-proxy-logs/token-usage.jsonl');
             const requests = usage.split('\n').filter(Boolean).map(line => JSON.parse(line));
-            // Keep complete proxy counters separate from the CLI's best-effort model spans.
+            // Keep complete proxy counters separate from native CLI telemetry.
             for (const request of requests) {
               const endMs = Date.parse(request.timestamp);
               await logSpan('gh-aw.detector.request', {
@@ -150,9 +150,6 @@ safe-outputs:
         ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: "3"
         CLAUDE_CODE_ENABLE_TELEMETRY: "1"
-        # Text-only responses can omit api_request logs; request spans retain usage.
-        CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: "1"
-        OTEL_TRACES_EXPORTER: otlp
         OTEL_LOGS_EXPORTER: otlp
         OTEL_METRICS_EXPORTER: none
         OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf

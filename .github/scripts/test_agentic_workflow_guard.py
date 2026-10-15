@@ -738,8 +738,6 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
         if 'CLAUDE_CODE_ENABLE_TELEMETRY' in step.get('env', {})
     )
     assert str(detector['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
-    assert str(detector['CLAUDE_CODE_ENHANCED_TELEMETRY_BETA']) == '1'
-    assert detector['OTEL_TRACES_EXPORTER'] == 'otlp'
     assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
     reporter = next(
@@ -886,6 +884,37 @@ jobs:
 
     assert [v.check for v in violations] == ['awf-binary-version']
     assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
+
+
+@pytest.mark.parametrize('schema_version', ['v0.28.31', 'v0.28.44'])
+def test_awf_binary_version_compares_the_schema_when_info_is_empty(tmp_path: Path, schema_version: str):
+    """Custom engines emit an empty info version; their actual config supplies the reference."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        f"""
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: ""
+      - name: Install AWF binary
+        run: bash "${{RUNNER_TEMP}}/gh-aw/actions/install_awf_binary.sh" v0.28.31
+      - name: Write firewall config
+        run: >-
+          printf '%s' '{{"$schema":"https://github.com/github/gh-aw-firewall/releases/download/{schema_version}/config.schema.json"}}'
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    if schema_version == 'v0.28.31':
+        assert violations == []
+    else:
+        assert [v.check for v in violations] == ['awf-binary-version']
+        assert 'v0.28.31' in violations[0].message
+        assert 'v0.28.44' in violations[0].message
+        assert 'Recompile with a gh-aw release' in violations[0].message
 
 
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
