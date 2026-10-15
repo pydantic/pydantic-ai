@@ -1478,9 +1478,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 if stream_error is not None:
                     # The consumer stopped the stream, so the graph task cancelled this one. Record what the
                     # provider billed for so far before the `wrap_model_request` chain unwinds, so wrappers that
-                    # account for billed responses see it. The graph task commits this same response afterwards.
+                    # account for billed responses, and the `chat` span, see it. The graph task commits this same
+                    # response afterwards.
                     _interrupted_response = _interrupted_stream_response(stream_error, agent_stream_holder[0].response)
                     req_ctx._usage_response_ledger.responses.append(_interrupted_response)  # pyright: ignore[reportPrivateUsage]
+                    capture_model_response_span_context(req_ctx, _interrupted_response, time_to_first_chunk)
                 raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
@@ -1653,26 +1655,26 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _commit_interrupted_response(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         model: models.Model,
-        partial: _messages.ModelResponse,
-        partial_response: _messages.ModelResponse,
+        streamed: _messages.ModelResponse,
+        recorded: _messages.ModelResponse,
     ) -> None:
         """Commit the response an interrupted stream produced so far, without checking usage limits.
 
-        `partial_response` is `partial` as `_interrupted_stream_response` recorded it.
+        `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
         """
-        if partial.state == 'suspended' and partial_response.state == 'interrupted':
+        if streamed.state == 'suspended' and recorded.state == 'interrupted':
             # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
-            await cancel_suspended_job(model, partial)
-        partial_response.run_id = ctx.state.run_id
-        partial_response.conversation_id = ctx.state.conversation_id
-        partial_response.workspace_ref = ctx.deps.workspace_ref
-        _record_attempts_usage(ctx.state.usage, partial_response.failed_attempts)
-        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
-        if partial_response.parts:
+            await cancel_suspended_job(model, streamed)
+        recorded.run_id = ctx.state.run_id
+        recorded.conversation_id = ctx.state.conversation_id
+        recorded.workspace_ref = ctx.deps.workspace_ref
+        _record_attempts_usage(ctx.state.usage, recorded.failed_attempts)
+        _usage_attribution.record_usage(ctx.state.usage, recorded.usage)
+        if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
-        ctx.state.message_history.append(partial_response)
+        ctx.state.message_history.append(recorded)
 
     @staticmethod
     def _build_agent_stream(
