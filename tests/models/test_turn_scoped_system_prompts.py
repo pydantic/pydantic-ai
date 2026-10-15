@@ -859,7 +859,7 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
     )
     messages: list[BetaMessageParam] = [
         {'role': 'user', 'content': [{'type': 'text', 'text': 'Check the weather everywhere.'}]},
-        {'role': 'system', 'content': [{'type': 'text', 'text': 'Reminder 1.'}], 'clear_at': 'next_user_message'},  # pyright: ignore[reportAssignmentType]
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Reminder 1.'}], 'clear_at': 'next_user_message'},
         {
             'role': 'assistant',
             'content': [{'type': 'tool_use', 'id': f'call_{i}', 'name': 'get_weather', 'input': {}} for i in range(12)],
@@ -868,7 +868,7 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
             'role': 'user',
             'content': [{'type': 'tool_result', 'tool_use_id': f'call_{i}', 'content': 'Sunny'} for i in range(12)],
         },
-        {'role': 'system', 'content': [{'type': 'text', 'text': 'Reminder 2.'}], 'clear_at': 'next_user_message'},  # pyright: ignore[reportAssignmentType]
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Reminder 2.'}], 'clear_at': 'next_user_message'},
     ]
 
     model._apply_message_cache_control(messages, '5m')  # pyright: ignore[reportPrivateUsage]
