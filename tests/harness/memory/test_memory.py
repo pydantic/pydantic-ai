@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
@@ -240,12 +241,14 @@ class DelegatingStore:
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
         return await self.inner.write(
             path,
             content,
             expected_version=expected_version,
             operation=operation,
+            metadata=metadata,
         )
 
     async def delete(
@@ -274,6 +277,7 @@ class ContendedStore(DelegatingStore):
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
         if self.conflicts_remaining:
             self.conflicts_remaining -= 1
@@ -283,7 +287,23 @@ class ContendedStore(DelegatingStore):
             content,
             expected_version=expected_version,
             operation=operation,
+            metadata=metadata,
         )
+
+
+@dataclass
+class PreMetadataStore(DelegatingStore):
+    """A custom store written before `MemoryStore.write` took `metadata`."""
+
+    async def write(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        path: str,
+        content: str,
+        *,
+        expected_version: str | None,
+        operation: MemoryOperation | None = None,
+    ) -> MemoryMutation:
+        return await super().write(path, content, expected_version=expected_version, operation=operation)
 
 
 @dataclass
@@ -449,6 +469,37 @@ class TestPublicAgentPath:
         assert memory_file is not None
         assert memory_file.content == '- prefers uv\n'
 
+    async def test_write_metadata_is_resolved_from_each_run(self) -> None:
+        @dataclass
+        class Deps:
+            user_id: str
+
+        store = InMemoryStore()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('write_memory', {'content': '- fact'}, tool_call_id='w')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=Deps,
+            capabilities=[
+                Memory[Deps](
+                    store=store,
+                    namespace=lambda ctx: ctx.deps.user_id,
+                    write_metadata=lambda ctx: {'updated_by': 'agent', 'actor_id': ctx.deps.user_id},
+                )
+            ],
+        )
+        await agent.run('remember', deps=Deps('alice'))
+        await agent.run('remember', deps=Deps('bob'))
+
+        for user_id in ('alice', 'bob'):
+            memory_file = await store.read(f'{user_id}/main/MEMORY.md', max_chars=1_000)
+            assert memory_file is not None
+            assert memory_file.metadata == {'updated_by': 'agent', 'actor_id': user_id}
+
     async def test_toolset_has_stable_id_and_exact_schemas(self) -> None:
         toolset = MemoryToolset(Memory[None]())
         tools = await toolset.get_tools(_ctx())
@@ -556,6 +607,40 @@ class TestWriteMemory:
         await toolset.write_memory(subfile_context, 'topic', file='topic')
         subfile_replay = await toolset.write_memory(subfile_context, 'topic', file='topic')
         assert subfile_replay['replayed'] is True
+
+    async def test_static_write_metadata_replaces_the_previous_writer(self) -> None:
+        capability = Memory[None](write_metadata={'updated_by': 'agent'})
+        await capability.store.write('main/MEMORY.md', '- typed by the user\n', expected_version=None)
+
+        await MemoryToolset(capability).write_memory(_ctx('append'), '- inferred by the model')
+
+        memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert memory_file.metadata == {'updated_by': 'agent'}
+
+    async def test_writes_without_write_metadata_clear_the_previous_writer(self) -> None:
+        capability = Memory[None]()
+        await capability.store.write(
+            'main/MEMORY.md', '- typed by the user\n', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+
+        await MemoryToolset(capability).write_memory(_ctx('append'), '- inferred by the model')
+
+        memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert memory_file.metadata is None
+
+    async def test_store_without_metadata_parameter_works_until_write_metadata_is_set(self) -> None:
+        store = PreMetadataStore()
+        memory = Memory[None](store=store)  # pyright: ignore[reportArgumentType]
+        assert (await MemoryToolset(memory).write_memory(_ctx('plain'), 'fact'))['status'] == 'created'
+        unset = Memory[None](store=store, write_metadata=lambda ctx: None)  # pyright: ignore[reportArgumentType]
+        assert (await MemoryToolset(unset).write_memory(_ctx('unset'), 'more'))['status'] == 'appended'
+
+        with pytest.raises(TypeError, match='metadata'):
+            await MemoryToolset(
+                Memory[None](store=store, write_metadata={'updated_by': 'agent'})  # pyright: ignore[reportArgumentType]
+            ).write_memory(_ctx('with-metadata'), 'fact')
 
     @pytest.mark.parametrize('tool_call_id,run_id', [('', 'run'), ('call', '')])
     async def test_mutation_requires_stable_ids(self, tool_call_id: str, run_id: str) -> None:

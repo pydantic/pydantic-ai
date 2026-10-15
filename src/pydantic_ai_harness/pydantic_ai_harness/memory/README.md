@@ -162,6 +162,66 @@ agent = Agent(
 
 Namespace isolation controls which records the capability addresses. It is not an authorization system for a custom or shared backing store. Validate the identity in application dependencies, restrict backend credentials, and ensure custom stores cannot escape the resolved namespace.
 
+## Write metadata
+
+Every bundled store can keep application-supplied metadata with a memory file, such as who wrote it, so an application UI can tell a note the user typed from one the model inferred. Pass `metadata` to `MemoryStore.write` and read it back from `MemoryFile.metadata`:
+
+```python
+from pydantic_ai_harness.memory import MemoryStore
+
+
+async def save_from_ui(store: MemoryStore, user_id: str, content: str) -> None:
+    path = f'{user_id}/main/MEMORY.md'
+    current = await store.read(path, max_chars=65_536)
+    await store.write(
+        path,
+        content,
+        expected_version=None if current is None else current.version,
+        metadata={'updated_by': 'ui', 'actor_id': user_id},
+    )
+```
+
+For the model's writes, set `write_metadata` to a mapping, or to a callable that resolves it from the run context for each `write_memory` call. The application supplies it: it is not a tool argument, and it is not rendered into the prompt.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai_harness import Memory
+from pydantic_ai_harness.memory import FileStore
+
+
+@dataclass
+class AppDeps:
+    user_id: str
+
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    deps_type=AppDeps,
+    capabilities=[
+        Memory(
+            FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')),
+            namespace=lambda ctx: ctx.deps.user_id,
+            write_metadata=lambda ctx: {'updated_by': 'agent', 'actor_id': ctx.deps.user_id},
+        )
+    ],
+    defer_model_check=True,
+)
+```
+
+Metadata describes the write that produced the file's current version:
+
+- It is stored in the same atomic step as the content, and replaces the previous write's metadata. A write without `metadata` leaves the file with none, so after an agent edit the file no longer shows the UI as its writer. Set `write_metadata` whenever another writer records metadata.
+- Compare-and-swap is unchanged: a write based on a stale version fails with a conflict and changes neither the content nor the metadata.
+- A replayed operation returns its receipt without touching the file, which keeps the metadata of the write being replayed unless a later write replaced it. Metadata is not part of the operation fingerprint, so a replay that resolves different metadata is not a conflict.
+- Deleting a file deletes its metadata.
+
+Keys and values are strings. `PostgresMemoryStore` keeps them in a `metadata JSONB` column and `SqliteMemoryStore` in a `metadata TEXT` column, both added to existing tables on first use. `FileStore` keeps them in `.memory-metadata.json` beside the Markdown files, with the version each entry describes, so a file edited outside the store reads back without metadata.
+
+`MemoryStore.write` takes `metadata`. `Memory` passes it only when `write_metadata` resolves a value, so a custom store written before the parameter existed keeps working until you set `write_metadata`.
+
 ## Multiple memories on one agent
 
 An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Three constraints apply:
@@ -211,6 +271,7 @@ Memory(
     agent_name='main',                 # storage segment inside the namespace; never shown to the model
     heading='',                        # optional heading on guidance and injected content
     namespace='',                      # string or per-run resolver
+    write_metadata=None,               # mapping or per-write resolver stored with model writes
     inject_memory=True,                # False keeps prompts cache-stable
     max_tokens=2_000,                  # finite approximate total injection budget
     max_lines=200,                     # additional main-notebook line limit
@@ -261,7 +322,7 @@ Each model request that uses automatic snapshot loading records one bounded snap
 
 Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
-Memory records do not carry source citations or verified provenance. If an application needs auditable facts, store provenance in the note itself or implement a custom store and schema. Optimistic concurrency prevents lost updates; it does not establish that a remembered claim is true.
+Memory records do not carry source citations. [Write metadata](#write-metadata) records what the application states about a write, such as who made it; it does not establish that a remembered claim is true, and neither does optimistic concurrency, which prevents lost updates. Deletions leave no record, so log them in the application if it needs an audit trail.
 
 ## API reference
 
