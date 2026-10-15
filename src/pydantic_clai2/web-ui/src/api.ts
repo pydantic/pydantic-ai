@@ -7,6 +7,7 @@ import type {
   Project,
   ServerMessage,
   Switch,
+  TaskTranscript,
   Transcript,
 } from './protocol'
 
@@ -79,6 +80,9 @@ export const api = {
   pluginSettings: (name: string, changes: Record<string, JsonValue>, reset: string[] = []) =>
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
+  task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
+  taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
+  steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */

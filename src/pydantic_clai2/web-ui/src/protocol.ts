@@ -97,16 +97,34 @@ export interface ThemeInfo {
   palette: Palette | null
 }
 
-export type ServerMessage =
-  | {
-      type: 'snapshot'
-      session: SessionInfo
-      items: Item[]
-      running: boolean
-      status: StatusInfo
-      questions: Questions[]
-      theme: ThemeInfo
-    }
+export type TaskOutcome = 'ok' | 'timeout' | 'budget' | 'failed' | 'contained' | 'cancelled' | 'error'
+
+/** A delegated task, as the sidebar's Workers tree shows it. */
+export interface TaskEntry {
+  id: string
+  parent_id: string | null
+  agent: string
+  model: string | null
+  prompt: string
+  status: 'running' | 'finished'
+  outcome: TaskOutcome | null
+  started_at: string
+  finished_at: string | null
+  background: boolean
+  resumable: boolean
+  /** Its last action, such as `thinking` or `running: shell`. */
+  activity: string
+  usage: Usage
+}
+
+/** A delegated task with the history it saved. */
+export interface TaskTranscript {
+  task: TaskEntry
+  items: Item[]
+}
+
+/** A message that changes one transcript's items, the session's or a task's. */
+export type ItemMessage =
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
@@ -118,6 +136,21 @@ export type ServerMessage =
   | { type: 'tool_done'; id: string; text: string; state: ToolState }
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
+
+export type ServerMessage =
+  | {
+      type: 'snapshot'
+      session: SessionInfo
+      items: Item[]
+      running: boolean
+      status: StatusInfo
+      questions: Questions[]
+      theme: ThemeInfo
+      tasks: TaskEntry[]
+      /** Each running task's transcript so far, by task ID. */
+      task_items: Record<string, Item[]>
+    }
+  | ItemMessage
   | { type: 'turn_start'; item: Item | null }
   | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
   | { type: 'status'; status: StatusInfo }
@@ -128,6 +161,8 @@ export type ServerMessage =
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
+  | { type: 'task'; task: TaskEntry }
+  | { type: 'task_event'; id: string; messages: ItemMessage[] }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 

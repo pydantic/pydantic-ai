@@ -30,6 +30,7 @@ from pydantic_clai2.plugins import (
     Plugin,
     PluginHost,
     SessionEnd,
+    TaskEvent,
     TurnEnd,
 )
 from pydantic_clai2.ui.browser import open_browser
@@ -182,3 +183,6 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_command_end(self, event: CommandEnd) -> None:
         self.remote.command_ended(event)
+
+    async def on_task_event(self, event: TaskEvent) -> None:
+        self.remote.workers.observe(event)

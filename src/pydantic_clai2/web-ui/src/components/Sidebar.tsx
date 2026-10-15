@@ -2,7 +2,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { Project, SessionEntry, ThemeInfo } from '../protocol'
+import type { Project, SessionEntry, TaskEntry, ThemeInfo } from '../protocol'
+import { WorkersTree } from './WorkersTree'
 import { ChevronIcon, ComposeIcon, FolderIcon, MoonIcon, MoreIcon, PaletteIcon, PuzzleIcon, SearchIcon, SidebarIcon, SunIcon } from './icons'
 
 export interface SidebarHandle {
@@ -23,6 +24,11 @@ interface Props {
   onCollapse: () => void
   onPlugins: () => void
   onError: (message: string) => void
+  /** The current session's delegated tasks, shown under it. */
+  tasks: TaskEntry[]
+  /** The worker open in the main pane. */
+  worker: string | null
+  onWorker: (id: string) => void
 }
 
 export function ago(iso: string): string {
@@ -36,7 +42,23 @@ export function ago(iso: string): string {
 
 /** Saved sessions grouped by project, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onCollapse, onPlugins, onError },
+  {
+    version,
+    viewing,
+    opening,
+    theme,
+    connected,
+    onTheme,
+    themeInfo,
+    onPickTheme,
+    onView,
+    onCollapse,
+    onPlugins,
+    onError,
+    tasks,
+    worker,
+    onWorker,
+  },
   ref,
 ) {
   const [query, setQuery] = useState('')
@@ -100,6 +122,12 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     }
   }
 
+  // The tree sits under the current session, or above the list while that row is hidden.
+  const listed = projects.some(
+    (project) => !(collapsed[project.key] ?? false) && project.sessions.some((session) => session.current),
+  )
+  const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
+
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -133,6 +161,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">
+        {!listed && workers}
         {projects.length === 0 && (
           <div className="empty-list">
             {unsaved ? 'This CLAI does not save sessions' : query ? 'No matching sessions' : 'No saved sessions yet'}
@@ -152,7 +181,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                 <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
               </button>
               {!closed &&
-                project.sessions.map((session) => (
+                project.sessions.flatMap((session) => [
                   <div
                     key={session.id}
                     className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''}`}
@@ -207,8 +236,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                         </button>
                       </div>
                     )}
-                  </div>
-                ))}
+                  </div>,
+                  session.current && workers,
+                ])}
             </section>
           )
         })}
