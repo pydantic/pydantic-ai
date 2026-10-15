@@ -36,7 +36,7 @@ def workspace_directory(path: str) -> Path:
 class SessionWorkspace:
     """Moves `clai2 --web`'s live session into another directory, as if CLAI had started there.
 
-    Never while a turn or a background fork runs: their tools still use the plugins loaded now.
+    Never while a turn, a background fork, or a delegated task runs: their tools still use the plugins loaded now.
     """
 
     session: Session[None, str]
@@ -48,7 +48,7 @@ class SessionWorkspace:
     keep: str
     """The plugin serving the browser, which stays loaded: loading it again would end the page."""
     busy: Callable[[], bool] = lambda: False
-    """Whether a background fork runs."""
+    """Whether a background fork or a delegated task runs."""
 
     def attach(self, *, sessions: Sessions[None, str], commands: Commands) -> None:
         """Make `/resume ID` move into the session's directory, and add `/workspace`."""

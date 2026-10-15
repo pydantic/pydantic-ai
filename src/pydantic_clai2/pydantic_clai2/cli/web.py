@@ -61,7 +61,10 @@ async def run_web(
         status=shell.status,
         settings=settings_for,
         keep=WEB,
-        busy=lambda: any(record.status == 'running' for record in shell.forks.records),
+        busy=lambda: (
+            any(record.status == 'running' for record in shell.forks.records)
+            or any(record.status == 'running' for record in shell.tasks.owner.records.values())
+        ),
     ).attach(sessions=shell.sessions, commands=shell.commands)
     reason: SessionEndReason = 'error'
     async with agent, create_task_group() as workers:
