@@ -268,6 +268,11 @@ class Remote:
         if unknown:
             found = await to_thread.run_sync(lambda: [project_identity(workspace) for workspace in unknown])
             self._identities.update(zip(unknown, found))
+        # Checking whether another process runs a session can spawn a program (`tasklist` on Windows).
+        running = [entry for entry in entries if entry.outcome == 'running']
+        busy: set[str] = (
+            await to_thread.run_sync(lambda: {entry.id for entry in running if _busy(entry)}) if running else set()
+        )
         here = self._identity(self.host.status.workspace).key
         projects: dict[str, Project] = {}
         for entry in entries:
@@ -276,19 +281,19 @@ class Remote:
                 identity.key,
                 Project(key=identity.key, name=identity.name, current=identity.key == here, sessions=[]),
             )
-            project.sessions.append(self._entry(entry))
+            project.sessions.append(self._entry(entry, busy=entry.id in busy))
         return sorted(projects.values(), key=lambda project: not project.current)
 
     def _identity(self, workspace: str) -> ProjectIdentity:
         return self._identities.get(workspace) or ProjectIdentity(key=workspace, name=workspace, root=workspace)
 
-    def _entry(self, summary: ConversationSummary) -> SessionEntry:
+    def _entry(self, summary: ConversationSummary, *, busy: bool) -> SessionEntry:
         current = summary.id == self.host.conversation.conversation_id
         state: SessionState = summary.outcome
         if current and self.running:
             state = 'running'
         elif summary.outcome == 'running':
-            state = 'busy' if _busy(summary) else 'cancelled'
+            state = 'busy' if busy else 'cancelled'
         return SessionEntry(
             id=summary.id,
             title=summary.title,

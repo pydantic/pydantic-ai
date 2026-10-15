@@ -101,7 +101,8 @@ async def test_send_input_drives_a_shell_without_an_editor(tmp_path: Path) -> No
     [host] = Recorder.hosts
     for text in ('/cost', '/missing', '  ', 'hello there', '/exit'):
         host.send_input(text)
-    assert await shell.run() == 'exit'
+    with anyio.fail_after(10):
+        assert await shell.run() == 'exit'
     assert [(event.text, event.output, type(event.error)) for event in Recorder.commands] == [
         ('/cost', 'No usage yet.', type(None)),
         ('/missing', '', ValueError),
@@ -152,9 +153,11 @@ async def test_interrupt_cancels_the_running_turn(tmp_path: Path) -> None:
         host.send_input('/exit')
 
     host.send_input('wait forever')
-    async with anyio.create_task_group() as group:
-        group.start_soon(stop_then_exit)
-        assert await shell.run() == 'exit'
+    # Bounded, so a regression in mid-turn dispatch fails here instead of hanging the run.
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(stop_then_exit)
+            assert await shell.run() == 'exit'
     assert [(turn.text, turn.outcome) for turn in Recorder.turns] == [('wait forever', 'cancelled')]
     assert [event.text for event in Recorder.commands] == ['/plugins list', '/exit']
     assert 'recorder' in Recorder.commands[0].output, 'ran over the turn, before it was interrupted'

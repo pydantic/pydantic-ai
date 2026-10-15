@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { api, connect, type Connection } from './api'
+import { api, connect, interrupt, type Connection } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
@@ -118,7 +118,7 @@ export function App() {
         window.setTimeout(() => sidebarRef.current?.focusSearch())
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault()
-        void api.newSession().catch((error: unknown) => showError(String(error)))
+        void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
       } else if (mod && event.key === 'j') {
         event.preventDefault()
         setRepl((open) => !open)
@@ -129,7 +129,7 @@ export function App() {
         // Esc in the composer or on the page interrupts, as in the terminal; other fields keep it for themselves.
         const target = event.target as HTMLElement
         const field = target.closest('input, textarea, select')
-        if (!field || field.closest('.composer')) void api.interrupt()
+        if (!field || field.closest('.composer')) void interrupt(showError)
       } else if (event.key === '/' && document.activeElement === document.body) {
         event.preventDefault()
         composer.current?.focus()
@@ -239,7 +239,11 @@ export function App() {
           </div>
         ) : (
           <>
-            <Transcript entries={entries} running={!preview && state.running} empty={null} />
+            <Transcript
+              entries={entries}
+              running={!preview && state.running}
+              empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
+            />
             <footer className="bottom">
               {!preview &&
                 state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
