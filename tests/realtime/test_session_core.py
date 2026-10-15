@@ -1216,3 +1216,10 @@ def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:
     assert [type(event).__name__ for event in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
         snapshot(['ResponseStarted', 'AudioDelta'])
     )
+
+
+def test_usage_naming_an_unknown_response_with_none_under_way_counts_toward_the_session_only() -> None:
+    """A report naming no response the core knows, between responses, has no message to add its usage to."""
+    session_core = feed(core(), SessionUsage(RequestUsage(input_tokens=3), provider_response_id='resp_unknown'))
+    assert session_core.usage.input_tokens == 3
+    assert session_core.all_messages() == []

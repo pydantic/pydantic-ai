@@ -48,14 +48,12 @@ from .codec import (
 
 @dataclass
 class _Turn:
-    """A spoken turn, from its first transcript until its reply ended."""
+    """A spoken turn, from its first transcript until its transcript is whole (marked finished, or no more will come)."""
 
     id: str
     identified: bool = False
     """Named by the provider (its transcripts carry an item id), which then says when its transcript is final."""
     joined: bool = False
-    final: bool = False
-    """Its transcript is whole: marked finished, or no more will come."""
     words: bool = False
     """Some of its transcript came."""
     replied: bool = False
@@ -420,7 +418,7 @@ class InferredLifecycle:
         self._turn = None
         if not turn.joined:
             self._join(turn, events)
-        elif turn.replied and not turn.final:
+        elif turn.replied:
             # It waited for late words past its reply: no more are coming.
             events.append(UserTurnDiscarded(turn_id=turn.id))
 
@@ -486,14 +484,12 @@ class InferredLifecycle:
         if event.item_id is not None and event.item_id in self._identified:
             # More of a turn the provider named, which needn't be the one being said now.
             if turn is not None and turn.id == event.item_id and final:
-                turn.final = True
                 if not turn.joined:
                     self._join(turn, before)
                 self._turn = None
             return
         if turn is not None and (
-            turn.final
-            or (event.item_id is not None and turn.id != event.item_id)
+            (event.item_id is not None and turn.id != event.item_id)
             or (turn.replied and turn.words and self._audio_since_reply)
         ):
             # The provider names a turn of its own, or the one before it said all it had: that one is over, and in
@@ -505,7 +501,6 @@ class InferredLifecycle:
         if isinstance(event, InputTranscript) and event.text:
             turn.words = True
         if final:
-            turn.final = True
             if not turn.joined:
                 # All of it is transcribed: the provider has it.
                 self._join(turn, before)
@@ -571,12 +566,10 @@ class InferredLifecycle:
             # The turn a reply already answered: this reply is to something said since.
             self._end_turn(turn, events)
             turn = None
-        if turn is not None and not (turn.joined and turn.final) and self._transcribes:
+        if turn is not None and self._transcribes:
             if not turn.joined:
                 turn.joined = True
                 events.append(UserTurnEnded(turn_id=turn.id))
-            if turn.final:
-                self._turn = None
             # (A turn that joined already, at its speech end or commit, is the one this replies to all the same.)
             return turn.id
         if not (audio and replying) or (self._transcribes and self._identified) or self._spoken_unanswered:
@@ -673,8 +666,8 @@ class InferredLifecycle:
             self._turn = None
             if not turn.joined:
                 events.append(UserTurnEnded(turn_id=turn.id))
-            if not turn.final:
-                events.append(UserTurnDiscarded(turn_id=turn.id))
+            # (Its transcript was still to come, or it would be over: what it has is all there will be.)
+            events.append(UserTurnDiscarded(turn_id=turn.id))
         self._place_held(events)
         if self._transcribes:
             # What audio was sent is the turn its transcript names, or nothing. (Without transcripts, it is still

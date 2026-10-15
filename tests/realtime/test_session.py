@@ -117,6 +117,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
+from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, ResponseStarted
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -5481,6 +5482,34 @@ async def test_audio_retention_budget_evicting_the_message_a_turn_started_after_
         ('user', 'Question 1.', True),
         ('user', 'Context.', False),
     ]
+
+
+async def test_audio_retention_budget_evicting_an_id_less_turn_keeps_it_at_its_transcript() -> None:
+    """Without speech boundaries, a turn joins the conversation at its transcript, after context sent meanwhile.
+
+    The second turn is two tenths of a second, so it evicts the first turn's question and answer meanwhile.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *_answered_turn(0),
+            _speak(_tenths_of_a_second(1) * 2),
+            _send_context('Context.'),
+            InputTranscript(text='Question 1.', is_final=True),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert _transcripts(session) == snapshot(
+        [
+            ('user', 'Question 0.', False),
+            ('assistant', 'Answer 0.', False),
+            ('user', 'Context.', False),
+            ('user', 'Question 1.', True),
+        ]
+    )
 
 
 async def test_audio_retention_budget_evicting_the_message_a_late_transcript_waits_on_keeps_its_place() -> None:
@@ -11902,7 +11931,7 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
             yield OutputTranscript(text='B is streaming')
             fail_now.set()
             await finish_b.wait()
-            yield ResponseDone()
+            yield ResponseDone()  # pragma: lax no cover  # (the wait can end, and the session close, before it's read)
             await asyncio.Event().wait()  # pragma: no cover
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -12216,3 +12245,34 @@ async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_r
     async with session:
         await drain_events(session)
     assert (session.usage.requests, session.usage.input_tokens) == (2, 3)
+
+
+async def test_a_connection_whose_frames_are_no_generator_is_read_to_the_end() -> None:
+    """`frames()` can return any async iterator: there's only nothing to close when the session stops reading."""
+
+    class _ListedFrames:
+        def __init__(self, frames: list[RealtimeFrame]) -> None:
+            self._frames = frames
+
+        def __aiter__(self) -> _ListedFrames:
+            return self
+
+        async def __anext__(self) -> RealtimeFrame:
+            if not self._frames:
+                raise StopAsyncIteration
+            return self._frames.pop(0)
+
+    class _Listed(FakeRealtimeConnection):
+        def frames(self) -> AsyncIterator[RealtimeFrame]:
+            return _ListedFrames(
+                [
+                    [ResponseStarted(response_id='r1'), OutputTranscript(text='Hi.', is_final=True)],
+                    [ResponseDone(), ResponseEnded(response_id='r1', status='completed')],
+                ]
+            )
+
+    session = RealtimeSession(_Listed([]))
+    await collect_events(session)
+    assert [
+        part.transcript for message in session.all_messages() for part in message.parts if isinstance(part, SpeechPart)
+    ] == ['Hi.']
