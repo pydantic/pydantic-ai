@@ -1530,7 +1530,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
         # for the model, and the mapping drops `_meta` and sometimes the content blocks, which the app needs.
         tool_name = name
-        sent: tuple[dict[str, Any], CallToolResult] | None = None
+        sent: CallToolResult | None = None
 
         async def call_tool_func(
             name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
@@ -1538,10 +1538,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             nonlocal sent
             result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
             if name == tool_name:
-                # Copies, as the mapped value shares objects with the result and a hook may edit either in place.
-                sent = copy.deepcopy(args), copy.deepcopy(result)
+                # A copy, as the mapped value shares objects with the result and a hook may edit it in place.
+                sent = copy.deepcopy(result)
             return _map_mcp_call_tool_result(result)
 
+        # The app gets the model's arguments, which the frontend already has, not ones a hook added (such as a key).
+        # A copy, as a hook may edit them in place.
+        model_args = copy.deepcopy(tool_args)
         if self.process_tool_call is not None:
             return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
         else:
@@ -1549,13 +1552,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         # Mapping the kept result again gives what the model would have got, so a `process_tool_call` hook that
         # changed the result keeps the raw one from reaching the app.
-        if sent is None or return_value != _map_mcp_call_tool_result(sent[1]):
+        if sent is None or return_value != _map_mcp_call_tool_result(sent):
             return return_value
-        args, result = sent
         app = MCPAppToolResult(
             resource_uri=resource_uri,
-            tool_input=args,
-            result=_call_tool_result_to_wire(result),
+            tool_input=model_args,
+            result=_call_tool_result_to_wire(sent),
             toolset_id=self.id,
         )
         return messages.ToolReturn(return_value=return_value, metadata={MCP_APP_METADATA_KEY: app})
