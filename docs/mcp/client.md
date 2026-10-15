@@ -485,13 +485,21 @@ An [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) is an HTM
 
 When the agent calls such a tool, the [`ToolReturn`][pydantic_ai.messages.ToolReturn] carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the model's arguments, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the result or doesn't call the tool, it isn't attached. A [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] around the toolset that edits results gets this `ToolReturn` for app tools, so it should edit `return_value`, and drop `metadata` if the page mustn't see the original.
 
-To show the page, read it with [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. It returns the MCP result as is, the shape app hosts expect: each item in `contents` has the HTML, its `mimeType` and its `_meta`, where `_meta.ui` holds the CSP and permissions for the iframe.
+Your frontend needs three things from your backend:
 
-```python {title="mcp_apps.py" test="skip"}
+- The page: [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] returns the MCP result as is, the shape app hosts expect: each item in `contents` has the HTML, its `mimeType` and its `_meta`, where `_meta.ui` holds the CSP and permissions for the iframe.
+- Tool calls the page makes: [`call_tool_for_app(name, arguments)`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] returns the MCP result as is, including `isError` results. Only tools whose `_meta.ui.visibility` includes `"app"`, or omits `visibility`, can be called. `process_tool_call` doesn't apply.
+- Resource reads the page makes: the same [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. Any resource on the server can be read.
+
+Protocol errors raise [`MCPError`][pydantic_ai.mcp.MCPError]; send its `code`, `message` and `data` back to the page as the JSON-RPC error. Other failures, such as an unreachable server, raise as they are.
+
+```python {title="mcp_apps.py"}
 from typing import Any
 
+from mcp.types import INVALID_PARAMS, METHOD_NOT_FOUND
+
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.mcp import MCPError, MCPToolset
 
 weather = MCPToolset('http://localhost:8000/mcp', id='weather')
 agent = Agent('{{ openai:medium }}', toolsets=[weather])
@@ -501,9 +509,34 @@ async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
     """Return the page's HTML and its `_meta.ui`."""
     [contents] = (await weather.read_resource_for_app(resource_uri))['contents']
     return contents['text'], contents.get('_meta', {}).get('ui', {})
+
+
+async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Answer a request the page made."""
+    match method, params:
+        case 'tools/call', {'name': str(name), **rest}:
+            return await weather.call_tool_for_app(name, rest.get('arguments'))
+        case 'resources/read', {'uri': str(uri)}:
+            return await weather.read_resource_for_app(uri)
+        case 'tools/call' | 'resources/read', _:
+            raise MCPError(message=f'Invalid params for {method!r}', code=INVALID_PARAMS)
+        case _:
+            raise MCPError(message=f'Method {method!r} is not supported', code=METHOD_NOT_FOUND)
 ```
 
-[`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions] lists the extensions a server supports; MCP Apps servers list `'io.modelcontextprotocol/ui'`. `MCPToolset` doesn't advertise the matching client extension, so a server that only offers app tools to clients that do won't offer them.
+Use one `MCPToolset` per server, and keep it entered (`async with weather:`) while pages are open so requests don't reconnect.
+
+[`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions] lists the extensions a server supports; MCP Apps servers list `'io.modelcontextprotocol/ui'`. Some servers only offer app tools to clients that advertise the matching client extension. `MCPToolset` doesn't by default. On FastMCP 4, pass a client that does; FastMCP 3 clients can't:
+
+```python {title="mcp_apps_extension.py" test="skip" typecheck="skip - FastMCP 4 API; the docs environment has FastMCP 3"}
+from fastmcp import Client
+from mcp.client import advertise
+
+from pydantic_ai.mcp import MCPToolset
+
+ui = advertise('io.modelcontextprotocol/ui', {'mimeTypes': ['text/html;profile=mcp-app']})
+weather = MCPToolset(Client('http://localhost:8000/mcp', extensions=[ui]), id='weather')
+```
 
 ## HTTP authentication
 

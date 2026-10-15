@@ -6,9 +6,10 @@ stream and dumped history. Only the malformed-record test builds app data by han
 
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import AsyncIterator
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -25,8 +26,10 @@ from .conftest import IsInt, IsStr, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import RunAgentInput, ToolMessage, UserMessage
-    from fastmcp import FastMCP
+    from fastmcp import Client, Context, FastMCP
+    from fastmcp.exceptions import McpError, ToolError
     from fastmcp.tools import ToolResult as FastMCPToolResult
+    from mcp import types as mcp_types
     from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
@@ -55,7 +58,9 @@ READ_FIELDS: dict[str, Any] = (
 
 
 def weather_server() -> FastMCP[None]:
-    """Tools with an MCP Apps UI (under the current and the deprecated `_meta` key), a tool without one, and the UI resource."""
+    """Tools with an MCP Apps UI (under the current and the deprecated `_meta` key), a tool without one, tools only
+    the app or only the model may call, and the UI resource.
+    """
     server: FastMCP[None] = FastMCP('weather_server')
 
     @server.resource(
@@ -83,6 +88,23 @@ def weather_server() -> FastMCP[None]:
     def get_time(city: str) -> str:
         """Has no UI."""
         return f'{city}: 09:00'
+
+    @server.tool(meta={'ui': {'visibility': ['app']}})
+    def select_day(day: str) -> str:
+        """Only the app calls this; it has no forecast for weekends."""
+        if day in ('saturday', 'sunday'):
+            raise ToolError(f'No forecast for {day}')
+        return f'Selected {day}'
+
+    @server.tool(meta={'ui': {'visibility': ['model']}})
+    def model_only() -> str:
+        """Only the model may call this."""
+        return 'model only'  # pragma: no cover
+
+    @server.tool
+    def supports_mcp_apps(ctx: Context) -> bool:
+        """Whether the client told the server it supports MCP Apps."""
+        return ctx.client_supports_extension('io.modelcontextprotocol/ui')
 
     return server
 
@@ -552,3 +574,99 @@ async def test_ag_ui_frontend_without_activity_events_receives_no_app(agent: Age
     ]
     assert 'TOOL_CALL_RESULT' in event_types
     assert 'ACTIVITY_SNAPSHOT' not in event_types
+
+
+def fastmcp_text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
+    """The `CallToolResult` FastMCP returns for a tool that returns `text`, or raises `ToolError(text)`."""
+    if is_error:
+        return {
+            'content': [{'type': 'text', 'text': text}],
+            **({'_meta': SERVER_INFO} if SERVER_INFO else {}),
+            'isError': True,
+        }
+    return {
+        'content': [{'type': 'text', 'text': text}],
+        'structuredContent': {'result': text},
+        '_meta': {'fastmcp': {'wrap_result': True}, **SERVER_INFO},
+        'isError': False,
+    }
+
+
+@pytest.mark.parametrize(
+    ('name', 'arguments', 'expected'),
+    [
+        pytest.param('select_day', {'day': 'friday'}, fastmcp_text_result('Selected friday'), id='app-only-tool'),
+        pytest.param(
+            'select_day',
+            {'day': 'sunday'},
+            fastmcp_text_result('No forecast for sunday', is_error=True),
+            id='error-result',
+        ),
+        pytest.param('get_time', {'city': 'a'}, fastmcp_text_result('a: 09:00'), id='tool-without-visibility'),
+    ],
+)
+async def test_call_tool_for_app(
+    weather: MCPToolset[Any], name: str, arguments: dict[str, Any], expected: dict[str, Any]
+):
+    """A page's tool calls get the server's full result in wire form, `isError` results included."""
+    assert await weather.call_tool_for_app(name, arguments) == expected
+
+
+@pytest.mark.parametrize('name', ['model_only', 'missing'])
+async def test_call_tool_for_app_refuses_tools_hidden_from_apps(weather: MCPToolset[Any], name: str):
+    """A page can't call tools hidden from apps or missing from this server; both get the same error."""
+    with pytest.raises(MCPError) as exc_info:
+        await weather.call_tool_for_app(name)
+    assert str(exc_info.value) == f'Tool {name!r} is not available to apps (code: -32602)'
+
+
+@pytest.mark.parametrize('arguments', ['day=friday', []])
+async def test_call_tool_for_app_refuses_arguments_that_are_not_an_object(weather: MCPToolset[Any], arguments: Any):
+    """A page's arguments come from its JSON, so ones that aren't an object get an `MCPError` instead of a call."""
+    with pytest.raises(MCPError) as exc_info:
+        await weather.call_tool_for_app('select_day', arguments)
+    assert str(exc_info.value) == 'Tool arguments must be an object (code: -32602)'
+
+
+async def test_call_tool_for_app_skips_process_tool_call():
+    """A page's tool calls don't go through `process_tool_call`, which handles the model's calls."""
+
+    async def hook(
+        ctx: RunContext[Any], call_tool: CallToolFunc, name: str, args: dict[str, Any]
+    ) -> ToolResult:  # pragma: no cover
+        raise AssertionError("a page's tool call must not reach process_tool_call")
+
+    hooked = MCPToolset(weather_server(), process_tool_call=hook)
+    assert await hooked.call_tool_for_app('select_day', {'day': 'friday'}) == fastmcp_text_result('Selected friday')
+
+
+async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any], monkeypatch: pytest.MonkeyPatch):
+    """A JSON-RPC error from the server's `tools/call` is raised as `MCPError`.
+
+    The error is injected because in-process FastMCP servers turn every tool failure into an `isError` result.
+    """
+    # SDK v1 wraps an `ErrorData`; v2 takes the fields directly, and CI type-checks against v1.
+    error = (
+        cast(Any, McpError)(code=-32001, message='call refused')
+        if MCP_SDK_V2
+        else McpError(mcp_types.ErrorData(code=-32001, message='call refused'))
+    )
+
+    async def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(weather.client, 'call_tool', refuse)
+    with pytest.raises(MCPError, match='call refused'):
+        await weather.call_tool_for_app('select_day', {'day': 'friday'})
+
+
+@pytest.mark.skipif(not MCP_SDK_V2, reason='FastMCP 3 clients have no client extensions')
+async def test_client_extension_announces_mcp_apps_support(weather: MCPToolset[Any]):
+    """The documented FastMCP 4 client extension tells servers the client supports MCP Apps; a plain one doesn't."""
+    # Only the MCP SDK v2 that FastMCP 4 uses has `advertise`, and CI type-checks against FastMCP 3.
+    mcp_client: Any = importlib.import_module('mcp.client')
+    ui = mcp_client.advertise('io.modelcontextprotocol/ui', {'mimeTypes': ['text/html;profile=mcp-app']})
+    announced = MCPToolset(Client(weather_server(), extensions=[ui]))
+    async with weather, announced:
+        assert await weather.direct_call_tool('supports_mcp_apps', {}) is False
+        assert await announced.direct_call_tool('supports_mcp_apps', {}) is True
