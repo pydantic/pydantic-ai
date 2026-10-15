@@ -2014,6 +2014,54 @@ class TestClearToolResults:
         with pytest.raises(ValueError, match='min_clear_tokens must be non-negative'):
             ClearToolResults(max_messages=1, min_clear_tokens=-1)
 
+    async def test_max_messages_clears_in_batches_without_rewriting_every_step(self):
+        """Once past `max_messages`, consecutive requests append to history rather than rewriting it.
+
+        Clearing removes no messages, so counting the whole history would re-fire on every request
+        and blank one more result at a moving boundary, busting the prompt cache each step.
+        """
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            step = len(sent)
+            if step > 11:
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={'q': step}, tool_call_id=f'c{step}')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[ClearToolResults(max_messages=8, keep_pairs=2)])
+
+        @agent.tool_plain
+        def lookup(q: int) -> str:
+            return f'result {q}'
+
+        result = await agent.run('go')
+
+        rewritten = [i for i in range(1, len(sent)) if sent[i][: len(sent[i - 1])] != sent[i - 1]]
+        assert rewritten == [4, 7, 10]
+        assert _return_contents(sent[-1]) == snapshot(
+            [
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                'result 9',
+                'result 10',
+                'result 11',
+            ]
+        )
+
+        # A follow-up run on the persisted history keeps counting from the last cleared result, so
+        # its first request extends the previous run's history instead of clearing again.
+        history = result.all_messages()
+        sent.clear()
+        await agent.run('again', message_history=history)
+        assert sent[0][: len(history)] == history
+
     async def test_no_clear_below_threshold(self):
         cap = ClearToolResults(max_messages=100, keep_pairs=0)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1'), *_pair('fn', 'tc2')]
