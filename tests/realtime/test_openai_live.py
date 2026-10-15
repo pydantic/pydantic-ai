@@ -3076,7 +3076,15 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
 ) -> None:
     """A backend response that ends as the session closes is a request like any other: one over a limit fails `close()`."""
 
+    reading = asyncio.Event()
+
     class _BackendFinishingSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            if not self._frames:
+                # The session is reading with nothing to read yet: waiting on the socket, as it is when it closes.
+                reading.set()
+            return await super().recv()
+
         async def send(self, data: str) -> None:
             if json.loads(data)['type'] == 'session.close':
                 terminal = _backend_terminal(
@@ -3101,7 +3109,7 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
         async with Agent().realtime(model, usage_limits=limits).session() as session:
             sessions.append(session)
             readings.append(asyncio.ensure_future(anext(aiter(session))))
-            await asyncio.sleep(0.01)
+            await reading.wait()
     readings[0].cancel()
     assert (sessions[0].usage.requests, sessions[0].usage.input_tokens) == (1, 10)
 

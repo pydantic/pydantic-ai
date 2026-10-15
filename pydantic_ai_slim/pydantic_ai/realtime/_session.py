@@ -2888,7 +2888,10 @@ class RealtimeSession:
                 self._park_error(exceeded)
 
     def _check_final_request(self, usage: RequestUsage) -> None:
-        """Check the request a response the session reported only as it closed made against the usage limits."""
+        """Check a request reported only as the session closed.
+
+        Against `per_request_input_tokens_limit` and `request_limit`.
+        """
         if self._usage_limits is not None:
             self._usage_limits.check_per_request_input_tokens(usage.input_tokens)
         self._check_reported_requests()
