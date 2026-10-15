@@ -31,6 +31,7 @@ from ._lifecycle import (
 from .codec import (
     AudioDelta,
     CommitAudio,
+    ConversationItemCreated,
     CreateResponse,
     InputTranscript,
     OutputTranscript,
@@ -145,6 +146,9 @@ class InferredLifecycle:
         self._spoken_unanswered: str | None = None
         """A spoken turn that joined the conversation ahead of a reply that hasn't started yet."""
         self._identified: set[str] = set()
+        self._replayed_items: set[str] = set()
+        self._replayed_calls: set[str] = set()
+        """The items and tool calls a resumed conversation replays (`ConversationItemCreated.replayed`)."""
         """The turns the provider named, by item id."""
 
     # --- what the connection sends ----------------------------------------------------------------
@@ -278,6 +282,8 @@ class InferredLifecycle:
     ) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
         before: list[LifecycleEvent] = []
         after: list[LifecycleEvent] = []
+        if self._replayed(event):
+            return before, after
         output = (
             isinstance(event, (PartStartEvent, ToolCall))
             or (isinstance(event, AudioDelta) and (self._audio_starts_response or takes_turn))
@@ -337,6 +343,20 @@ class InferredLifecycle:
         # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost to a
         # drop, which `connection_lost` lost already, ...) says nothing about the lifecycle.
         return before, after
+
+    def _replayed(self, event: RealtimeCodecEvent) -> bool:
+        """Whether `event` is about an item a resumed conversation replays, which says nothing new."""
+        if isinstance(event, ConversationItemCreated):
+            if event.replayed:
+                if event.item_id is not None:
+                    self._replayed_items.add(event.item_id)
+                if event.tool_call_id is not None:
+                    self._replayed_calls.add(event.tool_call_id)
+            return True
+        if isinstance(event, ToolCall) and event.tool_call_id in self._replayed_calls:
+            return True
+        item_id = getattr(event, 'item_id', None)
+        return isinstance(item_id, str) and item_id in self._replayed_items
 
     def _response_done(self, event: ResponseDone, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
         if self._open is None and self._ended_by_usage is not None:
@@ -425,8 +445,9 @@ class InferredLifecycle:
             # More of a turn the provider named, which needn't be the one being said now.
             if turn is not None and turn.id == event.item_id and final:
                 turn.final = True
-                if turn.joined:
-                    self._turn = None
+                if not turn.joined:
+                    self._join(turn, before)
+                self._turn = None
             return
         if turn is not None and (
             turn.final
@@ -443,8 +464,10 @@ class InferredLifecycle:
             turn.words = True
         if final:
             turn.final = True
-            if turn.joined:
-                self._turn = None
+            if not turn.joined:
+                # All of it is transcribed: the provider has it.
+                self._join(turn, before)
+            self._turn = None
 
     def _start_turn(self, item_id: str | None, before: list[LifecycleEvent], *, transcribed: bool = True) -> _Turn:
         self._turns += 1

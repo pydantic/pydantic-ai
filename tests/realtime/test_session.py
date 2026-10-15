@@ -305,6 +305,11 @@ def _profile(
     )
 
 
+def _reply_under_way(session: _RealtimeSession) -> bool:
+    """Whether a response of the model's is under way, as the session's core has it."""
+    return any(response.status is None for response in session._core._responses.values())  # pyright: ignore[reportPrivateUsage]
+
+
 def _own_record(session: _RealtimeSession) -> list[ModelMessage]:
     """The session's own record of the conversation, as it streams it: what a tool sees as `RunContext.messages`.
 
@@ -9893,7 +9898,7 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
     async with agent.realtime(model, usage_limits=UsageLimits(total_tokens_limit=50)).session() as session:
-        with pytest.raises(UsageLimitExceeded, match='Exceeded the total_tokens_limit of 50'):
+        with pytest.raises(UsageLimitExceeded, match='exceed the total_tokens_limit of 50'):
             _ = [e async for e in session]
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
     assert response.state == 'complete'
@@ -9906,7 +9911,7 @@ async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:
     async with agent.realtime(
         FakeRealtimeModel(conn), usage_limits=UsageLimits(cost_limit=Decimal('0.50'))
     ).session() as session:
-        with pytest.raises(UsageLimitExceeded, match=r'Exceeded the `cost_limit` of 0.50'):
+        with pytest.raises(UsageLimitExceeded, match=r'exceed the `cost_limit` of 0.50'):
             _ = [e async for e in session]
 
 
@@ -10609,9 +10614,9 @@ def test_session_conversation_usage_is_a_copy() -> None:
 async def test_cost_limit_passed_by_a_reply_settled_at_close_is_reported() -> None:
     """Hanging up mid-reply must not let an over-budget session exit cleanly.
 
-    The reply never reaches `ResponseDone`, so `close()` is what settles *and* prices it — the moment
-    its cost is first known. A taps-only caller never iterates, so this is the only place it can be
-    told the `cost_limit` it asked for was passed.
+    The reply never reaches `ResponseDone`, so it's settled (and priced) only as the connection goes, the moment
+    its cost is first known. A taps-only caller never iterates, so `close()` is the only place it can be told the
+    `cost_limit` it asked for was passed.
     """
     conn = FakeRealtimeConnection(
         [
@@ -10626,8 +10631,6 @@ async def test_cost_limit_passed_by_a_reply_settled_at_close_is_reported() -> No
             usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
         ).session() as session:
             _ = [part async for part in session.stream_transcripts()]
-            # Still in flight: the price that passes the limit is not known until close settles it.
-            assert session.usage.cost is None
 
 
 async def test_provider_output_reaches_a_view_subscribed_after_entry() -> None:
@@ -10663,6 +10666,7 @@ async def test_provider_output_reaches_a_view_subscribed_after_entry() -> None:
 async def test_wait_for_reply_returns_at_the_turn_boundary() -> None:
     conn = FakeRealtimeConnection(
         [OutputTranscript(text='hello there', is_final=True), ResponseDone()],
+        after_input=True,
     )
     session = RealtimeSession(conn)
     async with session:
@@ -11414,7 +11418,7 @@ async def test_parallel_tool_calls_are_one_response_answered_once(results_before
         await _until(lambda: conn.all_results_in.is_set())
         conn.close_response.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await _until(lambda: session._pending_response_requests == 0 and not session._response_active)  # pyright: ignore[reportPrivateUsage]
+            await _until(lambda: not session._core.reply_outstanding())  # pyright: ignore[reportPrivateUsage]
             await session.wait_for_reply()
         await session.close()
         events.cancel()
@@ -11653,7 +11657,7 @@ async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
     session = RealtimeSession(_MergesTwoTurns([]))
     async with session:
         await session.send('France?')
-        await _until(lambda: session._response_active)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: _reply_under_way(session))
         await session.send('Spain?')
         await session.send('Italy?')
         answer.set()
@@ -11806,7 +11810,7 @@ async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None
     async with session:
         events = asyncio.create_task(consume())
         await reply_started.wait()
-        await _until(lambda: session._response_active)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: _reply_under_way(session))
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
             await asyncio.sleep(0)
