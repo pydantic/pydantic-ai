@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -44,6 +44,11 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Query Logfire telemetry and manage observability resources.'
+    tool_prefix: str | None = 'logfire'
+    """Prepended with `_` to the server's tool names, as in `logfire_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
     """A Logfire API key, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a key.
 
@@ -80,8 +85,8 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
-            return read_only_toolset(toolset)
-        return toolset
+            toolset = read_only_toolset(toolset)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
         auth = self.auth(ctx) if callable(self.auth) else self.auth

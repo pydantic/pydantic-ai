@@ -76,7 +76,13 @@ Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Grain" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To add more than one `Grain` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To add more than one `Grain` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `grain_` prefix, as in `grain_<tool>`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them. Earlier releases used the server's names unprefixed: pass `tool_prefix=None` to keep those names, for example for message histories or durable runs that recorded them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 

@@ -25,6 +25,11 @@ def credential(auth: str | None, *, env: str | None, service: str) -> str:
     return auth
 
 
+def prefixed_toolset(toolset: AbstractToolset[AgentDepsT], prefix: str | None) -> AbstractToolset[AgentDepsT]:
+    """Prefix the server's tool names with `prefix` and `_`; `None` keeps them as the server names them."""
+    return toolset if prefix is None else toolset.prefixed(prefix)
+
+
 def is_read_only(tool: ToolDefinition) -> bool:
     """Whether the server explicitly marks a tool read-only."""
     match (tool.metadata or {}).get('annotations'):

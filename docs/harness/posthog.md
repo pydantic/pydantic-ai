@@ -76,7 +76,7 @@ Each run connects as its own user, so concurrent runs never share an account. `r
 
 Your app gets each user's key, stores it, and refreshes it if it is an OAuth token. For example, a settings page where each user pastes their own personal API key, or a "Connect PostHog" button that signs them in with PostHog OAuth and saves the access token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
 
-With durable execution such as Temporal, read the key from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `posthog`, so `defer_loading=True` works without one. To add more than one `PostHog` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the key from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `posthog`, so `defer_loading=True` works without one. To add more than one `PostHog` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
@@ -86,6 +86,12 @@ By default the server offers everything through a single `posthog` tool that the
 - `read_only=True` asks the server for its read-only mode, which drops every tool that makes changes.
 
 The key's scopes, and the organizations and projects it can reach, still decide what the agent can access.
+
+## Tool names
+
+The agent sees each of the server's tools under the `posthog_` prefix, as in `posthog_query-trends`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them. Earlier releases used the server's names unprefixed: pass `tool_prefix=None` to keep those names, for example for message histories or durable runs that recorded them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. `features` names PostHog feature groups, which the server selects before any prefix applies. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 

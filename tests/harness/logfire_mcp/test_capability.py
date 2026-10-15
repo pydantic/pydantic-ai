@@ -22,6 +22,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = [
@@ -51,8 +52,7 @@ def server() -> FastMCP:
 
 
 def transport(capability: LogfireMCP[None]) -> StreamableHttpTransport:
-    toolset = capability.get_toolset()
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(capability.get_toolset())
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
@@ -88,8 +88,11 @@ class TestLogfireMCP:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [
-            (False, '{"read_resource":"read","write_resource":"written","unmarked_resource":"unmarked"}'),
-            (True, '{"read_resource":"read"}'),
+            (
+                False,
+                '{"logfire_read_resource":"read","logfire_write_resource":"written","logfire_unmarked_resource":"unmarked"}',
+            ),
+            (True, '{"logfire_read_resource":"read"}'),
         ],
     )
     async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
@@ -135,7 +138,7 @@ class TestLogfireMCP:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: LogfireMCP[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-logfire'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-logfire'
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
@@ -149,8 +152,7 @@ class TestLogfireMCP:
         self, capability: LogfireMCP[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_credential_is_not_in_repr(self) -> None:
@@ -221,7 +223,10 @@ class TestPerRunAuth:
         alice, bob = await asyncio.gather(
             agent.run('Who am I?', deps='alice-token'), agent.run('Who am I?', deps='bob-token')
         )
-        assert (alice.output, bob.output) == ('{"whoami":"Bearer alice-token"}', '{"whoami":"Bearer bob-token"}')
+        assert (alice.output, bob.output) == (
+            '{"logfire_whoami":"Bearer alice-token"}',
+            '{"logfire_whoami":"Bearer bob-token"}',
+        )
 
     @pytest.mark.parametrize(('token', 'connections'), [('alice-token', 1), (None, 0), ('', 0)])
     async def test_connects_only_with_a_credential(

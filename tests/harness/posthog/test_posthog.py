@@ -21,6 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.posthog import PostHog
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -30,7 +31,7 @@ DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -71,7 +72,7 @@ class TestPostHog:
             """Query PostHog insights."""
             return {'name': 'Weekly signups'}
 
-        agent = Agent(TestModel(call_tools=['insight_query']), capabilities=[PostHog(client=server)])
+        agent = Agent(TestModel(call_tools=['posthog_insight_query']), capabilities=[PostHog(client=server)])
         result = await agent.run('Show weekly signups')
         assert 'Weekly signups' in result.output
 
@@ -98,8 +99,7 @@ class TestPostHog:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: PostHog[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,7 +139,7 @@ class TestPostHog:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: PostHog[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-posthog'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-posthog'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[PostHog(auth='posthog-key', defer_loading=True)])
@@ -188,7 +188,7 @@ class TestServerSettings:
             return 'created'  # pragma: no cover
 
         agent = Agent(TestModel(), capabilities=[PostHog(client=server, read_only=True)])
-        assert (await agent.run('Use the tools')).output == '{"insight_query":"queried"}'
+        assert (await agent.run('Use the tools')).output == '{"posthog_insight_query":"queried"}'
 
     @pytest.mark.parametrize(
         ('features', 'query'), [('flags', 'flags'), (['flags', 'error_tracking'], 'flags%2Cerror_tracking')]

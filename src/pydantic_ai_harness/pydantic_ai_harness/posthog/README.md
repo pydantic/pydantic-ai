@@ -103,9 +103,7 @@ With durable execution such as Temporal, read the key from the run's deps rather
 than from a global, since the function may run in another process. The
 capability's `id` defaults to `posthog`, so `defer_loading=True` works without
 one. To add more than one `PostHog` to an agent, give each a distinct `id` and
-wrap them in
-[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since
-their tool names are the same; two that share an `id` but differ raise an error.
+`tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
@@ -120,6 +118,22 @@ agent drives with commands, so narrow what it can reach on the server:
 
 The key's scopes, and the organizations and projects it can reach, still decide
 what the agent can access.
+
+## Tool names
+
+The agent sees each of the server's tools under the `posthog_` prefix, as in
+`posthog_query-trends`, so they don't collide with other tools on the agent. Set
+`tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names
+the server gives them. Earlier releases used the server's names unprefixed: pass
+`tool_prefix=None` to keep those names, for example for message histories or
+durable runs that recorded them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so
+the prefix does not change what it keeps. `features` names PostHog feature
+groups, which the server selects before any prefix applies. A [toolset
+wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
+`capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
+prefix included.
 
 ## Tool selection and approval
 
