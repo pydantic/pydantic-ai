@@ -293,14 +293,16 @@ def test_a_second_durable_engine_is_refused_at_construction() -> None:
     assert bound == []
 
 
-def test_a_durable_engine_inside_a_capability_group_is_refused() -> None:
+@pytest.mark.parametrize('wrap', [False, True], ids=['bare', 'wrapped'])
+def test_a_durable_engine_inside_a_capability_group_is_refused(wrap: bool) -> None:
     """A group binds as one unit, after the toolsets the engine has to wrap are collected."""
     bound: list[str] = []
+    engine: AbstractCapability[Any] = _BindLoggingDurability(bound)
     with pytest.raises(UserError) as exc_info:
         Agent(
             TestModel(),
             name='grouped_engine',
-            capabilities=[CombinedCapability([_BindLoggingDurability(bound)], id='infra')],
+            capabilities=[CombinedCapability([WrapperCapability(engine) if wrap else engine], id='infra')],
         )
     assert str(exc_info.value) == snapshot(
         "`_BindLoggingDurability` is inside capability 'infra', but a durable execution engine must be passed to "
