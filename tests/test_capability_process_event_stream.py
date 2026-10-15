@@ -1073,7 +1073,7 @@ class TestProcessEventStream:
         consumer_error = ValueError('consumer failed')
         with pytest.raises(ValueError, match='consumer failed') as exc_info:
             async with agent.run_stream('hello') as result:
-                async for _ in result.stream_text(debounce_by=None):
+                async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
                     raise consumer_error
 
         assert exc_info.value is consumer_error
@@ -1126,7 +1126,7 @@ class TestProcessEventStream:
 
         async def process(stream: AsyncIterable[AgentStreamEvent]) -> AsyncGenerator[AgentStreamEvent, None]:
             try:
-                async for event in stream:
+                async for event in stream:  # pragma: no branch
                     yield event
             finally:
                 cleanup_started.set()
@@ -1157,7 +1157,7 @@ class TestProcessEventStream:
                     tg.start_soon(permit_cleanup)
                     with scope:
                         async with agent.run_stream('hello') as result:
-                            async for _ in result.stream_text(debounce_by=None):
+                            async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
                                 scope.cancel()
                                 await anyio.lowlevel.checkpoint()
                     complete_at_run_exit = cleanup_complete.is_set()
@@ -1213,7 +1213,7 @@ class TestProcessEventStream:
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 with scope:
                     async with agent.run_stream('hello') as result:
-                        async for _ in result.stream_text(debounce_by=0):
+                        async for _ in result.stream_text(debounce_by=0):  # pragma: no branch
                             if wait_for_source:
                                 await source_waiting.wait()
                             scope.cancel()
