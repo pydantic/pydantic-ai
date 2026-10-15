@@ -22,7 +22,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse
+from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
@@ -296,7 +296,9 @@ class Tasks:
             if isinstance(message, ModelResponse):
                 usage.incr(message.usage)
                 usage.requests += 1
-                usage.tool_calls += len(message.tool_calls)
+            else:
+                # As a run counts them: the calls that returned, not those retried or still waiting.
+                usage.tool_calls += sum(isinstance(part, ToolReturnPart) for part in message.parts)
         return TaskInfo(
             id=record.id,
             parent_id=record.parent_id,
