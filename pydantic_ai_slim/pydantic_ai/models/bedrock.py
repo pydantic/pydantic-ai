@@ -159,6 +159,12 @@ if TYPE_CHECKING:
 # botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
 # instead of raising.
 _MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+_DATA_RETENTION_HINT = (
+    "Bedrock rejected this model under the account's data retention mode for this Region. Models that require human "
+    "review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy "
+    "`provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per "
+    'request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html'
+)
 
 
 @contextmanager
@@ -171,14 +177,21 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             error = e.response.get('Error')
-            if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
+            error_message = error.get('Message') if _utils.is_str_dict(error) else None
+            if error_message == 'The provided model identifier is invalid.':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            hint = (
+                _DATA_RETENTION_HINT
+                if isinstance(error_message, str) and 'data retention mode' in error_message.lower()
+                else None
+            )
             raise ModelHTTPError(
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
+                hint=hint,
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except (HTTPClientError, BotocoreConnectionError) as e:
@@ -1044,6 +1057,12 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                 elif tool_result := item.get('toolResult'):
                     if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                        # Nova's code interpreter returns one `json` block holding its standard schema
+                        # (https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-tools.html), code errors
+                        # included, so `content` is normalized to that object, as decided in
+                        # https://github.com/pydantic/pydantic-ai/pull/3892#discussion_r2688437212.
+                        # A sandbox timeout returns `status: 'error'` with empty `content`, parsed as `None`; sending
+                        # it back as `[{'json': None}]` is deliberate, as Bedrock rejects an empty `content` list.
                         items.append(
                             NativeToolReturnPart(
                                 provider_name=self.system,
@@ -1975,8 +1994,10 @@ class BedrockStreamedResponse(StreamedResponse):
                                 # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
 
                                 if tr_content := delta['toolResult']:  # pragma: no branch
-                                    # Goal here is to convert to object form.
-                                    # This assumes the first item is the relevant one.
+                                    # Same contract as in `BedrockConverseModel._process_response`. On a sandbox
+                                    # timeout this delta holds a `text` item instead, which is the first token of
+                                    # the model's reply leaked by Bedrock rather than tool output, so `content`
+                                    # stays `None` and the token is missing from the reply's text part.
                                     return_part.content = tr_content[0].get('json')
 
                                 # Don't yield anything yet - we wait for content block end

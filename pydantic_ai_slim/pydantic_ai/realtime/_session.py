@@ -86,7 +86,6 @@ from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._core import (
     AudioCleared,
     AudioSent,
-    AudioUnsent,
     Closed,
     CoreInput,
     ExchangeAbandoned,
@@ -105,7 +104,13 @@ from ._instrumentation import (
 )
 from ._lifecycle import LIFECYCLE_EVENT_TYPES
 from ._retained_audio import RetainedAudioBudget
-from ._utils import accumulate_transcript, pcm_to_wav, seed_pcm_audio, user_transcript_update
+from ._utils import (
+    accumulate_transcript,
+    fold_part_transcript,
+    pcm_to_wav,
+    seed_pcm_audio,
+    user_transcript_update,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -934,6 +939,9 @@ class RealtimeSession:
         self._active_assistant_index = 0
         self._assistant_transcript = ''
         self._output_audio = bytearray()
+        # The index and part of each output item whose part ended in the response being assembled, for a
+        # transcript of the item that arrives after it ended.
+        self._ended_assistant_parts: dict[str, tuple[int, SpeechPart | TextPart]] = {}
 
         # A realtime session is duplex: the user's part and the model's assemble at the same time, and
         # each response starts a fresh `_response_parts` list. Numbering streamed parts by their
@@ -1388,13 +1396,18 @@ class RealtimeSession:
                 # A part's start always precedes its deltas and its end, so this is the whole part
                 # going: drop the rest of it rather than leave deltas a reader cannot attach to
                 # anything. Part indexes are unique for the life of the session (`_next_part_index`
-                # only ever increments), so this cannot reach a later part that reused the number.
-                self._drop_queued_part(evicted.index)
+                # only ever increments), except that a late transcript streams an ended part again
+                # under its index (see `_late_assistant_transcript`): that restart is whole by itself.
+                self._drop_queued_part(position, evicted.index)
 
-    def _drop_queued_part(self, index: int) -> None:
-        for position in reversed(range(len(self._queue))):
+    def _drop_queued_part(self, position: int, index: int) -> None:
+        """Drop the deltas and end queued from `position` on for the part at `index`, up to a restart of it."""
+        while position < len(self._queue):
             queued = self._queue[position]
+            if isinstance(queued, PartStartEvent) and queued.index == index:
+                break
             if not isinstance(queued, (PartDeltaEvent, PartEndEvent)) or queued.index != index:
+                position += 1
                 continue
             del self._queue[position]
             if isinstance(queued, PartDeltaEvent):
@@ -1702,7 +1715,10 @@ class RealtimeSession:
         """Stream speech transcripts for both the user and assistant.
 
         By default, yields finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart] instances — one
-        per completed turn, carrying its `speaker` and full `transcript`.
+        per completed turn, carrying its `speaker` and full `transcript`. A model output item whose
+        transcript grows after its part ended, possibly while a later item is still streaming, is
+        yielded again each time it grows, with the transcript so far; `delta=True` carries the
+        `index` to replace it by.
 
         Pass `delta=True` for live captions, which yields
         [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate]s carrying the new text, the turn's
@@ -2075,27 +2091,18 @@ class RealtimeSession:
         audio_was_uncommitted = self._audio_uncommitted
         self._held_commit.has_audio = True
         self._open_user_turn_for_audio()
-        previous_length: int | None = None
-        if self._retain_input:
-            # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
-            # boundary later cuts this into that turn's own segment (see `_segment_input_audio`); only the
-            # exact split at the boundary is approximate (see `audio_retention`).
-            previous_length = len(self._input_audio)
+        retained: bytes | None = None
         try:
-            # The extend lives inside the try so a chunk that is not bytes-like (possible since
-            # `send_audio` accepts an async iterable of chunks) rolls the user-turn state back below
-            # instead of leaving `_user_turn_active` set with nothing buffered or sent. A failing
-            # `bytearray.extend` leaves the buffer unchanged, so the length guard in the handler
-            # correctly skips the truncation for that case.
+            # Copied inside the try so a chunk that is not bytes-like (possible since `send_audio` accepts
+            # an async iterable of chunks) fails before it goes out and rolls the user-turn state back
+            # below, instead of leaving `_user_turn_active` set with nothing buffered or sent.
             if self._retain_input:
-                self._input_audio.extend(data)
+                retained = memoryview(data).tobytes()
             self._audio_uncommitted = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
         except BaseException as e:
             self._user_turn_active = user_turn_was_active
             self._audio_uncommitted = audio_was_uncommitted
-            if previous_length is not None and len(self._input_audio) == previous_length + len(data):
-                del self._input_audio[previous_length:]
             if (
                 isinstance(e, RealtimeError)
                 and isinstance(e.__cause__, self._connection.transport_errors)
@@ -2108,7 +2115,14 @@ class RealtimeSession:
                 # the reconnect fails, the next chunk raises again.
                 return
             raise
-        if self._retain_input:
+        if retained is not None:
+            # Buffer the raw input so the finalized user turn can retain it, once it has gone out (with no
+            # await since, so still in send order), as the session core takes it: a boundary the pump handled
+            # while the chunk was on its way was drawn without it, and a chunk whose send failed belongs to
+            # no turn. A per-item speech-stopped boundary later cuts this into that turn's own segment (see
+            # `_segment_input_audio`); only the exact split at the boundary is approximate (see
+            # `audio_retention`).
+            self._input_audio.extend(retained)
             self._bound_retained_audio()
 
     def _open_user_turn_for_audio(self) -> None:
@@ -2408,7 +2422,6 @@ class RealtimeSession:
         # which is a caller that asked to send.
         async with self._send_lock:
             first_input = self._inputs_sent
-            audio_sent_to_core = False
             try:
                 for position, content in enumerate(contents):
                     # Numbered before the call, and whether or not it raises, matching how
@@ -2426,17 +2439,15 @@ class RealtimeSession:
                             tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
                         )
                     )
-                    if isinstance(content, BinaryAudio):
-                        # Under the lock, so the core takes audio in the order it goes out and a failed send
-                        # takes back its own chunk; before the send, as the pump can end the turn meanwhile.
-                        self._apply_core(AudioSent(data=bytes(content.data)))
-                        audio_sent_to_core = True
                     await self._connection.send(content)
+                    if isinstance(content, BinaryAudio):
+                        # Under the lock, so the core takes audio in the order it goes out; only once it has
+                        # gone out, as a turn the provider ended while it was on its way (which the pump can
+                        # record meanwhile) was ended without it, and a chunk whose send fails is in no turn.
+                        self._apply_core(AudioSent(data=bytes(content.data)))
             except BaseException as e:
                 # The caller takes back what it sent, so the core does too.
                 self._apply_core(InputWithdrawn(input_ids=tuple(range(first_input, self._inputs_sent))))
-                if audio_sent_to_core:
-                    self._apply_core(AudioUnsent())
                 if not isinstance(e, self._connection.transport_errors):
                     raise
                 # A send that fails because the link is gone is the same failure the receive side
@@ -2581,6 +2592,8 @@ class RealtimeSession:
         # An id-less provider cannot associate transcripts with overlapping input items. Its first
         # output frame is therefore the boundary that closes the anonymous user turn before the reply.
         events = self._finalize_anonymous_user_before_output()
+        if (late := self._late_assistant_transcript(text, output_text=output_text, item_id=item_id)) is not None:
+            return [*events, *late]
         events.extend(self._ensure_active_assistant(output_text=output_text, item_id=item_id))
         active = self._active_assistant
         assert active is not None
@@ -2596,6 +2609,42 @@ class RealtimeSession:
         if appended:
             events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
+
+    def _late_assistant_transcript(
+        self, text: str, *, output_text: bool, item_id: str | None
+    ) -> list[RealtimeEvent] | None:
+        """Fold a transcript into the part its item already ended, or `None` when the item has no ended part.
+
+        A provider can finish an item after a later item's content arrived, so the item's transcript comes late.
+        Text the stream already showed only updates the recorded part. New text streams the part again under the
+        index it ended with, which a `PartStartEvent` replaces, so the item still streams as one part. The part
+        under way keeps streaming around it, as the user's and the model's parts do.
+        """
+        if item_id is None or item_id == self._active_assistant_item_id:
+            return None
+        ended = self._ended_assistant_parts.get(item_id)
+        if ended is None or output_text != isinstance(ended[1], TextPart):
+            return None
+        index, part = ended
+        if isinstance(part, TextPart):
+            updated, appended = fold_part_transcript(part, text)
+            restarted: SpeechPart | TextPart = part
+            delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
+        else:
+            updated, appended = fold_part_transcript(part, text)
+            # Retained audio appears at the part's end, not at its start.
+            restarted = replace(part, audio=None)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
+        position = next(position for position, existing in enumerate(self._response_parts) if existing is part)
+        self._response_parts[position] = updated
+        self._ended_assistant_parts[item_id] = (index, updated)
+        if not appended:
+            return []
+        return [
+            PartStartEvent(index=index, part=restarted),
+            PartDeltaEvent(index=index, delta=delta),
+            PartEndEvent(index=index, part=updated),
+        ]
 
     def _handle_assistant_audio(self, data: bytes, *, item_id: str | None = None) -> list[RealtimeEvent]:
         events = self._finalize_anonymous_user_before_output()
@@ -2621,6 +2670,8 @@ class RealtimeSession:
             if self._retain_output and self._output_audio:
                 part = replace(part, audio=self._retain_audio(bytes(self._output_audio), output=True))
         index = self._active_assistant_index
+        if self._active_assistant_item_id is not None:
+            self._ended_assistant_parts[self._active_assistant_item_id] = (index, part)
         self._active_assistant = None
         self._active_assistant_item_id = None
         self._assistant_transcript = ''
@@ -2659,6 +2710,7 @@ class RealtimeSession:
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
+        self._ended_assistant_parts.clear()
         if interrupted:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):
