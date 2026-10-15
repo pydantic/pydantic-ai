@@ -142,9 +142,11 @@ class TestCodeModeInputGuardrail:
 
         agent = run.agent(CodeMode[None](speculate=['ping']), InputGuardrail(guard=guard, parallel=True))
         blocked_run = asyncio.create_task(agent.run('blocked'))
-        await run.requested.wait()
-        allowed = await agent.run('allowed', model=FunctionModel(stream_function=reply))
-        run.first_chunk_released.set()
+        try:
+            await asyncio.wait_for(run.requested.wait(), timeout=5)
+            allowed = await agent.run('allowed', model=FunctionModel(stream_function=reply))
+        finally:
+            run.first_chunk_released.set()
         blocked = await blocked_run
 
         assert allowed.output == 'done'
