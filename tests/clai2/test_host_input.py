@@ -291,7 +291,7 @@ async def test_a_host_without_a_shell() -> None:
     with pytest.raises(KeyError):
         host.setting('run.code_mode')
     with pytest.raises(KeyError):
-        host.setting('run.code_mode')
+        host.setting('display.theme')
     with pytest.raises(RuntimeError, match='has no prompt to enter input at'):
         host.send_input('hello')
     assert not host.interrupt()
