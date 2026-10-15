@@ -2849,14 +2849,15 @@ The page asks for every view when it connects, when the conversation changes, wh
 or ends, after each command, and, while a turn runs with a panel or its window open, every few
 seconds, so the page can follow the conversation. Keep `view` quick: cache what needs the network.
 A view that raises, or takes more than ten seconds, shows that in the panel instead, and a `url`
-that is not `http` or `https` is refused.
+that is not a well-formed `http` or `https` address with a host is refused.
 
-The server reads each page's response headers, at its address without the query, until it has
-them once, and frames the page only when its `Content-Security-Policy` `frame-ancestors`, or
-without one its `X-Frame-Options`, lets the web UI's address show it; a browser would draw an
-error box instead.
-Otherwise the panel offers to open the page in a window beside CLAI's, and points that window at
-the view's new `url` as it changes.
+Only `https` pages, or `http` pages on `127.0.0.1` or `localhost`, can be framed: the web UI's
+own `Content-Security-Policy` allows no others. For those, the server reads the response headers,
+at the page's address without the query, until it has them once, and frames the page only when
+its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Options`, lets the
+web UI's address show it; a browser would draw an error box instead. A page that does not answer
+within five seconds is not framed this time. Otherwise the panel offers to open the page in a
+window beside CLAI's, and points that window at the view's new `url` as it changes.
 
 ### Offer a spinner: `get_spinners()`
 
