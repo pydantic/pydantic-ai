@@ -937,24 +937,58 @@ class TestSqliteStoresEachMessageOnce:
         # Each run's snapshots repeat the earlier turns; each message is stored once.
         assert _count(db, 'snapshot_messages') == len(history)
 
-    async def test_failed_snapshot_write_keeps_its_messages_out(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize('connection_mode', ['store', 'caller-autocommit', 'caller-default'])
+    async def test_failed_snapshot_write_leaves_nothing_behind(self, tmp_path: Path, connection_mode: str) -> None:
         db = tmp_path / 'runs.db'
-        store = SqliteStepStore(database=db, media_store=None)
-        first, second = _growing_histories(2)
-        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))
-        conn = sqlite3.connect(db, isolation_level=None)
+        conn: sqlite3.Connection | None = None
+        if connection_mode == 'caller-autocommit':
+            conn = sqlite3.connect(db, check_same_thread=False, isolation_level=None)
+        elif connection_mode == 'caller-default':
+            conn = sqlite3.connect(db, check_same_thread=False)
         try:
-            conn.execute(
-                'CREATE TRIGGER reject_step_one AFTER INSERT ON snapshot_message_refs '
-                "WHEN NEW.position = 3 BEGIN SELECT RAISE(ABORT, 'rejected'); END"
-            )
+            if conn is None:
+                store = SqliteStepStore(database=db, media_store=None)
+            else:
+                store = SqliteStepStore(connection=conn, media_store=None)
+            first, second = _growing_histories(2)
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))
+            admin = sqlite3.connect(db, isolation_level=None)
+            try:
+                admin.execute(
+                    'CREATE TRIGGER reject_position_three AFTER INSERT ON snapshot_message_refs '
+                    "WHEN NEW.position = 3 BEGIN SELECT RAISE(ABORT, 'rejected'); END"
+                )
+            finally:
+                admin.close()
+
+            with pytest.raises(sqlite3.IntegrityError, match='rejected'):
+                await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
+            assert _count(db, 'snapshots') == 1
+            assert _count(db, 'snapshot_message_refs') == len(first)
+            assert _count(db, 'snapshot_messages') == len(first)
+            snap = await store.latest_snapshot(run_id='r1')
+            assert snap is not None
+            assert snap.messages == first
+        finally:
+            if conn is not None:
+                conn.close()
+
+    async def test_a_save_inside_the_caller_s_transaction_commits_with_it(self, tmp_path: Path) -> None:
+        db = tmp_path / 'runs.db'
+        conn = sqlite3.connect(db, check_same_thread=False)
+        try:
+            store = SqliteStepStore(connection=conn, media_store=None)
+            await store.register_run(RunRecord(run_id='r0'))
+            conn.commit()
+            conn.execute('CREATE TABLE app_state (value TEXT)')
+            conn.execute("INSERT INTO app_state VALUES ('pending')")
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+            assert conn.in_transaction
+            conn.rollback()
+            assert _count(db, 'snapshots') == 0
+            assert _count(db, 'snapshot_messages') == 0
         finally:
             conn.close()
-
-        with pytest.raises(sqlite3.IntegrityError, match='rejected'):
-            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
-        assert _count(db, 'snapshots') == 1
-        assert _count(db, 'snapshot_messages') == len(first)
 
     @pytest.mark.parametrize('caller_owned', [False, True])
     async def test_idempotent_retry_does_not_store_its_messages(self, tmp_path: Path, caller_owned: bool) -> None:

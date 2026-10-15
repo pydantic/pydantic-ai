@@ -389,7 +389,7 @@ Bounded retention discards older per-step snapshots, including pre-compaction on
 
 ### Storing each message once
 
-`max_snapshots_per_run` bounds the snapshots within a run, but every snapshot repeats the history before it, so storing each one in full grows with the number of snapshots times the history length. `SqliteStepStore` stores each message once instead: `snapshot_messages` holds each message's JSON keyed by its SHA-256, and `snapshot_message_refs` lists each snapshot's messages in order. Reads rebuild the full history, so `latest_snapshot` and `list_snapshots` return the same messages either way.
+`max_snapshots_per_run` bounds the snapshots within a run, but every snapshot repeats the history before it, so storing each one in full grows with the number of snapshots times the history length. `SqliteStepStore` stores each message's content once instead: `snapshot_messages` holds each message's JSON keyed by its SHA-256, and `snapshot_message_refs` lists each snapshot's messages in order, as a short row per message. Reads rebuild the full history, so `latest_snapshot` and `list_snapshots` return the same messages either way.
 
 Deleting a snapshot, by pruning or by deleting its conversation with `SqliteConversationStore.delete`, also deletes the messages no remaining snapshot references.
 

@@ -9,6 +9,8 @@ import os
 import re
 import sqlite3
 from collections import defaultdict
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
@@ -357,6 +359,29 @@ def _store_messages(conn: sqlite3.Connection, snapshot_seq: int, messages: list[
         refs.append((snapshot_seq, position, sha256))
     conn.executemany('INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', rows)
     conn.executemany('INSERT INTO snapshot_message_refs (snapshot_seq, position, sha256) VALUES (?, ?, ?)', refs)
+
+
+@contextmanager
+def _atomically(conn: sqlite3.Connection, *, store_owned: bool, begin: str = 'BEGIN') -> Generator[None]:
+    """Run the statements inside as one transaction, so they apply, and are read, all together.
+
+    On a connection the store opened, `begin` starts the transaction, and an exception
+    leaves it for closing the connection to roll back. On a caller's connection, a
+    savepoint joins any transaction the caller has open, so committing that stays theirs.
+    """
+    if store_owned:
+        conn.execute(begin)
+        yield
+        conn.execute('COMMIT')
+        return
+    conn.execute('SAVEPOINT step_store')
+    try:
+        yield
+    except BaseException:
+        conn.execute('ROLLBACK TO step_store')
+        conn.execute('RELEASE step_store')
+        raise
+    conn.execute('RELEASE step_store')
 
 
 def _referenced_messages(
@@ -1072,9 +1097,13 @@ class SqliteStepStore:
     snapshot growth: after each write, one indexed `DELETE` prunes rows
     outside the retain set (see `_sync_prune_snapshots`).
 
-    Every snapshot repeats the history before it, so storing each message once
-    keeps the store growing with distinct messages rather than with snapshots
-    times history length.
+    Every snapshot repeats the history before it, so each message's content is
+    stored once and a snapshot keeps only a short reference row per message.
+
+    A snapshot's row, messages and references are written together: in a
+    transaction on a connection the store opened, and in a savepoint on a
+    caller-owned `connection=`, which commits only when the caller has no
+    transaction open.
     """
 
     def __init__(
@@ -1325,38 +1354,37 @@ class SqliteStepStore:
     def _sync_save_snapshot(self, snapshot: ContinuableSnapshot, messages_json: object) -> None:
         messages = _OBJECT_LIST_ADAPTER.validate_python(messages_json)
         conn = self._open()
-        # On a connection this store opened, the row and its messages commit
-        # together; closing without `COMMIT` rolls both back.
-        own_transaction = self._connection is None
         try:
             self._ensure_schema(conn)
-            if own_transaction:
-                conn.execute('BEGIN IMMEDIATE')
-            cursor = conn.execute(
-                'INSERT INTO snapshots ('
-                'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
-                'idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (
-                    snapshot.run_id,
-                    snapshot.step_index,
-                    snapshot.conversation_id,
-                    snapshot.parent_run_id,
-                    snapshot.agent_name,
-                    snapshot.timestamp.isoformat(),
-                    snapshot.state,
-                    json.dumps(_StoredMessages(stored_messages=len(messages))),
-                    snapshot.idempotency_key,
-                ),
-            )
-            # The idempotency trigger ignores a retried save's row, leaving `lastrowid` at an earlier one.
-            if cursor.rowcount == 1:
-                assert cursor.lastrowid is not None
-                _store_messages(conn, cursor.lastrowid, messages)
-            self._sync_prune_snapshots(conn, snapshot.run_id)
-            if own_transaction:
-                conn.execute('COMMIT')
+            with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):
+                self._sync_insert_snapshot(conn, snapshot, messages)
         finally:
             self._maybe_close(conn)
+
+    def _sync_insert_snapshot(
+        self, conn: sqlite3.Connection, snapshot: ContinuableSnapshot, messages: list[object]
+    ) -> None:
+        cursor = conn.execute(
+            'INSERT INTO snapshots ('
+            'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
+            'idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                snapshot.run_id,
+                snapshot.step_index,
+                snapshot.conversation_id,
+                snapshot.parent_run_id,
+                snapshot.agent_name,
+                snapshot.timestamp.isoformat(),
+                snapshot.state,
+                json.dumps(_StoredMessages(stored_messages=len(messages))),
+                snapshot.idempotency_key,
+            ),
+        )
+        # The idempotency trigger ignores a retried save's row, leaving `lastrowid` at an earlier one.
+        if cursor.rowcount == 1:
+            assert cursor.lastrowid is not None
+            _store_messages(conn, cursor.lastrowid, messages)
+        self._sync_prune_snapshots(conn, snapshot.run_id)
 
     def _sync_prune_snapshots(self, conn: sqlite3.Connection, run_id: str) -> None:
         """Delete this run's snapshot rows outside the retain set when bounded.
@@ -1419,9 +1447,11 @@ class SqliteStepStore:
             )
             if not include_interrupted:
                 sql += " AND state = 'complete'"
-            row = conn.execute(sql + ' ORDER BY seq DESC LIMIT 1', (run_id,)).fetchone()
+            # One read transaction, so a concurrent prune can't remove the references between the queries.
+            with _atomically(conn, store_owned=self._connection is None):
+                row = conn.execute(sql + ' ORDER BY seq DESC LIMIT 1', (run_id,)).fetchone()
+                referenced = _referenced_messages(conn, '?', (row[8],)) if row is not None else {}
             if row is not None:
-                referenced = _referenced_messages(conn, '?', (row[8],))
                 row = (*row[:6], _history_json(row[6], referenced.get(row[8], [])), row[7])
         finally:
             self._maybe_close(conn)
@@ -1486,16 +1516,19 @@ class SqliteStepStore:
         conn = self._open()
         try:
             self._ensure_schema(conn)
-            sql = (
-                'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
-                'idempotency_key, seq '
-                'FROM snapshots WHERE run_id = ?'
-            )
+            where = 'FROM snapshots WHERE run_id = ?'
             if not include_interrupted:
-                sql += " AND state = 'complete'"
-            referenced = _referenced_messages(conn, 'SELECT seq FROM snapshots WHERE run_id = ?', (run_id,))
+                where += " AND state = 'complete'"
+            # One read transaction, so a concurrent prune can't remove the references between the queries.
+            with _atomically(conn, store_owned=self._connection is None):
+                referenced = _referenced_messages(conn, f'SELECT seq {where}', (run_id,))
+                snapshot_rows = conn.execute(
+                    'SELECT step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, '
+                    f'idempotency_key, seq {where} ORDER BY seq ASC',
+                    (run_id,),
+                ).fetchall()
             rows: list[tuple[object, ...]] = []
-            for row in conn.execute(sql + ' ORDER BY seq ASC', (run_id,)).fetchall():
+            for row in snapshot_rows:
                 try:
                     messages = _history_json(row[6], referenced.get(row[8], []))
                 except ValueError:
