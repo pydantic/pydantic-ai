@@ -263,6 +263,7 @@ class DelegationTasks:
             record.outcome, record.output, record.finished_at = None, '', None
             record.started_at, record.delivered = time.time(), False
             self._stopping.discard(record.id)
+            self._unsteered.pop(record.id, None)
             record.generation += 1
             record.run_id = uuid4().hex
             record.parent_id = parent_id
@@ -377,6 +378,8 @@ class DelegationTasks:
             if worker is not None:
                 await asyncio.gather(worker, return_exceptions=True)
             if record.status == 'running':
+                # Its run never started to read steering sent meanwhile.
+                self._unsteered.pop(task_id, None)
                 record.status, record.outcome = 'finished', 'cancelled'
                 record.output = 'Task stopped before execution.'
                 record.finished_at = time.time()

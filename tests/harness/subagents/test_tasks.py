@@ -284,6 +284,46 @@ async def test_steer_sent_before_the_child_run_starts_waits_for_it() -> None:
     assert 'start with the README' in str(seen[0])
 
 
+async def test_steer_for_a_task_stopped_before_its_run_reaches_no_later_run() -> None:
+    seen: list[list[ModelMessage]] = []
+    accepted, release = asyncio.Event(), asyncio.Event()
+
+    class Owner(DelegationTasks):
+        async def save(self, record: DelegationTask) -> None:
+            if not accepted.is_set():
+                accepted.set()
+                await release.wait()
+            await super().save(record)
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'child answer'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    owner = Owner()
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                running = asyncio.create_task(parent.run('go', conversation_id='parent'))
+                await accepted.wait()
+                (record,) = owner.records.values()
+                assert owner.steer(record.id, 'stale guidance')
+                stopping = asyncio.create_task(owner.cancel(record.id))
+                release.set()
+                await stopping
+                await running
+                assert (record.outcome, seen) == ('cancelled', [])
+                await owner.allow_resume(record.id)
+                resumed = Agent(
+                    parent_model(resume=record.id),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                await resumed.run('again', conversation_id='parent')
+    assert record.output == 'child answer'
+    assert 'stale guidance' not in str(seen)
+
+
 async def test_promotion_and_targeted_cancellation(tmp_path: Path) -> None:
     first_started, second_started = asyncio.Event(), asyncio.Event()
     release = asyncio.Event()
