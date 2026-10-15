@@ -264,9 +264,10 @@ class TestCodeModeInputGuardrail:
         assert result.output == 'done'
         assert run.calls == [1]
 
-    async def test_retry_adopts_launches_a_guard_cancelled_undecided_released(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_retry_adopts_launches_released_by_a_guard_cancelled_undecided(self, monkeypatch: pytest.MonkeyPatch):
         run = GuardedRun()
         run.watch_verdict_wait(monkeypatch)
+        code_mode = CodeMode[None](speculate=['ping'])
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             # Request 1 launches both calls and is retried while they wait; request 2 repeats the snippet.
@@ -282,11 +283,7 @@ class TestCodeModeInputGuardrail:
         agent = Agent(
             FunctionModel(stream_function=stream),
             deps_type=type(None),
-            capabilities=[
-                CodeMode[None](speculate=['ping']),
-                InputGuardrail[None](guard=undecided, parallel=True),
-                retrying_first_response(),
-            ],
+            capabilities=[code_mode, InputGuardrail[None](guard=undecided, parallel=True), retrying_first_response()],
         )
         agent.tool_plain(run.ping)
 
@@ -294,6 +291,7 @@ class TestCodeModeInputGuardrail:
 
         assert result.output == 'done'
         assert sorted(run.calls) == [1, 2]
+        assert (code_mode.speculation_stats.launched, code_mode.speculation_stats.adopted) == (2, 2)
 
     @pytest.mark.parametrize('blocks', [False, True], ids=['allow', 'block'])
     async def test_parallel_guard_under_durable_execution(self, blocks: bool):
