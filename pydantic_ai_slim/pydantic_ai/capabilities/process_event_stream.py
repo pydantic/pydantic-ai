@@ -67,7 +67,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     Async generator processors are closed and observer handlers are awaited during stream teardown.
     Release resources in a `finally` block, using a shielded AnyIO cancel scope for asynchronous
     cleanup that must finish under cancellation. An observer that stops reading before the stream
-    ends is not protected this way: its cleanup is cancelled if the stream then ends early.
+    ends is not protected this way: its cleanup can be interrupted if the stream then ends early.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
