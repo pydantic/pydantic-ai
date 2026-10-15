@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -35,7 +35,7 @@ from . import (
 )
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage
+    from ..messages import ModelMessage, ModelResponseStreamEvent
     from ..settings import ModelSettings
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
@@ -337,7 +337,11 @@ class FallbackModel(Model):
         If a previous response set `state='suspended'`, the request is routed directly
         to the pinned continuation model, bypassing the fallback chain. If the pinned model
         raises a fallback-eligible error while opening the stream, the messages are rewound
-        and the normal fallback chain is tried. Mid-stream failures still propagate.
+        and the normal fallback chain is tried.
+
+        A stream is only handed over once it has produced its first event, so an error the stream
+        raises before that, such as a provider reporting an overload after acknowledging the request,
+        falls back like an error while opening it. Failures after the first event still propagate.
 
         Response handlers are not applied: the response has already been streamed by the time
         it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
@@ -358,7 +362,9 @@ class FallbackModel(Model):
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        _request_stream_until_first_event(
+                            pinned, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
                     duration = start.elapsed()
@@ -402,7 +408,9 @@ class FallbackModel(Model):
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        _request_stream_until_first_event(
+                            model, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
                     duration = start.elapsed()
@@ -576,6 +584,42 @@ class FallbackModel(Model):
             record_attempt_span(
                 attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
             )
+
+
+@asynccontextmanager
+async def _request_stream_until_first_event(
+    model: Model,
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    run_context: RunContext[Any] | None,
+) -> AsyncGenerator[StreamedResponse]:
+    """Open `model`'s stream and wait for its first event before handing it over.
+
+    Providers can accept a streamed request and then report a failure before producing any output,
+    like an OpenAI Responses `response.failed` after `response.created`, or a Bedrock throttling
+    error as the first stream event. Waiting for the first event means such an error is raised here,
+    inside the candidate's own stream context, where `FallbackModel` can still move on to the next
+    model. The event is replayed to the consumer, so the stream it gets is unchanged.
+    """
+    async with model.request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+        events = aiter(response)
+        try:
+            first_event = await anext(events)
+        except StopAsyncIteration:
+            pass
+        else:
+            # `StreamedResponse.__aiter__` hands out the iterator stored here, so this puts the event back.
+            response._event_iterator = _prepend_event(first_event, events)  # pyright: ignore[reportPrivateUsage]
+        yield response
+
+
+async def _prepend_event(
+    first_event: ModelResponseStreamEvent, events: AsyncIterator[ModelResponseStreamEvent]
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    yield first_event
+    async for event in events:
+        yield event
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
