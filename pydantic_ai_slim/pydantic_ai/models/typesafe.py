@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Literal, assert_never, cast
 
 import httpx2
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from .._http import to_httpx2_timeout
 from .._warnings import PydanticAIDeprecationWarning
@@ -221,13 +221,13 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
         """Send one request to TypeSafe's Decisions API."""
         if not all(image.is_image for image in request.images):
             raise UserError('TypeSafe supports image evidence only; `request.images` contains a non-image.')
-        questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
         timeout = model_settings.get('timeout')
         extra_headers = httpx2.Headers(model_settings.get('extra_headers'))
         if request.images:
             # TypeSafe refuses a request with an image unless it opts in to the still-experimental image input.
             extra_headers.setdefault('TypeSafe-Danger-Zone-Images', 'true')
         try:
+            questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
             # The SDK's recursive JSON type aliases read as partially unknown.
             response = await self.client.system_one(  # pyright: ignore[reportUnknownMemberType]
                 cast(JSONContent, request.state),
@@ -247,9 +247,9 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
             ) from e
         except TypeSafeAPIConnectionError as e:
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
-        except TypeSafeError as e:
+        except (TypeSafeError, ValidationError) as e:
             # What is left is the SDK refusing to send what it was given, such as an `extra_body` that will
-            # not encode as JSON. That is the caller's to fix, not the model's.
+            # not encode as JSON or a question it will not build. That is the caller's to fix, not the model's.
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
         answers = {name: _from_typesafe_answer(answer) for name, answer in response.answers.items()}

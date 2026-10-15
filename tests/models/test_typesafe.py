@@ -48,7 +48,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters, decision
-from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
+from pydantic_ai.models.decision import DecisionRequest, NoulQuestion, ScoreQuestion
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -537,6 +537,20 @@ async def test_unencodable_extra_body_is_a_user_error(allow_model_requests: None
     )
     with pytest.raises(UserError, match='TypeSafe could not send this request'):
         await agent.run('anything')
+
+
+async def test_a_question_the_sdk_refuses_is_a_user_error(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """The SDK validates each question as it is built, so one it refuses is the caller's to fix, like a refused body.
+
+    Only a direct `decide` call can build such a question: the agent never asks a rubric with no levels.
+    """
+    with pytest.raises(UserError, match='TypeSafe could not send this request'):
+        await typesafe_model.decide(
+            DecisionRequest(state='Grade this.', questions={'q': ScoreQuestion(criteria=[])}), {}
+        )
+    assert request_capture.paths == []
 
 
 class Ticket(BaseModel):
@@ -2530,6 +2544,45 @@ Here is the photo.
 <image 1>\
 """)
     assert body['assets'] == snapshot({'<image 1>': {'type': 'image', 'part': 'asset-0'}})
+    assert assets == [image_content.data]
+
+
+@pytest.mark.vcr
+async def test_image_in_history_and_text_in_current_prompt(
+    allow_model_requests: None,
+    typesafe_model: TypeSafeModel,
+    image_content: BinaryImage,
+    request_capture: RequestCapture,
+):
+    """An image earlier in the conversation is still seen where its label sits inside the history in the state.
+
+    The input tokens are the image's: the text alone is a few dozen.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['This is what I bought at the market.', image_content])]),
+        ModelResponse(parts=[TextPart('Thanks, noted.')]),
+    ]
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is the fruit the customer bought green inside?')
+    result = await agent.run('Can I eat it as it is?', message_history=history)
+
+    assert result.output == snapshot(True)
+    assert result.response.usage.input_tokens == snapshot(1258)
+    body, assets = multipart(request_capture.headers[0], request_capture.raw_bodies[0])
+    assert body['state'] == snapshot(
+        {
+            'history': [
+                {
+                    'user': """\
+This is what I bought at the market.
+
+<image 1>\
+"""
+                },
+                {'assistant': 'Thanks, noted.'},
+            ],
+            'text': 'Can I eat it as it is?',
+        }
+    )
     assert assets == [image_content.data]
 
 
