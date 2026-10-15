@@ -4,6 +4,8 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncIterator, Callable
+from contextvars import Context
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -185,11 +187,46 @@ async def test_checkout_guidance_stays_out_of_system_instructions(tmp_path: Path
 async def test_deadline_reports_time_limit_without_waiting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An expired run budget is classified separately from provider timeouts."""
-    monkeypatch.setattr(cli, 'run_timeout_secs', lambda: 0)
+    """A positive deadline cancels an active headless stream and reports its cause."""
+    budget = 1234
+    monkeypatch.setattr(cli, 'run_timeout_secs', lambda: budget)
+    loop = asyncio.get_running_loop()
+    original_call_later = loop.call_later
+    callbacks: list[Callable[[], object]] = []
+    stream_stopped = False
+
+    def schedule(
+        delay: float, callback: Callable[..., object], *args: object, context: Context | None = None
+    ) -> asyncio.TimerHandle:
+        if delay == budget:
+            callbacks.append(partial(callback, *args))
+            return loop.call_at(loop.time() + budget, callback, *args, context=context)
+        return original_call_later(delay, callback, *args, context=context)
+
+    monkeypatch.setattr(loop, 'call_later', schedule)
+
+    async def pending_response(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        del messages, info
+        nonlocal stream_stopped
+        assert len(callbacks) == 1
+        callbacks[0]()
+        try:
+            await asyncio.Future()
+        finally:
+            stream_stopped = True
+        yield 'Unreachable'
+
     agent = workflow.build_agent()
-    with agent.override(model=TestModel()), pytest.raises(cli.RunTimeLimitExceeded):
-        await agent.run('Investigate', usage_limits=UsageLimits(request_limit=400))
+    with agent.override(model=FunctionModel(stream_function=pending_response)):
+        result = await run_headless(
+            text='Investigate',
+            settings=Settings(request_limit=400, code_mode=False),
+            store=SettingsStore(tmp_path / 'clai2.db'),
+            project=ProjectSettings(),
+            agent=agent,
+        )
+    assert result == 1
+    assert stream_stopped
     artifact = tmp_path / 'agent-stdio.log'
     artifact.write_text(capsys.readouterr().err)
     result = health.parse_run_result(artifact)

@@ -1,5 +1,7 @@
 """Repository workflow policy composed with the public CLAI 2 engine's Coder."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -30,21 +32,33 @@ from .shared import reset_context_state
 class WorkflowPolicy(AbstractCapability[object]):
     """Keep workflow budgets and terminal health metadata around CLAI's run."""
 
+    timed_out: bool = False
+
+    async def for_run(self, ctx: RunContext[object]) -> WorkflowPolicy:
+        return WorkflowPolicy()
+
+    def expire(self, ctx: RunContext[object]) -> None:
+        """Cancel the run owner, rather than its capability lifecycle waiter."""
+        self.timed_out = True
+        ctx.cancel()
+
+    async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+        if self.timed_out:
+            raise cli.RunTimeLimitExceeded('Workflow exceeded its run budget') from error
+        raise error
+
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         reset_context_state()
         budget = cli.run_timeout_secs()
         cli.run_deadline = time.monotonic() + budget
         started = time.monotonic()
         error: BaseException | None = None
+        timer = asyncio.get_running_loop().call_later(budget, self.expire, ctx)
         try:
             async with AsyncExitStack() as stack:
                 if _model is not None:
                     await stack.enter_async_context(_model.client)
-                async with asyncio.timeout(budget):
-                    return await handler()
-        except TimeoutError as exc:
-            error = cli.RunTimeLimitExceeded(f'Workflow exceeded its {budget}-second run budget')
-            raise error from exc
+                return await handler()
         except UsageLimitExceeded as exc:
             if cli.safe_output_pending():
                 error = exc
@@ -62,6 +76,7 @@ class WorkflowPolicy(AbstractCapability[object]):
             error = exc
             raise
         finally:
+            timer.cancel()
             cli.run_deadline = None
             run_attempt: int | None = None
             try:

@@ -131,6 +131,7 @@ jobs:
 engine:
   model: anthropic/${{ vars.GH_AW_MODEL }}
 imports:
+  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md

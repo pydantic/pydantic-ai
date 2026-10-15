@@ -49,6 +49,7 @@ import argparse
 import json
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -493,6 +494,28 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
     ]
 
 
+def shell_commands(script: str) -> list[list[str]]:
+    """Tokenize commands without treating quoted strings or comments as executions."""
+    lexer = shlex.shlex(script.replace('\\\n', ''), posix=True, punctuation_chars=';&|\n')
+    lexer.whitespace = ' \t\r'
+    lexer.whitespace_split = True
+    commands: list[list[str]] = []
+    command: list[str] = []
+    try:
+        for token in lexer:
+            if all(char in ';&|\n' for char in token):
+                if command:
+                    commands.append(command)
+                    command = []
+            else:
+                command.append(token)
+    except ValueError:
+        return []
+    if command:
+        commands.append(command)
+    return commands
+
+
 def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     """Require the public engine, workflow policy and isolated Z.ai credentials."""
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
@@ -511,15 +534,34 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     else:
         execution = executions[0]
         run = execution.get('run')
-        command = run if isinstance(run, str) else ''
+        commands = shell_commands(run) if isinstance(run, str) else []
+        awf_commands = [command for command in commands if command[0] == 'awf']
+        awf = awf_commands[0] if len(awf_commands) == 1 else []
+        harness_commands: list[list[str]] = []
+        if '--' in awf:
+            child = awf[awf.index('--') + 1 :]
+            if len(child) >= 3 and child[:2] == ['/bin/bash', '-c']:
+                harness_commands = shell_commands(child[2])
         env = _as_mapping(execution.get('env'))
-        if 'pydantic-ai_harness.cjs clai2' not in command:
+        harness_paths = {
+            '${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs',
+            '/tmp/gh-aw/actions/pydantic-ai_harness.cjs',
+        }
+        if not any(
+            len(command) == 3
+            and command[0] in {'node', '$GH_AW_NODE_EXEC'}
+            and command[1] in harness_paths
+            and command[2] == 'clai2'
+            for command in harness_commands[-1:]
+        ):
             missing.append('the public CLAI 2 harness')
         if env.get('XDG_CONFIG_HOME') != '/tmp/gh-aw/clai2-config':
             missing.append('isolated CLAI settings for the workflow budgets')
-        if '--exclude-env ANTHROPIC_API_KEY' not in command:
+        options = awf[: awf.index('--')] if '--' in awf else awf
+        exclusions = {value for flag, value in zip(options, options[1:]) if flag == '--exclude-env'}
+        if 'ANTHROPIC_API_KEY' not in exclusions:
             missing.append('AWF exclusion of the provider credential')
-        if not env.get('PYDANTIC_AI_TASK_ID') or '--exclude-env PYDANTIC_AI_TASK_ID' in command:
+        if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
             missing.append('task identity available inside the agent sandbox')
         if env.get('PAI_AGENT') != 'pydantic_ai_gh_aw_shim.agent:agent':
             missing.append('the repository workflow policy')

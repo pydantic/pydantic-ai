@@ -680,11 +680,7 @@ def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
     assert 'public CLAI 2 harness' in violations[0].message
 
 
-def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
-    """The public engine retains policy, model and proxy credential exclusion."""
-    lock = _write(
-        tmp_path / 'w.lock.yml',
-        """
+_PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
     env:
@@ -700,9 +696,47 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYDANTIC_AI_TASK_ID: stable-task
-""",
-    )
+"""
+
+
+def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
+    """The public engine retains policy, model and proxy credential exclusion."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK)
     assert check_compiled_runner_contract(lock) == []
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        "echo 'pydantic-ai_harness.cjs clai2 --exclude-env ANTHROPIC_API_KEY'\nawf -- /tmp/legacy-launcher",
+        'awf -- /bin/bash -c \'echo "--exclude-env ANTHROPIC_API_KEY"; node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2\'',
+        'awf --exclude-env ANTHROPIC_API_KEY -- /bin/bash -c \'echo "pydantic-ai_harness.cjs clai2"; /tmp/legacy-launcher\'',
+        '# pydantic-ai_harness.cjs clai2 --exclude-env ANTHROPIC_API_KEY\nawf -- /tmp/legacy-launcher',
+        "awf -- /bin/bash -c 'node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2' --exclude-env ANTHROPIC_API_KEY",
+    ],
+)
+def test_compiled_runner_contract_rejects_decoy_command_text(tmp_path: Path, command: str):
+    """Only executed commands and outer AWF arguments establish the contract."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    workflow['jobs']['agent']['steps'][0]['run'] = command
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    assert [v.check for v in check_compiled_runner_contract(lock)] == ['compiled-runner-contract']
+
+
+@pytest.mark.parametrize('lock', sorted((Path(__file__).parent.parent / 'workflows').glob('pydantic-ai-*.lock.yml')))
+def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
+    """Every GLM-producing job must receive the actual compiled OTLP configuration."""
+    workflow = yaml.safe_load(lock.read_text(encoding='utf-8'))
+    assert workflow['env']['OTEL_EXPORTER_OTLP_ENDPOINT']
+    assert workflow['env']['OTEL_EXPORTER_OTLP_HEADERS']
+    detector = next(
+        step['env']
+        for step in workflow['jobs']['detection']['steps']
+        if 'CLAUDE_CODE_ENABLE_TELEMETRY' in step.get('env', {})
+    )
+    assert str(detector['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
+    assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
+    assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
 
 
 # --- AWF binary pin (the #8041 skew) ------------------------------------------
