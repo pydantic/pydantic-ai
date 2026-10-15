@@ -144,7 +144,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             self._client = hf_client
 
     def _refresh_http_client(self) -> None:
-        """Build a new `AsyncInferenceClient` when the one this provider built was used on another event loop.
+        """Build a new `AsyncInferenceClient` when the one this provider built was used on a stopped event loop.
 
         The client opens its HTTP client on first use and keeps it, so it can't be used from another event loop.
         """

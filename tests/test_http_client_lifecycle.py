@@ -8,6 +8,7 @@ that what they count and check is each client the provider itself creates.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -48,10 +49,21 @@ _OPENAI_RESPONSE: dict[str, Any] = {
 
 
 @pytest.fixture
-def new_provider_clients(monkeypatch: pytest.MonkeyPatch, allow_model_requests: None) -> list[httpx2.AsyncClient]:
+def transport_loops() -> dict[httpx2.AsyncHTTPTransport, set[asyncio.AbstractEventLoop]]:
+    """The event loops each HTTP transport answered requests on. A real one can only use its connections on one."""
+    return {}
+
+
+@pytest.fixture
+def new_provider_clients(
+    monkeypatch: pytest.MonkeyPatch,
+    allow_model_requests: None,
+    transport_loops: dict[httpx2.AsyncHTTPTransport, set[asyncio.AbstractEventLoop]],
+) -> list[httpx2.AsyncClient]:
     """Every HTTP client an OpenAI provider creates for itself, each one new, answered without a network.
 
-    Clients used on an event loop that has since closed can't be closed, so this leaves closing them to the test.
+    A client used on an event loop that has since closed can't be closed, so unlike `provider_clients`, this
+    leaves them open.
     """
     clients: list[httpx2.AsyncClient] = []
 
@@ -62,6 +74,7 @@ def new_provider_clients(monkeypatch: pytest.MonkeyPatch, allow_model_requests: 
         return client
 
     async def handle(self: httpx2.AsyncHTTPTransport, request: httpx2.Request) -> httpx2.Response:
+        transport_loops.setdefault(self, set()).add(asyncio.get_running_loop())
         return httpx2.Response(200, json=_OPENAI_RESPONSE)
 
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
@@ -110,7 +123,9 @@ def _unwrapped(model: Model) -> Model:
     ],
 )
 def test_unentered_agent_gets_new_client_on_new_event_loop(
-    new_provider_clients: list[httpx2.AsyncClient], wrap: Callable[[Model], Model]
+    new_provider_clients: list[httpx2.AsyncClient],
+    transport_loops: dict[httpx2.AsyncHTTPTransport, set[asyncio.AbstractEventLoop]],
+    wrap: Callable[[Model], Model],
 ):
     """An agent that isn't entered keeps its model's HTTP client between runs, and replaces it on a new event loop."""
     model = wrap(OpenAIChatModel('gpt-5.2', provider=OpenAIProvider()))
@@ -129,12 +144,38 @@ def test_unentered_agent_gets_new_client_on_new_event_loop(
     assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
     assert len(new_provider_clients) == 3
     assert _openai_http_client(model) is new_provider_clients[2]
+    assert [len(loops) for loops in transport_loops.values()] == [1, 1, 1]
     # Nothing closes a client whose event loop is gone.
     assert [client.is_closed for client in new_provider_clients] == [False, False, False]
 
 
-def test_unentered_agent_keeps_passed_in_client_on_new_event_loop(new_provider_clients: list[httpx2.AsyncClient]):
-    """An HTTP client passed to the provider is the caller's, so it's never replaced."""
+def test_unentered_agent_keeps_client_while_its_event_loop_runs(new_provider_clients: list[httpx2.AsyncClient]):
+    """While the event loop a client was last used on still runs, as in another thread, the client isn't replaced."""
+    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
+    agent = Agent(model)
+    other_loop = asyncio.new_event_loop()
+    other_thread = threading.Thread(target=other_loop.run_forever)
+    other_thread.start()
+    try:
+        result = asyncio.run_coroutine_threadsafe(agent.run('What is the capital of France?'), other_loop).result()
+        assert result.output == 'Paris'
+        assert _run_on_new_event_loops(agent, count=1) == ['Paris']
+        assert len(new_provider_clients) == 1
+    finally:
+        other_loop.call_soon_threadsafe(other_loop.stop)
+        other_thread.join()
+        other_loop.close()
+
+    # Once the loop the client was last used on has stopped, a run on another one gets a new client.
+    assert _run_on_new_event_loops(agent, count=1) == ['Paris']
+    assert len(new_provider_clients) == 2
+
+
+def test_unentered_agent_keeps_passed_in_client_on_new_event_loop(
+    new_provider_clients: list[httpx2.AsyncClient],
+    transport_loops: dict[httpx2.AsyncHTTPTransport, set[asyncio.AbstractEventLoop]],
+):
+    """An HTTP client passed to the provider is the caller's, so it's never replaced, even on another event loop."""
     http_client = create_uncached_client()
     model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=http_client))
     agent = Agent(model)
@@ -142,6 +183,7 @@ def test_unentered_agent_keeps_passed_in_client_on_new_event_loop(new_provider_c
     assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
     assert new_provider_clients == []
     assert _openai_http_client(model) is http_client
+    assert [len(loops) for loops in transport_loops.values()] == [2]
 
 
 async def test_unentered_run_after_agent_exit_gets_new_client(provider_clients: list[httpx2.AsyncClient]):
