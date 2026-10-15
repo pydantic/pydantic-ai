@@ -48,7 +48,7 @@ interactions:
 
 
       Fix the errors and try again.'
-    is_error: false
+    is_error: true
 - kind: message
   direction: received
   at: 0.859

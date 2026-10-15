@@ -2386,3 +2386,16 @@ async def test_the_greeting_answers_no_microphone_audio() -> None:
             ]
         ]
     )
+
+
+async def test_a_failed_tool_result_is_flagged_as_an_error() -> None:
+    connection, ws = _connection()
+    await connection.send(ToolResult(tool_call_id='call_1', output='{"error": "service down"}', failed=True))
+    assert ws.sent_frames() == [
+        {
+            'type': 'client_tool_result',
+            'tool_call_id': 'call_1',
+            'result': '{"error": "service down"}',
+            'is_error': True,
+        }
+    ]

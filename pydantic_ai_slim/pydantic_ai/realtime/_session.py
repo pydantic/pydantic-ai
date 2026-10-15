@@ -3841,11 +3841,16 @@ class RealtimeSession:
             return result_part, user_content
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
-        await self._send_tool_result(call_part, output, wire_content)
+        failed = isinstance(result_part, RetryPromptPart) or result_part.outcome == 'failed'
+        await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
 
-    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
-        result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
+    async def _send_tool_result(
+        self, call_part: ToolCallPart, output: str, wire_content: list[UserContent], *, failed: bool = False
+    ) -> None:
+        result = ToolResult(
+            tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
+        )
         if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is None:
             # A connection that answers each result (or a call dispatched outside the pump): the result is
             # a reply of its own, as it always has been.
