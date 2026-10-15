@@ -106,7 +106,7 @@ if TYPE_CHECKING:
 
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
-    from .batch import BatchRequest, BatchResult, BatchStatus
+    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -549,48 +549,56 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @property
     def batch_max_requests(self) -> int | None:
-        """The most requests the provider accepts in one batch, or `None` when batching is unsupported."""
+        """The most requests the provider accepts in one batch, or `None` when the model has no batch API.
+
+        A model that returns a number implements the other `batch_*` methods, which
+        [`BatchModel`][pydantic_ai.models.batch.BatchModel] and
+        [`model_request_batch`][pydantic_ai.direct.model_request_batch] are built on.
+        """
         return None
 
-    async def batch_encode(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        *,
-        custom_id: str,
-    ) -> BatchRequest:
-        """Encode a model request the way the model would send it on its own."""
-        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        """Encode a request for the provider's batch API, with the parameters the model would send on its own.
 
-    async def batch_create(self, requests: Sequence[BatchRequest]) -> str:
-        """Submit requests that share a `group` as one batch, and return its ID."""
-        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
-
-    async def batch_status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
-        """Retrieve the job state without downloading its results.
-
-        `ended` means processing finished, including failed, expired or canceled requests.
-        The caller owns scheduling and persistence when using this API directly.
+        Raises a [`UserError`][pydantic_ai.exceptions.UserError] for a setting the batch API can't honor.
         """
-        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
 
-    async def batch_results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
-        """Return the batch's results once it has ended, or `None` while it is still processing."""
-        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        """Submit encoded requests that share a `group` as one batch job.
 
-    async def batch_cancel(self, batch_id: str, *, group: str | None = None) -> None:
-        """Cancel a batch that is still processing."""
-        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
+        A failed submission is not retried, because the provider may have created the job before the connection
+        failed: check the provider's jobs before submitting the requests again.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
 
-    def batch_decode(
-        self,
-        result: BatchResult,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        """Turn a result into a response, or raise the model error the request would have raised on its own."""
-        raise NotImplementedError(f'Batch requests are not supported by {self.__class__.__name__}.')
+    async def batch_status(self, batch: Batch) -> Batch:
+        """Retrieve the current state of a batch job, without its results."""
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve the results of a batch job that has ended, keyed by each request's `custom_id`.
+
+        Raises a [`UserError`][pydantic_ai.exceptions.UserError] if `batch` hasn't ended; check with
+        [`batch_status`][pydantic_ai.models.Model.batch_status] first.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        """Ask the provider to cancel a batch job, and return its updated state.
+
+        Requests the provider already completed may still be billed.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        """Turn a batch result into the response the request would have produced on its own.
+
+        Raises the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the request would have raised, or one
+        saying the request expired or was canceled before the model ran it. `request` must be the request the result
+        belongs to, as its settings and parameters determine how the result is read; its messages aren't used.
+        """
+        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""

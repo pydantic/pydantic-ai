@@ -26,7 +26,7 @@ from . import (
 )
 
 if TYPE_CHECKING:
-    from .batch import BatchRequest, BatchResult, BatchStatus
+    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 __all__ = ['WrapperModel']
 
@@ -75,35 +75,23 @@ class WrapperModel(Model):
     def batch_max_requests(self) -> int | None:
         return self.wrapped.batch_max_requests
 
-    async def batch_encode(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        *,
-        custom_id: str,
-    ) -> BatchRequest:
-        return await self.wrapped.batch_encode(messages, model_settings, model_request_parameters, custom_id=custom_id)
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await self.wrapped.batch_encode(request)
 
-    async def batch_create(self, requests: Sequence[BatchRequest]) -> str:
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         return await self.wrapped.batch_create(requests)
 
-    async def batch_status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
-        return await self.wrapped.batch_status(batch_id, group=group)
+    async def batch_status(self, batch: Batch) -> Batch:
+        return await self.wrapped.batch_status(batch)
 
-    async def batch_results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
-        return await self.wrapped.batch_results(batch_id, group=group)
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        return await self.wrapped.batch_results(batch)
 
-    async def batch_cancel(self, batch_id: str, *, group: str | None = None) -> None:
-        await self.wrapped.batch_cancel(batch_id, group=group)
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        return await self.wrapped.batch_cancel(batch)
 
-    def batch_decode(
-        self,
-        result: BatchResult,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        return self.wrapped.batch_decode(result, model_settings, model_request_parameters)
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return self.wrapped.batch_decode(result, request)
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         return await self.wrapped.cancel_suspended_response(response)

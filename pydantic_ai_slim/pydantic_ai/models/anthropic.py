@@ -91,6 +91,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _anthropic_batch,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -111,7 +112,7 @@ from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcin
 from ._transport_errors import transport_error_message
 
 if TYPE_CHECKING:
-    from .batch import BatchRequest, BatchResult, BatchStatus
+    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -1096,47 +1097,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None
         return 100_000
 
-    async def batch_encode(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        *,
-        custom_id: str,
-    ) -> BatchRequest:
-        from ._anthropic_batch import batch_encode
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _anthropic_batch.batch_encode(self, request)
 
-        return await batch_encode(self, messages, model_settings, model_request_parameters, custom_id=custom_id)
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name):
+            return await _anthropic_batch.batch_create(self, requests)
 
-    async def batch_create(self, requests: Sequence[BatchRequest]) -> str:
-        from ._anthropic_batch import batch_create
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name):
+            return await _anthropic_batch.batch_status(self, batch)
 
-        return await batch_create(self, requests)
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name):
+            return await _anthropic_batch.batch_results(self, batch)
 
-    async def batch_status(self, batch_id: str, *, group: str | None = None) -> BatchStatus:
-        from ._anthropic_batch import batch_status
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name):
+            return await _anthropic_batch.batch_cancel(self, batch)
 
-        return await batch_status(self, batch_id, group=group)
-
-    async def batch_results(self, batch_id: str, *, group: str | None = None) -> list[BatchResult] | None:
-        from ._anthropic_batch import batch_results
-
-        return await batch_results(self, batch_id, group=group)
-
-    async def batch_cancel(self, batch_id: str, *, group: str | None = None) -> None:
-        from ._anthropic_batch import batch_cancel
-
-        return await batch_cancel(self, batch_id, group=group)
-
-    def batch_decode(
-        self,
-        result: BatchResult,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        from ._anthropic_batch import batch_decode
-
-        return batch_decode(self, result, model_settings, model_request_parameters)
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _anthropic_batch.batch_decode(self, result, request)
 
     @property
     def model_name(self) -> AnthropicModelName:
