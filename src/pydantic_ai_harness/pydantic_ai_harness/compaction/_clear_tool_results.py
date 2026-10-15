@@ -62,8 +62,10 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     the threshold and clear one more result on every request, rewriting history (and busting the
     prompt cache) each step. Counting from the last cleared result instead makes clearing happen
     in batches, and the requests between two clears extend the cached prefix. Before the first clear
-    the count is the whole history. The kept pairs count toward it, so keep it well above
-    `2 * keep_pairs`."""
+    the count is the whole history. The kept pairs count toward it: right after a clear about
+    `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more, so
+    the next clear comes after about `(max_messages - 2 * keep_pairs) / 2` tool steps. At or below
+    `2 * keep_pairs` it clears on every request."""
 
     max_tokens: int | None = None
     """Trigger clearing when estimated token count exceeds this value. `None` disables."""
@@ -189,12 +191,11 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     def _exceeds_max_messages(self, messages: list[ModelMessage]) -> bool:
         if self.max_messages is None:
             return False
-        since_last_clear = len(messages)
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
+        for since_last_clear, message in enumerate(reversed(messages)):
             if isinstance(message, ModelRequest) and any(
                 type(part) is ToolReturnPart and str(part.content) == self.placeholder for part in message.parts
             ):
-                since_last_clear = len(messages) - index - 1
                 break
+        else:
+            since_last_clear = len(messages)
         return since_last_clear > self.max_messages
