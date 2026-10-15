@@ -3,6 +3,7 @@
 import asyncio
 import html
 import io
+import re
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
@@ -20,6 +21,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
+from termflow.themes import PALETTES
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 from websockets.typing import Origin
@@ -65,6 +67,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.ui.rendering import theme as terminal_theme
 
 TOKEN = 'secret-token'
 HOSTS = frozenset({'testserver'})
@@ -284,12 +287,26 @@ def test_theme(make_web: 'MakeWeb') -> None:
         web_.post('/api/input', {'text': '/theme tokyo_night'})
         changed = receive_until(socket, ThemeChanged)[1].theme
         assert changed.name == 'tokyo_night'
-        assert changed.palette is not None and (changed.palette.bg, len(changed.palette.ansi)) == ('#1a1b26', 16)
+        assert changed.palette is not None
+        assert (changed.palette.bg, len(changed.palette.ansi)) == (PALETTES['tokyo_night'].bg, 16)
         web_.post('/api/input', {'text': '/cost'})
         messages, _ = receive_until(socket, Notice)
         assert not any(isinstance(message, ThemeChanged) for message in messages), 'sent only when it changes'
+        web_.post('/api/input', {'text': '/theme default'})
+        changed = receive_until(socket, ThemeChanged)[1].theme
+        assert (changed.name, changed.palette) == ('default', None), "back to Pydantic's colours"
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
+
+
+def test_theme_slots_match_the_terminal() -> None:
+    """`web-ui/src/palette.ts` paints each role from the same ANSI slot as `ui/rendering/theme.py` does."""
+    source = (Path(__file__).parents[2] / 'src/pydantic_clai2/web-ui/src/palette.ts').read_text()
+    constants = {name: float(value) for name, value in re.findall(r'^const (\w+) = ([\d.]+)$', source, re.MULTILINE)}
+    roles = ('ACCENT', 'ERROR', 'THINKING', 'SUCCESS', 'WARNING', 'INFO')
+    terminal = {role: terminal_theme._SLOTS[getattr(terminal_theme, role).removeprefix('bold ')] for role in roles}  # pyright: ignore[reportPrivateUsage]
+    assert {role: constants[role] for role in roles} == terminal
+    assert constants['DIFF_TINT'] == terminal_theme._DIFF_TINT  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_failed_turn(make_web: 'MakeWeb') -> None:
