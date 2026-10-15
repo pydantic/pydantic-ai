@@ -296,16 +296,18 @@ async def test_shell_header_dims_highlighted_code_without_underlines() -> None:
     assert _color(console, text, 'from') == KEYWORD, 'still highlighted'
     for fragment in ('●', 'shell', 'notes'):
         assert not _style(console, text, fragment).dim, 'the tool name and muted text are as before'
-    fence = io.StringIO()
-    renderer = StreamRenderer(
-        Console(file=fence, force_terminal=True, color_system='truecolor', width=100), stop_loading=lambda: None
-    )
+
+
+async def test_streamed_code_fence_keeps_syntax_underlines() -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=100)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
     source = '```python\nfrom pydantic_ai.messages import ModelRequest\n```\n'
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(source)))
     await renderer.finish()
-    fenced = Text.from_ansi(fence.getvalue())
-    assert _style(console, fenced, 'pydantic_ai').underline, 'streamed code fences keep their style'
-    assert not _style(console, fenced, 'from').dim
+    text = Text.from_ansi(output.getvalue())
+    assert _style(console, text, 'pydantic_ai').underline, 'only shell call headers drop underlines'
+    assert not _style(console, text, 'from').dim
 
 
 async def test_shell_header_escapes_controls_before_highlighting() -> None:
@@ -403,7 +405,7 @@ async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width()
         selected[0] = 'default'
         # Rendered again, not recoloured: the palette's blue is also the slot of a brand colour.
         assert colour('import') == KEYWORD
-        assert Text.from_ansi(rows()[1]).get_style_at_offset(console, 8).dim, 'still dimmed'
+        assert _style(console, Text.from_ansi(rows()[1]), 'import').dim, 'still dimmed'
         retained = rows()[:5]
         await _print_shell_call(console, command)
         assert rows()[-6:-1] == retained, 'the retained header matches one printed in the new theme'
