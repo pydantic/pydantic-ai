@@ -421,8 +421,15 @@ def test_plugin_settings_accept_the_old_transport_key() -> None:
     assert len(plugin.capabilities) == 1
 
 
+@pytest.mark.subprocess(reason='the logger level a fresh interpreter ends up with depends on import order')
 def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
-    assert logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel() >= logging.WARNING
+    """FastMCP sets its logger to INFO as it's imported: the plugin's WARNING must outlast that, whichever comes first."""
+    script = (
+        "import logging, pydantic_clai2.mcp; print(logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel())"
+    )
+    env = {name: value for name, value in os.environ.items() if name != 'FASTMCP_LOG_LEVEL'}
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True, env=env)
+    assert int(result.stdout) >= logging.WARNING
 
 
 @pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
