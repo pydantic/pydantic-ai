@@ -818,6 +818,14 @@ CASES = [
         attrs={'status_code': 503},
     ),
     Case(
+        # A 529 is overloaded by its status alone, even when neither the body's type nor its message says so.
+        id='mistral-status-529',
+        model=_mistral,
+        handler=_json(529, {'object': 'error', 'message': 'Please try again later', 'type': 'unknown_error'}),
+        categories=_OVERLOADED,
+        attrs={'status_code': 529},
+    ),
+    Case(
         id='mistral-payment-required',
         model=_mistral,
         handler=_json(402, {'object': 'error', 'message': 'Payment required', 'type': 'payment_required'}),
