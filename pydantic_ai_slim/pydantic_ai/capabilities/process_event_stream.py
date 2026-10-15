@@ -139,7 +139,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # different tasks raises that same error.
         handler_task = asyncio.create_task(run_handler())
         next_task: asyncio.Task[AgentStreamEvent] | None = None
-        next_scope: anyio.CancelScope | None = None
+        next_scope = anyio.CancelScope()
         stream_iterator = aiter(stream)
         try:
             async with send_stream:
@@ -152,7 +152,6 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
                 try:
                     while True:
-                        next_scope = anyio.CancelScope()
                         next_task = asyncio.create_task(pull_next(next_scope))
                         if handler_alive:
                             await asyncio.wait(
@@ -183,6 +182,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                                 # Handler bailed early; keep forwarding events downstream.
                                 handler_alive = False
                         yield event
+                        next_scope = anyio.CancelScope()
                 except BaseException:
                     # Cancel while the handler is still waiting on receive, before sender closure wakes it.
                     handler_scope.cancel()
@@ -198,8 +198,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
             # can finish before the upstream iterator is closed.
             with anyio.CancelScope(shield=True):
                 handler_scope.cancel()
-                if next_scope is not None:
-                    next_scope.cancel()
+                next_scope.cancel()
                 await asyncio.gather(handler_task, *filter(None, (next_task,)), return_exceptions=True)
                 await _utils.aclose_if_supported(stream_iterator)
             raise
