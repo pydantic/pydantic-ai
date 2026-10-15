@@ -404,8 +404,8 @@ class DelegationTasks:
         """Send a running child a user message, which its run reads at its next model request.
 
         Returns `False` when the child is not running, so a caller can offer to resume it instead.
-        A message sent before the child's run starts waits for it; one sent as its final response
-        settles may arrive too late for it to read. Raises `ValueError` for blank text and `KeyError`
+        A message sent before the child's run starts waits for it, and is dropped if the child is stopped
+        first; one sent as its final response settles may arrive too late for it to read. Raises `ValueError` for blank text and `KeyError`
         for an unknown task.
         """
         if not text.strip():
