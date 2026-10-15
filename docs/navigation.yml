@@ -139,9 +139,6 @@ navigation:
           - "models/outlines"
           - "models/base"
           - "models/providers"
-      - page: "Direct batching"
-        path: "models/batch.md"
-        slug: "models/batch"
       - page: "Pydantic AI Gateway"
         path: "gateway.md"
         slug: "overview/gateway"
@@ -719,6 +716,11 @@ navigation:
         slug: "guides/image-generation"
         aliases:
           - "image-generation"
+      - page: "Batch Processing"
+        path: "batch.md"
+        slug: "guides/batch"
+        aliases:
+          - "batch"
       - page: "Embeddings"
         path: "embeddings.md"
         slug: "guides/embeddings"

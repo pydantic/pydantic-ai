@@ -554,21 +554,16 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 ## Batch API
 
-Use [`Model.batch_create`][pydantic_ai.models.Model.batch_create] and the other `batch_*` methods to submit and collect batches directly.
-See [Direct batch requests](batch.md) for a complete example.
+`AnthropicModel` supports [batch processing](../batch.md) through the Claude API's
+[Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing), which charge
+[50% of standard API prices](https://platform.claude.com/docs/en/build-with-claude/batch-processing#pricing).
+Batching and prompt-caching discounts apply together. One batch can hold up to 100,000 requests, and its
+requests can use different models and settings.
 
-Wrap an `AnthropicModel` in [`BatchModel`][pydantic_ai.models.batch.BatchModel] to use Message Batches
-inside a supported durable agent run. Submission happens automatically by batch size or queue deadline.
-See [Automatic batching](../durable_execution/batching.md) for a complete Temporal workflow example,
-settings, cancellation behavior and payload limits.
-
-Anthropic charges batch usage at [50% of standard API prices](https://platform.claude.com/docs/en/build-with-claude/batch-processing#pricing).
-Batching and prompt-caching discounts can apply together.
-
-Message Batches do not support `anthropic_speed`, `max_tokens=0` cache pre-warming,
-or streaming. Configure transport timeouts and custom headers on the Anthropic client;
-per-request `timeout` and `extra_headers` are unsupported. Use static API credentials
-and the same client configuration when submitting and retrieving a batch.
+Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry, and need an API key or
+auth token on the client. They don't support streaming, `anthropic_speed` or `max_tokens=0` cache pre-warming.
+Configure transport timeouts and custom headers on the Anthropic client: per-request `timeout` and
+`extra_headers` are unsupported. Retrieve a batch with the same client configuration that submitted it.
 
 ## Mid-conversation system messages
 

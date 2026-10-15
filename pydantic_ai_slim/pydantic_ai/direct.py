@@ -8,11 +8,12 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import TracebackType
 
 from pydantic_ai.usage import RequestUsage
@@ -20,10 +21,12 @@ from pydantic_ai.usage import RequestUsage
 from . import agent, messages, models, settings
 from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
-from .models import StreamedResponse, instrumented as instrumented_models
+from .exceptions import ModelAPIError, UserError
+from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
 
 __all__ = (
     'model_request',
+    'model_request_batch',
     'model_request_sync',
     'model_request_stream',
     'model_request_stream_sync',
@@ -103,6 +106,117 @@ async def model_request(
         model_settings,
         mrp,
     )
+
+
+async def model_request_batch(
+    model: models.Model | models.KnownModelName | str,
+    requests: Sequence[batch_models.BatchRequest],
+    *,
+    poll_interval: timedelta = timedelta(seconds=30),
+    max_poll_interval: timedelta = timedelta(minutes=10),
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> list[messages.ModelResponse | ModelAPIError]:
+    """Send requests through the model's batch API, and wait for their responses.
+
+    Batch APIs cost less, typically half, but can take up to a day to finish. The requests are submitted in as few
+    batches as the provider accepts, and each batch is checked on with a growing interval until it ends. Cancelling
+    the call cancels the batches that haven't ended.
+
+    ```py title="model_request_batch_example.py"
+    from pydantic_ai import ModelRequest
+    from pydantic_ai.direct import model_request_batch
+    from pydantic_ai.models.batch import BatchRequest
+
+
+    async def main():
+        questions = {'france': 'What is the capital of France?', 'italy': 'What is the capital of Italy?'}
+        responses = await model_request_batch(
+            'anthropic:claude-haiku-4-5',
+            [
+                BatchRequest(custom_id=key, messages=[ModelRequest.user_text_prompt(question)])
+                for key, question in questions.items()
+            ],
+        )
+        for key, response in zip(questions, responses):
+            print(key, response if isinstance(response, Exception) else response.text)
+            #> france The capital of France is Paris.
+            #> italy The capital of Italy is Rome.
+    ```
+
+    To submit requests now and collect their results in another process, use the `batch_*` methods of
+    [`Model`][pydantic_ai.models.Model] directly; see [Batch processing](../batch.md).
+
+    Args:
+        model: The model to send the requests to. We allow `str` here since the actual list of allowed models changes frequently.
+        requests: The requests to send, each with its own messages, settings and parameters. Their `custom_id`s must be unique.
+        poll_interval: How long to wait before first checking on a batch. The interval grows by half after every check.
+        max_poll_interval: The longest wait between checks.
+        instrument: Whether to instrument the requests with OpenTelemetry/Logfire, if `None` the value from
+            [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
+
+    Returns:
+        One item per request, in the same order: the request's response, or the
+            [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with.
+    """
+    model_instance = _prepare_model(model, instrument)
+    if (max_requests := model_instance.batch_max_requests) is None:
+        raise UserError(f'{type(model_instance).__name__} {model_instance.model_name!r} has no batch API.')
+    if len({request.custom_id for request in requests}) != len(requests):
+        raise UserError('Each batch request needs a unique `custom_id`.')
+
+    groups: dict[str, list[batch_models.EncodedBatchRequest]] = {}
+    for request in requests:
+        request = dataclasses.replace(
+            request,
+            model_request_parameters=_ensure_instruction_parts(request.messages, request.model_request_parameters),
+        )
+        encoded = await model_instance.batch_encode(request)
+        groups.setdefault(encoded.group, []).append(encoded)
+
+    batches: list[batch_models.Batch] = []
+    try:
+        for group in groups.values():
+            for start in range(0, len(group), max_requests):
+                batches.append(await model_instance.batch_create(group[start : start + max_requests]))
+        for index, batch in enumerate(batches):
+            batches[index] = await _wait_for_batch(
+                model_instance, batch, poll_interval=poll_interval, max_poll_interval=max_poll_interval
+            )
+        results = {
+            result.custom_id: result for batch in batches for result in await model_instance.batch_results(batch)
+        }
+    except BaseException:
+        await _cancel_batches(model_instance, batches)
+        raise
+
+    responses: list[messages.ModelResponse | ModelAPIError] = []
+    for request in requests:
+        result = results.get(request.custom_id) or batch_models.BatchResult(
+            custom_id=request.custom_id, status='expired'
+        )
+        try:
+            responses.append(model_instance.batch_decode(result, request))
+        except ModelAPIError as error:
+            responses.append(error)
+    return responses
+
+
+async def _wait_for_batch(
+    model: models.Model, batch: batch_models.Batch, *, poll_interval: timedelta, max_poll_interval: timedelta
+) -> batch_models.Batch:
+    """Check on `batch` with a growing interval until it has ended, and return its final state."""
+    delay = poll_interval.total_seconds()
+    while batch.status != 'ended':
+        await asyncio.sleep(delay)
+        batch = await model.batch_status(batch)
+        delay = min(delay * 1.5, max_poll_interval.total_seconds())
+    return batch
+
+
+async def _cancel_batches(model: models.Model, batches: Sequence[batch_models.Batch]) -> None:
+    """Cancel the batches that haven't ended, shielded so the cancellation that triggered it can't interrupt it."""
+    cancels = [model.batch_cancel(batch) for batch in batches if batch.status != 'ended']
+    await asyncio.shield(asyncio.gather(*cancels, return_exceptions=True))
 
 
 def model_request_sync(

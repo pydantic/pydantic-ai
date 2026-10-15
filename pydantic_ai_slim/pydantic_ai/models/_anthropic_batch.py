@@ -61,7 +61,7 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
     prepared_settings, model_request_parameters = model.prepare_request(
         request.model_settings, request.model_request_parameters
     )
-    settings = cast(AnthropicModelSettings, prepared_settings or {})
+    settings = cast('AnthropicModelSettings', prepared_settings or {})
     if 'timeout' in settings:
         raise UserError(
             'Anthropic Message Batches do not support per-request `timeout`; configure the client timeout instead.'
@@ -159,7 +159,7 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
                 request.model_settings, request.model_request_parameters
             )
         response = model._process_response(  # pyright: ignore[reportPrivateUsage]
-            message, model_request_parameters, cast(AnthropicModelSettings, prepared_settings or {})
+            message, model_request_parameters, cast('AnthropicModelSettings', prepared_settings or {})
         )
         # Selects batch prices when `genai-prices` calculates the response's cost.
         response.provider_details = {**(response.provider_details or {}), 'processing': 'batch'}
@@ -211,6 +211,7 @@ def _batch_group(model: AnthropicModel, betas: Iterable[str]) -> str:
 
 
 def _validate_batch_group(model: AnthropicModel, group: str) -> None:
+    _batch_client(model)
     expected = _GROUP_ADAPTER.validate_json(group)
     if group != _batch_group(model, expected['betas']):
         raise UserError(

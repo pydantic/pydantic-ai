@@ -1,43 +1,31 @@
-"""`BatchModel` and the batch provider contract, outside any durable engine.
+"""`BatchModel`, `model_request_batch` and the batch contract, using the in-memory batch API of the test models.
 
-The engine paths (queueing, collection, cancellation) are tested through real Temporal workflows in
-`tests/durable_exec/temporal/test_batch.py`. These tests pin what holds without one: validation, the
-errors raised before anything is queued, and the parts of
-the Anthropic codec that involve no network call.
+Provider codecs and their recorded batches are tested per provider (`test_anthropic_batch*.py`, ...); these tests pin the
+provider-independent behavior: grouping requests into batches, waiting through the continuation loop, resuming from
+history, and how results and errors reach a run. They aren't VCR tests because they exercise timing and failure
+orderings a recording can't produce on demand.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from datetime import timedelta
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRequest, UserPromptPart
-from pydantic_ai.capabilities import ResolveModelId
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai import Agent, ModelRequest, TextPart, UserPromptPart
+from pydantic_ai.direct import model_request_batch
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import BatchModel, BatchResult, BatchSettings
-from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult, BatchSettings, EncodedBatchRequest
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
-from tests.durable_exec.test_durable_exec_compat import JournalDurability
 
-from ..conftest import try_import
-
-with try_import() as anthropic_available:
-    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
-
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-
-class BatchCapableTestModel(TestModel):
-    @property
-    def batch_max_requests(self) -> int:
-        return 100_000
+from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 
 
 @pytest.mark.parametrize(
@@ -46,249 +34,407 @@ class BatchCapableTestModel(TestModel):
         {'max_requests': 0},
         {'max_wait': timedelta(0)},
         {'poll_interval': timedelta(seconds=-1)},
+        {'poll_interval': timedelta(minutes=20), 'max_poll_interval': timedelta(minutes=10)},
     ],
 )
-def test_batch_settings_reject_non_positive_values(settings: dict[str, object]) -> None:
+def test_batch_settings_are_validated(settings: BatchSettings) -> None:
     with pytest.raises(UserError, match='must be positive'):
-        BatchModel(BatchCapableTestModel(), batch_settings=BatchSettings(**settings))  # pyright: ignore[reportArgumentType]
+        BatchModel(TestModel(), batch_settings=settings)
 
 
 def test_batch_model_needs_a_model_with_a_batch_api() -> None:
-    with pytest.raises(UserError, match=r"TestModel 'test' has no batch API."):
-        BatchModel(TestModel())
+    @dataclass(init=False)
+    class NoBatchModel(TestModel):
+        @property
+        def batch_max_requests(self) -> int | None:
+            return None
+
+    with pytest.raises(UserError, match=r"NoBatchModel 'test' has no batch API."):
+        BatchModel(NoBatchModel())
 
 
-@pytest.mark.parametrize('wrapper', [WrapperModel, InstrumentedModel])
-def test_batch_model_preserves_wrapped_model_support(wrapper: type[WrapperModel]) -> None:
-    model = BatchModel(wrapper(BatchCapableTestModel()))
-    assert model.batch_max_requests == 100_000
-    assert (model.max_requests, model.max_wait, model.poll_interval) == (
-        100,
-        timedelta(seconds=30),
-        timedelta(minutes=1),
+def test_batch_size_is_capped_by_the_provider_limit() -> None:
+    assert BatchModel(TestModel(), batch_settings={'max_requests': 1_000_000}).max_requests == 10_000
+
+
+async def test_concurrent_runs_share_a_batch() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3}))
+
+    results = await asyncio.gather(*(agent.run(f'Hello {i}') for i in range(3)))
+
+    assert [result.output for result in results] == ['success (no tool calls)'] * 3
+    assert [batch.request_count for batch in wrapped.created] == [3]
+    for result in results:
+        assert [type(message).__name__ for message in result.all_messages()] == ['ModelRequest', 'ModelResponse']
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.state == 'complete'
+        assert result.usage.requests == 1
+
+
+async def test_a_partial_batch_is_submitted_after_max_wait() -> None:
+    wrapped = SlowBatchTestModel()
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 10}))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert [batch.request_count for batch in wrapped.created] == [1]
+
+
+async def test_flush_submits_without_waiting() -> None:
+    wrapped = SlowBatchTestModel()
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    agent = Agent(model)
+
+    runs = [asyncio.create_task(agent.run(f'Hello {i}')) for i in range(2)]
+    while sum(len(queue.requests) for queues in model._queues.values() for queue in queues.values()) < 2:  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0)
+    assert wrapped.created == []
+    await model.flush()
+
+    assert [result.output for result in await asyncio.gather(*runs)] == ['success (no tool calls)'] * 2
+    assert [batch.request_count for batch in wrapped.created] == [2]
+
+
+async def test_a_cancelled_request_leaves_the_queue_before_submission() -> None:
+    wrapped = SlowBatchTestModel()
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    agent = Agent(model)
+
+    kept = asyncio.create_task(agent.run('Keep me'))
+    dropped = asyncio.create_task(agent.run('Drop me'))
+    while sum(len(queue.requests) for queues in model._queues.values() for queue in queues.values()) < 2:  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0)
+    dropped.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dropped
+    await model.flush()
+
+    assert (await kept).output == 'success (no tool calls)'
+    assert [batch.request_count for batch in wrapped.created] == [1]
+
+
+async def test_checks_back_off_up_to_the_maximum_interval() -> None:
+    model = BatchModel(
+        TestModel(),
+        batch_settings={
+            'max_wait': timedelta(milliseconds=1),
+            'poll_interval': timedelta(seconds=10),
+            'max_poll_interval': timedelta(seconds=30),
+        },
+    )
+    pending = await _pending_response(model)
+
+    delays = [model.continuation_delay(_with_polls(pending, polls)) for polls in range(5)]
+    assert delays == snapshot([10.0, 15.0, 22.5, 30.0, 30.0])
+    # A response that isn't waiting for a batch gets the wrapped model's delay.
+    assert model.continuation_delay(ModelResponse(parts=[TextPart('done')])) is None
+
+
+async def test_a_run_resumes_waiting_for_the_same_batch_from_history() -> None:
+    """A history ending in a pending batch response picks the batch back up instead of submitting the request again."""
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    pending = await _pending_response(model)
+    assert pending.state == 'suspended'
+    assert [batch.request_count for batch in wrapped.created] == [1]
+
+    # A fresh `BatchModel` over the same provider model, as in a new process.
+    agent = Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS))
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('Hello')]), pending])
+
+    assert result.output == 'success (no tool calls)'
+    assert len(wrapped.created) == 1
+    assert [message.state for message in result.all_messages() if isinstance(message, ModelResponse)] == ['complete']
+
+
+async def test_a_provider_continuation_keeps_its_content_across_batch_rounds() -> None:
+    """A suspended batch result is continued in a new batch request, and the turn keeps both segments."""
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[TextPart('The answer ')], state='suspended', provider_response_id='seg1')
+        assert isinstance(messages[-1], ModelResponse) and messages[-1].text == 'The answer '
+        return ModelResponse(parts=[TextPart('is 42.')], provider_response_id='seg2')
+
+    result = await Agent(BatchModel(FunctionModel(respond), batch_settings=FAST_BATCH_SETTINGS)).run(
+        'What is the answer?'
     )
 
-
-async def test_direct_batch_methods_describe_unsupported_models() -> None:
-    model = TestModel()
-    parameters = ModelRequestParameters()
-    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
-        await model.batch_encode([], None, parameters, custom_id='item')
-    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
-        await model.batch_create([])
-    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
-        await model.batch_status('batch')
-    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
-        await model.batch_results('batch')
-    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
-        await model.batch_cancel('batch')
-    with pytest.raises(NotImplementedError, match='Batch requests are not supported by TestModel'):
-        model.batch_decode(BatchResult(custom_id='item', status='canceled'), None, parameters)
+    assert result.output == 'The answer is 42.'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    assert calls == 2
 
 
-async def test_batch_model_fails_outside_a_durable_context_before_queueing() -> None:
-    agent = Agent(BatchModel(BatchCapableTestModel()))
+async def test_a_batch_error_reaches_the_run() -> None:
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=400, model_name='function', body={'error': 'bad request'})
 
-    with pytest.raises(UserError, match='need a durable execution context with batch support'):
-        await agent.run('Hello')
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(BatchModel(FunctionModel(fail), batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == {'error': 'bad request'}
 
 
-async def test_batch_model_rejects_streaming() -> None:
-    agent = Agent(BatchModel(BatchCapableTestModel()))
+async def test_a_result_missing_from_the_batch_is_a_model_error() -> None:
+    @dataclass(init=False)
+    class LosingModel(TestModel):
+        async def batch_results(self, batch: Batch) -> list[BatchResult]:
+            return []
 
-    with pytest.raises(UserError, match='`BatchModel` does not support streaming'):
+    with pytest.raises(ModelAPIError, match='expired before the model ran it'):
+        await Agent(BatchModel(LosingModel(), batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
+
+
+async def test_abandoning_every_request_cancels_the_batch() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    pending = await _pending_response(model)
+
+    await model.cancel_suspended_response(pending)
+
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_cancelling_a_run_cancels_its_batch() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    run = asyncio.create_task(Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)).run('Hello'))
+    while wrapped.status_checks == 0:
+        await asyncio.sleep(0)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_a_response_that_is_not_waiting_is_cancelled_by_the_wrapped_model() -> None:
+    model = BatchModel(TestModel(), batch_settings=FAST_BATCH_SETTINGS)
+    await model.cancel_suspended_response(ModelResponse(parts=[], state='suspended'))
+
+
+async def test_streaming_is_rejected() -> None:
+    agent = Agent(BatchModel(TestModel()))
+    with pytest.raises(UserError, match='does not support streaming'):
         async with agent.run_stream('Hello'):
-            # Streaming rejects before entering the context.
             pass  # pragma: no cover
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-def test_anthropic_batch_api_is_only_on_the_claude_api_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
-    direct = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-    bedrock = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(
-            anthropic_client=AsyncAnthropicBedrock(aws_region='us-east-1', aws_access_key='a', aws_secret_key='b')
-        ),
+async def test_model_request_batch_returns_responses_and_errors_in_request_order() -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prompt = messages[-1].parts[-1]
+        assert isinstance(prompt, UserPromptPart)
+        if prompt.content == 'fail':
+            raise ModelHTTPError(status_code=429, model_name='function', body='slow down')
+        return ModelResponse(parts=[TextPart(f'echo: {prompt.content}')])
+
+    responses = await model_request_batch(
+        FunctionModel(respond),
+        [
+            BatchRequest(custom_id=name, messages=[ModelRequest(parts=[UserPromptPart(name)])])
+            for name in ('one', 'fail', 'two')
+        ],
+        poll_interval=timedelta(milliseconds=1),
     )
 
-    assert direct.batch_max_requests == 100_000
-    assert bedrock.batch_max_requests is None
-    with pytest.raises(UserError, match='has no batch API'):
-        BatchModel(bedrock)
+    one, failed, two = responses
+    assert isinstance(one, ModelResponse) and one.text == 'echo: one'
+    assert isinstance(two, ModelResponse) and two.text == 'echo: two'
+    assert isinstance(failed, ModelHTTPError)
+    assert (failed.status_code, failed.body) == (429, 'slow down')
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_batch_request_carries_the_messages_params_without_secrets() -> None:
-    """The codec runs the same request builder as `AnthropicModel.request`, and its group never holds the key.
+async def test_model_request_batch_splits_requests_by_the_provider_limit() -> None:
+    @dataclass(init=False)
+    class SmallBatchModel(SlowBatchTestModel):
+        @property
+        def batch_max_requests(self) -> int | None:
+            return 2
 
-    Not a VCR test: encoding makes no request. Submission and results are recorded in the Temporal suite.
-    """
-    model = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='secret-key'))
+    model = SmallBatchModel(pending_checks=1)
+    responses = await model_request_batch(
+        model,
+        [BatchRequest(custom_id=str(i), messages=[ModelRequest(parts=[UserPromptPart('Hello')])]) for i in range(5)],
+        poll_interval=timedelta(milliseconds=1),
     )
 
-    request = await model.batch_encode(
-        [ModelRequest(parts=[UserPromptPart('Hello')])],
-        {'max_tokens': 100, 'stop_sequences': ['END']},
-        ModelRequestParameters(),
-        custom_id='item1',
-    )
-
-    body = json.loads(request.body)
-    assert body['model'] == 'claude-sonnet-4-5'
-    assert body['max_tokens'] == 100
-    assert body['stop_sequences'] == ['END']
-    assert body['messages'][0]['role'] == 'user'
-    assert 'secret-key' not in request.group
-    group = json.loads(request.group)
-    assert group['betas'] == []
-    assert 'api.anthropic.com' not in request.group
+    assert len(responses) == 5
+    assert [batch.request_count for batch in model.created] == [2, 2, 1]
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_batch_rejects_per_request_headers() -> None:
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-
-    with pytest.raises(UserError, match='do not support per-request `extra_headers`'):
-        await model.batch_encode(
-            [ModelRequest(parts=[UserPromptPart('Hello')])],
-            {'extra_headers': {'X-Tenant': 'a'}},
-            ModelRequestParameters(),
-            custom_id='item1',
+async def test_model_request_batch_cancels_unfinished_batches_when_cancelled() -> None:
+    model = SlowBatchTestModel(pending_checks=1000)
+    task = asyncio.create_task(
+        model_request_batch(
+            model,
+            [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
+            poll_interval=timedelta(milliseconds=1),
         )
-
-
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-@pytest.mark.parametrize('status', ['expired', 'canceled'])
-def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) -> None:
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
-
-    with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it.'):
-        model.batch_decode(
-            BatchResult(custom_id='item1', status=status),  # pyright: ignore[reportArgumentType]
-            None,
-            ModelRequestParameters(),
-        )
-
-
-def test_an_engine_without_batch_support_rejects_the_model() -> None:
-
-    with pytest.raises(UserError, match='Journal compatibility stub does not provide'):
-        Agent(BatchModel(BatchCapableTestModel()), name='unsupported-batch-agent', capabilities=[JournalDurability()])
-
-
-async def test_an_engine_without_batch_support_rejects_a_runtime_model() -> None:
-
-    agent = Agent(
-        TestModel(),
-        name='unsupported-runtime-batch',
-        capabilities=[ResolveModelId(lambda ctx, model_id: BatchModel(BatchCapableTestModel())), JournalDurability()],
     )
-    with pytest.raises(UserError, match='Journal compatibility stub does not provide'):
-        await agent.run('hello', model='test:runtime-batch')
+    while model.status_checks == 0:
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert model.canceled == [model.created[0].id]
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_batch_refuses_a_different_registered_client(allow_model_requests: None) -> None:
-    first = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key'))
-    second = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='second-key'))
-    request = await first.batch_encode(
-        [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters(), custom_id='item'
+async def test_model_request_batch_validates_its_input() -> None:
+    @dataclass(init=False)
+    class NoBatchModel(TestModel):
+        @property
+        def batch_max_requests(self) -> int | None:
+            return None
+
+    request = BatchRequest(custom_id='same', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])
+    with pytest.raises(UserError, match=r"NoBatchModel 'test' has no batch API\."):
+        await model_request_batch(NoBatchModel(), [request])
+    with pytest.raises(UserError, match='unique `custom_id`'):
+        await model_request_batch(TestModel(), [request, request])
+
+
+async def test_in_memory_batches_belong_to_their_model_instance() -> None:
+    model = TestModel()
+    batch = await model.batch_create(
+        [await model.batch_encode(BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hi')])]))]
     )
-    with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_create([request])
-    with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_status('batch', group=request.group)
-    with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_results('batch', group=request.group)
-    with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_cancel('batch', group=request.group)
-    other = await second.batch_encode(
-        [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters(), custom_id='other'
+    assert (await model.batch_cancel(batch)).status == 'ended'
+    with pytest.raises(UserError, match='was not created by this model instance'):
+        await TestModel().batch_status(batch)
+
+
+async def _pending_response(model: BatchModel) -> ModelResponse:
+    return await model.request([ModelRequest(parts=[UserPromptPart('Hello')])], None, ModelRequestParameters())
+
+
+def _with_polls(response: ModelResponse, polls: int) -> ModelResponse:
+    assert response.provider_details is not None
+    ticket = {**response.provider_details['batch'], 'polls': polls}
+    return ModelResponse(
+        parts=response.parts,
+        state=response.state,
+        provider_response_id=response.provider_response_id,
+        provider_details={**response.provider_details, 'batch': ticket},
     )
-    with pytest.raises(UserError, match='must share a `group`'):
-        await first.batch_create([request, other])
-    with pytest.raises(UserError, match='at least one request'):
-        await first.batch_create([])
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-@pytest.mark.parametrize(
-    'settings',
-    [
-        {'anthropic_speed': 'fast'},
-        {'max_tokens': 0},
-        {'timeout': 10},
-        {'extra_body': {'speed': 'standard'}},
-        {'extra_body': {'stream': True}},
-    ],
-)
-async def test_anthropic_batch_rejects_synchronous_only_parameters(settings: ModelSettings) -> None:
-    model = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test'))
-    with pytest.raises(UserError, match='not support'):
-        await model.batch_encode(
-            [ModelRequest(parts=[UserPromptPart('hello')])], settings, ModelRequestParameters(), custom_id='item'
-        )
+async def test_a_failed_submission_reaches_every_request_in_the_batch() -> None:
+    class FailingBatchModel(TestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            raise ModelHTTPError(status_code=500, model_name='test', body='batch creation failed')
+
+    agent = Agent(BatchModel(FailingBatchModel(), batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2}))
+    results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert [type(result).__name__ for result in results] == ['ModelHTTPError', 'ModelHTTPError']
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_batch_preserves_supported_settings() -> None:
+async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
+    """IDs are derived from the encoded request, so they repeat across reruns, but never within one batch."""
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
-    request = await model.batch_encode(
-        [ModelRequest(parts=[UserPromptPart('hello')], instructions='Answer briefly')],
-        AnthropicModelSettings(
-            max_tokens=100,
-            anthropic_metadata={'user_id': 'user'},
-            anthropic_service_tier='standard_only',
-            anthropic_cache=True,
-            anthropic_cache_diagnostics=True,
-            extra_body={'temperature': 0.5},
-        ),
-        ModelRequestParameters(
-            function_tools=[ToolDefinition(name='weather', parameters_json_schema={'type': 'object', 'properties': {}})]
-        ),
-        custom_id='item',
-    )
-    body = json.loads(request.body)
-    assert body['metadata'] == {'user_id': 'user'}
-    assert body['service_tier'] == 'standard_only'
-    assert body['diagnostics'] == {'previous_message_id': None}
-    assert body['temperature'] == 0.5
-    assert body['system'][0]['text'] == 'Answer briefly'
-    assert body['tools'][0]['name'] == 'weather'
+    class ConstantBodyModel(SlowBatchTestModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tokens: list[str] = []
+            self.custom_ids: list[str] = []
 
+        async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+            encoded = await super().batch_encode(request)
+            self.tokens.append(encoded.body)
+            return EncodedBatchRequest(custom_id=encoded.custom_id, group=encoded.group, body='same')
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_batch_requires_static_credentials() -> None:
-    client = AsyncAnthropic(api_key='')
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
-    assert model.batch_max_requests == 100_000
-    BatchModel(model)
-    with pytest.raises(UserError, match='require static Anthropic API credentials'):
-        await model.batch_encode([], None, ModelRequestParameters(), custom_id='item')
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            self.custom_ids = [request.custom_id for request in requests]
+            tokens = iter(self.tokens)
+            return await super().batch_create([replace(request, body=next(tokens)) for request in requests])
+
+    wrapped = ConstantBodyModel()
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3}))
+
+    results = await asyncio.gather(*(agent.run('Hello') for _ in range(3)))
+
+    assert [result.output for result in results] == ['success (no tool calls)'] * 3
+    base_id = wrapped.custom_ids[0]
+    assert wrapped.custom_ids == [base_id, f'{base_id}-1', f'{base_id}-2']
 
 
-async def test_wrapped_non_batch_model_keeps_durable_execution() -> None:
+async def test_requests_cancelled_before_the_deadline_submit_nothing() -> None:
+    wrapped = SlowBatchTestModel()
+    model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    run = asyncio.create_task(Agent(model).run('Hello'))
+    while not any(model._queues.values()):  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    await model.flush()
 
-    result = await Agent(WrapperModel(TestModel()), name='wrapped-plain', capabilities=[JournalDurability()]).run(
-        'hello'
-    )
-    assert isinstance(result.output, str)
+    assert wrapped.created == []
 
 
-@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_direct_batch_methods_reject_a_bedrock_client(
-    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
-) -> None:
-    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
-    model = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(
-            anthropic_client=AsyncAnthropicBedrock(aws_region='us-east-1', aws_access_key='a', aws_secret_key='b')
-        ),
-    )
-    with pytest.raises(UserError, match='does not support Message Batches'):
-        await model.batch_status('batch')
+async def test_abandoning_some_requests_keeps_the_batch_running() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2})
+    first, _ = await asyncio.gather(_pending_response(model), _pending_response(model))
+
+    await model.cancel_suspended_response(first)
+
+    assert wrapped.canceled == []
+
+
+async def test_results_are_shared_by_the_requests_of_a_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every request of a batch reads the results fetched once, and only the most recent batches' are kept."""
+    monkeypatch.setattr('pydantic_ai.models.batch._RESULTS_CACHE_SIZE', 1)
+
+    @dataclass(init=False)
+    class CountingResultsModel(TestModel):
+        result_fetches: int = 0
+
+        async def batch_results(self, batch: Batch) -> list[BatchResult]:
+            self.result_fetches += 1
+            return await super().batch_results(batch)
+
+    wrapped = CountingResultsModel()
+    wrapped.result_fetches = 0
+    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2}))
+
+    await asyncio.gather(agent.run('one'), agent.run('two'))
+    await asyncio.gather(agent.run('three'), agent.run('four'))
+
+    assert wrapped.result_fetches == 2
+
+
+def test_a_malformed_batch_ticket_is_not_waited_on() -> None:
+    model = BatchModel(TestModel())
+    response = ModelResponse(parts=[], state='suspended', provider_details={'batch': 'not a ticket'})
+    assert model.continuation_delay(response) is None
+
+
+async def test_a_request_checked_after_the_results_arrived_reads_them_from_memory() -> None:
+    @dataclass(init=False)
+    class CountingResultsModel(TestModel):
+        result_fetches: int = 0
+
+        async def batch_results(self, batch: Batch) -> list[BatchResult]:
+            self.result_fetches += 1
+            return await super().batch_results(batch)
+
+    wrapped = CountingResultsModel()
+    wrapped.result_fetches = 0
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2})
+    first, second = await asyncio.gather(_pending_response(model), _pending_response(model))
+    prompt = ModelRequest(parts=[UserPromptPart('Hello')])
+
+    for pending in (first, second):
+        response = await model.request([prompt, pending], None, ModelRequestParameters())
+        assert response.state == 'complete'
+
+    assert wrapped.result_fetches == 1

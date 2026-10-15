@@ -8,11 +8,12 @@ methods on [`Model`][pydantic_ai.models.Model] are the provider-level primitives
 from __future__ import annotations
 
 import asyncio
-import uuid
+import hashlib
+import itertools
 import weakref
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Sequence
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
@@ -203,6 +204,14 @@ class _Queue:
     timer: asyncio.TimerHandle | None = None
 
 
+def _take(queues: dict[str, _Queue], group: str) -> _Queue:
+    """Take a queue off for submission, so later requests start a new one."""
+    queue = queues.pop(group)
+    if queue.timer is not None:
+        queue.timer.cancel()
+    return queue
+
+
 @dataclass(init=False)
 class BatchModel(WrapperModel):
     """Send a model's requests through its provider's batch API.
@@ -212,8 +221,8 @@ class BatchModel(WrapperModel):
     Meanwhile the run's message history ends in a suspended response that records the batch, so a run resumed from
     that history, in this process or another, waits for the same batch instead of submitting the request again.
 
-    Under [durable execution](../durable_execution/overview.md), every check runs as a separate durable step, with
-    durable waits in between, so a run waits out a batch across worker restarts and deployments.
+    Under [durable execution](../durable_execution/overview.md), submitting a request and every check on its batch run
+    as separate durable steps, so an interrupted run continues from the same batch when it's recovered.
 
     Requests can't be streamed.
     """
@@ -259,8 +268,10 @@ class BatchModel(WrapperModel):
             weakref.WeakKeyDictionary()
         )
         self._submissions: set[asyncio.Task[None]] = set()
-        # Every request waiting on a batch checks on it, so recent statuses and results are shared between them.
-        self._statuses: dict[str, tuple[float, Batch]] = {}
+        # Every request waiting on a batch checks on it, so concurrent checks and the results are shared between them.
+        self._polls: dict[
+            tuple[asyncio.AbstractEventLoop, str], asyncio.Future[tuple[Batch, dict[str, BatchResult] | None]]
+        ] = {}
         self._results: OrderedDict[str, dict[str, BatchResult]] = OrderedDict()
         self._abandoned: dict[str, set[str]] = {}
 
@@ -284,16 +295,15 @@ class BatchModel(WrapperModel):
                 ),
             )
 
-        custom_id = uuid.uuid4().hex
         encoded = await self.wrapped.batch_encode(
             BatchRequest(
-                custom_id=custom_id,
+                custom_id='',
                 messages=messages,
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             )
         )
-        batch = await self._enqueue(encoded)
+        custom_id, batch = await self._enqueue(encoded)
         return ModelResponse(
             parts=[],
             model_name=self.wrapped.model_name,
@@ -338,105 +348,97 @@ class BatchModel(WrapperModel):
 
     async def flush(self) -> None:
         """Submit every queued request now instead of waiting for a full batch or `max_wait`."""
-        for queues in list(self._queues.values()):
-            for group in list(queues):
-                await self._submit(queues, group)
+        submissions = [
+            self._submit(_take(queues, group)) for queues in list(self._queues.values()) for group in list(queues)
+        ]
+        await asyncio.gather(*submissions)
 
-    async def _enqueue(self, encoded: EncodedBatchRequest) -> Batch:
+    async def _enqueue(self, encoded: EncodedBatchRequest) -> tuple[str, Batch]:
+        """Queue a request, and return the ID it was given in the batch it was submitted in."""
         loop = asyncio.get_running_loop()
         queues = self._queues.setdefault(loop, {})
         queue = queues.setdefault(encoded.group, _Queue())
+        # Derived from the request, so a rerun of the same requests gets the same IDs; unique within the batch.
+        base_id = custom_id = hashlib.sha256(encoded.body.encode()).hexdigest()[:32]
+        taken = {request.custom_id for request, _ in queue.requests}
+        duplicates = itertools.count(1)
+        while custom_id in taken:
+            custom_id = f'{base_id}-{next(duplicates)}'
+        encoded = replace(encoded, custom_id=custom_id)
         future: asyncio.Future[Batch] = loop.create_future()
         queue.requests.append((encoded, future))
+
+        def submit() -> None:
+            # Taken off the queues right away, so a request made before the submission runs starts the next batch. The
+            # submission is a task of its own, so cancelling the request that triggered it doesn't cancel the others.
+            task = loop.create_task(self._submit(_take(queues, encoded.group)))
+            self._submissions.add(task)
+            task.add_done_callback(self._submissions.discard)
+
         if len(queue.requests) >= self.max_requests:
-            await self._submit(queues, encoded.group)
+            submit()
         elif queue.timer is None and self.max_wait is not None:
-
-            def submit_on_deadline() -> None:
-                task = loop.create_task(self._submit(queues, encoded.group))
-                self._submissions.add(task)
-                task.add_done_callback(self._submissions.discard)
-
-            queue.timer = loop.call_later(self.max_wait.total_seconds(), submit_on_deadline)
+            queue.timer = loop.call_later(self.max_wait.total_seconds(), submit)
         try:
-            return await asyncio.shield(future)
+            return custom_id, await asyncio.shield(future)
         except asyncio.CancelledError:
-            if not future.done():
-                # Still queued, so it can leave the batch before it's submitted.
-                queue.requests = [(request, f) for request, f in queue.requests if f is not future]
+            # Leaves the batch if it's still queued; a submitted batch has already taken the queue's requests.
+            queue.requests = [(request, f) for request, f in queue.requests if f is not future]
             raise
 
-    async def _submit(self, queues: dict[str, _Queue], group: str) -> None:
-        if (queue := queues.pop(group, None)) is None:
-            return
-        if queue.timer is not None:
-            queue.timer.cancel()
-        requests = [(request, future) for request, future in queue.requests if not future.done()]
-        if not requests:
+    async def _submit(self, queue: _Queue) -> None:
+        if not (requests := queue.requests):
+            # Every queued request was cancelled before the deadline.
             return
         try:
             batch = await self.wrapped.batch_create([request for request, _ in requests])
-        except BaseException as error:
+        except Exception as error:
             for _, future in requests:
-                if not future.done():
-                    future.set_exception(error)
-            if not isinstance(error, Exception):
-                raise
+                future.set_exception(error)
         else:
             for _, future in requests:
-                if not future.done():
-                    future.set_result(batch)
+                future.set_result(batch)
+        finally:
+            # A submission that was itself cancelled, for example as the event loop shuts down, leaves nothing to wait for.
+            for _, future in requests:
+                future.cancel()
 
     async def _check(self, ticket: _Ticket, pending: ModelResponse, request: BatchRequest) -> ModelResponse:
-        batch = _BATCH_ADAPTER.validate_python(ticket['batch'])
-        if (results := self._results.get(batch.id)) is None:
-            now = asyncio.get_running_loop().time()
-            cached = self._statuses.get(batch.id)
-            if cached is not None and now - cached[0] < self.poll_interval.total_seconds() / 2:
-                batch = cached[1]
-            else:
-                batch = await self.wrapped.batch_status(batch)
-                self._statuses[batch.id] = (now, batch)
-            if batch.status != 'ended':
-                # Unchanged apart from the poll count: the same `provider_response_id` makes the graph replace the
-                # pending response with this one, so content the response accumulated before the batch is kept.
-                return replace(
-                    pending,
-                    provider_details={
-                        **(pending.provider_details or {}),
-                        _TICKET_KEY: _Ticket(
-                            custom_id=ticket['custom_id'],
-                            batch=_BATCH_ADAPTER.dump_python(batch, mode='json'),
-                            polls=ticket['polls'] + 1,
-                        ),
-                    },
-                )
-            results = {result.custom_id: result for result in await self.wrapped.batch_results(batch)}
-            self._statuses.pop(batch.id, None)
-            self._results[batch.id] = results
-            while len(self._results) > _RESULTS_CACHE_SIZE:
-                self._results.popitem(last=False)
-        else:
-            self._results.move_to_end(batch.id)
+        batch, results = await self._poll(_BATCH_ADAPTER.validate_python(ticket['batch']))
+        if results is None:
+            # Unchanged apart from the poll count: the same `provider_response_id` makes the graph replace the pending
+            # response with this one, so content the response accumulated before the batch is kept.
+            return replace(
+                pending,
+                provider_details={
+                    **(pending.provider_details or {}),
+                    _TICKET_KEY: _Ticket(
+                        custom_id=ticket['custom_id'],
+                        batch=_BATCH_ADAPTER.dump_python(batch, mode='json'),
+                        polls=ticket['polls'] + 1,
+                    ),
+                },
+            )
         result = results.get(ticket['custom_id']) or BatchResult(custom_id=ticket['custom_id'], status='expired')
         return self.wrapped.batch_decode(result, request)
 
+    async def _poll(self, batch: Batch) -> tuple[Batch, dict[str, BatchResult] | None]:
+        """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
+        if (results := self._results.get(batch.id)) is not None:
+            self._results.move_to_end(batch.id)
+            return batch, results
+        key = (asyncio.get_running_loop(), batch.id)
+        if (poll := self._polls.get(key)) is None:
+            poll = self._polls[key] = asyncio.ensure_future(self._fetch(batch))
+            poll.add_done_callback(lambda _: self._polls.pop(key, None))
+        return await asyncio.shield(poll)
 
-async def wait_for_batch(
-    model: Model, batch: Batch, *, poll_interval: timedelta, max_poll_interval: timedelta
-) -> Batch:
-    """Check on `batch` with a growing interval until it has ended, and return its final state."""
-    delay = poll_interval.total_seconds()
-    while batch.status != 'ended':
-        await asyncio.sleep(delay)
-        batch = await model.batch_status(batch)
-        delay = min(delay * 1.5, max_poll_interval.total_seconds())
-    return batch
-
-
-async def cancel_batches(model: Model, batches: Sequence[Batch]) -> None:
-    """Cancel unfinished batches, shielded so a cancellation that triggered it can't interrupt it."""
-    for batch in batches:
+    async def _fetch(self, batch: Batch) -> tuple[Batch, dict[str, BatchResult] | None]:
+        batch = await self.wrapped.batch_status(batch)
         if batch.status != 'ended':
-            with suppress(Exception):
-                await asyncio.shield(model.batch_cancel(batch))
+            return batch, None
+        results = {result.custom_id: result for result in await self.wrapped.batch_results(batch)}
+        self._results[batch.id] = results
+        while len(self._results) > _RESULTS_CACHE_SIZE:
+            self._results.popitem(last=False)
+        return batch, results

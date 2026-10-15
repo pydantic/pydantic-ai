@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from decimal import Decimal
+import asyncio
+from datetime import timedelta
 
 import pytest
+from cassetter import Cassette, RecordMode
+from pydantic import BaseModel
 
+from pydantic_ai import Agent
+from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.messages import ModelRequest, UserPromptPart
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -20,93 +26,138 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
 
-@pytest.mark.vcr('test_anthropic_batch_roundtrip.yaml')
-@pytest.mark.parametrize('check_status', [False, True])
-@pytest.mark.parametrize('wrapper', [None, WrapperModel, InstrumentedModel])
-async def test_anthropic_batch_roundtrip(
-    allow_model_requests: None,
-    monkeypatch: pytest.MonkeyPatch,
-    check_status: bool,
-    wrapper: type[WrapperModel] | None,
-) -> None:
-    model: Model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test'))
-    if wrapper is not None:
-        model = wrapper(model)
-    parameters = ModelRequestParameters()
-    settings: ModelSettings = {'max_tokens': 8}
-    requests = [
-        await model.batch_encode(
-            [ModelRequest(parts=[UserPromptPart('Reply with OK.')])],
-            settings,
-            parameters,
-            custom_id=custom_id,
-        )
-        for custom_id in ('pydantic-ai-batch-one', 'pydantic-ai-batch-two')
-    ]
+def _poll_interval(vcr: Cassette) -> timedelta:
+    """Wait between checks while recording a real batch; replay the recorded checks without waiting."""
+    return timedelta(seconds=10) if vcr.record_mode != RecordMode.NONE else timedelta(milliseconds=1)
 
-    batch_id = await model.batch_create(requests)
-    if check_status:
-        assert await model.batch_status(batch_id) == 'in_progress'
-    else:
-        assert await model.batch_results(batch_id) is None
-    results = await model.batch_results(batch_id)
-    assert results is not None
-    assert [item.custom_id for item in results] == ['pydantic-ai-batch-two', 'pydantic-ai-batch-one']
-    assert all(item.status == 'succeeded' for item in results)
 
-    for item in results:
-        response = model.batch_decode(item, settings, parameters)
-        assert response.text == 'OK.'
-        assert response.state == 'complete'
-        assert response.provider_response_id is not None
-        assert response.usage.input_tokens == 11
-        assert response.usage.output_tokens == 5
-        assert response.usage.cost == Decimal('0.000018')
-        assert response.cost().total_price == Decimal('0.000036')
+async def _wait(model: Model, batch: Batch, vcr: Cassette) -> Batch:
+    while batch.status != 'ended':
+        await asyncio.sleep(_poll_interval(vcr).total_seconds())
+        batch = await model.batch_status(batch)
+    return batch
 
-    def unavailable_price(*args: object, **kwargs: object) -> None:
-        raise ValueError('Price data unavailable')
 
-    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', unavailable_price)
-    response = model.batch_decode(results[0], settings, parameters)
-    assert response.text == 'OK.' and response.usage.cost is None
+def _request(custom_id: str, settings: ModelSettings | None = None) -> BatchRequest:
+    return BatchRequest(
+        custom_id=custom_id,
+        messages=[ModelRequest(parts=[UserPromptPart('Reply with OK.')])],
+        model_settings=settings or {'max_tokens': 8},
+    )
 
 
 @pytest.mark.vcr
-async def test_anthropic_batch_item_error(allow_model_requests: None) -> None:
-    model = AnthropicModel('not-a-real-anthropic-model', provider=AnthropicProvider(api_key='test'))
-    settings: ModelSettings = {'max_tokens': 8}
-    parameters = ModelRequestParameters()
-    request = await model.batch_encode(
-        [ModelRequest(parts=[UserPromptPart('Reply with OK.')])], settings, parameters, custom_id='batch-error'
-    )
-    batch_id = await model.batch_create([request])
-    results = await model.batch_results(batch_id)
-    assert results is not None and len(results) == 1
-    assert results[0].status == 'errored'
+@pytest.mark.parametrize('wrapper', [None, WrapperModel, InstrumentedModel])
+async def test_anthropic_batch_roundtrip(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, wrapper: type[WrapperModel] | None
+) -> None:
+    model: Model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    if wrapper is not None:
+        model = wrapper(model)
+    requests = [_request('pydantic-ai-batch-one'), _request('pydantic-ai-batch-two')]
+
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests])
+    assert batch.status == 'in_progress'
+    assert batch.request_count == 2
+    with pytest.raises(Exception, match='has not ended yet'):
+        await model.batch_results(batch)
+
+    batch = await _wait(model, batch, vcr)
+    results = {result.custom_id: result for result in await model.batch_results(batch)}
+    assert set(results) == {'pydantic-ai-batch-one', 'pydantic-ai-batch-two'}
+
+    for request in requests:
+        response = model.batch_decode(results[request.custom_id], request)
+        assert response.text == 'OK.'
+        assert response.state == 'complete'
+        assert response.provider_details is not None and response.provider_details['processing'] == 'batch'
+        # Batch prices are half the standard ones.
+        assert (
+            response.cost().total_price * 2
+            == ModelResponse(
+                parts=response.parts,
+                usage=response.usage,
+                model_name=response.model_name,
+                provider_name=response.provider_name,
+                timestamp=response.timestamp,
+            )
+            .cost()
+            .total_price
+        )
+
+
+@pytest.mark.vcr
+async def test_anthropic_batch_item_error(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette) -> None:
+    model = AnthropicModel('not-a-real-anthropic-model', provider=AnthropicProvider(api_key=anthropic_api_key))
+    request = _request('batch-error')
+    batch = await _wait(model, await model.batch_create([await model.batch_encode(request)]), vcr)
+    [result] = await model.batch_results(batch)
+    assert result.status == 'errored'
     with pytest.raises(ModelHTTPError) as exc_info:
-        model.batch_decode(results[0], settings, parameters)
+        model.batch_decode(result, request)
     assert exc_info.value.status_code == 404
     body = exc_info.value.body
     assert isinstance(body, dict) and isinstance(body['error'], dict)
     assert body['error']['type'] == 'not_found_error'
 
 
-@pytest.mark.vcr('test_anthropic_batch_cancellation.yaml')
-@pytest.mark.parametrize('wrapper', [None, WrapperModel, InstrumentedModel])
-async def test_anthropic_batch_cancellation(allow_model_requests: None, wrapper: type[WrapperModel] | None) -> None:
-    model: Model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test'))
-    if wrapper is not None:
-        model = wrapper(model)
-    settings: ModelSettings = {'max_tokens': 8}
-    parameters = ModelRequestParameters()
-    request = await model.batch_encode(
-        [ModelRequest(parts=[UserPromptPart('Reply with OK.')])], settings, parameters, custom_id='batch-cancel'
-    )
-    batch_id = await model.batch_create([request])
-    await model.batch_cancel(batch_id)
-    results = await model.batch_results(batch_id)
-    assert results is not None and len(results) == 1
-    assert results[0].status == 'canceled'
+@pytest.mark.vcr
+async def test_anthropic_batch_cancellation(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette) -> None:
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    request = _request('batch-cancel')
+    batch = await model.batch_create([await model.batch_encode(request)])
+    batch = await model.batch_cancel(batch)
+    assert batch.status == 'canceling'
+    [result] = await model.batch_results(await _wait(model, batch, vcr))
+    assert result.status == 'canceled'
     with pytest.raises(ModelAPIError, match='canceled before the model ran it'):
-        model.batch_decode(results[0], settings, parameters)
+        model.batch_decode(result, request)
+
+
+class CityInfo(BaseModel):
+    city: str
+    country: str
+
+
+@pytest.mark.vcr
+async def test_anthropic_batch_model_agent_run(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+) -> None:
+    """An agent with structured output runs through the batch API: its request waits in the run's message history.
+
+    Concurrent runs sharing a batch is covered with the in-memory batch API in `test_batch.py`: how concurrent checks
+    of one batch overlap depends on network latency, which a recording can't replay.
+    """
+    model = BatchModel(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        batch_settings={
+            'max_requests': 1,
+            'poll_interval': _poll_interval(vcr),
+            'max_poll_interval': _poll_interval(vcr),
+        },
+    )
+    result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
+
+    assert result.output == CityInfo(city='Paris', country='France')
+    assert result.usage.requests == 1
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert response.provider_details is not None and response.provider_details['processing'] == 'batch'
+    assert response.provider_details['batch']['batch']['request_count'] == 1
+
+
+@pytest.mark.vcr
+async def test_anthropic_model_request_batch(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette) -> None:
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    responses = await model_request_batch(
+        model,
+        [_request('one'), _request('two', {'max_tokens': 8, 'stop_sequences': ['OK']})],
+        poll_interval=_poll_interval(vcr),
+        max_poll_interval=_poll_interval(vcr),
+    )
+    # The second request stops at its stop sequence, before generating any text.
+    assert [response.text if isinstance(response, ModelResponse) else response for response in responses] == [
+        'OK.',
+        None,
+    ]

@@ -88,13 +88,12 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
-For background Anthropic work, wrap a registered `AnthropicModel` with `BatchModel` from
-`pydantic_ai.models.batch` and attach `TemporalDurability` at construction. `BatchSettings` controls
-automatic submission by request count or the oldest request's queue deadline. Use the existing Temporal
-worker plugins to register the batch manager. Call `await agent.run(...)` inside the workflow; do not
-write a submission or polling loop. Batch mode requires a supported durable binding and is non-streaming.
-Keep requests within the backend's inline payload limits. Each tool turn or validation retry can require
-another batch. Cancelled submitted items may still be billed.
+For latency-tolerant work at batch prices, wrap the model with `BatchModel` from `pydantic_ai.models.batch`
+(Anthropic, OpenAI Responses and Gemini API models have batch APIs) and run the agent as usual; concurrent
+runs in one process share batches. Don't write a submission or polling loop: a waiting request suspends the
+turn through the agent graph's continuation loop, so it works in a plain `agent.run(...)` and under every
+durable engine, and a run resumed from its message history picks up the same batch. `BatchModel` is
+non-streaming, and each tool turn or output retry is another batch round trip.
 
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.
 
@@ -182,4 +181,4 @@ Extensibility entry points:
 
 Reach for these only when the built-in primitives are genuinely insufficient.
 
-For direct bulk requests, use `model.batch_encode()`, `batch_create()`, `batch_status()`, `batch_results()`, `batch_cancel()` and `batch_decode()`. Persist batch IDs and request settings yourself; this API does not run tools or require a durable engine.
+For bulk model requests without an agent, use `pydantic_ai.direct.model_request_batch()`. To submit in one process and collect in another, use `model.batch_encode()`, `batch_create()`, `batch_status()`, `batch_results()`, `batch_cancel()` and `batch_decode()`, and store the returned `Batch` handle with the requests' settings and parameters.
