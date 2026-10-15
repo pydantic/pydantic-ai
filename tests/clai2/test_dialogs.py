@@ -83,11 +83,18 @@ async def test_text_checks_only_non_empty_text_and_masks_secrets() -> None:
         return None if text.startswith('hunter') else 'Not a hunter.'
 
     typed_text = await TerminalDialogs(Runners(run_text=run_text)).text(
-        title='Password', label='Token', placeholder='Paste it', initial='hun', secret=True, check=check
+        title='Password',
+        label='Token',
+        placeholder='Paste it',
+        initial='hun',
+        secret=True,
+        check=check,
+        description='Find it at https://example.com.',
     )
     assert typed_text == 'hunter2'
     [widget] = widgets
     assert (widget._prompt, widget._placeholder, widget.text, widget._mask) == ('Token: ', 'Paste it', 'hun', '*')  # pyright: ignore[reportPrivateUsage]
+    assert widget._title == 'Password\n\nFind it at https://example.com.'  # pyright: ignore[reportPrivateUsage]
     validator = widget._validator  # pyright: ignore[reportPrivateUsage]
     assert validator is not None
     assert [validator(' x '), validator('   '), validator('hunter')] == ['Not a hunter.', None, None]
@@ -104,7 +111,7 @@ async def test_text_returns_none_when_backed_out(result: TextInputResult) -> Non
 
     assert await TerminalDialogs(Runners(run_text=run_text)).text(title='Name') is None
     [widget] = widgets
-    assert (widget._prompt, widget._mask, widget._validator) == ('Value: ', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert (widget._title, widget._prompt, widget._mask, widget._validator) == ('Name', 'Value: ', None, None)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(('result', 'answer'), [(pick(True), True), (pick(False), False), (CLOSED, False)])

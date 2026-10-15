@@ -3,7 +3,7 @@
 import asyncio
 import importlib
 import logging
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +44,7 @@ from pydantic_clai2.plugins import (
     PluginOrigin,
     PluginStatus,
     Renderer,
+    ResultT,
     SessionCatalog,
     SessionEnd,
     SessionEndReason,
@@ -56,6 +57,7 @@ from pydantic_clai2.plugins._factories import build, import_file, settings_capab
 from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -246,6 +248,8 @@ class PluginLoader(Generic[DepsT]):
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
         # A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store.
         self._staged: dict[str, PluginSettings] = {}
+        self._editing: set[str] = set()
+        """Plugins whose settings menu is open, in the terminal or for an edit from elsewhere, so only one edits at a time."""
         # Capabilities that rejected their configuration while a run was set up, by plugin, until it loads again.
         self._suspended: dict[str, list[object]] = {}
         # The capability CLAI built from a `module:Class` declaration's settings, by plugin.
@@ -762,18 +766,28 @@ class PluginLoader(Generic[DepsT]):
 
     async def configure(self, name: str) -> str:
         """Open the plugin's settings menu, then load it again if its saved settings changed."""
-        entry = self._entry(name)
-        loaded = entry.loaded
         _requested('configure', name)
+        async with self._settings_open(name) as loaded:
+            if not loaded.plugin.has_configure:
+                raise ValueError(f'Plugin {name} has no settings menu; replace its declaration with /plugins add.')
+            return await loaded.plugin.configure()
+
+    @asynccontextmanager
+    async def _settings_open(self, name: str) -> AsyncGenerator[LoadedPlugin[DepsT]]:
+        """The loaded plugin, its menu held open for the block; afterwards it loads again if its saved settings changed."""
+        entry = self._entry(name)
         _check_not_included(entry)
+        loaded = entry.loaded
         if loaded is None:
             raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
-        if not loaded.plugin.has_configure:
-            raise ValueError(f'Plugin {name} has no settings menu; replace its declaration with /plugins add.')
-        before = self._entry(name).declaration.settings
+        if name in self._editing:
+            raise ValueError(f'The settings menu of {name} is already open; finish there first.')
+        self._editing.add(name)
+        before = entry.declaration.settings
         try:
-            return await loaded.plugin.configure()
+            yield loaded
         finally:
+            self._editing.discard(name)
             # Also when the menu fails after saving, so the running plugin matches what is saved.
             if self._entry(name).declaration.settings != before:
                 await self._load_again(name)
@@ -784,21 +798,28 @@ class PluginLoader(Generic[DepsT]):
 
     async def save_settings(self, name: str, settings: BaseModel) -> None:
         """Save a loaded plugin's settings through its host, then load it again if they changed, as `configure` does."""
-        entry = self._entry(name)
-        _check_not_included(entry)
-        loaded = entry.loaded
-        if loaded is None:
-            raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
-        model = loaded.plugin.settings_type
-        if model is NoSettings:
-            raise ValueError(f'Plugin {name} takes no settings.')
-        if not isinstance(settings, model):
-            raise TypeError(f'Plugin {name} takes {model.__name__}, not {type(settings).__name__}.')
-        _requested('configure', name)
-        before = entry.declaration.settings
-        loaded.plugin.host.save_settings(settings)
-        if self._entry(name).declaration.settings != before:
-            await self._load_again(name)
+        async with self._settings_open(name) as loaded:
+            model = loaded.plugin.settings_type
+            if model is NoSettings:
+                raise ValueError(f'Plugin {name} takes no settings.')
+            if not isinstance(settings, model):
+                raise TypeError(f'Plugin {name} takes {model.__name__}, not {type(settings).__name__}.')
+            _requested('configure', name)
+            loaded.plugin.host.save_settings(settings)
+
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        """A loaded plugin's declared settings menu, for `host.plugins`; see `PluginCatalog`."""
+        loaded = self._entry(name).loaded
+        return None if loaded is None else loaded.plugin.settings_menu()
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        """Edit through a loaded plugin's declared menu, then load it again if its settings changed; see `PluginCatalog`."""
+        async with self._settings_open(name) as loaded:
+            menu = loaded.plugin.settings_menu()
+            if menu is None:
+                raise ValueError(f'Plugin {name} declares no settings menu; /plugins configure {name} opens its own.')
+            _requested('configure', name)
+            return await edit(menu)
 
     def configurable(self, name: str) -> bool:
         """Whether the plugin is loaded and offers a settings menu by overriding `configure`."""
@@ -973,6 +994,7 @@ def _info(entry: PluginEntry[DepsT]) -> PluginInfo:
         notice=entry.ignored,
         provides=loaded.summary() if loaded is not None else '',
         has_menu=loaded is not None and loaded.plugin.has_configure,
+        settings_menu=loaded is not None and loaded.plugin.settings_menu() is not None,
         settings_model=None if settings is None else model,
         settings=settings,
     )

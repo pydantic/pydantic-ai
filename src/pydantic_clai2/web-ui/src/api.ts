@@ -2,6 +2,8 @@ import type {
   AnswerBody,
   CompletionInfo,
   JsonValue,
+  MenuEdited,
+  MenuInfo,
   PluginAction,
   PluginRow,
   Project,
@@ -79,6 +81,12 @@ export const api = {
   pluginSettings: (name: string, changes: Record<string, JsonValue>, reset: string[] = []) =>
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
+  menu: (name: string) => call<MenuInfo>('GET', `/api/plugins/${encodeURIComponent(name)}/fields`),
+  setField: (name: string, key: string, value: string | null) =>
+    call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}`, { value }),
+  runAction: (name: string, key: string) =>
+    call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}/action`),
+  answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */
