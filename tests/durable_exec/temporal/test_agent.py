@@ -3462,6 +3462,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
             '_run_held_toolsets',
             '_tool_name_path',
             'agent',
+            'deadline',
             'deps',
             'discovered_tool_names',
             'max_retries',
