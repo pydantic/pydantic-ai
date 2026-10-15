@@ -327,6 +327,9 @@ class Tasks:
         await self.owner.allow_resume(record.id)
         self.send_input(resume_prompt(record))
 
+    def steer(self, task_id: str, text: str) -> bool:
+        return self.owner.steer(self._record(task_id).id, text)
+
     def _record(self, task_id: str) -> DelegationTask:
         record = self.owner.records.get(task_id)
         if record is None or record.conversation_id != self.conversation_id():

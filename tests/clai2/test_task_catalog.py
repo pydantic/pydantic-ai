@@ -56,11 +56,16 @@ def first_prompt(messages: list[ModelMessage]) -> str:
 
 async def test_tasks_reach_plugins_while_the_shell_runs(tmp_path: Path) -> None:
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        if first_prompt(messages) == 'child':
+        if first_prompt(messages) == 'child' and len(messages) == 1:
             catalog = Watcher.hosts[0].tasks
             assert catalog is not None
-            Watcher.listed.append(catalog.listing())
+            listed = catalog.listing()
+            Watcher.listed.append(listed)
+            assert catalog.steer(listed[0].id, 'look at the tests too')
             yield 'child done'
+        elif first_prompt(messages) == 'child':
+            assert 'look at the tests too' in str(messages[-1])
+            yield 'child steered'
         elif len(messages) == 1:
             yield {0: DeltaToolCall(name='delegate_task', json_args='{"agent_name":"self","task":"child"}')}
         else:
@@ -100,7 +105,7 @@ async def test_tasks_reach_plugins_while_the_shell_runs(tmp_path: Path) -> None:
     assert any(isinstance(event.event, DelegationStartEvent) for event in Watcher.events)
     assert any(isinstance(event.event, DelegationEndEvent) for event in Watcher.events)
     assert last.event is None
-    assert (last.task.status, last.task.outcome, last.task.usage.requests) == ('finished', 'ok', 1)
+    assert (last.task.status, last.task.outcome, last.task.usage.requests) == ('finished', 'ok', 2)
     assert last.task.finished_at is not None and last.task.finished_at >= last.task.started_at
     assert last.task.model is not None and last.task.model.startswith('function:')
 
@@ -175,6 +180,7 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
         assert worker.background
         await ui.stop(worker.id)
         assert worker.user_stopped and worker.status == 'finished'
+        assert not ui.steer(worker.id, 'too late')
         await ui.resume(worker.id)
         assert not worker.user_stopped
         assert entered == [resume_prompt(worker)]

@@ -2252,7 +2252,9 @@ prompt the keyboard does:
   `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
-  `send_input` would. An ID from another conversation raises `LookupError`.
+  `send_input` would. `steer(ID, TEXT)` sends a running task a message, which it reads at its
+  next model request, and returns `False` once it has finished, when `resume` is the way to go
+  on. An ID from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
