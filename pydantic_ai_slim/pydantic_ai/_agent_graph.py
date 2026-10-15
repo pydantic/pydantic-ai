@@ -2176,11 +2176,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
             ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
-            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
-            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
-            # chain's combined input rather than any single segment's — conservative, not lenient.
-            # A response a provider SDK merged from several requests (Google long decode) is checked against
-            # the input of the first; see `context_input_tokens`.
+            # The limit caps context size, so it reads `context_input_tokens`: `usage.input_tokens`, except for
+            # a response whose usage sums several model requests. A Google long decode is checked against its
+            # first request's input, and an Anthropic server-side tool loop that reported its passes against its
+            # last pass's. A continuation chain (Anthropic `pause_turn`, OpenAI background mode) sums usage across
+            # segments (see `_check_continuation_usage`), so it is checked against that sum, unless the last
+            # segment stamped its context size: then against that segment's.
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
