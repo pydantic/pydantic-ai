@@ -305,6 +305,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] instead of running the agent.
     Tool calls are limited to tools visible to apps and don't go through
     [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]; any resource on these servers can be read.
+    Anyone who can post to this endpoint can make these requests, so check that the request belongs to the user
+    before dispatching it.
 
     Only [`run_stream`][pydantic_ai.ui.UIAdapter.run_stream], and so `dispatch_request`, answers these runs;
     `run_stream_native` still runs the agent. Defaults to no toolsets, which runs the agent for every request.

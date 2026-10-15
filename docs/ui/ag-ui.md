@@ -524,7 +524,7 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries an `ACTIVITY_SNAPSHOT` with `activityType: "mcp-apps"` (`ag-ui-protocol` 0.1.19 or later). Its `content`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). This is the shape the AG-UI [MCP Apps middleware](https://www.npmjs.com/package/@ag-ui/mcp-apps-middleware) emits, so renderers built for it work unchanged. Dumped history keeps it as an `ActivityMessage`; loading ignores it.
 
-CopilotKit's renderer loads the page and relays its requests by starting a run with `forwardedProps.__proxiedMCPRequest` and reading `RUN_FINISHED.result`. Pass `mcp_app_toolsets` to answer those runs without running the agent:
+Renderers built for the MCP Apps middleware, such as CopilotKit's, load the page and relay its requests by starting a run with `forwardedProps.__proxiedMCPRequest` and reading `RUN_FINISHED.result`. Pass `mcp_app_toolsets` to answer those runs without running the agent:
 
 ```python {title="ag_ui_mcp_apps.py"}
 from starlette.applications import Starlette
@@ -537,7 +537,7 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 weather = MCPToolset('http://localhost:8000/mcp', id='weather')
-agent = Agent('openai:gpt-5.2', toolsets=[weather])
+agent = Agent('{{ openai:medium }}', toolsets=[weather])
 
 
 async def run_agent(request: Request) -> Response:
