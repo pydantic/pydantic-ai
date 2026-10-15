@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
+from urllib.parse import quote, unquote
 
 import anyio
 import anyio.to_thread
 import httpx2
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
@@ -162,6 +166,32 @@ async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     return content
 
 
+def _normalize_same_origin_path(path: str, parameter: str) -> str:
+    """Validate and normalize a same-origin directory path."""
+    if (
+        not path.startswith('/')
+        or path.startswith('//')
+        or any(character in '\\?#' or ord(character) < 0x20 or ord(character) == 0x7F for character in path)
+        or any(unquote(segment) in ('.', '..') for segment in path.split('/'))
+    ):
+        raise UserError(
+            f'Invalid `{parameter}` {path!r}. '
+            'Use an absolute same-origin path starting with exactly one `/`, '
+            'without control characters, backslashes, dot segments, a query, or a fragment.'
+        )
+    return path if path.endswith('/') else f'{path}/'
+
+
+class _ChatConfig(TypedDict, total=False):
+    basePath: str
+    apiPath: str
+
+
+def _serialize_config(config: _ChatConfig) -> str:
+    serialized = json.dumps(config, ensure_ascii=True, separators=(',', ':'))
+    return serialized.replace('&', r'\u0026').replace('<', r'\u003c').replace('>', r'\u003e')
+
+
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
@@ -172,6 +202,9 @@ def create_web_app(
     html_source: str | Path | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
     allowed_hosts: Sequence[str] | None = None,
+    *,
+    base_path: str | None = None,
+    api_path: str | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -192,7 +225,8 @@ def create_web_app(
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
         html_source: Path or URL for the chat UI HTML. Can be:
-            - None (default): Fetches from CDN and caches locally
+            - None (default): Fetches from CDN and caches locally. Uses UI 2.1.0 for root
+                deployments and 2.3.0 when the effective browser or API path is non-default.
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
@@ -206,17 +240,32 @@ def create_web_app(
             with a `421`, so that a website cannot reach the UI on your machine by pointing a
             hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
             if something in front of the app already authenticates requests.
+        base_path: Absolute same-origin directory for browser navigation. By default, this is
+            derived from a non-root ASGI `root_path`; at the origin root, the UI keeps its build
+            default. This configures browser URLs only; it does not mount the returned app at that
+            path.
+        api_path: Absolute same-origin directory containing the `configure` and `chat` endpoints.
+            By default, this is a non-root ASGI `root_path` followed by `/api/`; at the origin root,
+            the UI keeps its build default. This configures browser requests only; it does not
+            change the app's internal `/api` mount.
 
     Returns:
         A configured Starlette application ready to be served
 
     Raises:
-        UserError: If an `allowed_hosts` entry is not a hostname, `*.example.com`, or `*`.
+        UserError: If an `allowed_hosts` entry is invalid, or if `base_path` or `api_path` is not an
+            absolute same-origin directory path. A request whose ASGI `root_path` is neither empty
+            nor an absolute same-origin directory path also raises `UserError` (surfaced as a 500).
     """
     # Normalized here rather than left to the middleware so a bad pattern is reported from this call
     # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
     # idempotent, so the middleware doing it again over the same list is a no-op.
     allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
+    explicit: _ChatConfig = {}
+    if base_path is not None:
+        explicit['basePath'] = _normalize_same_origin_path(base_path, 'base_path')
+    if api_path is not None:
+        explicit['apiPath'] = _normalize_same_origin_path(api_path, 'api_path')
 
     api_app = create_api_app(
         agent=agent,
@@ -237,7 +286,28 @@ def create_web_app(
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
-        content = await _get_ui_html(html_source)
+        root_path = quote(request.scope.get('root_path', ''), safe='/')
+        derived: _ChatConfig = {}
+        if root_path not in ('', '/'):
+            root_path = _normalize_same_origin_path(root_path, 'root_path')
+            derived = {'basePath': root_path, 'apiPath': f'{root_path}api/'}
+
+        source = html_source
+        paths: _ChatConfig = derived | explicit
+        if source is None and (paths.get('basePath', '/') != '/' or paths.get('apiPath', '/api/') != '/api/'):
+            # Runtime path configuration requires 2.3.0; keep the existing UI for root deployments.
+            source = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html'
+        content = await _get_ui_html(source)
+        if derived or explicit:
+            # This parser-blocking classic script runs before the UI's deferred module script.
+            # Appending preserves the doctype and avoids putting the page in quirks mode.
+            # Custom HTML config overrides derived paths; explicit arguments override both.
+            bootstrap = (
+                f'<script>window.PYDANTIC_AI_CHAT_CONFIG=Object.assign('
+                f'{_serialize_config(derived)},window.PYDANTIC_AI_CHAT_CONFIG,{_serialize_config(explicit)}'
+                f');</script>'
+            ).encode()
+            content += bootstrap
 
         return HTMLResponse(
             content=content,

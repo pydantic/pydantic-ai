@@ -5,6 +5,8 @@ credential (`mcp-NAME`) using CLAI's credential store: the keyring, chunked for 
 or a private file when no keyring exists. FastMCP keys entries by server URL, so a new URL signs in again.
 """
 
+import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -22,6 +24,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, http_client
 from pydantic_clai2.plugins.sign_in import SignInRequired, not_signed_in
+
+# FastMCP configures logging during import, so suppress OAuth INFO messages after its imports.
+# The browser opening is the signal; an explicit `FASTMCP_LOG_LEVEL` still wins for debugging.
+if 'FASTMCP_LOG_LEVEL' not in os.environ:  # pragma: no branch
+    logging.getLogger('fastmcp').setLevel(logging.WARNING)
 
 _TOKENS = 'mcp-oauth-token'
 """The collection FastMCP keeps access and refresh tokens in."""
