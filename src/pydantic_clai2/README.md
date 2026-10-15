@@ -14,8 +14,9 @@ it summarises older messages before the context runs out and adds `/compact`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
-token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
-entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
+token kept in `/keys`. `/google_workspace` opens its settings menu (the web UI's
+plugins panel shows it too): the `/keys` entry to use (`GOOGLE_ACCESS_TOKEN` by
+default), products, and read-only tools; see
 [its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
 `/plugins enable logfire_mcp` turns on the Logfire plugin, which lets the agent query
 your Logfire telemetry through Logfire's MCP server, and opens a settings menu (which
