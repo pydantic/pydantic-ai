@@ -147,6 +147,19 @@ async def test_wait_closes_when_the_task_finishes_and_raises_its_error() -> None
             await TerminalDialogs(script.runners).wait(title='Signing in', description='Finish it.', task=fails)
 
 
+async def test_wait_raises_when_its_screen_fails_rather_than_reading_as_a_cancel() -> None:
+    def broken(menu: Menu) -> MenuResult:
+        raise OSError('no terminal')
+
+    async def forever(show: Callable[[str], None]) -> None:
+        await anyio.sleep_forever()
+
+    with anyio.fail_after(5), pytest.raises(OSError, match='no terminal'):
+        await TerminalDialogs(Runners(run_choice=broken)).wait(
+            title='Signing in', description='Finish it.', task=forever
+        )
+
+
 def _on_loop() -> bool:
     try:
         asyncio.get_running_loop()
