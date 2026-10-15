@@ -134,8 +134,11 @@ The additional patterns redact the OAuth credentials and account identifiers; Lo
 
 To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] sends the `session-id`, `thread-id`, and `x-client-request-id` headers and the `prompt_cache_key` request field. All four are derived from the [`conversation_id`](../message-history.md) of the message history, so runs continuing the same conversation reuse a stable identity. An explicit `openai_prompt_cache_key` model setting or explicitly supplied `extra_headers` always win over the derived values. This does not guarantee a cache hit.
 
+The Codex backend caches prompts implicitly and rejects the explicit prompt caching fields of the OpenAI API, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, [`CachePoint`][pydantic_ai.messages.CachePoint]s, and `openai_cache_instructions` have no effect.
+
 ## Limitations
 
+- [`connect()`][pydantic_ai.models.openai_codex.OpenAICodexModel.connect] raises [`UserError`][pydantic_ai.exceptions.UserError] before opening a WebSocket. Codex session headers depend on the conversation, which is resolved when a request starts.
 - The Codex backend is streaming-only; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.
 - Unsupported generic settings (`max_tokens`, `temperature`, and `top_p`) are dropped before sending. The Codex profile leaves explicit `openai_top_logprobs`, `openai_truncation`, and `openai_user` settings to the standard OpenAI handling, so backend incompatibilities surface as errors. The usual reasoning-related restrictions on log probabilities still apply.
 - The backend requires `store=false`, so every request is sent with it and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError], since there is no stored response to continue from.

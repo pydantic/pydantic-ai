@@ -258,7 +258,7 @@ tools = ["Read", "Grep"]
 - `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
 - `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
 - Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
-- TOML is parsed with the standard library `tomllib`, so it needs Python 3.11 or newer; on 3.10 TOML files are skipped with a warning.
+- TOML files are parsed with the standard-library `tomllib` module.
 
 Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
 
@@ -410,13 +410,17 @@ pending reports on its next explicitly started run. Enqueue delivery is acknowle
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
 
 An observer receives `DelegationTaskEvent`, with the task identity and an optional
-correlated child stream event. Managed start/end events carry `task_id` and
+correlated child stream event. Events from the child's own stream also carry the
+`model_name` and `context_window` of the model streaming that request, so a UI can
+show the child's context usage. Managed start/end events carry `task_id` and
 `parent_id`. Managed cancellation and uncontained exceptions produce terminal
 outcomes; unmanaged events and exception propagation keep their original contract.
 Metadata and final/interrupted histories are atomically saved under `directory`.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
-Inspect possible partial effects before an explicit resume.
+Inspect possible partial effects before an explicit resume. A resume closes out tool
+calls the interruption left unanswered with an `interrupted` tool return, so the child
+sees they did not complete.
 
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;

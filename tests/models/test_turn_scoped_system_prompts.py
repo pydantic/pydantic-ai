@@ -19,12 +19,13 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from pydantic_ai import (
     Agent,
+    CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -52,11 +53,19 @@ if TYPE_CHECKING:
     from .conftest import AnthropicModelFactory
 
 with try_import() as anthropic_available:
-    from anthropic import AsyncAnthropicFoundry
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
+    from anthropic.types.beta import BetaMessageParam, BetaTextBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .test_anthropic import (
+        MockAnthropic,
+        completion_message,
+        get_mock_chat_completion_kwargs,
+        mock_anthropic_client,
+    )
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
@@ -750,3 +759,80 @@ async def test_openrouter_message_cache_control_goes_before_the_turn_scoped_prom
             {'role': 'user', 'content': '<system>Reminder 2.</system>'},
         ]
     )
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_unified_cache_skips_the_turn_scoped_entry(allow_model_requests: None):
+    """`cache=True` takes the same breakpoint path as the `anthropic_cache*` settings, so it honors turn-scoped entries.
+
+    It turns on automatic caching plus instruction and tool breakpoints. The server's automatic breakpoint skips a
+    `clear_at` entry, so an explicit `CachePoint` on the block before one is the block automatic caching would mark:
+    a `1h` breakpoint there with a `5m` automatic one is a 400, so the explicit one wins and the top-level one is
+    left out, as it is for any other last block. A unit test: the claim is the request as built.
+    """
+    reply = completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock([reply, reply])
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='Be terse.', capabilities=[TurnReminder()], model_settings={'cache': True})
+
+    await agent.run('Hello')
+    await agent.run(['Hello', CachePoint(ttl='1h')])
+
+    first, second = get_mock_chat_completion_kwargs(mock_client)
+    for n, kwargs in enumerate((first, second), start=1):
+        assert kwargs['messages'][-1] == {
+            'role': 'system',
+            'content': [{'text': f'Reminder: be terse. This is request {n}.', 'type': 'text'}],
+            'clear_at': 'next_user_message',
+        }
+    assert first['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert first['system'] == snapshot(
+        [{'type': 'text', 'text': 'Be terse.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+    )
+    assert 'cache_control' not in second
+    # The instructions' breakpoint is raised to `1h`: a `1h` one can't come after a `5m` one.
+    assert second['system'] == snapshot(
+        [{'type': 'text', 'text': 'Be terse.', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
+    )
+    assert second['messages'][0]['content'] == snapshot(
+        [{'text': 'Hello', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
+    )
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
+    """On Bedrock, the previous request's end gets a breakpoint after a wide turn, but never on its `clear_at` entry.
+
+    The previous request put its breakpoint on the block before its turn-scoped entry (`cache_control` on one is a
+    400), so that's the block the lookback breakpoint goes on, with the entry's blocks counted toward the lookback.
+    """
+    model = AnthropicModel(
+        'claude-opus-5-5',
+        provider=AnthropicProvider(
+            anthropic_client=mock_anthropic_client(
+                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+            )
+        ),
+    )
+    messages: list[BetaMessageParam] = [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Check the weather everywhere.'}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Reminder 1.'}], 'clear_at': 'next_user_message'},  # pyright: ignore[reportAssignmentType]
+        {
+            'role': 'assistant',
+            'content': [{'type': 'tool_use', 'id': f'call_{i}', 'name': 'get_weather', 'input': {}} for i in range(12)],
+        },
+        {
+            'role': 'user',
+            'content': [{'type': 'tool_result', 'tool_use_id': f'call_{i}', 'content': 'Sunny'} for i in range(12)],
+        },
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Reminder 2.'}], 'clear_at': 'next_user_message'},  # pyright: ignore[reportAssignmentType]
+    ]
+
+    model._apply_message_cache_control(messages, '5m')  # pyright: ignore[reportPrivateUsage]
+
+    assert [
+        (index, block_index)
+        for index, message in enumerate(messages)
+        for block_index, block in enumerate(cast(list[dict[str, Any]], message['content']))
+        if 'cache_control' in block
+    ] == [(0, 0), (3, 11)]

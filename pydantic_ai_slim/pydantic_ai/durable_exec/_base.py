@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import uuid
 from abc import abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -14,13 +15,13 @@ from collections.abc import (
 )
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from functools import partial
-from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
 
 from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
-from typing_extensions import Self
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
@@ -174,6 +175,18 @@ class _RestrictedRunContext(Protocol):
 
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
+_CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
+"""Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
+
+
+def conversation_id_from_run_id(run_id: str) -> str:
+    """Derive a run's default `conversation_id` from its `run_id`.
+
+    For engines whose default `run_id` is replay-stable, so a re-execution of the run gets the same
+    conversation ID without another draw. The derivation is also stable for a caller-supplied `run_id`.
+    """
+    return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
+
 
 class _BoundModelOperations(NamedTuple):
     request: BoundDurableOperation[ModelRequestParams, Any, ModelResponse]
@@ -262,6 +275,13 @@ def _durable_policies(workspace: Workspace) -> list[tuple[object, ...]]:
 
 def _same_durable_workspace(left: Workspace, right: Workspace) -> bool:
     return workspace_layers(left) == workspace_layers(right) and _durable_policies(left) == _durable_policies(right)
+
+
+def _as_capability(value: object, capability: AbstractCapability[Any]) -> object:
+    """Name `capability` on a `RunContext` argument, the way a durable unit's operation body sees it."""
+    if isinstance(value, RunContext):
+        return replace(cast(RunContext[Any], value), _capability=capability)
+    return value
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
@@ -672,7 +692,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Dispatch through serialized context so per-run capability instances recover worker-side.
 
         Outside a durable container, calling the original operation preserves live context mutations
-        without rebuilding resources solely to round-trip them through the durable projection.
+        without rebuilding resources solely to round-trip them through the durable projection. Inside
+        a durable unit, such as a tool's, the operation runs inline too: the enclosing unit already
+        records its result, and engines like AWS Lambda cannot nest one unit in another.
         """
         capability_id = capability.id
         if capability_id is None:
@@ -680,6 +702,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
         if not self.in_durable_context:
+            return await bind_declaration_body(declaration, capability)(*args, **kwargs)
+        if in_durable_unit():
+            # The body runs as the capability, as it would in its own unit, so the events it emits
+            # are its own rather than those of the capability whose tool called it.
+            args = tuple(_as_capability(value, capability) for value in args)
+            kwargs = {key: _as_capability(value, capability) for key, value in kwargs.items()}
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
         request_context = next(

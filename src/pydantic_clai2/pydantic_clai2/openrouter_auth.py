@@ -20,6 +20,7 @@ from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.auth import ReadLine, read_line
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -53,7 +54,7 @@ class OpenRouterAuth:
         *,
         console: Console,
         read_line: ReadLine = read_line,
-        open_browser: Callable[[str], bool] = webbrowser.open,
+        open_browser: Callable[[str], bool] = open_browser,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 300,
     ) -> None:
@@ -110,7 +111,7 @@ class OpenRouterAuth:
                     received = code.result() if code in done else paste.result()
                     return await self.exchange(code=received, verifier=verifier)
         except TimeoutError:
-            raise UserError('OpenRouter login timed out. Connect again through /add_model > openrouter.') from None
+            raise UserError('OpenRouter login timed out. Connect again through /model add > openrouter.') from None
         finally:
             code.cancel()
             tasks: list[asyncio.Task[None] | asyncio.Task[str]] = [*handlers]
@@ -181,5 +182,5 @@ class OpenRouterAuth:
                 return KeyResponse.model_validate_json(response.content).key
             except (httpx.HTTPError, ValidationError):
                 raise UserError(
-                    'OpenRouter key exchange failed. Connect again through /add_model > openrouter.'
+                    'OpenRouter key exchange failed. Connect again through /model add > openrouter.'
                 ) from None

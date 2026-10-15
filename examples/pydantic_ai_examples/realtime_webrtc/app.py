@@ -203,7 +203,7 @@ async def offer(request: Request) -> JSONResponse:
     call.task = asyncio.create_task(run_sideband(call))
     try:
         await asyncio.wait_for(call.attached.wait(), timeout=10)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         call.task.cancel()
         CALLS.pop(answer.session.call_id, None)
         raise HTTPException(
