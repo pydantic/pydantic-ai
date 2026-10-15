@@ -581,6 +581,13 @@ class DeclaredSource:
         self.host = host
 
     def rows(self):
+        # Like a source that reads the keyring or `/keys`, it must never be read on the event loop.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError('rows() read on the event loop')
         return (
             FieldRow(
                 key='colour',
