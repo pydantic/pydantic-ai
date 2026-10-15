@@ -1786,10 +1786,12 @@ activity, and failures each have their own role colour.
 
 CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML
 (`*.toml`) format. Choose folders in `/plugins configure coder` under
-**Agent folders**. The list saves each change immediately; no JSON editing is
+**Agent folders**, or with its **Change…** button in the
+[web UI](#web-ui)'s plugins panel, where each step below opens as a dialog in
+the page. The list saves each change immediately; no JSON editing is
 needed. These folders contain sub-agent definitions, not files for code search.
 
-- **Add directory path** (`a`) accepts one local directory. An unprefixed
+- **Add directory path** accepts one local directory. An unprefixed
   directory name is saved as a path, so entering `agents` here means
   `./agents`, not the folder-name shortcut below.
 - The list is saved once for all projects. A relative path such as
@@ -1797,14 +1799,16 @@ needed. These folders contain sub-agent definitions, not files for code search.
   repository can keep its own copy; it is saved even if the current project
   lacks it, and projects without it skip it. Absolute and `~/...` paths name
   one fixed directory for every project, so they must exist when you add them.
-- **Browse local directories** (`b`) includes hidden folders. Type to filter,
-  Enter to open a folder, Left to go to its parent, and **Use this directory**
-  to select it. The choice is saved as an absolute path, used in every project;
-  type a relative path with **Add directory path** to follow each project
-  instead. Ctrl+L opens the full current path for viewing or navigation.
-- Enter on an entry opens its actions. `e` edits its current value; `d` removes
-  it from the search without deleting files. Esc cancels an edit or returns to
-  the previous menu; **Save & close** returns with changes already saved.
+- **Browse local directories** includes hidden folders. Pick a folder to open
+  it, **..** to go to its parent, and **Use this directory** to select it; in
+  the terminal, type to filter a long list. The choice is saved as an absolute
+  path, used in every project; type a relative path with **Add directory path**
+  to follow each project instead. **Go to path** shows the full current path
+  for viewing or navigation.
+- Choosing an entry opens its actions: edit its current value, replace it by
+  browsing, or remove it from the search without deleting files. Esc cancels an
+  edit or returns to the previous menu, and an empty edit changes nothing;
+  **Save & close** returns with changes already saved.
 - Duplicate entries are rejected, as are absolute and `~/...` paths that are
   missing, files, or unreadable. Existing saved entries stay editable and
   removable even if their directory no longer exists.

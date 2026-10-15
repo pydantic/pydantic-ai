@@ -1031,7 +1031,10 @@ are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 upgrade never loads new definitions without your say. Old
 `pydantic_ai_harness.coder:Coder` declarations load through this module and are
 not rewritten. `/plugins configure coder` edits this list; see
-[Agent folders](README.md#agent-folders).
+[Agent folders](README.md#agent-folders). The same settings menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where the Agent
+folders row's **Change…** button asks the folder list, its edits, and the
+directory browser as dialogs in the page.
 
 `skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
