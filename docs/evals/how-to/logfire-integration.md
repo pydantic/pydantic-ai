@@ -270,7 +270,7 @@ If the task raises, the exception is recorded on the case span, and the attribut
 | Span | Message | Attribute |
 |---|---|---|
 | `execute {task}` | `execute {task}` | `task`: the task function's name. With `retry_task`, each attempt gets its own span. |
-| `evaluator: {evaluator_name}` | `Calling evaluator: {evaluator_name}` | `evaluator_name`: the evaluator's default evaluation name. An exception raised by the evaluator is recorded on this span, not on the case span. |
+| `evaluator: {evaluator_name}` | `Calling evaluator: {evaluator_name}` | `evaluator_name`: the evaluator's [`get_default_evaluation_name`][pydantic_evals.evaluators.Evaluator.get_default_evaluation_name]. An exception raised by the evaluator is recorded on this span, not on the case span. |
 | `report_evaluator: {evaluator_name}` | `report_evaluator: {evaluator_name}` | `evaluator_name`: the report evaluator's serialization name. |
 
 [Online evaluation](../online-evaluation.md#default-otel-event-emission) emits `gen_ai.evaluation.result` log events instead of these spans.
