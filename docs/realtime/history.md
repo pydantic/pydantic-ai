@@ -161,8 +161,8 @@ delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.message
 waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
 their part's audio until they are consumed.
 
-On OpenAI, Azure OpenAI, and xAI, retained audio is kept in the history
-[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns. The conversation a
+Retained audio is kept in the history
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns, on every provider. The conversation a
 tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input recorded on
 each response's [span](observability.md), carry transcripts without that audio for now; the events and
 the response a span records keep it.
