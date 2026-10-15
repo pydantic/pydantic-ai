@@ -33,7 +33,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar as TypeVarExtensions
 
 from pydantic_ai import Agent
-from pydantic_ai._run_context import AnchoredEvidence
+from pydantic_ai._run_context import AnchoredEvidence, ToolNamePath
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec import JSON_CODEC
@@ -401,6 +401,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('active_capability_ids', list, _STR_SET_ADAPTER),
     ('_deferred_capability_ids', list, _STR_SET_ADAPTER),
     ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
+    ('_tool_name_path', list, TypeAdapter(ToolNamePath)),
     ('workspace_ref', dict, TypeAdapter(WorkspaceRef)),
 )
 
@@ -415,7 +416,10 @@ _NONE_UNLESS_ATTACHED = (
     '_run_capabilities_by_id',
     '_run_held_toolsets',
 )
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('_tool_name_path', ()),
+)
 _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
 
 
@@ -521,7 +525,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Project the serializable context state needed by child operations."""
-        return {
+        serialized: dict[str, Any] = {
             'run_id': ctx.run_id,
             'conversation_id': ctx.conversation_id,
             # Models contain provider clients and cannot be serialized. Their
@@ -551,6 +555,11 @@ class RenderRunContext(RunContext[AgentDepsT]):
             'capability_active': ctx.capability_active,
             'workspace_ref': ctx.workspace.ref,
         }
+        # Set while a toolset under a name-changing wrapper is listed, so a `prepare` that runs in
+        # the child reads its tool's own retry count.
+        if tool_name_path := ctx._tool_name_path:
+            serialized['_tool_name_path'] = tool_name_path
+        return serialized
 
     @classmethod
     def deserialize_run_context(
