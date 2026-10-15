@@ -12072,7 +12072,7 @@ async def test_closing_records_the_usage_the_provider_reports_as_its_session_end
 
 
 async def test_closing_records_a_response_report_on_a_provider_whose_responses_are_requests() -> None:
-    """Such a provider counted the request as the response started: the report it makes at the end only adds usage."""
+    """Such a provider counts a request as it records a response: a report made at the close only adds usage."""
     conn = _EndingConnection([SessionUsage(RequestUsage(input_tokens=10))])
     async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(request_limit=0)) as session:
         pass
