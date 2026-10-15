@@ -12,9 +12,13 @@ in-flight model activity, which also ends its retries.
 A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] starts a deadline for each model it tries, so the
 agent graph starts none for it. When the model that answers suspends its response (Anthropic `pause_turn`, OpenAI
 background mode), the graph's continuation loop calls the `FallbackModel` again for each segment, pinned to that
-model. A [`ContinuationChain`][pydantic_ai.models._request_timeout.ContinuationChain] carries the pinned model's
-deadline from one segment to the next, so the chain stays one request to it: a segment that starts after the deadline,
-for example after a long wait between polls, times out at once, and the `FallbackModel` moves on to its next model.
+model. So the chain stays one request to that model, the `FallbackModel` carries its deadline on the suspended
+response, as a UTC timestamp in the `__pydantic_ai__` metadata next to the continuation pin, and each later segment
+gets what is left of it: a segment that starts after the deadline, for example after a long wait between polls, times
+out at once, and the `FallbackModel` moves on to its next model. Wall-clock time is carried because a durable engine
+runs each segment in its own activity or step, possibly in another process, where anyio's clock means nothing. The
+timestamp is dropped once the response completes, and when a later run resumes a suspended response from history,
+which is a new request.
 """
 
 from __future__ import annotations as _annotations
@@ -28,19 +32,23 @@ from contextlib import (
     contextmanager,
     nullcontext,
 )
-from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 
+from .._utils import is_str_dict, now_utc
 from ..exceptions import ModelRequestTimeout
 from ..settings import ModelSettings
 
 if TYPE_CHECKING:
     from .._run_context import RunContext
-    from ..messages import ModelMessage
+    from ..messages import ModelMessage, ModelResponse
     from . import Model, ModelRequestParameters, StreamedResponse
+
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_CARRIED_DEADLINE_KEY = 'request_deadline'
 
 _T = TypeVar('_T')
 
@@ -70,6 +78,14 @@ class RequestDeadline:
         if scope.cancelled_caught:
             raise ModelRequestTimeout(self.model_name, self.timeout)
 
+    def expires_at(self) -> datetime:
+        """When the request times out, in wall-clock UTC."""
+        return now_utc() + timedelta(seconds=self.deadline - anyio.current_time())
+
+    def until(self, expires_at: datetime) -> RequestDeadline:
+        """This deadline moved to wall-clock UTC `expires_at`, e.g. one carried over from an earlier segment."""
+        return replace(self, deadline=anyio.current_time() + (expires_at - now_utc()).total_seconds())
+
     async def iterate(self, iterator: AsyncIterator[_T]) -> AsyncIterator[_T]:
         """Pull from `iterator` under the deadline, one item at a time."""
         while True:
@@ -81,29 +97,33 @@ class RequestDeadline:
             yield item
 
 
-@dataclass
-class ContinuationChain:
-    """The deadline of the model a continuation chain is pinned to, once a model that starts its own picked one."""
-
-    pinned: RequestDeadline | None = None
-
-
-_current_chain: ContextVar[ContinuationChain | None] = ContextVar('_current_continuation_chain', default=None)
+def carry_deadline(response: ModelResponse | StreamedResponse, deadline: RequestDeadline) -> None:
+    """Carry `deadline` on a suspended response, for the segments that continue it."""
+    if response.metadata is None:
+        response.metadata = {}
+    namespace = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
+    namespace[_CARRIED_DEADLINE_KEY] = deadline.expires_at().isoformat()
 
 
-@contextmanager
-def use_continuation_chain(chain: ContinuationChain) -> Generator[None]:
-    """Make `chain` the continuation chain of the requests made inside."""
-    token = _current_chain.set(chain)
-    try:
-        yield
-    finally:
-        _current_chain.reset(token)
+def carried_deadline(response: ModelResponse) -> datetime | None:
+    """The deadline carried on a suspended response, in wall-clock UTC, if any."""
+    namespace = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if is_str_dict(namespace) and isinstance(expires_at := namespace.get(_CARRIED_DEADLINE_KEY), str):
+        return datetime.fromisoformat(expires_at)
+    return None
 
 
-def current_continuation_chain() -> ContinuationChain | None:
-    """The continuation chain of the request being made, if the agent graph is resolving one."""
-    return _current_chain.get()
+def without_carried_deadline(response: ModelResponse) -> ModelResponse:
+    """`response` without a carried deadline, copying its metadata rather than changing it."""
+    metadata = response.metadata
+    namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if metadata is None or not (is_str_dict(namespace) and _CARRIED_DEADLINE_KEY in namespace):
+        return response
+    namespace = {key: value for key, value in namespace.items() if key != _CARRIED_DEADLINE_KEY}
+    metadata = {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
+    if namespace:
+        metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    return replace(response, metadata=metadata or None)
 
 
 def start_request_deadline(model: Model, model_settings: ModelSettings | None) -> RequestDeadline | None:

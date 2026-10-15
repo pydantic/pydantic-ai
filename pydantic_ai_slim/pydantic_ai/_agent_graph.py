@@ -93,12 +93,7 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
-from .models._request_timeout import (
-    ContinuationChain,
-    enforce_request_deadline,
-    start_request_deadline,
-    use_continuation_chain,
-)
+from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
@@ -1088,7 +1083,8 @@ def _split_resume_seed(
     through untouched.
     """
     if messages and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended':
-        return list(messages[:-1]), last
+        # Resuming is a new request, so the deadline a `FallbackModel` carried on the suspended response is dropped.
+        return list(messages[:-1]), without_carried_deadline(last)
     return list(messages), None
 
 
@@ -1200,13 +1196,9 @@ async def model_request(
     last_mode: MergeMode | None = None
     response = seed
     # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
-    # `FallbackModel` starts one per model it tries instead, and carries the one of the model it picked on the chain.
+    # `FallbackModel` starts one per model it tries instead, and carries the picked model's on its suspended responses.
     deadline = start_request_deadline(model, request_context.model_settings)
-    with (
-        set_current_run_context(run_context),
-        use_continuation_chain(ContinuationChain()),
-        enforce_request_deadline(deadline),
-    ):
+    with set_current_run_context(run_context), enforce_request_deadline(deadline):
         while True:
             if response is None:
                 messages = base_messages

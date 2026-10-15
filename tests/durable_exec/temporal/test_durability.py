@@ -72,6 +72,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     SkipModelRequest,
@@ -575,20 +576,36 @@ async def test_durability_request_timeout_cancels_the_model_activity(client: Cli
     ).replay_workflow(history)
 
 
-async def _pauses_twice_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Pauses its response twice, each segment taking more than half of the `request_timeout` below."""
-    await asyncio.sleep(0.15)
+_pausing_model_fresh_starts = 0
+
+
+async def _pauses_forever_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Keeps pausing its response, each segment taking more than half of the `request_timeout` below.
+
+    Only its first fresh request is served: after that it is unavailable, so the fallback moves on.
+    """
+    global _pausing_model_fresh_starts
     last = messages[-1]
     segment = len(last.parts) if isinstance(last, ModelResponse) and last.state == 'suspended' else 0
-    if segment < 2:
-        return ModelResponse(
-            parts=[TextPart(f'segment {segment}. ')], provider_response_id=f'segment-{segment}', state='suspended'
-        )
-    return ModelResponse(parts=[TextPart('done')])
+    if segment == 0:
+        _pausing_model_fresh_starts += 1
+        if _pausing_model_fresh_starts > 1:
+            raise ModelAPIError('pauses', 'unavailable')
+    await asyncio.sleep(0.15)
+    return ModelResponse(
+        parts=[TextPart(f'segment {segment}. ')], provider_response_id=f'segment-{segment}', state='suspended'
+    )
+
+
+def _fallback_answer_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('fallback answer')])
 
 
 fallback_continuation_agent = Agent(
-    FallbackModel(FunctionModel(_pauses_twice_fn, model_name='pauses'), FunctionModel(_hanging_model_fn)),
+    FallbackModel(
+        FunctionModel(_pauses_forever_fn, model_name='pauses'),
+        FunctionModel(_fallback_answer_fn, model_name='fallback'),
+    ),
     name='durability_fallback_continuation',
     deps_type=type(None),
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
@@ -599,13 +616,24 @@ fallback_continuation_agent = Agent(
 @workflow.defn
 class FallbackContinuationWorkflow:
     @workflow.run
-    async def run(self) -> str:
-        return (await fallback_continuation_agent.run('hello')).output
+    async def run(self) -> list[str]:
+        result = await fallback_continuation_agent.run('hello')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        return [
+            result.output,
+            *(
+                f'{attempt.model_name}: {(attempt.error or "").split(":")[0]}'
+                for attempt in response.failed_attempts or []
+            ),
+        ]
 
 
-async def test_durability_fallback_continuation_gets_a_deadline_per_activity(client: Client):
-    """A `FallbackModel` gives its models their deadlines inside the activity, and each continuation segment is its
-    own activity: a turn whose segments together take longer than `request_timeout` completes, as documented."""
+async def test_durability_fallback_continuation_keeps_its_deadline_across_activities(client: Client):
+    """A `FallbackModel` runs inside each continuation segment's activity, and the deadline of the model it picked
+    carries over from one activity to the next: the second segment times out, and the fallback answers."""
+    global _pausing_model_fresh_starts
+    _pausing_model_fresh_starts = 0
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -617,7 +645,7 @@ async def test_durability_fallback_continuation_gets_a_deadline_per_activity(cli
             id=FallbackContinuationWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-    assert output == snapshot('segment 0. segment 1. done')
+    assert output == snapshot(['fallback answer', 'pauses: ModelRequestTimeout', 'pauses: ModelAPIError'])
 
 
 # --- Durability with tools ---

@@ -405,6 +405,98 @@ async def test_fallback_keeps_the_picked_models_deadline_across_continuations(st
         ('polls-forever', 'ModelRequestTimeout'),
         ('polls-forever', 'ModelAPIError'),
     ]
+    # The deadline was carried on the suspended responses only while the turn was being continued.
+    assert all('request_deadline' not in str(message.metadata) for message in messages)
+
+
+class PausesOnce(Model):
+    """Pauses its response once, then completes it."""
+
+    @property
+    def model_name(self) -> str:
+        return 'pauses-once'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        state = 'complete' if self._continuing(messages) else 'suspended'
+        return ModelResponse(parts=[TextPart(state)], model_name=self.model_name, state=state)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        state = 'complete' if self._continuing(messages) else 'suspended'
+        yield ScriptedStreamedResponse(
+            model_request_parameters,
+            _segment=StreamSegment(
+                texts=[state], state=state, provider_response_id='', input_tokens=1, output_tokens=1
+            ),
+        )
+
+    @staticmethod
+    def _continuing(messages: list[ModelMessage]) -> bool:
+        last = messages[-1]
+        return isinstance(last, ModelResponse) and last.state == 'suspended'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_carried_deadline_is_not_kept_in_history(stream: bool):
+    """The deadline a `FallbackModel` carries on a suspended response is dropped once the turn completes."""
+    model = FallbackModel(PausesOnce(), FunctionModel(answer, stream_function=stream_answer, model_name='fallback'))
+    agent = Agent(model, model_settings={'request_timeout': 10})
+
+    if stream:
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+        messages = result.all_messages()
+    else:
+        messages = (await agent.run('hello')).all_messages()
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.state, response.metadata) == snapshot(
+        ('complete', {'__pydantic_ai__': {'fallback_model_id': 'test:pauses-once'}})
+    )
+
+
+async def test_resumed_continuation_gets_a_fresh_deadline():
+    """A later run resuming a suspended response from history is a new request, even if the deadline it carried
+    has long passed."""
+
+    async def answer_after_a_checkpoint(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        await anyio.lowlevel.checkpoint()
+        return ModelResponse(parts=[TextPart('answer')])
+
+    pinned = FunctionModel(answer_after_a_checkpoint, model_name='pinned')
+    suspended = ModelResponse(
+        parts=[TextPart('working')],
+        model_name='pinned',
+        provider_response_id='job',
+        state='suspended',
+        metadata={
+            '__pydantic_ai__': {'fallback_model_id': pinned.model_id, 'request_deadline': '2000-01-01T00:00:00+00:00'}
+        },
+    )
+    model = FallbackModel(pinned, FunctionModel(answer, model_name='fallback'))
+    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
+
+    result = await agent.run(message_history=[ModelRequest.user_text_prompt('hello'), suspended])
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.model_name, response.failed_attempts) == ('pinned', None)
 
 
 async def test_nested_fallback_gives_each_inner_model_a_deadline():
