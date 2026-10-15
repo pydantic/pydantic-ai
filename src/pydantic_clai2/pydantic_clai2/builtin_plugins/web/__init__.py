@@ -5,6 +5,7 @@ starts CLAI with only the browser to drive it. The terminal and the browser driv
 """
 
 import html
+import ipaddress
 import os
 import secrets
 import tempfile
@@ -36,6 +37,17 @@ from pydantic_clai2.ui.browser import open_browser
 USAGE = 'Usage: /web [start|stop|status]'
 
 
+HTTP_PORT = 80
+
+
+def _unspecified(host: str) -> bool:
+    """Whether `host` is an address meaning every interface, in any spelling, such as `0.0.0.0` or `::0`."""
+    try:
+        return ipaddress.ip_address(host).is_unspecified
+    except ValueError:  # A host name, not an address.
+        return False
+
+
 class WebSettings(BaseModel):
     """Where the web UI listens, and whether `/web` opens the browser."""
 
@@ -48,7 +60,7 @@ class WebSettings(BaseModel):
     @classmethod
     def _one_address(cls, value: str) -> str:
         value = value.strip().removeprefix('[').removesuffix(']')
-        if value in ('', '0.0.0.0', '::'):
+        if not value or _unspecified(value):
             # Requests must name the address the server listens on, which a wildcard does not say.
             raise ValueError('listen on one address, such as 127.0.0.1, not on every interface')
         return value
@@ -139,7 +151,11 @@ class WebPlugin(Plugin[WebSettings]):
         address = f'[{self.settings.host}]' if ':' in self.settings.host else self.settings.host
 
         def app(port: int) -> ASGIApp:
-            hosts = frozenset(f'{name}:{port}' for name in ('127.0.0.1', 'localhost', '[::1]', address))
+            names = ('127.0.0.1', 'localhost', '[::1]', address)
+            hosts = frozenset(f'{name}:{port}' for name in names)
+            if port == HTTP_PORT:
+                # Browsers leave the scheme's default port out of `Host`.
+                hosts |= frozenset(names)
             return create_app(remote=self.remote, token=self.token, hosts=hosts)
 
         self.server = WebServer.serve(app, host=self.settings.host, port=self.settings.port)

@@ -1,12 +1,21 @@
 import { memo } from 'react'
 import type { Diff } from '../protocol'
 
+/** A diff's lines, with its `---`/`+++` file headers left out: only before its first hunk, so a
+ * removed line that itself starts with `--` (a SQL comment, a Markdown rule) is kept. */
+function body(diff: string): string[] {
+  const lines = diff.replace(/\n$/, '').split('\n')
+  const first = lines.findIndex((line) => line.startsWith('@@ '))
+  if (first < 0) return lines
+  return lines.filter((line, index) => index >= first || !(line.startsWith('--- ') || line.startsWith('+++ ')))
+}
+
 export function diffStats(diff: string): { added: number; removed: number } {
   let added = 0
   let removed = 0
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('+') && !line.startsWith('+++')) added++
-    else if (line.startsWith('-') && !line.startsWith('---')) removed++
+  for (const line of body(diff)) {
+    if (line.startsWith('+')) added++
+    else if (line.startsWith('-')) removed++
   }
   return { added, removed }
 }
@@ -17,8 +26,7 @@ export const DiffView = memo(function DiffView({ diff }: { diff: Diff }) {
   let oldLine = 0
   let newLine = 0
   let numbered = false
-  for (const line of diff.diff.replace(/\n$/, '').split('\n')) {
-    if (line.startsWith('---') || line.startsWith('+++')) continue
+  for (const line of body(diff.diff)) {
     const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/.exec(line)
     if (hunk) {
       oldLine = Number(hunk[1])
