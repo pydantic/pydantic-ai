@@ -12,6 +12,8 @@ Two providers wrap those endpoints:
 - [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini API (Google AI Studio), surfaced under the `'google:'` prefix.
 - [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] — [Google Cloud](google-cloud.md) (formerly known as Vertex AI), surfaced under the `'google-cloud:'` prefix.
 
+Both [`gateway/google:<model>`](../gateway.md) and [`gateway/google-cloud:<model>`](../gateway.md) use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] through Pydantic AI Gateway. Gemini API-only features, such as [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool], require the direct Gemini API through [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider].
+
 ## Install
 
 To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
