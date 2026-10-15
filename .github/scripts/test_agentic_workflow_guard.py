@@ -742,6 +742,18 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     assert detector['OTEL_TRACES_EXPORTER'] == 'otlp'
     assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
+    reporter = next(
+        step
+        for step in workflow['jobs']['detection']['steps']
+        if step.get('name') == 'Report detector usage and outcome'
+    )
+    assert reporter['if'] == "always() && steps.detection_guard.outputs.run_detection == 'true'"
+    assert reporter['env']['DETECTOR_OUTCOME'] == '${{ steps.detection_agentic_execution.outcome }}'
+    assert reporter['env']['DETECTOR_CANCELLED'] == '${{ cancelled() }}'
+    assert reporter['env']['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
+    assert reporter['continue-on-error'] is True
+    assert 'gh-aw.detector.result' in reporter['with']['script']
+    assert 'gh-aw.detector.request' in reporter['with']['script']
     configs = compiled_awf_configs(lock)
     assert len(configs) == 2
     for config in configs:

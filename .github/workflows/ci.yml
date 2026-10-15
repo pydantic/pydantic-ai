@@ -267,6 +267,9 @@ jobs:
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
 
+      - name: Test threat detector telemetry
+        run: node --test .github/scripts/test_detector_telemetry.cjs
+
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
       # It lives outside `testpaths`, in the job that installs Pyright, because one of its

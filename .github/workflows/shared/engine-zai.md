@@ -67,6 +67,79 @@ safe-outputs:
   threat-detection:
     # Detection has an independent budget and uses the same verified model pricing.
     max-ai-credits: -1
+    post-steps:
+      - name: Report detector usage and outcome
+        if: always() && steps.detection_guard.outputs.run_detection == 'true'
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DETECTOR_OUTCOME: ${{ steps.detection_agentic_execution.outcome }}
+          DETECTOR_CANCELLED: ${{ cancelled() }}
+          OTEL_SERVICE_NAME: gh-aw.threat-detection
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { logSpan } = require(path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'otlp.cjs'));
+            const directory = '/tmp/gh-aw/threat-detection';
+            const read = name => fs.existsSync(name) ? fs.readFileSync(name, 'utf8') : '';
+            const log = read(path.join(directory, 'detection.log'));
+            const usage = read('/tmp/gh-aw/sandbox/firewall/logs/api-proxy-logs/token-usage.jsonl');
+            const requests = usage.split('\n').filter(Boolean).map(line => JSON.parse(line));
+            // Keep complete proxy counters separate from the CLI's best-effort model spans.
+            for (const request of requests) {
+              const endMs = Date.parse(request.timestamp);
+              await logSpan('gh-aw.detector.request', {
+                'gh-aw.telemetry.source': 'awf-proxy',
+                'gen_ai.request.model': request.model,
+                'gh-aw.detector.usage.input_tokens': request.input_tokens,
+                'gh-aw.detector.usage.output_tokens': request.output_tokens,
+                'gh-aw.detector.usage.cache_read_tokens': request.cache_read_tokens,
+                'gh-aw.detector.usage.cache_write_tokens': request.cache_write_tokens,
+                'http.response.status_code': request.status,
+                'gh-aw.request.id': request.request_id,
+                'gh-aw.request.duration_ms': request.duration_ms,
+                'gh-aw.ai_credits': request.ai_credits_this_response,
+              }, { startMs: endMs - request.duration_ms, endMs, isError: request.status >= 400 });
+            }
+            let retries = 0;
+            let retryDelayMs = 0;
+            const statuses = {};
+            for (const line of log.split('\n')) {
+              if (!/^\[engine\] \{\s*"type":\s*"system",\s*"subtype":\s*"api_retry"/.test(line)) continue;
+              const event = JSON.parse(line.slice('[engine] '.length));
+              if (event.type !== 'system' || event.subtype !== 'api_retry') continue;
+              retries++;
+              if (Number.isFinite(event.retry_delay_ms)) retryDelayMs += event.retry_delay_ms;
+              if (Number.isInteger(event.error_status)) {
+                statuses[event.error_status] = (statuses[event.error_status] || 0) + 1;
+              }
+            }
+            const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
+            const verdictText = read(path.join(directory, 'detection_result.json'));
+            const verdict = verdictText ? JSON.parse(verdictText) : null;
+            const outcome = process.env.DETECTOR_CANCELLED === 'true' ? 'cancelled' : process.env.DETECTOR_OUTCOME || 'unknown';
+            const valid = verdict && ['prompt_injection', 'secret_leak', 'malicious_patch'].every(key => typeof verdict[key] === 'boolean');
+            const failed = outcome !== 'success' || !valid;
+            const attributes = {
+              'gh-aw.telemetry.source': 'detector-evidence',
+              'gh-aw.detector.outcome': outcome,
+              'gh-aw.detector.reason': marker ? marker[1] : valid ? 'verdict' : 'missing_verdict',
+              'gh-aw.detector.verdict': valid ? verdict.prompt_injection || verdict.secret_leak || verdict.malicious_patch ? 'blocked' : 'clean' : 'missing',
+              'gh-aw.detector.requests': requests.length,
+              'gh-aw.detector.usage_available': Boolean(usage),
+              'gh-aw.detector.retries': retries,
+              'gh-aw.detector.retry_delay_ms': retryDelayMs,
+              'gh-aw.detector.log_available': Boolean(log),
+            };
+            for (const [status, count] of Object.entries(statuses)) {
+              attributes['gh-aw.detector.retries.http_' + status] = count;
+            }
+            await logSpan('gh-aw.detector.result', attributes, {
+              startMs: Number(process.env.GITHUB_AW_OTEL_JOB_START_MS) || Date.now(),
+              isError: failed,
+              errorMessage: failed ? attributes['gh-aw.detector.reason'] : undefined,
+            });
     # Detection uses the stateful Claude CLI, so it retains normal recovery.
     engine:
       id: claude

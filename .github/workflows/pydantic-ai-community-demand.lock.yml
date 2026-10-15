@@ -1,5 +1,5 @@
-# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"b5d7784569f0e132fe8a0d7f7ce7cfd435423be8781173e2b1349900c2160508","body_hash":"e3fc51846b826fdc3e7d8fd705753b04a98ebcf25fe8c8ff2a9629735bef419e","compiler_version":"v0.91.1","strict":true,"agent_id":"pydantic-ai","agent_model":"anthropic/${{ vars.GH_AW_MODEL }}","detection_agent_id":"claude","detection_agent_model":"${{ vars.GH_AW_MODEL }}","engine_versions":{"claude":"2.1.227","pydantic-ai":"0.56.0"}}
-# gh-aw-manifest: {"version":1,"secrets":["COPILOT_GITHUB_TOKEN","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_TOKEN","ZAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"v6.0.2"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c18668ad3cf93ea998bef934396af7bb5c839dc7","version":"v10.2.0"},{"repo":"github/gh-aw-actions/setup","sha":"d7cc687a9bc76b9d56e6c496649403392f654b35","version":"v0.91.1"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.28.31","digest":"sha256:c4ab1d48d533cc7daaa5f2e1193d1a644888242fb8813d49c6de46d129224b76","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.28.31@sha256:c4ab1d48d533cc7daaa5f2e1193d1a644888242fb8813d49c6de46d129224b76"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.31","digest":"sha256:a5a37489635109334a5e2b5cb2eaba32e8c8f1a89d8dea6009baa962a8904c4a","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.31@sha256:a5a37489635109334a5e2b5cb2eaba32e8c8f1a89d8dea6009baa962a8904c4a"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.28.31","digest":"sha256:90a46d2e6e910ace2c09c2dcf6b56dc374ed513d9da642a4e9fcfcd6e9248a9d","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.28.31@sha256:90a46d2e6e910ace2c09c2dcf6b56dc374ed513d9da642a4e9fcfcd6e9248a9d"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.28","digest":"sha256:69920365d9f0143ed853743c319b2bd4614ca7f9537474ad8eff0c47da84c5a4","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.28@sha256:69920365d9f0143ed853743c319b2bd4614ca7f9537474ad8eff0c47da84c5a4"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f"},{"image":"ghcr.io/github/github-mcp-server:v1.12.2","digest":"sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","pinned_image":"ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_me","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["missing_data","missing_tool","noop","record_community_verdict","report_incomplete"]}],"threat_detection":{"mode":"enabled"}}
+# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"fb64f5352c4c0791e978613123fb3af6b4c37eb94d18d070e82fc587734b4ecd","body_hash":"e3fc51846b826fdc3e7d8fd705753b04a98ebcf25fe8c8ff2a9629735bef419e","compiler_version":"v0.91.1","strict":true,"agent_id":"pydantic-ai","agent_model":"anthropic/${{ vars.GH_AW_MODEL }}","detection_agent_id":"claude","detection_agent_model":"${{ vars.GH_AW_MODEL }}","engine_versions":{"claude":"2.1.227","pydantic-ai":"0.56.0"}}
+# gh-aw-manifest: {"version":1,"secrets":["COPILOT_GITHUB_TOKEN","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_TOKEN","ZAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"v6.0.2"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"3a2844b7e9c422d3c10d287c895573f7108da1b3"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c18668ad3cf93ea998bef934396af7bb5c839dc7","version":"v10.2.0"},{"repo":"github/gh-aw-actions/setup","sha":"d7cc687a9bc76b9d56e6c496649403392f654b35","version":"v0.91.1"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.28.31","digest":"sha256:c4ab1d48d533cc7daaa5f2e1193d1a644888242fb8813d49c6de46d129224b76","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.28.31@sha256:c4ab1d48d533cc7daaa5f2e1193d1a644888242fb8813d49c6de46d129224b76"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.31","digest":"sha256:a5a37489635109334a5e2b5cb2eaba32e8c8f1a89d8dea6009baa962a8904c4a","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.28.31@sha256:a5a37489635109334a5e2b5cb2eaba32e8c8f1a89d8dea6009baa962a8904c4a"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.28.31","digest":"sha256:90a46d2e6e910ace2c09c2dcf6b56dc374ed513d9da642a4e9fcfcd6e9248a9d","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.28.31@sha256:90a46d2e6e910ace2c09c2dcf6b56dc374ed513d9da642a4e9fcfcd6e9248a9d"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.28","digest":"sha256:69920365d9f0143ed853743c319b2bd4614ca7f9537474ad8eff0c47da84c5a4","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.28@sha256:69920365d9f0143ed853743c319b2bd4614ca7f9537474ad8eff0c47da84c5a4"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:11c2c544876cdbaffefe0f7f1283b74838c209654b4934a78e23ed11f750490f"},{"image":"ghcr.io/github/github-mcp-server:v1.12.2","digest":"sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6","pinned_image":"ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_me","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["missing_data","missing_tool","noop","record_community_verdict","report_incomplete"]}],"threat_detection":{"mode":"enabled"}}
 # This file was automatically generated by gh-aw (v0.91.1). DO NOT EDIT. To debug this workflow, load the skill at https://github.com/github/gh-aw/blob/main/debug.md
 #
 #    ___                   _   _
@@ -50,6 +50,7 @@
 #   - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 #   - actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 #   - actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+#   - actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
 #   - actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
 #   - actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 (source v9)
 #   - actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -2385,6 +2386,78 @@ jobs:
           mkdir -p /tmp/gh-aw/threat-detection/sandbox/firewall
           if [ -d /tmp/gh-aw/sandbox/firewall/logs ]; then mkdir -p /tmp/gh-aw/threat-detection/sandbox/firewall/logs && cp -r /tmp/gh-aw/sandbox/firewall/logs/. /tmp/gh-aw/threat-detection/sandbox/firewall/logs/; fi
           if [ -d /tmp/gh-aw/sandbox/firewall/audit ]; then mkdir -p /tmp/gh-aw/threat-detection/sandbox/firewall/audit && cp -r /tmp/gh-aw/sandbox/firewall/audit/. /tmp/gh-aw/threat-detection/sandbox/firewall/audit/; fi
+      - name: Report detector usage and outcome
+        if: always() && steps.detection_guard.outputs.run_detection == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        env:
+          DETECTOR_CANCELLED: ${{ cancelled() }}
+          DETECTOR_OUTCOME: ${{ steps.detection_agentic_execution.outcome }}
+          OTEL_SERVICE_NAME: gh-aw.threat-detection
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { logSpan } = require(path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions', 'otlp.cjs'));
+            const directory = '/tmp/gh-aw/threat-detection';
+            const read = name => fs.existsSync(name) ? fs.readFileSync(name, 'utf8') : '';
+            const log = read(path.join(directory, 'detection.log'));
+            const usage = read('/tmp/gh-aw/sandbox/firewall/logs/api-proxy-logs/token-usage.jsonl');
+            const requests = usage.split('\n').filter(Boolean).map(line => JSON.parse(line));
+            // Keep complete proxy counters separate from the CLI's best-effort model spans.
+            for (const request of requests) {
+              const endMs = Date.parse(request.timestamp);
+              await logSpan('gh-aw.detector.request', {
+                'gh-aw.telemetry.source': 'awf-proxy',
+                'gen_ai.request.model': request.model,
+                'gh-aw.detector.usage.input_tokens': request.input_tokens,
+                'gh-aw.detector.usage.output_tokens': request.output_tokens,
+                'gh-aw.detector.usage.cache_read_tokens': request.cache_read_tokens,
+                'gh-aw.detector.usage.cache_write_tokens': request.cache_write_tokens,
+                'http.response.status_code': request.status,
+                'gh-aw.request.id': request.request_id,
+                'gh-aw.request.duration_ms': request.duration_ms,
+                'gh-aw.ai_credits': request.ai_credits_this_response,
+              }, { startMs: endMs - request.duration_ms, endMs, isError: request.status >= 400 });
+            }
+            let retries = 0;
+            let retryDelayMs = 0;
+            const statuses = {};
+            for (const line of log.split('\n')) {
+              if (!/^\[engine\] \{\s*"type":\s*"system",\s*"subtype":\s*"api_retry"/.test(line)) continue;
+              const event = JSON.parse(line.slice('[engine] '.length));
+              if (event.type !== 'system' || event.subtype !== 'api_retry') continue;
+              retries++;
+              if (Number.isFinite(event.retry_delay_ms)) retryDelayMs += event.retry_delay_ms;
+              if (Number.isInteger(event.error_status)) {
+                statuses[event.error_status] = (statuses[event.error_status] || 0) + 1;
+              }
+            }
+            const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
+            const verdictText = read(path.join(directory, 'detection_result.json'));
+            const verdict = verdictText ? JSON.parse(verdictText) : null;
+            const outcome = process.env.DETECTOR_CANCELLED === 'true' ? 'cancelled' : process.env.DETECTOR_OUTCOME || 'unknown';
+            const valid = verdict && ['prompt_injection', 'secret_leak', 'malicious_patch'].every(key => typeof verdict[key] === 'boolean');
+            const failed = outcome !== 'success' || !valid;
+            const attributes = {
+              'gh-aw.telemetry.source': 'detector-evidence',
+              'gh-aw.detector.outcome': outcome,
+              'gh-aw.detector.reason': marker ? marker[1] : valid ? 'verdict' : 'missing_verdict',
+              'gh-aw.detector.verdict': valid ? verdict.prompt_injection || verdict.secret_leak || verdict.malicious_patch ? 'blocked' : 'clean' : 'missing',
+              'gh-aw.detector.requests': requests.length,
+              'gh-aw.detector.usage_available': Boolean(usage),
+              'gh-aw.detector.retries': retries,
+              'gh-aw.detector.retry_delay_ms': retryDelayMs,
+              'gh-aw.detector.log_available': Boolean(log),
+            };
+            for (const [status, count] of Object.entries(statuses)) {
+              attributes['gh-aw.detector.retries.http_' + status] = count;
+            }
+            await logSpan('gh-aw.detector.result', attributes, {
+              startMs: Number(process.env.GITHUB_AW_OTEL_JOB_START_MS) || Date.now(),
+              isError: failed,
+              errorMessage: failed ? attributes['gh-aw.detector.reason'] : undefined,
+            });
+        continue-on-error: true
       - name: Parse threat detection token usage for step summary
         id: parse_detection_token_usage
         if: always()
