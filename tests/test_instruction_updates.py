@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
 from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai.capabilities import Capability, Hooks
+from pydantic_ai.capabilities import Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     UserPromptPart,
+    _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -856,6 +857,97 @@ def test_instruction_updates_render_escapes_the_id():
     """A capability id is free text, so a quote in it must not end the `id` attribute."""
     part = InstructionDeltaPart(id='capability:"quoted" <id>:state', content='New.')
     assert part.render() == '<context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</context>'
+
+
+def test_instruction_updates_render_escapes_closing_tags_in_the_content():
+    """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
+    part = InstructionDeltaPart(id='agent:state', content='Before </context></System > </context-diff> after.')
+    assert part.render() == snapshot(
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context-diff> after.\n</context>'
+    )
+
+
+MEMORY = '\n'.join(f'- Fact {index}: value {index}.' for index in range(1, 21))
+"""A block long enough that a one-line edit is shorter as a diff than as the full text."""
+
+
+def test_instruction_updates_render_diff_against_the_replaced_text():
+    edited = MEMORY.replace('Fact 7: value 7.', 'Fact 7: value seven.')
+    part = InstructionDeltaPart(id='agent:memory', content=edited, base_hash=_instruction_text_hash(MEMORY))
+    assert part.render(previous=MEMORY) == snapshot(
+        """\
+<context-diff id="agent:memory">
+--- before
++++ after
+@@ -5,5 +5,5 @@
+ - Fact 5: value 5.
+ - Fact 6: value 6.
+-- Fact 7: value 7.
++- Fact 7: value seven.
+ - Fact 8: value 8.
+ - Fact 9: value 9.
+</context-diff>\
+"""
+    )
+    full = f'<context id="agent:memory">\n{edited}\n</context>'
+    # Without the text the change replaces, or with other text, the model gets the full replacement.
+    assert part.render() == full
+    assert part.render(previous=f'{MEMORY}\n- Fact 21: value 21.') == full
+    # So it does when the diff would be longer.
+    short = InstructionDeltaPart(id='agent:state', content='B', base_hash=_instruction_text_hash('A'))
+    assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
+
+
+async def test_instruction_updates_send_long_block_edits_as_diffs():
+    """A one-line edit to a long block is recorded in full but sent as a diff against the text the model has."""
+    received: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)), deps_type=State)
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    first_edit = MEMORY.replace('Fact 7: value 7.', 'Fact 7: value seven.')
+    second_edit = first_edit.replace('- Fact 12: value 12.\n', '')
+    history: list[ModelMessage] = []
+    for value in [MEMORY, first_edit, second_edit]:
+        result = await agent.run('Continue.', deps=State(value), message_history=history)
+        history = result.all_messages()
+
+    deltas = [part for message in history if isinstance(message, ModelRequest) for part in message.parts]
+    deltas = [part for part in deltas if isinstance(part, InstructionDeltaPart)]
+    assert [(part.content, part.base_hash) for part in deltas] == [
+        (first_edit, _instruction_text_hash(MEMORY)),
+        (second_edit, _instruction_text_hash(first_edit)),
+    ]
+    assert received[1] == [deltas[0].render(previous=MEMORY)]
+    # Each request renders the earlier changes exactly as before, so the cached prefix holds.
+    assert received[2] == [*received[1], deltas[1].render(previous=first_edit)]
+    assert all(statement.startswith('<context-diff id="agent:memory">') for statement in received[2])
+
+    # A processor that drops the first change leaves the second without the text it was computed
+    # against, so the model gets it in full.
+    def drop_first_change(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[part for part in message.parts if part != deltas[0]])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    received.clear()
+    await agent.run(
+        'Continue.',
+        deps=State(second_edit),
+        message_history=history,
+        capabilities=[ProcessHistory(drop_first_change)],
+    )
+    assert received == [[f'<context id="agent:memory">\n{second_edit}\n</context>']]
 
 
 @pytest.mark.parametrize('include_content', [False, True])

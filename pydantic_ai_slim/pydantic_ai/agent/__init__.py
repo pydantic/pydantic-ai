@@ -3918,7 +3918,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
-            if any(part.on_change == 'append' for part in instruction_parts):
+            if _instructions.explicitly_appends(sourced_instructions, instruction_parts):
                 warnings.warn(
                     "`on_change='append'` is not supported by realtime sessions; instructions use session resolution.",
                     UserWarning,

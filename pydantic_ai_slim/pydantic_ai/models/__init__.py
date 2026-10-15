@@ -1036,25 +1036,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
-            inline_system = self.profile.get('supports_inline_system_prompts', False)
-            messages = [
-                replace(
-                    message,
-                    parts=[
-                        SystemPromptPart(
-                            content=part.render(inline_system=inline_system),
-                            timestamp=message.timestamp or _utils.now_utc(),
-                        )
-                        if isinstance(part, InstructionDeltaPart)
-                        else part
-                        for part in message.parts
-                        if not isinstance(part, InstructionDeltaPart) or index >= baseline_index
-                    ],
-                )
-                if isinstance(message, ModelRequest)
-                else message
-                for index, message in enumerate(messages)
-            ]
+            messages = _render_instruction_deltas(
+                messages,
+                baseline_index=baseline_index,
+                inline_system=self.profile.get('supports_inline_system_prompts', False),
+            )
 
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
@@ -2632,6 +2618,47 @@ def _render_append_parts(parts: list[InstructionPart], *, inline_system: bool) -
         else part
         for part in parts
     ]
+
+
+def _render_instruction_deltas(
+    messages: Sequence[ModelMessage], *, baseline_index: int, inline_system: bool
+) -> list[ModelMessage]:
+    """Render each delta in the current instruction window as a `SystemPromptPart`, dropping earlier ones.
+
+    Each block's text is folded forward from the window's baseline, so a delta can be rendered as a
+    diff against the text the model last received for its block. Only text earlier in `messages`
+    goes into that fold, so a request renders each delta identically on every later request.
+    """
+    baseline = messages[baseline_index] if baseline_index < len(messages) else None
+    sent: dict[str, str] = (
+        {
+            instruction_id: entry.part.content
+            for instruction_id, entry in baseline.instruction_baseline.items()
+            if entry.part.content
+        }
+        if isinstance(baseline, ModelRequest) and baseline.instruction_baseline
+        else {}
+    )
+    rendered: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, InstructionDeltaPart) for part in message.parts
+        ):
+            rendered.append(message)
+            continue
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, InstructionDeltaPart):
+                parts.append(part)
+            elif index >= baseline_index:
+                text = part.render(inline_system=inline_system, previous=sent.get(part.id))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
+                if part.content is None:
+                    sent.pop(part.id, None)
+                else:
+                    sent[part.id] = part.content
+        rendered.append(replace(message, parts=parts))
+    return rendered
 
 
 def _has_instruction_deltas(messages: Iterable[ModelMessage]) -> bool:

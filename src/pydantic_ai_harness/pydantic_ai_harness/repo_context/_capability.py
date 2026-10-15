@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ToolCallPart
@@ -182,6 +183,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return self._render_instructions()
 
         return instructions
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        # The context files are read each run, so an edit to one between runs is appended as a change (a
+        # diff, when that's shorter) rather than rewriting the cached prompt.
+        return append_on_change_by_default(super()._collect_instructions(), key='repo_context')
 
     def _render_instructions(self) -> str | None:
         parts: list[str] = []

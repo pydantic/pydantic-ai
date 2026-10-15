@@ -10,6 +10,7 @@ from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CapabilityInstructionSource,
     InstructionBaselineEntry,
     InstructionChangePolicy,
     InstructionDeltaPart,
@@ -18,6 +19,7 @@ from pydantic_ai.messages import (
     InstructionSource,
     ModelMessage,
     ModelRequest,
+    _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     post_compaction_window,
 )
 from pydantic_ai.template import TemplateStr
@@ -66,8 +68,48 @@ class SourcedInstruction(Generic[AgentDepsT]):
     id: InstructionId | None = None
     dynamic: bool = False
     on_change: InstructionChangePolicy = 'rewrite'
+    framework_default: bool = False
+    """Whether `on_change` is the framework's choice for a block it owns rather than its author's.
+
+    Such a block uses `'rewrite'` without a warning where appending isn't supported, such as in a
+    realtime session or when its capability is loaded on demand.
+    """
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def append_on_change_by_default(
+    instructions: Sequence[SourcedInstruction[AgentDepsT]], *, key: str
+) -> list[SourcedInstruction[AgentDepsT]]:
+    """Make the computed blocks of a framework-owned capability append their changes.
+
+    Built-in and harness capabilities whose instructions change between requests or runs use this, so
+    their changes extend the cached prompt rather than rewriting it. A block with no id of its own,
+    because its capability has no `id`, is keyed `capability:<key>`. Literal text, which can't change,
+    and a block whose author chose a policy are left as they are.
+    """
+    return [
+        replace(
+            sourced,
+            id=sourced.id or InstructionId(CapabilityInstructionSource(key), name=sourced.name),
+            on_change='append',
+            framework_default=True,
+        )
+        if sourced.dynamic and sourced.on_change == 'rewrite'
+        else sourced
+        for sourced in instructions
+    ]
+
+
+def explicitly_appends(
+    instructions: Sequence[SourcedInstruction[AgentDepsT]], parts: Sequence[InstructionPart]
+) -> bool:
+    """Whether an author, rather than the framework, asked for `on_change='append'` on any of `parts`.
+
+    `parts` are what `instructions` (and any toolsets) resolved to.
+    """
+    framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
+    return any(part.on_change == 'append' and part.id not in framework_ids for part in parts)
 
 
 def sourced_instruction(
@@ -271,7 +313,7 @@ def update_instruction_history(
             instruction_id: InstructionPart.join(parts) for instruction_id, parts in current_parts.items()
         }
         changes = [
-            InstructionDeltaPart(id=instruction_id, content=current_values.get(instruction_id))
+            _instruction_change(instruction_id, effective.get(instruction_id), current_values.get(instruction_id))
             for instruction_id in dict.fromkeys([*effective, *current_values])
             if effective.get(instruction_id) != current_values.get(instruction_id)
         ]
@@ -294,3 +336,9 @@ def update_instruction_history(
         target.instructions = InstructionPart.join(prefix)
         target.instruction_parts = prefix
     return prefix
+
+
+def _instruction_change(instruction_id: str, previous: str | None, content: str | None) -> InstructionDeltaPart:
+    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff."""
+    base_hash = _instruction_text_hash(previous) if previous is not None and content is not None else None
+    return InstructionDeltaPart(id=instruction_id, content=content, base_hash=base_hash)

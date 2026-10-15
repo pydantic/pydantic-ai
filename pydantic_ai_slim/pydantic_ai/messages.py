@@ -2,10 +2,12 @@ from __future__ import annotations as _annotations
 
 import base64
 import dataclasses
+import difflib
 import hashlib
 import html
 import mimetypes
 import os
+import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -2113,20 +2115,42 @@ class InstructionDeltaPart:
     content: str | None
     """The complete replacement text, or `None` to withdraw the block."""
 
+    base_hash: str | None = None
+    """The SHA-256 hex digest of the block's text this change replaces, or `None` if it replaces none.
+
+    A model can then send the change as a diff against the text it sent before, and only when that text
+    is still what this change was computed against: if a history processor dropped an earlier change,
+    the hashes differ and the model sends `content` in full instead.
+    """
+
     part_kind: Literal['instruction-delta'] = 'instruction-delta'
     """Part type identifier, used as a discriminator for deserialization."""
 
-    def render(self, *, inline_system: bool = True) -> str:
+    def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
         """Render this change as a `<context>` element that replaces the block's earlier one.
+
+        A replacement is rendered as a `<context-diff>` element instead, holding a unified diff against
+        `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
+        shorter than the full replacement.
 
         Args:
             inline_system: Whether the receiving model supports mid-conversation system messages, per its
                 profile's `supports_inline_system_prompts`. When `False`, the model gets this text as
                 `<system>`-tagged user text, and a withdrawal says that it stays in effect. Defaults to
                 `True` for callers with no model to ask, such as token estimates and search.
+            previous: The block's text as the model last received it, if known.
         """
         if self.content is not None:
-            content = self.content
+            full = _context_element(self.id, self.content)
+            if (
+                previous is not None
+                and self.base_hash is not None
+                and _instruction_text_hash(previous) == self.base_hash
+            ):
+                diff = _context_diff_element(self.id, previous, self.content)
+                if len(diff) < len(full):
+                    return diff
+            return full
         elif inline_system:
             content = 'This context has been withdrawn.'
         else:
@@ -2140,9 +2164,30 @@ class InstructionDeltaPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+def _instruction_text_hash(text: str) -> str:
+    """The digest an `InstructionDeltaPart.base_hash` records for the text it replaces."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+_CLOSING_FRAMING_TAG = re.compile(r'</(context-diff|context|system)\s*>', re.IGNORECASE)
+
+
+def _neutralize_closing_tags(content: str) -> str:
+    """Escape closing framing tags in a block's text, so the text can't end its own element early."""
+    return _CLOSING_FRAMING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
+
+
 def _context_element(instruction_id: str, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
-    return f'<context id="{html.escape(instruction_id)}">\n{content}\n</context>'
+    return f'<context id="{html.escape(instruction_id)}">\n{_neutralize_closing_tags(content)}\n</context>'
+
+
+def _context_diff_element(instruction_id: str, previous: str, content: str) -> str:
+    """Tag a unified diff from a block's previous text to its new text with the block's id."""
+    diff = '\n'.join(
+        difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
+    )
+    return f'<context-diff id="{html.escape(instruction_id)}">\n{_neutralize_closing_tags(diff)}\n</context-diff>'
 
 
 def _render_instruction_baseline(part: InstructionPart, *, inline_system: bool) -> InstructionPart:  # pyright: ignore[reportUnusedFunction]

@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai import CapabilityInstructionSource, InstructionBaselineEntry, InstructionId, InstructionPart
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
@@ -822,6 +823,31 @@ async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
+                instruction_baseline={
+                    'capability:deferred_capabilities': InstructionBaselineEntry(
+                        index=0,
+                        part=InstructionPart(
+                            content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                            dynamic=True,
+                            on_change='append',
+                            id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                        ),
+                    )
+                },
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                        dynamic=True,
+                        on_change='append',
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                    )
+                ],
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -855,6 +881,17 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                        dynamic=True,
+                        on_change='append',
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                    )
+                ],
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -879,6 +916,17 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                        dynamic=True,
+                        on_change='append',
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                    )
+                ],
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1083,6 +1131,35 @@ Visible billing instructions.
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
+                instruction_baseline={
+                    'capability:deferred_capabilities': InstructionBaselineEntry(
+                        index=1,
+                        part=InstructionPart(
+                            content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
+                            dynamic=True,
+                            on_change='append',
+                            id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                        ),
+                    )
+                },
+                instruction_parts=[
+                    InstructionPart(
+                        content='Visible billing instructions.',
+                        id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                    ),
+                    InstructionPart(
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
+                        dynamic=True,
+                        on_change='append',
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                    ),
+                ],
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1122,6 +1199,21 @@ Visible billing instructions.
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content='Visible billing instructions.',
+                        id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                    ),
+                    InstructionPart(
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
+                        dynamic=True,
+                        on_change='append',
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                    ),
+                ],
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1153,6 +1245,21 @@ Visible billing instructions.
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content='Visible billing instructions.',
+                        id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                    ),
+                    InstructionPart(
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
+                        dynamic=True,
+                        on_change='append',
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                    ),
+                ],
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

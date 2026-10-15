@@ -99,7 +99,7 @@ def add_user_name(ctx: RunContext[str]) -> str:
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
 For changing operator state, use `@agent.instructions(name='state', on_change='append')` to preserve the instruction prefix.
-The callback still runs before each request; changed values become full replacements in history.
+The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
 Return `None` or an empty string to withdraw the block.
 Use the same decorator on an always-on capability with an explicit `id`.
 Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`.
@@ -108,6 +108,7 @@ Compaction or loss of the baseline starts a new prefix from current instructions
 Use a durable operation for instruction callbacks that read external state during durable execution.
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
 
 ## Define Agents Declaratively with Specs
 
