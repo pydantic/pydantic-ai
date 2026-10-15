@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from inline_snapshot import snapshot
 
 from pydantic_ai.messages import (
+    BinaryAudio,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
@@ -107,3 +108,19 @@ async def test_frames_take_an_async_iterable_with_nothing_to_close() -> None:
     assert [lifecycle(frame) async for frame in tracker.frames(_Events())] == snapshot(
         [['ResponseStarted'], ['ResponseEnded'], []]
     )
+
+
+def test_a_commit_that_never_went_out_commits_nothing() -> None:
+    tracker = InferredLifecycle(transcribes=False)
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.input_failed(tracker.input_sent(CommitAudio()))
+    tracker.input_sent('Hello')
+    assert lifecycle(tracker.take_pending()) == snapshot(['InputAdded'])
+
+
+def test_a_failed_commit_of_a_transcribed_turn_leaves_it_to_join_later() -> None:
+    tracker = InferredLifecycle(transcribes=True)
+    assert lifecycle(tracker.message([InputTranscript('Hello')])) == snapshot(['UserTurnStarted'])
+    tracker.input_failed(tracker.input_sent(CommitAudio()))
+    assert lifecycle(tracker.take_pending()) == snapshot([])
+    assert lifecycle(tracker.message([OutputTranscript('Hi.')])) == snapshot(['UserTurnEnded', 'ResponseStarted'])

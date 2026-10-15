@@ -60,6 +60,18 @@ class _Turn:
     """The reply to it is over, before any of its transcript came: what still comes is late, until the next turn."""
 
 
+@dataclass
+class _Uncommit:
+    """What a commit changed, to undo should it never go out."""
+
+    input_id: InputId
+    pending: int
+    audio_since_reply: bool
+    unnamed_committed: bool
+    spoken_unanswered: str | None
+    joined: _Turn | None
+
+
 class InferredLifecycle:
     """Works out a connection's lifecycle events from the order of what it sends and receives.
 
@@ -75,8 +87,8 @@ class InferredLifecycle:
     What it works out:
 
     - A response starts with its first output (audio, a transcript, a native tool part, a tool call), and ends at
-      its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone], or at the usage report that follows a response's
-      tool calls when they are reported with `response_usage_follows`. Its id is made up, so it is recorded as no
+      its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone]; a response that makes tool calls ends with them,
+      or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is made up, so it is recorded as no
       provider's (`ResponseStarted.provider_id=False`).
     - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
       answered when it started (`ResponseStarted.basis='inferred'`).
@@ -147,6 +159,8 @@ class InferredLifecycle:
         """Words came since the user started speaking: the speech is the turn they transcribe."""
         self._spoken_unanswered: str | None = None
         """A spoken turn that joined the conversation ahead of a reply that hasn't started yet."""
+        self._uncommit: _Uncommit | None = None
+        """How to take back the latest commit, while its send may still fail."""
         self._identified: set[str] = set()
         self._replayed_items: set[str] = set()
         self._replayed_calls: set[str] = set()
@@ -167,7 +181,17 @@ class InferredLifecycle:
             self._audio_since_reply = True
             return input_id
         if isinstance(content, CommitAudio):
-            # The audio sent since the last turn is one now: it joins the conversation as the commit arrives.
+            # The audio sent since the last turn is one now: it joins the conversation as the commit arrives. (Undone
+            # if the commit never goes out.)
+            turn = self._turn
+            self._uncommit = _Uncommit(
+                input_id=input_id,
+                pending=len(self._pending),
+                audio_since_reply=self._audio_since_reply,
+                unnamed_committed=self._unnamed_committed,
+                spoken_unanswered=self._spoken_unanswered,
+                joined=turn if turn is not None and not turn.joined else None,
+            )
             self._commit_turn()
             return input_id
         if isinstance(content, CreateResponse):
@@ -215,6 +239,15 @@ class InferredLifecycle:
 
     def input_failed(self, input_id: InputId) -> None:
         """The input never went out (its send raised): forget it."""
+        if (uncommit := self._uncommit) is not None and uncommit.input_id == input_id:
+            # A commit that never went out committed nothing.
+            self._uncommit = None
+            del self._pending[uncommit.pending :]
+            self._audio_since_reply = uncommit.audio_since_reply
+            self._unnamed_committed = uncommit.unnamed_committed
+            self._spoken_unanswered = uncommit.spoken_unanswered
+            if uncommit.joined is not None:
+                uncommit.joined.joined = False
         self._unanswered = [unanswered for unanswered in self._unanswered if unanswered != input_id]
         self._held = [held for held in self._held if held != input_id]
         self._pending = [event for event in self._pending if event != InputAdded(input_id=input_id)]
@@ -231,6 +264,8 @@ class InferredLifecycle:
         For a frame of the connection's own, like the one it reports a reconnect in.
         """
         pending, self._pending = self._pending, []
+        # (A commit whose events are out can't be taken back any more.)
+        self._uncommit = None
         return pending
 
     def _reply_owed(self) -> bool:

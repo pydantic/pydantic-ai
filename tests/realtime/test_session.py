@@ -12276,3 +12276,26 @@ async def test_a_connection_whose_frames_are_no_generator_is_read_to_the_end() -
     assert [
         part.transcript for message in session.all_messages() for part in message.parts if isinstance(part, SpeechPart)
     ] == ['Hi.']
+
+
+async def test_a_response_over_the_request_limit_within_one_frame_is_neither_recorded_nor_counted() -> None:
+    """The session refuses a response as it handles the frame that started it, which can have ended it too."""
+
+    class _OneFrame(FakeRealtimeConnection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [
+                ResponseStarted(response_id='r1'),
+                OutputTranscript(text='Hi.', is_final=True),
+                ResponseDone(),
+                ResponseEnded(response_id='r1', status='completed'),
+            ]
+            await asyncio.Event().wait()  # pragma: lax no cover
+
+    model = FakeRealtimeModel(_OneFrame([]))
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model, usage_limits=UsageLimits(request_limit=0)).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 0'):
+            async for _ in session:
+                pass
+    assert session.usage.requests == 0
+    assert session.all_messages() == []

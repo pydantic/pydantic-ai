@@ -104,7 +104,7 @@ from ._core import (
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._lifecycle import LIFECYCLE_EVENT_TYPES, StaleEvent
+from ._lifecycle import LIFECYCLE_EVENT_TYPES, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
     accumulate_transcript,
@@ -977,6 +977,8 @@ class RealtimeSession:
         # `_TRANSCRIPT_HOLD_SECONDS`).
         self._transcript_watchdogs: dict[str, asyncio.TimerHandle] = {}
         self._barge_in_watchdogs: dict[str, asyncio.TimerHandle] = {}
+        self._frame_response: str | None = None
+        """The response the frame being handled started, if it started one."""
         # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
         # buffer is no user turn.
         self._audio_uncommitted = False
@@ -3982,7 +3984,7 @@ class RealtimeSession:
             except UsageLimitExceeded:
                 if (request_limit := self._usage_limits.request_limit) is not None and usage.requests >= request_limit:
                     # The request it is would exceed `request_limit`: not one this session records, or counts.
-                    self._apply_core(ResponseRefused())
+                    self._apply_core(ResponseRefused(response_id=self._frame_response))
                 raise
         self._response_limit_checked = True
         # A response that is starting is not the one whose terminal is still to come. Gemini finalizes a
@@ -4377,6 +4379,10 @@ class RealtimeSession:
                 for event in frame:
                     if not isinstance(event, StaleEvent):
                         core.apply(event)
+                # (A response this session refuses as it handles the frame can have ended in it already.)
+                self._frame_response = next(
+                    (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted)), None
+                )
                 self._core_advanced(core)
                 codec = [
                     event.event if isinstance(event, StaleEvent) else event

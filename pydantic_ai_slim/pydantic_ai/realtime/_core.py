@@ -179,6 +179,9 @@ class ResponseRefused:
     It stops reading the connection, so the response is cut off: it isn't recorded, or counted as a request.
     """
 
+    response_id: str | None = None
+    """The response, if the frame the session refused it in started it: it may have ended in that frame too."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class ResponseOverdue:
@@ -368,9 +371,9 @@ class SessionCore:
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
         self._carried_usage: list[SessionUsage] = []
+        """Usage reported between responses, naming none: the next response's."""
         self._next_refused = False
         """The session refused the next response before it started (see `ResponseRefused`)."""
-        """Usage reported between responses, naming none: the next response's."""
         self._audio_budget = RetainedAudioBudget(
             retain_audio_max_seconds, input_sample_rate=input_sample_rate, output_sample_rate=output_sample_rate
         )
@@ -495,11 +498,7 @@ class SessionCore:
         elif isinstance(command, ResponseOverdue):
             self._release_held_turns(command.response_id)
         elif isinstance(command, ResponseRefused):
-            if (response := self._speaking_response()) is not None:
-                response.refused = True
-            else:
-                # Refused at the first sign of it, its usage reported ahead of it.
-                self._next_refused = True
+            self._refuse_response(command.response_id)
         elif isinstance(command, ReceiveEnded):
             self._receiving = False
             # Nothing more will be read: not the rest of a response under way, nor of a turn that joined.
@@ -999,6 +998,25 @@ class SessionCore:
         else:
             # Recorded after something that joined the conversation later (a turn whose transcript came late).
             insort(queue, entry, key=lambda recorded: recorded.placed_at)
+
+    def _refuse_response(self, response_id: str | None) -> None:
+        response = self._responses.get(response_id) if response_id is not None else self._speaking_response()
+        if response is None:
+            # Refused at the first sign of it, its usage reported ahead of it.
+            self._next_refused = True
+        elif response.message is None:
+            response.refused = True
+        elif not response.tool_calls:
+            # Over within the frame it started in: recorded already, so taken back. (Its usage counted toward the
+            # session as it came; one that made tool calls stays, as its calls are refused one by one.)
+            response.refused = True
+            response.message = None
+            self._placed.remove(response)
+            if response in self._recorded_audio:
+                self._recorded_audio.remove(response)
+            if self._responses_are_requests:
+                self.usage.requests -= 1  # usage-attribution: the session owns its spans
+                self.requests -= 1
 
     def _lose_open_responses(self) -> None:
         for response in [response for response in self._responses.values() if response.status is None]:
