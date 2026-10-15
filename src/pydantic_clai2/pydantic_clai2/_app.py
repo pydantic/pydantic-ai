@@ -913,9 +913,9 @@ def create_shell(
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
     commands.register(
         Command(
-            name='repl',
-            description="Run your own Python in this session's run_code REPL: /repl CODE",
-            handler=shell.repl_command,
+            name='monty',
+            description="Run your own Python in Monty, this session's run_code sandbox: /monty CODE",
+            handler=shell.monty_command,
             raw=True,
             live=True,
         )
@@ -1090,17 +1090,17 @@ class _Shell(Generic[DepsT, OutputT]):
             raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
         self.submitted.append(text)
 
-    async def repl_command(self, args: list[str]) -> str:
-        """`/repl CODE`: run a cell in the REPL code mode keeps with the session; the next prompt tells the model."""
+    async def monty_command(self, args: list[str]) -> str:
+        """`/monty CODE`: run a cell in the Monty sandbox code mode keeps with the session; the next prompt tells the model."""
         code = args[0].strip() if args else ''
         if not code:
-            raise ValueError("Usage: /repl CODE runs your own cell in this session's run_code REPL.")
+            raise ValueError("Usage: /monty CODE runs your own cell in Monty, this session's run_code sandbox.")
         if not (self.speculation.enabled or self.context.settings.code_mode):
-            raise ValueError('Code mode is off, so there is no REPL. Turn it on with /set run.code_mode true.')
+            raise ValueError('Code mode is off, so there is no Monty sandbox. Turn it on with /set run.code_mode true.')
         if self.session.repl_states is None:
-            raise ValueError('This CLAI saves no sessions, so no REPL outlives a run.')
+            raise ValueError('This CLAI saves no sessions, so no Monty state outlives a run.')
         self.session.plugins = self.run_plugins()
-        cell = await self.session.run_in_repl(code)
+        cell = await self.session.run_in_monty(code)
         if cell.failed:
             raise ValueError(f'The cell failed:\n{cell.report()}')
         return cell.report() or '(no output)'

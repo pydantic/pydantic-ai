@@ -306,8 +306,8 @@ def test_theme(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
-def test_a_repl_cell_from_the_browser(make_web: 'MakeWeb') -> None:
-    """`/repl` from the browser runs the user's cell in the session's REPL: shown as theirs, and not a turn."""
+def test_a_monty_cell_from_the_browser(make_web: 'MakeWeb') -> None:
+    """`/monty` from the browser runs the user's cell in the session's Monty sandbox: shown as theirs, and not a turn."""
     pytest.importorskip('pydantic_monty')
     web_ = make_web(Agent(TestModel()))
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
@@ -315,9 +315,9 @@ def test_a_repl_cell_from_the_browser(make_web: 'MakeWeb') -> None:
         running = web_.run()
         web_.post('/api/input', {'text': '/set run.code_mode true'})
         receive_until(socket, Notice)
-        web_.post('/api/input', {'text': '/repl x = 6 * 7\nprint(x)'})
+        web_.post('/api/input', {'text': '/monty x = 6 * 7\nprint(x)'})
         messages, notice = receive_until(socket, Notice)
-        assert (notice.command, notice.text) == ('/repl x = 6 * 7\nprint(x)', '42')
+        assert (notice.command, notice.text) == ('/monty x = 6 * 7\nprint(x)', '42')
         [cell] = [message.item for message in messages if isinstance(message, ItemAdded)]
         assert (cell.name, cell.by_user) == ('run_code', True)
         assert not any(isinstance(message, TurnStarted | TurnEnded) for message in messages)

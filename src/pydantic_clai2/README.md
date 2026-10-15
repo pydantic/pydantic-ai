@@ -100,7 +100,7 @@ completion. Copilot requests use your saved login through the lazy provider reso
 
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
-blocks, live token counts while a turn streams, a panel with code mode's `run_code` REPL cells, and a composer with `/` command completion, a
+blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
 model picker, and a stop button. The
 terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
@@ -2173,12 +2173,12 @@ in the `/resume` browser deletes its state. Sub-agents start each task with an
 empty sandbox. A state Monty cannot load starts a fresh sandbox, and a state over
 32 MiB is not saved, so the next prompt starts with an empty sandbox.
 
-`/repl CODE` runs your own cell in that sandbox between turns, with the same tool
-functions the model's cells get: `/repl x = 41`, then `/repl print(x)`. It prints
+`/monty CODE` runs your own cell in Monty, that sandbox, between turns, with the same
+tool functions the model's cells get: `/monty x = 41`, then `/monty print(x)`. It prints
 what the cell printed and returned, keeps the state with the session, and stays out
 of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
-web UI, the REPL panel's input runs `/repl` too.
+web UI, the Monty panel's input runs `/monty` too.
 
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
 calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's
