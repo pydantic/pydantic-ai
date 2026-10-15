@@ -55,9 +55,29 @@ with try_import() as openai_available:
 SHORT_TIMEOUT = 0.05
 """For a request that never finishes: how soon it times out only affects how long the test takes."""
 
-GENEROUS_TIMEOUT = 0.5
-"""For a test in which something must get done before the deadline, e.g. a first chunk reaching the consumer, on a
-loaded runner."""
+LONG_TIMEOUT = 10
+"""For a test in which something must get done before the deadline, e.g. a first chunk reaching the consumer. Where the
+deadline must then pass, the test moves the `clock` past it rather than waiting, so a loaded runner can't make the
+deadline pass too soon."""
+
+
+@dataclass
+class Clock:
+    """The event loop's clock, which a test moves forward to make a deadline pass exactly when it wants."""
+
+    offset: float = 0
+
+    def advance(self, seconds: float = LONG_TIMEOUT) -> None:
+        self.offset += seconds
+
+
+@pytest.fixture
+async def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
+    clock = Clock()
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    monkeypatch.setattr(loop, 'time', lambda: real_time() + clock.offset)
+    return clock
 
 
 async def hang(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -75,13 +95,19 @@ async def stream_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncI
 
 @dataclass
 class StreamThatHangs:
-    """Streams one chunk, then waits for the next one forever, recording whether the stream was torn down."""
+    """Streams one chunk, then waits for the next one forever, recording whether the stream was torn down.
 
+    With a `clock`, the deadline passes once the next chunk is asked for, so after the first one was received.
+    """
+
+    clock: Clock | None = None
     closed: bool = False
 
     async def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         try:
             yield 'partial '
+            if self.clock is not None:
+                self.clock.advance()
             await anyio.sleep_forever()
             yield 'unreachable'  # pragma: no cover
         finally:
@@ -146,10 +172,11 @@ async def test_outer_cancellation_is_not_a_request_timeout():
     assert scope.cancelled_caught
 
 
-async def test_streamed_request_times_out_mid_stream():
-    stream = StreamThatHangs()
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_streamed_request_times_out_mid_stream(anyio_backend: str, clock: Clock):
+    stream = StreamThatHangs(clock)
     agent = Agent(
-        FunctionModel(stream_function=stream, model_name='slow'), model_settings={'request_timeout': GENEROUS_TIMEOUT}
+        FunctionModel(stream_function=stream, model_name='slow'), model_settings={'request_timeout': LONG_TIMEOUT}
     )
     received: list[str] = []
 
@@ -167,16 +194,17 @@ async def test_streamed_request_times_out_mid_stream():
     )
 
 
-async def test_streamed_request_times_out_with_event_stream_handler():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_streamed_request_times_out_with_event_stream_handler(anyio_backend: str, clock: Clock):
     """`run()` streams behind the scenes when there's an event stream handler, and the deadline covers that too."""
-    stream = StreamThatHangs()
+    stream = StreamThatHangs(clock)
     events: list[AgentStreamEvent] = []
 
     async def handler(ctx: RunContext[Any], stream_events: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream_events:
             events.append(event)
 
-    agent = Agent(FunctionModel(stream_function=stream), model_settings={'request_timeout': GENEROUS_TIMEOUT})
+    agent = Agent(FunctionModel(stream_function=stream), model_settings={'request_timeout': LONG_TIMEOUT})
 
     with pytest.raises(ModelRequestTimeout):
         await agent.run('hello', event_stream_handler=handler)
@@ -200,13 +228,15 @@ async def test_slow_stream_consumer_counts_towards_the_deadline():
                 await anyio.sleep(SHORT_TIMEOUT * 4)
 
 
-async def test_deadline_ends_with_the_last_chunk():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_deadline_ends_with_the_last_chunk(anyio_backend: str, clock: Clock):
     """Once the stream has been read through its last chunk, the consumer can take as long as it likes."""
-    agent = Agent(FunctionModel(stream_function=stream_answer), model_settings={'request_timeout': GENEROUS_TIMEOUT})
+    agent = Agent(FunctionModel(stream_function=stream_answer), model_settings={'request_timeout': LONG_TIMEOUT})
 
     async with agent.run_stream('hello') as result:
         output = await result.get_output()
-        await anyio.sleep(GENEROUS_TIMEOUT + SHORT_TIMEOUT)
+        clock.advance()
+        await anyio.lowlevel.checkpoint()
 
     assert output == 'answer'
 
@@ -305,14 +335,15 @@ async def test_fallback_falls_back_when_opening_a_stream_times_out():
     assert [attempt.model_name for attempt in response.failed_attempts or []] == ['primary']
 
 
-async def test_fallback_stream_times_out_mid_stream_on_the_models_own_deadline():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_fallback_stream_times_out_mid_stream_on_the_models_own_deadline(anyio_backend: str, clock: Clock):
     """Once a model's stream is open there's no falling back, and its own deadline still covers reading it."""
-    stream = StreamThatHangs()
+    stream = StreamThatHangs(clock)
     model = FallbackModel(
         FunctionModel(stream_function=stream, model_name='primary'),
         FunctionModel(stream_function=stream_answer, model_name='fallback'),
     )
-    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
+    agent = Agent(model, model_settings={'request_timeout': LONG_TIMEOUT})
 
     with pytest.raises(ModelRequestTimeout) as exc_info:
         async with agent.run_stream('hello') as result:
@@ -490,7 +521,7 @@ async def test_resumed_continuation_gets_a_fresh_deadline():
         },
     )
     model = FallbackModel(pinned, FunctionModel(answer, model_name='fallback'))
-    agent = Agent(model, model_settings={'request_timeout': GENEROUS_TIMEOUT})
+    agent = Agent(model, model_settings={'request_timeout': LONG_TIMEOUT})
 
     result = await agent.run(message_history=[ModelRequest.user_text_prompt('hello'), suspended])
 
