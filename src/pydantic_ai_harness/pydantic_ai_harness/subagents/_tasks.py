@@ -120,6 +120,7 @@ class DelegationTasks:
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
         self._receivers: dict[tuple[str, str | None], Callable[[SystemPromptPart], str | None]] = {}
+        self._steering: dict[str, Callable[[str], str | None]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._open = False
@@ -394,6 +395,20 @@ class DelegationTasks:
             and not r.delivered
         ]
 
+    def steer(self, task_id: str, text: str) -> bool:
+        """Send a running child a user message, which its run reads at its next model request.
+
+        Returns `False` when the child is not running, so a caller can offer to resume it instead.
+        A message sent as the child's final response settles may arrive too late for it to read.
+        """
+        if not text.strip():
+            raise ValueError('Steering text must not be empty')
+        enqueue = self._steering.get(task_id)
+        if self.records[task_id].status != 'running' or enqueue is None:
+            return False
+        enqueue(text)
+        return True
+
     def history(self, task_id: str) -> list[ModelMessage]:
         """Independent replay history; callers cannot mutate the saved child through it."""
         return copy.deepcopy(self.records[task_id].messages)
@@ -430,15 +445,23 @@ class DelegationTasks:
         conversation_id: str,
         parent_id: str | None,
         enqueue: Callable[[SystemPromptPart], str | None],
+        steer: Callable[[str], str | None] | None = None,
     ) -> Generator[None]:
-        """Keep a queue attached only for the lifetime of its owning run."""
+        """Keep a queue attached only for the lifetime of its owning run.
+
+        `steer` queues a user message on a child's own run, for `DelegationTasks.steer`.
+        """
         key = (conversation_id, parent_id)
         self._receivers[key] = enqueue
+        if steer is not None and parent_id is not None:
+            self._steering[parent_id] = steer
         self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
         try:
             yield
         finally:
             self._receivers.pop(key, None)
+            if parent_id is not None:
+                self._steering.pop(parent_id, None)
             self._queued = {
                 enqueue_id: identity
                 for enqueue_id, identity in self._queued.items()
@@ -487,6 +510,7 @@ class DelegationReports(AbstractCapability[object]):
             conversation_id=self.conversation_id,
             parent_id=self.task_id,
             enqueue=lambda part: ctx.enqueue(part, priority=self.priority),
+            steer=lambda text: ctx.enqueue(text, priority='asap'),
         ):
             return await handler()
 

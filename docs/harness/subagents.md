@@ -432,6 +432,12 @@ output settles. Reports are routed to the direct parent; an idle parent receives
 pending reports on its next explicitly started run. Enqueue delivery is acknowledged
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
 
+`steer(task_id, text)` sends a running child a user message on its own run's queue
+with `priority='asap'`: the child reads it at its next model request, and one about to
+finish goes on with it instead. It returns `False` when the child is not running, so an
+application can offer to resume it. A message sent as the child's final response
+settles may arrive too late for it to read.
+
 An observer receives `DelegationTaskEvent`, with the task identity and an optional
 correlated child stream event. Managed start/end events carry `task_id` and
 `parent_id`. Managed cancellation and uncontained exceptions produce terminal

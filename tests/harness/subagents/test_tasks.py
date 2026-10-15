@@ -221,6 +221,48 @@ async def test_background_receipt_then_automated_report(tmp_path: Path) -> None:
         assert not restored.reports(conversation_id='parent')
 
 
+async def test_steer_reaches_a_running_child_only() -> None:
+    started, release = asyncio.Event(), asyncio.Event()
+    seen: list[list[ModelMessage]] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        if len(seen) == 1:
+            started.set()
+            await release.wait()
+            yield 'first answer'
+        else:
+            yield 'steered answer'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    owner = DelegationTasks()
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                running = asyncio.create_task(parent.run('go', conversation_id='parent'))
+                await started.wait()
+                (record,) = owner.records.values()
+                with pytest.raises(ValueError, match='must not be empty'):
+                    owner.steer(record.id, '  ')
+                assert owner.steer(record.id, 'focus on the tests')
+                release.set()
+                await running
+            assert record.output == 'steered answer'
+            steered = [
+                part.content
+                for message in seen[1]
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            ]
+            assert steered == ['inspect', 'focus on the tests']
+            assert 'focus on the tests' in str(record.messages)
+            assert not owner.steer(record.id, 'too late'), 'a finished child offers resume instead'
+            with pytest.raises(KeyError):
+                owner.steer('unknown', 'hello')
+
+
 async def test_promotion_and_targeted_cancellation(tmp_path: Path) -> None:
     first_started, second_started = asyncio.Event(), asyncio.Event()
     release = asyncio.Event()
