@@ -2422,7 +2422,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Args:
             extra_headers: Headers for the WebSocket handshake, overriding the model's default
-                `extra_headers`. Request headers must match the headers used to open the connection.
+                `extra_headers`. Request headers must match the configured handshake headers. The client's
+                credentials aren't compared, so set a request `Authorization` header here.
             websocket_connection_options: Typed connection options passed to the OpenAI SDK.
                 The model's default `timeout` controls the handshake; each request's `timeout`
                 controls sending and receiving. SDK client timeouts apply when no setting is given.
@@ -3401,9 +3402,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
             }
             request_headers.setdefault('user-agent', get_user_agent())
-            effective_headers = self._websocket.effective_headers(
-                self._websocket.auth_headers, self.client, request_headers
-            )
+            effective_headers = self._websocket.effective_headers(self.client, request_headers)
             if effective_headers != self._websocket.headers:
                 # Name the differing headers without their values, which can carry credentials.
                 differing_headers = ', '.join(

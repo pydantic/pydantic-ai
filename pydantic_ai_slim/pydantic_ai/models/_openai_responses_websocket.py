@@ -44,8 +44,6 @@ class ResponsesWebSocket:
     connection: AsyncResponsesConnection
     model_name: str
     model_id_namespace: str
-    # A shared client refreshes its credentials for later handshakes; this socket keeps its own.
-    auth_headers: Mapping[str, str]
     headers: Mapping[str, str]
     active: bool = False
     closed: bool = False
@@ -89,22 +87,15 @@ class ResponsesWebSocket:
         except (OSError, WebSocketException, TimeoutError) as exc:
             raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {exc}') from exc
 
-        auth_headers = client.auth_headers
-        return cls(
-            connection,
-            model_name,
-            model_id_namespace,
-            auth_headers,
-            cls.effective_headers(auth_headers, client, headers),
-        )
+        return cls(connection, model_name, model_id_namespace, cls.effective_headers(client, headers))
 
     @staticmethod
-    def effective_headers(
-        auth_headers: Mapping[str, str], client: AsyncOpenAI, extra_headers: Mapping[str, str]
-    ) -> dict[str, str]:
+    def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
+        # The client's credentials stay out: a shared client can refresh them during any handshake, so they don't
+        # show what this socket sent.
         headers: dict[str, str | Omit] = {
             key.lower(): value
-            for header_set in (auth_headers, client.default_headers, extra_headers)
+            for header_set in (client.default_headers, extra_headers)
             for key, value in header_set.items()
         }
         # Drop only `Omit`: a value of any other type has to reach the handshake comparison, so a request header

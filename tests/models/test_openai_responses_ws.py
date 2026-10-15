@@ -1351,6 +1351,11 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
             '`x-request-only`',
             id='int-value',
         ),
+        pytest.param(
+            {'openai-organization': 'org-test', 'x-tenant': 'tenant-test', 'Authorization': 'Bearer test'},
+            '`authorization`',
+            id='restated-client-credentials',
+        ),
     ],
 )
 async def test_request_header_overrides(
@@ -1387,7 +1392,6 @@ async def test_request_header_overrides(
         pytest.param({}, id='inherited'),
         pytest.param({'X-Tenant': 'tenant-test'}, id='explicit'),
         pytest.param({'x-tenant': 'tenant-test'}, id='case-insensitive'),
-        pytest.param({'Authorization': 'Bearer test'}, id='authorization'),
     ],
 )
 async def test_client_default_headers(

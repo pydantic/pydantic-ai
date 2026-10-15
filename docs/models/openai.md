@@ -308,7 +308,7 @@ A connection supports **one active response at a time**. Concurrent tasks can ea
 A connection doesn't reconnect, retry an interrupted generation, or switch to HTTP. To recover, open a new connection and resume with the full `message_history`. On the recovery run, pass `model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=None)` to clear an inherited `'auto'` value, so the full history is sent without a previous response ID. With `openai_store=False` or Zero Data Retention, `previous_response_id` works only on the same socket, through OpenAI's connection-local cache. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
 
 !!! note "Configuration and limits"
-    - The handshake uses headers from the model's default `extra_headers`, `model.connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. Headers in agent or run `model_settings` don't configure it and must match the connection's headers.
+    - The handshake uses headers from the model's default `extra_headers`, `model.connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. Headers in agent or run `model_settings` don't configure it and must match those headers. The SDK client's credentials aren't among them, so an `Authorization` header passed only in agent or run settings raises an error.
     - Headers and transport options set only on a custom HTTP client aren't inherited by the WebSocket.
     - The model's default `timeout` bounds the handshake, and each request's `timeout` bounds its send and receive. Otherwise, the SDK client's timeouts apply.
     - `model.connect(websocket_connection_options=...)` accepts the OpenAI SDK's typed socket options, such as `max_size`.
