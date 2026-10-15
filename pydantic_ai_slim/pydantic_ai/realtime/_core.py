@@ -98,7 +98,7 @@ class InputSent:
 
     `request` is the history entry recording it, when it records one, placed where the provider adds the
     input to its conversation. `solicits` is whether the input asks for a response, which makes it a
-    reply obligation. `tool_call_id` names the call a tool result answers.
+    reply obligation. `tool_call_id` names the call a tool result, or an approval, answers.
     """
 
     input_id: InputId
@@ -231,6 +231,8 @@ class _Response:
     message: ModelResponse | None = None
     """What history records for it, built once it ended (and `None` if it ended with nothing to record)."""
     tool_calls: list[str] = field(default_factory=list[str])
+    approvals: list[str] = field(default_factory=list[str])
+    """The calls of the provider's own it asked to approve while this response was under way (see `_approval`)."""
     placed_at: float = 0
     """Its position among the entities that joined the conversation (see `SessionCore._place`)."""
 
@@ -339,6 +341,8 @@ class SessionCore:
         """The input that carried each tool call's result to the provider."""
         self._settled_calls: set[str] = set()
         """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
+        self._approvals: set[str] = set()
+        """The calls of the provider's own it asked to approve: owed the session's answer until it goes out."""
         self._input_audio = bytearray()
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
@@ -430,10 +434,11 @@ class SessionCore:
                 RealtimeSessionErrorEvent,
                 ConversationCreated,
                 PartEndEvent,  # a native tool part is whole at its start
-                NativeToolApprovalRequest,  # the session's approval handler answers it; its call is a native part
             ),
         ):
             pass
+        elif isinstance(item, NativeToolApprovalRequest):
+            self._approval(item.tool_call_id)
         elif isinstance(item, PartStartEvent):
             if (response := self._open_response(None)) is not None:
                 response.native_parts.append(item.part)
@@ -617,6 +622,16 @@ class SessionCore:
         response.parts.append(ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id))
         response.tool_calls.append(event.tool_call_id)
         self._call_response[event.tool_call_id] = response
+
+    def _approval(self, call_id: str) -> None:
+        """The provider asked to approve one of its own calls: what the model does next waits on the answer.
+
+        A waiter is owed the answer (it is the next thing the exchange needs, as a function tool's result is),
+        whether it was waiting on the response under way, or started waiting after it ended.
+        """
+        self._approvals.add(call_id)
+        if (response := self._open_response(None)) is not None:
+            response.approvals.append(call_id)
 
     def _refuse_call(self, call_id: str) -> None:
         if (response := self._call_response.get(call_id)) is None or call_id in self._returns:
@@ -1070,6 +1085,7 @@ class SessionCore:
             for call_id, response in self._call_response.items()
             if call_id not in self._settled_calls and response.status in (None, 'completed')
         }
+        tokens |= {Owed('call', call_id, epoch) for call_id in self._approvals}
         return self.still_owed(frozenset(tokens))
 
     def still_owed(self, tokens: frozenset[Owed]) -> frozenset[Owed]:
@@ -1107,6 +1123,7 @@ class SessionCore:
                     owed.add(token)
                 elif response.status == 'completed':
                     pending.extend(replace(token, kind='call', key=call_id) for call_id in response.tool_calls)
+                    pending.extend(replace(token, kind='call', key=call_id) for call_id in response.approvals)
                     if (continuation := self._continued_by.get(token.key)) is not None:
                         pending.append(replace(token, key=continuation))
             elif (result := self._result_input.get(token.key)) is not None:

@@ -12155,34 +12155,74 @@ async def test_usage_reported_as_the_session_ends_counts_against_the_limits() ->
 # --- approving a call the provider runs itself -----------------------------------------------------------
 
 
-def _native_approval_round(*, outcome: str = 'Found the customer.') -> list[RealtimeCodecEvent]:
-    """A response in which the provider asks to approve a call to one of its own (MCP) tools, then runs it."""
-    call = NativeToolCallPart(
-        tool_name='crm_lookup', args={'email': 'ada@example.com'}, tool_call_id='mcp_1', provider_name='fake'
-    )
-    result = NativeToolReturnPart(tool_name='crm_lookup', content=outcome, tool_call_id='mcp_1', provider_name='fake')
-    return [
-        PartStartEvent(index=0, part=call),
-        PartEndEvent(index=0, part=call),
-        NativeToolApprovalRequest(
-            'mcp_1', tool_name='crm_lookup', args={'email': 'ada@example.com'}, metadata={'server': 'crm'}
-        ),
-        PartStartEvent(index=1, part=result),
-        PartEndEvent(index=1, part=result),
-        OutputTranscript(text='Ada is a customer.', is_final=True),
-        ResponseDone(),
-    ]
+_CRM_CALL = NativeToolCallPart(
+    tool_name='crm_lookup', args={'email': 'ada@example.com'}, tool_call_id='mcp_1', provider_name='fake'
+)
+
+
+class _ProviderToolConnection(FakeRealtimeConnection):
+    """A provider that asks to approve its own CRM lookup, runs it only once approved, and then answers.
+
+    Its reply ends with the request, as one whose model goes on in a reply of its own once the call is decided.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            [
+                PartStartEvent(index=0, part=_CRM_CALL),
+                PartEndEvent(index=0, part=_CRM_CALL),
+                NativeToolApprovalRequest(
+                    'mcp_1', tool_name='crm_lookup', args={'email': 'ada@example.com'}, metadata={'server': 'crm'}
+                ),
+                ResponseDone(),
+            ]
+        )
+        self._decided: asyncio.Queue[NativeToolApproval] = asyncio.Queue()
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        if isinstance(content, NativeToolApproval):
+            self._decided.put_nowait(content)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for event in super().__aiter__():
+            yield event
+        decision = await self._decided.get()
+        result = NativeToolReturnPart(
+            tool_name='crm_lookup',
+            content='Ada is a customer.' if decision.approved else decision.reason,
+            tool_call_id='mcp_1',
+            provider_name='fake',
+            outcome='success' if decision.approved else 'denied',
+        )
+        for event in (
+            PartStartEvent(index=0, part=result),
+            PartEndEvent(index=0, part=result),
+            OutputTranscript(text='Done.', is_final=True),
+            ResponseDone(),
+        ):
+            yield event
 
 
 async def _run_native_approval(
     capabilities: list[AbstractCapability[Any]],
-) -> tuple[FakeRealtimeConnection, list[RealtimeEvent], list[ModelMessage]]:
+) -> tuple[_ProviderToolConnection, list[RealtimeEvent], list[ModelMessage]]:
     agent: Agent[None, str] = Agent()
-    conn = FakeRealtimeConnection(_native_approval_round())
+    conn = _ProviderToolConnection()
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=capabilities).session() as session:
         events = [e async for e in session]
     return conn, events, session.all_messages()
+
+
+def _native_returns(messages: list[ModelMessage]) -> list[NativeToolReturnPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart)
+    ]
 
 
 async def test_a_provider_tool_call_approved_by_the_handler() -> None:
@@ -12211,8 +12251,12 @@ async def test_a_provider_tool_call_approved_by_the_handler() -> None:
         DeferredToolRequestsEvent,
         DeferredToolResultsEvent,
     ]
-    [response] = [m for m in messages if isinstance(m, ModelResponse)]
-    assert [type(part) for part in response.parts] == [NativeToolCallPart, NativeToolReturnPart, SpeechPart]
+    assert [type(part) for m in messages if isinstance(m, ModelResponse) for part in m.parts] == [
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        SpeechPart,
+    ]
+    assert [(part.outcome, part.content) for part in _native_returns(messages)] == [('success', 'Ada is a customer.')]
 
 
 @pytest.mark.parametrize(
@@ -12232,9 +12276,10 @@ async def test_a_provider_tool_call_the_handler_does_not_simply_approve_is_denie
     def decide(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={'mcp_1': decision})
 
-    conn, _, _ = await _run_native_approval([HandleDeferredToolCalls(handler=decide)])
+    conn, _, messages = await _run_native_approval([HandleDeferredToolCalls(handler=decide)])
 
     assert conn.sent == [NativeToolApproval('mcp_1', approved=False, reason=reason)]
+    assert [(part.outcome, part.content) for part in _native_returns(messages)] == [('denied', reason)]
 
 
 async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
@@ -12251,6 +12296,39 @@ async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
     assert not any(isinstance(e, DeferredToolResultsEvent) for e in events)
 
 
+@pytest.mark.parametrize('waiting_since', ['before the request', 'after its response ended'])
+async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str) -> None:
+    """The response that asked ended, but the exchange goes on once the call is decided: a wait covers the decision."""
+    asked = asyncio.Event()
+    decide_now = asyncio.Event()
+
+    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        asked.set()
+        await decide_now.wait()
+        return requests.build_results(approve_all=True)
+
+    agent: Agent[None, str] = Agent()
+    conn = _ProviderToolConnection()
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(
+        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
+    ).session() as session:
+        if waiting_since == 'before the request':
+            await session.send('Look up Ada.')
+            waiter = asyncio.create_task(session.wait_for_reply())
+            await asyncio.wait_for(asked.wait(), _LIVENESS_TIMEOUT)
+        else:
+            session._start_pump()  # pyright: ignore[reportPrivateUsage]
+            await asyncio.wait_for(asked.wait(), _LIVENESS_TIMEOUT)
+            await asyncio.sleep(0.01)
+            waiter = asyncio.create_task(session.wait_for_reply())
+        await asyncio.sleep(0.01)
+        assert not waiter.done()
+        decide_now.set()
+        await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
+    assert conn.sent[-1] == NativeToolApproval('mcp_1', approved=True)
+
+
 async def test_closing_while_the_approval_handler_decides_answers_nothing() -> None:
     deciding = asyncio.Event()
 
@@ -12260,7 +12338,7 @@ async def test_closing_while_the_approval_handler_decides_answers_nothing() -> N
         raise AssertionError('unreachable')  # pragma: no cover
 
     agent: Agent[None, str] = Agent()
-    conn = BlockingRealtimeConnection(_native_approval_round()[:3])
+    conn = _ProviderToolConnection()
     model = FakeRealtimeModel(conn)
     async with agent.realtime(
         model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
