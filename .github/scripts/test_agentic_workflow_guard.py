@@ -738,6 +738,8 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
         if 'CLAUDE_CODE_ENABLE_TELEMETRY' in step.get('env', {})
     )
     assert str(detector['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
+    assert str(detector['CLAUDE_CODE_ENHANCED_TELEMETRY_BETA']) == '1'
+    assert detector['OTEL_TRACES_EXPORTER'] == 'otlp'
     assert detector['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert detector['OTEL_LOGS_EXPORTER'] == 'otlp'
     configs = compiled_awf_configs(lock)
