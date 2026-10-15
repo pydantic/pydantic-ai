@@ -49,8 +49,8 @@ def content_hash(value: Any) -> str | None:
     The serialization sorts object keys and the members of sets in builtin containers, so the hash doesn't
     depend on dict insertion order or on the per-process iteration order of sets of strings. (Sets inside
     Pydantic models or dataclasses aren't reached, so they can still hash differently between processes,
-    which reads as a change.) Returns `None` when `value` has no JSON serialization (an arbitrary object, an unsupported dict
-    key, or a circular reference), meaning its identity is unknown.
+    which reads as a change.) Returns `None` when `value` has no JSON serialization (an arbitrary object,
+    an unsupported dict key, or a circular reference), meaning its identity is unknown.
     """
     try:
         canonical = _canonical_json(_sort_sets(value))
