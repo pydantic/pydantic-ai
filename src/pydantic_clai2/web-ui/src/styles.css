@@ -201,8 +201,6 @@ pre {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
 }
 
 .logo {
@@ -1614,7 +1612,7 @@ pre {
   font-size: 12px;
 }
 
-.switch:hover:not(:disabled) {
+.switch:hover:not([aria-disabled='true']) {
   background: var(--hover);
   color: var(--text-soft);
 }
@@ -1629,7 +1627,8 @@ pre {
   color: var(--lithium);
 }
 
-.switch:disabled {
+.switch[aria-disabled='true'] {
+  cursor: default;
   opacity: 0.7;
 }
 
