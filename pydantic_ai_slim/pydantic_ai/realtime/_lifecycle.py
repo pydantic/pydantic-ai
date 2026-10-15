@@ -62,6 +62,12 @@ class ResponseStarted:
     from the requests it had outstanding (`'inferred'`)."""
     user_turn_id: str | None = None
     """The spoken user turn a response the provider started on its own is replying to, when known."""
+    continues: str | None = None
+    """The response this one carries on from: one the provider ended while saying the exchange isn't over (Gemini's
+    `interaction_status=IN_PROGRESS`), so whatever waits for that one's reply waits for this one too."""
+    provider_id: bool = True
+    """Whether `response_id` is the provider's own id, which history records, rather than one the connection made up
+    for a protocol that gives its responses none."""
 
 
 ResponseStatus = Literal['completed', 'cancelled', 'failed', 'incomplete', 'lost']
@@ -96,6 +102,9 @@ class UserTurnEnded:
     still_speaking: bool = False
     """Whether it joined while the user is still saying it (xAI adds its item at speech start): its audio, and with
     it the turn, then ends with the speech."""
+    before_response: str | None = None
+    """The response it joined ahead of, when the connection learned of the turn only after that response, its reply,
+    had started (Gemini transcribes the user's words after the model starts answering them)."""
 
 
 @dataclass(frozen=True, kw_only=True)
