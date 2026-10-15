@@ -1103,7 +1103,8 @@ class SqliteStepStore:
     A snapshot's row, messages and references are written together: in a
     transaction on a connection the store opened, and in a savepoint on a
     caller-owned `connection=`, which commits only when the caller has no
-    transaction open.
+    transaction open. Setting up the schema on first use commits the
+    caller's connection regardless.
     """
 
     def __init__(
