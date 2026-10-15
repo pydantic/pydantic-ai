@@ -684,7 +684,9 @@ CLAI builds sharing your settings still store it under, so `/plugins enable logf
 keeps meaning `observability`. Its command is `/logfire`; `/logfire_mcp` still works.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
-`/plugins configure logfire_mcp` or `c` in `/plugins`.
+`/plugins configure logfire_mcp` or `c` in `/plugins`. The same menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where **API key**
+and **Which Logfire** open their pickers and fields as dialogs in the page.
 
 Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
 the menu, and the plugin loads again with the new settings. Esc backs out of any
@@ -728,22 +730,24 @@ without changing anything.
 Whichever Logfire you last chose in either plugin is remembered, in
 `~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
-before any of its settings were saved also switches it to that Logfire, and says so,
-when it is Logfire US or EU; any other Logfire is only highlighted, so a key you
-already use is never sent to a server you did not pick for it.
+in the terminal before any of its settings were saved also switches it to that
+Logfire, and says so, when it is Logfire US or EU; any other Logfire is only
+highlighted, so a key you already use is never sent to a server you did not pick
+for it. The web UI's panel only highlights it: the plugin switches when you pick it.
 
 ### Keys live in `/keys`
 
 Plugin settings are stored as plaintext in SQLite, so they hold only the key's
-name, never its value. Enter on **API key** opens the same picker as
-`/model add`:
+name, never its value. Enter on **API key** (**Change…** in the web UI) offers:
 
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
 - **Enter a different API key**: a masked field. The value is saved in `/keys`
   as `LOGFIRE_API_KEY`, the conventional label; CLAI asks before replacing an
-  existing `LOGFIRE_API_KEY`, since other plugins may use it.
-- **No API key**: clears the choice.
+  existing `LOGFIRE_API_KEY`, since other plugins may use it. With nothing in
+  `/keys` yet, the masked field opens straight away.
+
+`R` on the row (**Reset** in the web UI) clears the choice.
 
 The plugin uses the first credential that is available:
 

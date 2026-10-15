@@ -21,7 +21,8 @@ entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; 
 your Logfire telemetry through Logfire's MCP server, and opens a settings menu (which
 Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
-`/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
+`/logfire login`). Reopen it with `/plugins configure logfire_mcp`, or in the web UI's
+plugins panel; see
 [Logfire](PLUGINS.md#logfire-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
