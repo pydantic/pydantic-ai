@@ -12,9 +12,7 @@ from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests
-from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_clai2.models.custom_params import expand_params
 from pydantic_clai2.models.model_options import model_options, validate_model_options
@@ -316,6 +314,9 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
 
 @pytest.mark.parametrize(('name', 'mode'), [('claude-sonnet-4-5', 'enabled'), ('claude-fable-5-1', 'adaptive')])
 async def test_claude_native_thinking_reaches_request(name: str, mode: str) -> None:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     bodies: list[dict[str, JsonValue]] = []
     adapter = TypeAdapter(dict[str, JsonValue])
 

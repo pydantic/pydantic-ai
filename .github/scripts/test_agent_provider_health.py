@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import ssl
 import sys
 import threading
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -254,32 +256,157 @@ def test_zai_quota_unavailable_or_ambiguous_is_unknown(payload: object) -> None:
     assert _parse_zai_quota(payload).status == 'unknown'
 
 
+@pytest.mark.parametrize(
+    ('payload', 'diagnostic'),
+    [
+        ([], 'invalid_response'),
+        ({'code': 201}, 'invalid_response_code'),
+        (_quota_response(success=False), 'unsuccessful_response'),
+        ({'code': 200, 'success': True, 'data': {}}, 'invalid_limits'),
+        (_quota_response(limits=[None]), 'invalid_limit_row'),
+        (_quota_response(limits=[{'type': 'TOKENS_LIMIT', 'unit': 2}]), 'invalid_window_unit'),
+        (
+            _quota_response(limits=[{'type': 'TOKENS_LIMIT', 'unit': 3, 'number': 4}]),
+            'invalid_window_number',
+        ),
+        (
+            _quota_response(
+                limits=[
+                    {
+                        'type': 'TOKENS_LIMIT',
+                        'unit': 3,
+                        'number': 5,
+                        'percentage': 1,
+                        'nextResetTime': 1_791_012_926_973,
+                    },
+                    {
+                        'type': 'TOKENS_LIMIT',
+                        'unit': 3,
+                        'number': 5,
+                        'percentage': 1,
+                        'nextResetTime': 1_791_012_926_973,
+                    },
+                ]
+            ),
+            'duplicate_window',
+        ),
+        (_quota_response(interval_percentage=None), 'invalid_percentage'),
+        (_quota_response(interval_percentage=101), 'invalid_percentage'),
+        (_quota_response(interval_percentage=10**1000), 'invalid_percentage'),
+        (_quota_response(interval_reset=10**1000), 'invalid_reset_time'),
+        (_quota_response(limits=[]), 'missing_windows'),
+    ],
+)
+def test_zai_quota_parser_attaches_fixed_diagnostic(payload: object, diagnostic: str) -> None:
+    """Malformed response branches expose only their fixed diagnostic code."""
+    quota = _parse_zai_quota(payload)
+
+    assert quota.status == 'unknown'
+    assert quota.diagnostic == diagnostic
+
+
 def test_zai_quota_probe_returns_unknown_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-error HTTP response with the wrong status remains unknown."""
     response = FakeHTTPResponse(_quota_response(), status=503)
     monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-    assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
+    quota = _fetch_zai_quota('private-zai-fixture-key')
+
+    assert quota.status == 'unknown'
+    assert quota.diagnostic == 'invalid_response_code'
+    assert quota.http_status == 503
 
 
-@pytest.mark.parametrize('error', [OSError('offline'), health.urllib.error.URLError('offline')])
-def test_zai_quota_probe_returns_unknown_on_transport_error(
-    error: OSError | health.urllib.error.URLError, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize('status', [401, 429, 503])
+def test_zai_quota_probe_records_only_http_error_category_and_status(
+    status: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def open_url(
-        _opener: health.urllib.request.OpenerDirector, *_args: object, **_kwargs: object
-    ) -> FakeHTTPResponse:
+    """HTTP error metadata is reduced to a fixed category and numeric status."""
+    sentinel = 'provider-private-response-sentinel'
+    headers = Message()
+    headers['X-Private'] = sentinel
+    error = health.urllib.error.HTTPError(
+        health.ZAI_QUOTA_URL,
+        status,
+        f'reason {sentinel}',
+        headers,
+        None,
+    )
+
+    def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
         raise error
 
     monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
 
-    assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
+    quota = _fetch_zai_quota(f'key-{sentinel}')
+
+    assert quota.status == 'unknown'
+    assert quota.diagnostic == 'http_error'
+    assert quota.http_status == status
+    assert sentinel not in repr(quota)
+
+
+@pytest.mark.parametrize(
+    ('error', 'diagnostic'),
+    [
+        (TimeoutError('private timeout message'), 'timeout'),
+        (ssl.SSLError('private TLS message'), 'tls_error'),
+        (OSError('private network message'), 'network_error'),
+        (health.urllib.error.URLError(TimeoutError('wrapped timeout secret')), 'timeout'),
+        (health.urllib.error.URLError(ssl.SSLError('wrapped TLS secret')), 'tls_error'),
+        (health.urllib.error.URLError('private network message'), 'network_error'),
+    ],
+)
+def test_zai_quota_probe_returns_unknown_on_transport_error(
+    error: OSError | health.urllib.error.URLError, diagnostic: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transport exceptions map to fixed network diagnostic categories."""
+
+    def open_url(_opener: health.urllib.request.OpenerDirector, *_args: object, **_kwargs: object) -> FakeHTTPResponse:
+        raise error
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+
+    quota = _fetch_zai_quota('private-zai-fixture-key')
+
+    assert quota.status == 'unknown'
+    assert quota.diagnostic == diagnostic
+    assert quota.http_status is None
 
 
 def test_zai_quota_probe_returns_unknown_on_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed response JSON reports its fixed category and successful HTTP status."""
     response = FakeHTTPResponse(b'{')
     monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-    assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
+    quota = _fetch_zai_quota('private-zai-fixture-key')
+
+    assert quota.status == 'unknown'
+    assert quota.diagnostic == 'invalid_json'
+    assert quota.http_status == 200
+
+
+def test_zai_quota_probe_classifies_encoding_error_without_payload_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid UTF-8 reports a fixed category without including response bytes."""
+    response = FakeHTTPResponse(b'\xffprivate-response-sentinel')
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    quota = _fetch_zai_quota('private-zai-fixture-key')
+
+    assert quota.diagnostic == 'invalid_encoding'
+    assert quota.http_status == 200
+    assert 'private-response-sentinel' not in repr(quota)
+
+
+def test_zai_quota_probe_does_not_request_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An absent key returns a diagnostic without making a network request."""
+
+    def unexpected_open(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
+        raise AssertionError('missing key must not make a request')
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', unexpected_open)
+
+    assert _fetch_zai_quota('').diagnostic == 'missing_api_key'
 
 
 def test_zai_quota_probe_does_not_forward_authorization_on_cross_origin_redirect(
@@ -303,6 +430,7 @@ def test_zai_quota_probe_does_not_forward_authorization_on_cross_origin_redirect
     target_thread = threading.Thread(target=target_server.serve_forever, daemon=True)
     target_thread.start()
     try:
+
         class RedirectHandler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 source_authorization.append(self.headers.get('Authorization'))
@@ -335,7 +463,11 @@ def test_zai_quota_probe_does_not_forward_authorization_on_cross_origin_redirect
 
 def test_zai_quota_probe_returns_unknown_on_oversized_json_integer(monkeypatch: pytest.MonkeyPatch) -> None:
     response = FakeHTTPResponse(b'{"code":' + b'9' * 5000 + b'}')
-    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
+        return response
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
 
     assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
 
@@ -345,7 +477,11 @@ def test_check_writes_blocked_artifact_for_out_of_range_zai_reset(
 ) -> None:
     """An unrepresentable provider reset time blocks the gate without losing its artifact."""
     payload = _quota_response(interval_reset=10**1000)
-    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: FakeHTTPResponse(payload))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
+        return FakeHTTPResponse(payload)
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: FakeGitHub())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     secret = 'zai-key-private-fixture'
     monkeypatch.setenv('ZAI_API_KEY', secret)
@@ -363,6 +499,8 @@ def test_check_writes_blocked_artifact_for_out_of_range_zai_reset(
     result = _health_from_json(json.loads(artifact))
     assert not result.ready
     assert result.quota.status == 'unknown'
+    assert result.quota.diagnostic == 'invalid_reset_time'
+    assert result.quota.http_status == 200
     assert secret not in artifact
 
 
@@ -423,6 +561,8 @@ def test_health_artifact_round_trips_versioned_gate_dto(tmp_path: Path) -> None:
             weekly_remaining_percent=30,
             interval_reset_at='2026-10-01T13:00:00Z',
             weekly_reset_at='2026-10-07T00:00:00Z',
+            diagnostic='invalid_json',
+            http_status=200,
         ),
     )
     path = tmp_path / 'provider-health.json'
@@ -438,7 +578,46 @@ def test_health_artifact_round_trips_versioned_gate_dto(tmp_path: Path) -> None:
     assert 'weekly_unlimited' not in quota_data
     quota_data['interval_unlimited'] = 'legacy value'
     quota_data['weekly_unlimited'] = {'legacy': True}
+    payload_data['quota'] = quota_data
     assert _health_from_json(payload_data) == original
+
+    del quota_data['diagnostic']
+    del quota_data['http_status']
+    legacy = _health_from_json(payload_data)
+    assert legacy.quota.diagnostic is None
+    assert legacy.quota.http_status is None
+
+
+@pytest.mark.parametrize(
+    ('diagnostic', 'http_status', 'expected_diagnostic', 'expected_http_status'),
+    [
+        ('private provider message', 200, None, 200),
+        ('invalid_json', True, 'invalid_json', None),
+        ('invalid_json', 99, 'invalid_json', None),
+        ('invalid_json', 600, 'invalid_json', None),
+    ],
+)
+def test_health_artifact_discards_invalid_optional_diagnostics(
+    diagnostic: object, http_status: object, expected_diagnostic: str | None, expected_http_status: int | None
+) -> None:
+    """Invalid optional metadata is discarded without rejecting the artifact."""
+    payload: dict[str, object] = {
+        'version': 1,
+        'workflow': 'nightly-sweep',
+        'task_key': 'task-1',
+        'trigger_event': 'schedule',
+        'run_attempt': 1,
+        'ready': False,
+        'reason': 'Z.ai quota health is unknown',
+        'checked_at': '2026-10-01T12:00:00Z',
+        'quota': {'status': 'unknown', 'diagnostic': diagnostic, 'http_status': http_status},
+    }
+
+    result = _health_from_json(payload)
+
+    assert result.quota.status == 'unknown'
+    assert result.quota.diagnostic == expected_diagnostic
+    assert result.quota.http_status == expected_http_status
 
 
 def test_check_requires_the_actual_run_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -650,6 +829,62 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert health.main(['check', '--output', str(second_workflow_health)]) == 0
     assert not _health_from_json(json.loads(second_workflow_health.read_text())).ready
     assert len(client.posts) == 1
+
+
+def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run that used its whole time budget is reported as its own limit, not a provider timeout."""
+    workflow = 'CI Review'
+    task_key = 'CI Review:workflow_run:pr-123:head-a1b2'
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    shim.emit_result(
+        'run timed out after 28min', usage=None, session_id='s', is_error=True, error=shim.RunTimeLimitExceeded()
+    )
+    agent_artifact = tmp_path / 'agent-stdio.log'
+    agent_artifact.write_text(capsys.readouterr().out)
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            'workflow_run',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=70,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=health_artifact,
+            agent_artifact=agent_artifact,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    [issue] = client.issues
+    assert _marker_from_body(issue.body) == health.IncidentMarker(
+        'task', f'{workflow}:{task_key}', 'time_limit', '70', None
+    )
+    assert issue.body.startswith('## Operational failure\n\nThe agent reached its per-run time limit\n\n')
+    assert 'The run stopped at its own limit, not on a provider error.' in issue.body
+    assert 'Confirm provider credentials' not in issue.body
 
 
 @pytest.mark.parametrize('stale_is_error', [False, True])
@@ -929,6 +1164,192 @@ def test_check_command_reads_zai_quota_and_writes_secret_free_artifact(
         assert 'interval: ' not in summary.read_text()
 
 
+def test_check_and_incident_outputs_keep_hostile_provider_data_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Provider secrets and exception data never enter outputs or incidents."""
+    sentinel = 'private-provider-sentinel-7bf3'
+    client = FakeGitHub()
+    headers = Message()
+    headers['X-Private-Header'] = sentinel
+    error = health.urllib.error.HTTPError(
+        health.ZAI_QUOTA_URL,
+        429,
+        f'reason {sentinel}',
+        headers,
+        None,
+    )
+
+    def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
+        raise error
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', f'key-{sentinel}')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'nightly-sweep')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'schedule')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    output = tmp_path / 'provider-health.json'
+    github_output = tmp_path / 'output'
+    summary = tmp_path / 'summary'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+
+    assert health.main(['check', '--output', str(output)]) == 0
+    check_stdout = capsys.readouterr().out
+    assert 'quota diagnostic: http_error; HTTP status 429' in check_stdout
+    for text in (output.read_text(), github_output.read_text(), summary.read_text(), check_stdout):
+        assert sentinel not in text
+
+    assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(output)]) == 0
+    post_data = _mapping(client.posts[0])
+    assert post_data is not None
+    incident_body = str(post_data.get('body'))
+    assert 'quota diagnostic: http_error; HTTP status 429' in incident_body
+    assert sentinel not in incident_body
+
+
+def test_check_command_sanitizes_request_validation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Request validation errors remain blocked without exposing the credential."""
+    sentinel = 'credential-header-secret-9d25'
+
+    def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
+        raise ValueError(f'Invalid header value: {sentinel}')
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: FakeGitHub())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', sentinel)
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'nightly-sweep')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'schedule')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    artifact = tmp_path / 'provider-health.json'
+    output = tmp_path / 'output'
+    summary = tmp_path / 'summary'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+
+    assert health.main(['check', '--output', str(artifact)]) == 0
+    decision = _health_from_json(json.loads(artifact.read_text()))
+    assert not decision.ready
+    assert decision.quota.diagnostic == 'invalid_request'
+    for text in (artifact.read_text(), output.read_text(), summary.read_text(), capsys.readouterr().out):
+        assert sentinel not in text
+
+
+def test_monitor_reports_only_valid_http_status_from_untrusted_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An invalid artifact category is dropped while its valid status remains safe."""
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    artifact = tmp_path / 'provider-health.json'
+    artifact.write_text(
+        json.dumps(
+            {
+                'version': 1,
+                'workflow': 'nightly-sweep',
+                'task_key': 'task-1',
+                'trigger_event': 'schedule',
+                'run_attempt': 1,
+                'ready': False,
+                'reason': 'Z.ai quota health is unknown',
+                'checked_at': '2026-10-01T12:00:00Z',
+                'quota': {'status': 'unknown', 'diagnostic': 'provider-private-category', 'http_status': 200},
+            }
+        )
+    )
+
+    assert (
+        health.main(
+            ['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact), '--dry-run']
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert 'quota diagnostic: HTTP status 200' in output
+    assert 'provider-private-category' not in output
+    assert 'http_error' not in output
+    assert client.posts == []
+
+
+def test_monitor_existing_incident_reuse_prints_quota_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Existing-incident blocks print the safe diagnostic suffix and return."""
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        artifact,
+        health.Health(
+            'nightly-sweep',
+            'task-1',
+            'schedule',
+            1,
+            False,
+            'Open operational incident #77 blocks inference',
+            '2026-10-01T12:00:00Z',
+            health.Quota('unknown', diagnostic='timeout', http_status=429),
+        ),
+    )
+
+    assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
+
+    assert capsys.readouterr().out.strip() == (
+        'Activation was blocked by an existing incident: Open operational incident #77 blocks inference '
+        '(quota diagnostic: timeout; HTTP status 429)'
+    )
+    assert client.posts == []
+
+
+@pytest.mark.parametrize('existing_run_id', ['43', '99'], ids=['exact-marker', 'same-scope-different-run'])
+def test_monitor_reuses_matching_quota_incident_with_safe_diagnostic(
+    existing_run_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A matching quota incident is reused and the safe diagnostic is logged."""
+    quota = health.Quota('unknown', diagnostic='timeout', http_status=503)
+    marker = health.IncidentMarker('provider', 'zai', 'quota_unknown', existing_run_id, quota.reset_at)
+    client = FakeGitHub([_issue(77, marker)])
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        artifact,
+        health.Health(
+            'nightly-sweep',
+            'task-1',
+            'schedule',
+            1,
+            False,
+            'Z.ai quota health is unknown',
+            '2026-10-01T12:00:00Z',
+            quota,
+        ),
+    )
+
+    assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
+
+    assert capsys.readouterr().out.strip() == (
+        'Reusing operational incident #77: https://github.com/org/repo/issues/77 '
+        '(quota diagnostic: timeout; HTTP status 503)'
+    )
+    assert client.posts == []
+
+
 @pytest.mark.parametrize('minimax_key', ['', 'retired-fixture-key'])
 @pytest.mark.parametrize('conclusion', ['success', 'failure'])
 def test_retired_provider_configuration_skips_without_an_incident(
@@ -1013,8 +1434,13 @@ def test_current_configuration_with_missing_credentials_still_creates_an_inciden
     decision = _health_from_json(json.loads(artifact.read_text()))
     assert decision.ready is False
     assert decision.reason == 'Z.ai quota health is unknown'
+    assert decision.quota.diagnostic == 'missing_api_key'
     assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
     assert len(client.posts) == 1
+    post_data = _mapping(client.posts[0])
+    assert post_data is not None
+    incident_body = str(post_data.get('body'))
+    assert 'quota diagnostic: missing_api_key' in incident_body
     assert _marker_from_payload(client.posts[0]) == health.IncidentMarker(
         'provider', 'zai', 'quota_unknown', '43', None
     )
@@ -1061,12 +1487,18 @@ def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest
     assert client.closed == [1]
 
 
-def test_scheduled_monitor_creates_or_reuses_unknown_quota_incident(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scheduled_monitor_creates_or_reuses_unknown_quota_incident(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Repeated scheduled checks reuse one incident when quota remains unknown."""
     client = FakeGitHub()
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('unknown'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def fetch_unknown(*_args: object) -> health.Quota:
+        return health.Quota('unknown', diagnostic='timeout')
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unknown)
     args = argparse.Namespace(dry_run=False, recover_issue=None)
 
     _reconcile_recovery(client, args)
@@ -1075,6 +1507,33 @@ def test_scheduled_monitor_creates_or_reuses_unknown_quota_incident(monkeypatch:
     assert len(client.posts) == 1
     payload: object = client.posts[0]
     assert _marker_from_payload(payload) == health.IncidentMarker('provider', 'zai', 'quota_unknown', None, None)
+    post_data = _mapping(payload)
+    assert post_data is not None
+    incident_body = str(post_data.get('body'))
+    assert 'quota diagnostic: timeout' in incident_body
+    assert 'quota diagnostic: timeout' in capsys.readouterr().out
+
+
+def test_scheduled_recovery_dry_run_reports_unknown_quota_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dry-run recovery output includes safe quota diagnostics without creating issues."""
+    client = FakeGitHub()
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+
+    def fetch_unknown(*_args: object) -> health.Quota:
+        return health.Quota('unknown', diagnostic='invalid_json', http_status=200)
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unknown)
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=True, recover_issue=None)) == 0
+
+    assert capsys.readouterr().out.strip() == (
+        'DRY RUN: provider quota is unknown; would open/reuse an incident '
+        '(quota diagnostic: invalid_json; HTTP status 200)'
+    )
+    assert client.posts == []
 
 
 def test_manual_recovery_requires_healthy_provider_and_targets_one_issue(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1113,7 +1572,9 @@ def test_manual_recovery_rejects_retired_provider_incident(monkeypatch: pytest.M
     assert client.closed == []
 
 
-def test_named_recovery_without_provider_key_stays_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_named_recovery_without_provider_key_stays_unknown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Missing provider credentials stay unknown even when the fetch stub is healthy."""
     issue = _issue(4, health.IncidentMarker('workflow', 'nightly-sweep', 'timeout', '4', None))
     client = FakeGitHub([issue])
@@ -1123,6 +1584,7 @@ def test_named_recovery_without_provider_key_stays_unknown(monkeypatch: pytest.M
     _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=4))
 
     assert client.closed == []
+    assert 'quota diagnostic: missing_api_key' in capsys.readouterr().out
 
 
 def test_named_workflow_and_task_recovery_also_requires_healthy_quota(

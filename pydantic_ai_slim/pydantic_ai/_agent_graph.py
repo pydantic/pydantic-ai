@@ -58,6 +58,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._context_size import context_input_tokens
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -2188,8 +2189,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.
+            # A response a provider SDK merged from several requests (Google long decode) is checked against
+            # the input of the first; see `context_input_tokens`.
             for response in responses:
-                ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
+                ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
     async def _build_retry_node(
         self,

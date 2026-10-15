@@ -52,7 +52,7 @@ overrides only what it needs, and the agent asks for each contribution.
 |---|---|
 | constructor arguments | `Plugin[Settings]`, validated from the saved JSON into `self.settings` |
 | `get_toolset()`, `get_instructions()`, ... | `get_capabilities()`, `get_commands()`, `get_status_segments()`, `get_spinners()`, `get_model_providers()`, `get_logins()` |
-| `before_run`, `after_tool_execute`, ... | `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed` |
+| `before_run`, `after_tool_execute`, ... | `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_plugin_load_failed` |
 | `@on_event(EventClass)` | `render(event)` for display; `@on_event` / `Hooks` inside `get_capabilities` for observing |
 | `RunContext` | `self.host`, a `PluginHost` holding the console, conversation, status, full screen, and saved settings |
 
@@ -73,7 +73,9 @@ The consequences:
 
 - **The loader collects instead of the plugin registering.** `collect(plugin)`
   calls each `get_*` method once and freezes the results in a `LoadedPlugin`.
-  Unloading discards it; there is nothing to unregister.
+  Unloading discards it; there is nothing to unregister. The loader first awaits
+  `prepare()`, so contributions that depend on files, such as one `/command` per
+  Agent Skill, are read asynchronously instead of blocking in a `get_*` method.
 - **`PluginHost` is only context.** It lost every registration method and list.
 - **Agent-run hooks are core's.** A plugin that wants `before_tool_execute` or a
   typed stream event returns a `Hooks` capability (or its own capability using
@@ -83,7 +85,9 @@ The consequences:
   capability class (`module:Class`), which is wrapped in a plugin whose only
   contribution is that capability, built from the settings JSON.
 - **Tests construct, not activate.** `load_plugin(PluginClass, host)` returns the
-  same `LoadedPlugin` the loader builds.
+  same `LoadedPlugin` the loader builds. It is synchronous, so for a plugin with
+  `prepare` it raises `TypeError` naming the `from_host`, `await prepare()`,
+  `collect` sequence to use instead.
 
 Startup load failures happen before an agent run, so core's `before_run` and other
 run hooks cannot report them. The loader delivers `PluginLoadFailed` through
