@@ -38,7 +38,7 @@ from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar
 
-from pydantic_ai._genai_prices import calculate_price_for_usage, response_price_context
+from pydantic_ai._genai_prices import calculate_price_for_usage
 
 from . import _otel_messages, _utils
 from ._event_registry import (
@@ -3069,7 +3069,7 @@ class ModelResponse:
             provider_api_url=self.provider_url,
             provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
-            price_context=response_price_context(self),
+            price_context=self.provider_details,
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:

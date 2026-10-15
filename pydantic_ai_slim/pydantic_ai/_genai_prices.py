@@ -120,12 +120,6 @@ def calculate_price_for_usage(
     )
 
 
-def response_price_context(response: ModelResponse) -> PriceContext | None:
-    """The genai-prices `price_context` for a response: the service tier the provider reports it was served at."""
-    service_tier = (response.provider_details or {}).get('service_tier')
-    return {'service_tier': service_tier} if service_tier else None
-
-
 def best_effort_price(
     usage: RequestUsage | RunUsage,
     *,
@@ -180,7 +174,7 @@ def fill_response_cost(response: ModelResponse) -> None:
                 provider_api_url=response.provider_url,
                 provider_name=response.provider_name,
                 genai_request_timestamp=response.timestamp,
-                price_context=response_price_context(response),
+                price_context=response.provider_details,
             )
         )
         is not None

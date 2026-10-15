@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from . import _utils, exceptions, messages as _messages, models
 from ._context_size import context_input_tokens
-from ._genai_prices import best_effort_price, response_price_context
+from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -237,7 +237,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 provider_api_url=self.response.provider_url,
                 provider_name=self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
-                price_context=response_price_context(self.response),
+                price_context=self.response.provider_details,
             )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price
