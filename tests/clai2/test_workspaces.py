@@ -5,6 +5,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from io import StringIO
@@ -25,9 +26,10 @@ from pydantic_clai2.builtin_plugins.workspaces import (
     WorkspacesSettings,
     WorktreeKind,
     describe,
+    manager as manager_module,
 )
 from pydantic_clai2.builtin_plugins.workspaces.backend import is_url, repo_slug
-from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, check_id, workspaces_dir
+from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, Workspace, check_id, workspaces_dir
 from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher, LocalProcesses, free_port, probe
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.menus import Option
@@ -228,8 +230,8 @@ async def test_a_workspace_from_creation_to_destruction(
     [spawned] = rig.processes.spawned
     folder = rig.directory / 'registry' / workspace.id
     token = (folder / 'token').read_text().strip()
-    assert spawned.argv[:4] == ['python', '-m', 'pydantic_clai2', '--web']
-    assert spawned.argv[6:] == ['--token-file', str(folder / 'token'), '--model', 'test']
+    assert spawned.argv[:5] == ['python', '-P', '-m', 'pydantic_clai2', '--web']
+    assert spawned.argv[7:] == ['--token-file', str(folder / 'token'), '--model', 'test']
     assert (spawned.cwd, spawned.log) == (workspace.path, folder / 'session.log')
     assert token not in ' '.join(spawned.argv), 'the token stays off the command line'
     assert rig.probe.tokens == [token]
@@ -238,7 +240,7 @@ async def test_a_workspace_from_creation_to_destruction(
     assert stat.S_IMODE(folder.stat().st_mode) == 0o700
     running = await rig.workspaces().get(workspace.id)
     assert running.status == 'running' and running.session is not None
-    port = spawned.argv[5]
+    port = spawned.argv[6]
     assert shown == f'Workspace {workspace.id} runs at http://127.0.0.1:{port}/; opened in your browser.'
     assert token not in shown and token not in describe(running)
     assert opened == [(folder / 'open.html').as_uri()]
@@ -538,16 +540,19 @@ async def test_local_processes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     """A real child in its own process group: started, reaped when killed, and refused on Windows."""
     processes = LocalProcesses()
     log = tmp_path / 'log'
-    pid = processes.spawn(['sh', '-c', 'echo started; exec sleep 30'], cwd=tmp_path, env=os.environ, log=log)
+
+    async def reaped(pid: int) -> None:
+        [reaper] = [thread for thread in threading.enumerate() if thread.name == f'clai2-workspace-{pid}']
+        await anyio.to_thread.run_sync(reaper.join, 10)
+
+    pid = processes.spawn(['sleep', '30'], cwd=tmp_path, env=os.environ, log=log)
     assert processes.alive(pid)
     assert os.getpgid(pid) == pid
-    with anyio.fail_after(10):
-        while not log.read_text():
-            await anyio.sleep(0.01)
     processes.signal(pid, signal.SIGKILL)
-    with anyio.fail_after(10):
-        while processes.alive(pid):
-            await anyio.sleep(0.01)
+    await reaped(pid)
+    assert not processes.alive(pid)
+    printed = processes.spawn(['echo', 'started'], cwd=tmp_path, env=os.environ, log=log)
+    await reaped(printed)
     assert log.read_text() == 'started\n' and stat.S_IMODE(log.stat().st_mode) == 0o600
     assert not processes.alive(1) or os.geteuid() == 0, "another user's process is not ours"
     monkeypatch.setattr(sys, 'platform', 'win32')
@@ -591,3 +596,44 @@ def test_git_helpers_report_failures(repository: Path, tmp_path: Path, monkeypat
         remove_worktree(path=repository)
     with pytest.raises(ValueError, match='Cannot fetch x: no git'):
         clone_or_fetch(url='x', path=tmp_path / 'clone')
+
+
+async def test_one_process_at_a_time(rig: Rig, repository: Path) -> None:
+    """Two CLAIs starting one workspace at once start one child: the second waits for the first's lock."""
+    first, second = rig.workspaces(), rig.workspaces()
+    workspace = await first.create(kind='local-worktree', repo=str(repository))
+    answer = anyio.Event()
+    rig.probe.ready = False
+
+    async def slowly(port: int, token: str) -> bool:
+        await answer.wait()
+        return True
+
+    rig.launcher.probe = slowly
+    started: list[Workspace] = []
+    async with anyio.create_task_group() as group:
+
+        async def start(workspaces: Workspaces) -> None:
+            started.append(await workspaces.start(workspace.id))
+
+        group.start_soon(start, first)
+        await anyio.wait_all_tasks_blocked()
+        group.start_soon(start, second)
+        await anyio.wait_all_tasks_blocked()
+        answer.set()
+    assert len(rig.processes.spawned) == 1
+    assert started[0].session == started[1].session
+
+
+async def test_windows_needs_no_lock(rig: Rig, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspaces = rig.workspaces()
+    workspace = await workspaces.create(kind='local-worktree', repo=str(repository))
+    monkeypatch.setattr(manager_module.sys, 'platform', 'win32')
+    assert (await workspaces.stop(workspace.id)).status == 'ready'
+
+
+def test_branch_prefixes_git_refuses() -> None:
+    for prefix in ('a..', 'a//', 'a/.', 'a.lock/'):
+        with pytest.raises(ValueError, match='Git refuses branch names'):
+            WorktreeKind(branch_prefix=prefix)
+    assert WorktreeKind(branch_prefix='agent/').branch_prefix == 'agent/'

@@ -46,6 +46,14 @@ class WorktreeKind(BaseModel):
     )
     model: str = Field(default='', description="The model the workspace's CLAI starts with. Empty: your saved default.")
 
+    @field_validator('branch_prefix')
+    @classmethod
+    def _branch(cls, value: str) -> str:
+        # What `git check-ref-format` refuses inside a name; the pattern above covers the characters.
+        if any(part in value for part in ('..', '//', '/.', '.lock/')):
+            raise ValueError('Git refuses branch names with `..`, `//`, `/.`, or `.lock/`')
+        return value
+
     @field_validator('root')
     @classmethod
     def _absolute(cls, value: str) -> str:

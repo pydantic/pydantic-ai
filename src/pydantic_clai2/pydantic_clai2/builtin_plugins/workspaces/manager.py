@@ -4,8 +4,11 @@ This is what the `/workspaces` command and the `orchestrator` plugin's tools bot
 but through `token`, for a client that talks to a workspace's CLAI.
 """
 
+import os
 import secrets
-from collections.abc import Mapping
+import sys
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +20,14 @@ from pydantic_clai2.builtin_plugins.workspaces.backend import Backend, LocalWork
 from pydantic_clai2.builtin_plugins.workspaces.kinds import WorktreeKind
 from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, Workspace, workspaces_dir
 from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher, read_token
+
+
+def _lock_file(descriptor: int) -> None:
+    """Wait for an exclusive lock on the open file; Windows, which runs no workspace sessions, needs none."""
+    if sys.platform != 'win32':
+        import fcntl
+
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
 
 
 def new_id(repo: str) -> str:
@@ -88,9 +99,21 @@ class Workspaces:
         )
         return await self._save(workspace)
 
+    @asynccontextmanager
+    async def _exclusive(self, workspace_id: str) -> AsyncGenerator[None]:
+        """Hold the workspace's lock, so every CLAI process starts, stops, and destroys it one at a time."""
+        async with self._lock:
+            await self.get(workspace_id)  # An unknown ID has no folder to lock.
+            descriptor = os.open(self.registry.folder(workspace_id) / '.lock', os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                await to_thread.run_sync(_lock_file, descriptor)
+                yield
+            finally:
+                os.close(descriptor)  # Releases the lock.
+
     async def start(self, workspace_id: str) -> Workspace:
         """Start the workspace's CLAI unless it runs already; `RuntimeError` when it does not start."""
-        async with self._lock:
+        async with self._exclusive(workspace_id):
             workspace = await self.get(workspace_id)
             if workspace.status == 'running':
                 return workspace
@@ -99,23 +122,27 @@ class Workspaces:
 
     async def stop(self, workspace_id: str) -> Workspace:
         """Stop the workspace's CLAI, if one runs."""
-        async with self._lock:
-            workspace = await self.get(workspace_id)
-            if workspace.session is None:
-                return workspace
-            await self.backend.stop(workspace.session)
-            return await self._save(replace(workspace, status='stopped'))
+        async with self._exclusive(workspace_id):
+            return await self._stop(workspace_id)
+
+    async def _stop(self, workspace_id: str) -> Workspace:
+        workspace = await self.get(workspace_id)
+        if workspace.session is None:
+            return workspace
+        await self.backend.stop(workspace.session)
+        return await self._save(replace(workspace, status='stopped'))
 
     async def destroy(self, workspace_id: str) -> Workspace:
         """Stop the workspace's CLAI, remove its checkout unless its teardown keeps it, and forget it.
 
         Raises `ValueError`, forgetting nothing, when the checkout is not where workspaces go or Git refuses.
         """
-        workspace = await self.stop(workspace_id)
-        if workspace.teardown == 'remove':
-            await self.backend.destroy(workspace)
-        await to_thread.run_sync(self.registry.forget, workspace_id)
-        return workspace
+        async with self._exclusive(workspace_id):
+            workspace = await self._stop(workspace_id)
+            if workspace.teardown == 'remove':
+                await self.backend.destroy(workspace)
+            await to_thread.run_sync(self.registry.forget, workspace_id)
+            return workspace
 
     async def token(self, workspace_id: str) -> str:
         """The token of the workspace's running CLAI, for a client; `RuntimeError` when none runs."""
