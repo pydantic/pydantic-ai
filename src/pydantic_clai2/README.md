@@ -2056,7 +2056,8 @@ update appears at newline or tool completion. CRLF works across chunk boundaries
 Long display lines are ellipsized to terminal width. The command itself wraps
 under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
 count summarizes any rows beyond that. The command is highlighted as Bash, in the
-same colours as fenced code. Code inside it uses its own language: a heredoc body
+colours of fenced code but dimmed and without underlines, so it reads as secondary
+to the answer. Code inside it uses its own language: a heredoc body
 takes the language of the command reading it (`python - <<'EOF'`, `psql <<SQL`),
 of the file it is written to (`cat > probe.py <<'EOF'`), or of a delimiter such as
 `PYEOF`, and the quoted code of `python -c '...'` or `node -e '...'` is Python or
