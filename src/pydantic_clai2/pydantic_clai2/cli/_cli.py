@@ -90,6 +90,8 @@ def run(*, splash: Splash | None = None) -> None:
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
         args.database = args.database.resolve()
+    if args.token_file is not None:
+        args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
     try:
         from pydantic_ai.usage import UsageLimits
         from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent

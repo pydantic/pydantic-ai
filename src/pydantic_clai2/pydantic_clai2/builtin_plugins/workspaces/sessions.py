@@ -128,6 +128,8 @@ class Launcher:
         argv = [self.python, '-P', '-m', 'pydantic_clai2', '--web', '--port', '0', '--token-file', str(token_file)]
         if model:
             argv += ['--model', model]
+        # A fresh log, so the port read back is this launch's, never the last one's.
+        write_private(log, '')
         pid = self.processes.spawn(argv, cwd=cwd, env=env, log=log)
         started = datetime.now(UTC)
         deadline = monotonic() + self.startup_timeout
