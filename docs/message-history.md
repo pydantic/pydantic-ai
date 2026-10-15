@@ -34,7 +34,7 @@ Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult
 ```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 print(result.output)
@@ -62,10 +62,8 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -81,7 +79,7 @@ Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.Strea
 ```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 
 async def main():
@@ -135,7 +133,7 @@ async def main():
                     )
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=12),
-                model_name='gpt-5.2',
+                model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -165,7 +163,7 @@ If `message_history` is set and not empty, a new system prompt is not generated 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -196,10 +194,8 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -222,8 +218,8 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000462'), input_tokens=56, output_tokens=26),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.000372'), input_tokens=56, output_tokens=26),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -309,7 +305,7 @@ A fresh `conversation_id` is generated on the first run, stamped onto every mess
 ```python {title="conversation_id is shared across runs in the same conversation"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 result1 = agent.run_sync('Tell me a joke.')
 result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
@@ -339,7 +335,7 @@ To override or fork `conversation_id`:
 ```python {title="forking a conversation"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 result1 = agent.run_sync('Tell me a joke.')
 forked = agent.run_sync(
@@ -376,7 +372,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,  # (1)!
 )
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
@@ -457,7 +453,7 @@ class StoredRun(BaseModel):
     result: AgentRunResult[str]
 
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 result = agent.run_sync('Tell me a joke.')
 
 stored_json = StoredRun(result=result).model_dump_json()
@@ -495,7 +491,7 @@ Client-supplied [`CompactionPart`][pydantic_ai.messages.CompactionPart]s are kep
 from pydantic_ai import Agent, ModelMessagesTypeAdapter
 from pydantic_ai.messages import sanitize_messages
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 # `request_json` is the body submitted by an untrusted client.
 loaded_history = ModelMessagesTypeAdapter.validate_python(request_json['message_history'])
@@ -527,7 +523,7 @@ whole thing can be stored under one key and handed back intact:
 ```python {title="carry a conversation between runs"}
 from pydantic_ai import Agent, Conversation
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 conversation: Conversation = agent.run_sync('Tell me a joke.').conversation
 print(len(conversation.messages))
@@ -546,7 +542,7 @@ three carry together:
 ```python {title="continue a conversation"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 first = agent.run_sync('Tell me a joke.')
 second = agent.run_sync('Explain?', conversation=first.conversation)
@@ -603,12 +599,12 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google:gemini-3-pro-preview` model.
+In the example below, we reuse the message from the first agent run, which uses the `{{ openai:medium }}` model, in a second agent run using the `{{ google:large }}` model.
 
 ```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -616,7 +612,7 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    model='google:gemini-3-pro-preview',
+    model='{{ google:large }}',
     message_history=result1.new_messages(),
 )
 print(result2.output)
@@ -643,10 +639,8 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -669,8 +663,8 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000424'), input_tokens=56, output_tokens=26),
-        model_name='gemini-3-pro-preview',
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        model_name='{{ google:large.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -693,12 +687,12 @@ so far as context.
 from pydantic_ai import Agent
 
 biography_agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Answer biographical questions concisely.',
 )
 
 science_agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Answer science questions for a general audience.',
 )
 
@@ -791,7 +785,7 @@ Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import SystemPromptPart
 
-agent = Agent('anthropic:claude-opus-4-7')
+agent = Agent('{{ anthropic:large }}')
 
 
 @agent.tool
@@ -825,7 +819,7 @@ from outside (e.g. forwarding events from a webhook, chat platform, or job queue
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('anthropic:claude-opus-4-7')
+agent = Agent('{{ anthropic:large }}')
 
 
 async def main():
@@ -926,7 +920,7 @@ def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
     return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
 # Create agent with history processor
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(filter_responses)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(filter_responses)])
 
 # Example: Create some conversation history
 message_history = [
@@ -951,7 +945,7 @@ async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessag
     """Keep only the last 5 messages to manage token usage."""
     return messages[-5:] if len(messages) > 5 else messages
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent_messages)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(keep_recent_messages)])
 
 # Example: Even with a long conversation history, only the last 5 messages are sent to the model
 long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
@@ -983,7 +977,7 @@ def context_aware_processor(
         return messages[-3:]  # Keep only recent messages when token usage is high
     return messages
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_processor)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(context_aware_processor)])
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
@@ -1000,7 +994,7 @@ from pydantic_ai.capabilities import ProcessHistory
 
 # Use a cheaper model to summarize old messages.
 summarize_agent = Agent(
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     instructions="""
 Summarize this conversation, omitting small talk and unrelated topics.
 Focus on the technical discussion and next steps.
@@ -1019,7 +1013,7 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
     return messages
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messages)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(summarize_old_messages)])
 ```
 
 !!! warning "Be careful when summarizing the message history"
@@ -1063,7 +1057,7 @@ def compact_when_window_fills(
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='You are a helpful assistant.',
     capabilities=[ProcessHistory(compact_when_window_fills)],
 )
@@ -1090,7 +1084,7 @@ from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.profiles import prompt_cache_outlook
 
-profile = AnthropicModel('claude-sonnet-4-6').profile
+profile = AnthropicModel('{{ anthropic:medium.name }}').profile
 
 now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 history = [
@@ -1134,7 +1128,7 @@ async def compact_when_cold(ctx: RunContext, request_context: ModelRequestContex
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     model_settings=AnthropicModelSettings(anthropic_cache='1h'),  # (1)!
     capabilities=[hooks],
 )
@@ -1216,7 +1210,7 @@ def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[ProcessHistory(filter_responses), ProcessHistory(summarize_old_messages)],
 )
 ```

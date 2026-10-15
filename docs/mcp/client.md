@@ -74,7 +74,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])  # (2)!
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])  # (2)!
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -117,7 +117,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:3001/sse')
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ### Stdio
@@ -131,7 +131,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset(StdioTransport(command='python', args=['mcp_server.py']))
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ### In-process FastMCP server
@@ -151,7 +151,7 @@ async def add(a: int, b: int) -> int:
     return a + b
 
 toolset = MCPToolset(fastmcp_server)
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -244,7 +244,7 @@ from pydantic_ai.mcp import load_mcp_toolsets
 toolsets = load_mcp_toolsets('mcp_config.json')
 
 # Create an agent with all loaded toolsets
-agent = Agent('openai:gpt-5.2', toolsets=toolsets)
+agent = Agent('{{ openai:medium }}', toolsets=toolsets)
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -350,7 +350,7 @@ calculator = MCPToolset('http://localhost:3002/sse').prefixed('calc')   # `calc_
 
 # Both servers may expose a `get_data` tool, but they're disambiguated as
 # `weather_get_data` and `calc_get_data`.
-agent = Agent('openai:gpt-5.2', toolsets=[weather, calculator])
+agent = Agent('{{ openai:medium }}', toolsets=[weather, calculator])
 ```
 
 ## Server instructions
@@ -362,7 +362,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp', include_instructions=True)
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ## Tool metadata
@@ -414,7 +414,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp', prefer_tasks=False)
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ## Resources
@@ -530,7 +530,7 @@ class UserDeps:
     mcp_token: str
 
 
-agent = Agent('openai:gpt-5.2', deps_type=UserDeps)
+agent = Agent('{{ openai:medium }}', deps_type=UserDeps)
 
 
 @agent.toolset(per_run_step=False)  # (1)!
@@ -573,7 +573,7 @@ ssl_ctx.load_cert_chain(certfile='/etc/ssl/certs/client.crt', keyfile='/etc/ssl/
 http_client = httpx2.AsyncClient(verify=ssl_ctx, timeout=httpx2.Timeout(10.0))
 
 toolset = MCPToolset('http://localhost:3001/sse', http_client=http_client)  # (1)!
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. The toolset never closes the client, so it can be reused across runs and you are responsible for closing it. On FastMCP 3, build the client with legacy `httpx` instead.
@@ -685,7 +685,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset(StdioTransport(command='python', args=['generate_svg.py']))
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 
 async def main():
@@ -816,7 +816,7 @@ toolset = MCPToolset(
     elicitation_handler=handle_elicitation,
 )
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 
 async def main():
