@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import threading
+import warnings
 import weakref
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import httpx
@@ -149,6 +152,62 @@ def test_unentered_agent_gets_new_client_on_new_event_loop(
     assert [len(loops) for loops in transport_loops.values()] == [1, 1, 1]
     # Nothing closes a client whose event loop is gone.
     assert [client.is_closed for client in new_provider_clients] == [False, False, False]
+
+
+class _CountingOpenAIServer(ThreadingHTTPServer):
+    """A local HTTP/1.1 server with keep-alive that answers every chat completion, counting the connections it accepts."""
+
+    daemon_threads = True
+
+    def __init__(self) -> None:
+        self.connections = 0
+        owner = self
+        body = json.dumps(_OPENAI_RESPONSE).encode()
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def setup(self) -> None:
+                super().setup()
+                owner.connections += 1
+
+            def do_POST(self) -> None:
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        super().__init__(('127.0.0.1', 0), Handler)
+
+
+def test_unentered_agent_runs_on_new_event_loop_over_real_connections(
+    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """A second `asyncio.run()` used to reuse a pooled connection of the closed event loop: `Event loop is closed`."""
+    # Imported under another name, so the autouse `track_httpx_clients` fixture doesn't swap in its client cache.
+    monkeypatch.setattr(openai_compatible, 'create_async_httpx2_client', create_uncached_client)
+    server = _CountingOpenAIServer()
+    server_thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01})
+    provider = OpenAIProvider(base_url=f'http://127.0.0.1:{server.server_port}/v1', api_key='test-key')
+    agent = Agent(OpenAIChatModel('gpt-5.2', provider=provider))
+    server_thread.start()
+    try:
+        assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
+        assert server.connections == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join()
+        # Neither client can be closed now that its event loop is, so collect their sockets here.
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
+            del agent, provider
+            gc.collect()
 
 
 def test_unentered_agent_keeps_client_while_its_event_loop_runs(new_provider_clients: list[httpx2.AsyncClient]):
