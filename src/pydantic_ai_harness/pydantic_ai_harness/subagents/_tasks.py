@@ -37,9 +37,7 @@ def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrap
     try:
         return handler(messages)
     except UnicodeDecodeError:
-        # Raw `bytes` that aren't UTF-8 in an `Any`-typed field (a child tool's binary return, say):
-        # `ser_json_bytes='base64'` only takes effect from the outermost adapter, which here is
-        # `DelegationTask`'s and can't be configured, so the messages go through the one that is.
+        # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them.
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
 
 
