@@ -2201,7 +2201,8 @@ prompt the keyboard does:
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
   session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
-  refuses the current conversation and one running in another CLAI. Like opening `/resume`,
+  refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
+  its own copy of the session's `run_code` REPL, and a deleted session's REPL is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming.
