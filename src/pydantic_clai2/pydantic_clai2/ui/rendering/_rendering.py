@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
-from typing import IO, Literal
+from typing import IO
 
 import anyio
 from rich.console import Console, RenderableType
@@ -48,7 +48,14 @@ from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.grep_output import GrepOutput
 from pydantic_clai2.ui.rendering.tool_group import ToolCallGroup
-from pydantic_clai2.ui.rendering.tool_output import ToolOutput, print_tool_header, terminal_text, tool_arguments_text
+from pydantic_clai2.ui.rendering.tool_output import (
+    ColorSystemName,
+    ToolOutput,
+    color_system,
+    print_tool_header,
+    terminal_text,
+    tool_arguments_text,
+)
 
 
 def markdown_style() -> RenderStyle:
@@ -225,15 +232,6 @@ class MarkdownPipeline:
                 self._code_lines = []
             else:
                 self._renderer.render(event)
-
-
-ColorSystemName = Literal['standard', '256', 'truecolor', 'windows']
-
-
-def color_system(console: Console) -> ColorSystemName | None:
-    """The colour system `console` renders with; `None` when it renders no colour."""
-    name = console.color_system
-    return name if name in ('standard', '256', 'truecolor', 'windows') else None
 
 
 def render_markdown(

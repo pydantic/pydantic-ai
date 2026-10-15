@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import inspect
 import time
-from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -59,6 +58,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._context_size import context_input_tokens
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -229,17 +229,6 @@ async def _with_event_stream_buffer(
         yield event
     while event_stream_buffer:
         yield event_stream_buffer.pop(0)
-
-
-async def _cancel_task(task: Task[Any]) -> None:
-    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
-    task.cancel()
-    try:
-        await task
-    except BaseException:
-        # Called while another stream error is already propagating; await only
-        # to finish cleanup and retrieve the task exception, not replace it.
-        pass
 
 
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
@@ -1482,8 +1471,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # the stream closes; it continues with the response `wrap_model_request` returns instead.
                         _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
                     # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                    # mid-iteration and graph teardown cancels `wrap_task` at the `wait()` above,
+                    # mirroring `InstrumentedModel.request_stream`. On
                     # that cancelled path `finish` is never reached today (no metrics of any
                     # kind are recorded), so this is symmetry rather than an observable fix.
                     time_to_first_chunk = sr.time_to_first_chunk(request_start)
@@ -1607,7 +1596,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             try:
                 if stream_error is not None:
-                    await _cancel_task(wrap_task)
+                    # Graph teardown may already be under cancellation. Drain the wrapper task so its model
+                    # stream cleanup finishes before the event iterator is closed below.
+                    await cancel_and_drain(wrap_task)
                     # Capture the partial response so `capture_run_messages` and `all_messages()`
                     # include what was streamed before the interruption.
                     # We append directly rather than via `_append_response` to skip the usage-limit
@@ -2192,8 +2183,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.
+            # A response a provider SDK merged from several requests (Google long decode) is checked against
+            # the input of the first; see `context_input_tokens`.
             for response in responses:
-                ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
+                ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
     async def _build_retry_node(
         self,

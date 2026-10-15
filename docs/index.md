@@ -60,11 +60,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai_harness import Advisor, Coder
 
     agent = Agent(
-        'anthropic:claude-fable-5-1',
+        '{{ anthropic:xlarge }}',
         capabilities=[
             Coder(),  # files, shell, repo context, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
-            Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
+            Advisor('{{ openai:medium }}'),  # a second opinion from another model when stuck
         ],
     )
     agent.to_cli_sync()
@@ -75,14 +75,14 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ```python {test="skip" lint="skip"}
     capabilities = [
         FileSystem('.'), Shell(cwd='.'), RepoContext(), SubAgents(...),
-        ClearToolResults(), WarnNearLimits(), ToolOutputLimits(), RepairToolArguments(),
+        ClearToolResults(), ToolOutputLimits(), RepairToolArguments(),
     ]
     ```
 
     Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
     ```bash
-    uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
+    uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
     ```
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -110,7 +110,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         score: float = Field(ge=-1, le=1)
 
 
-    agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
+    agent = Agent('{{ openai:medium }}', output_type=Sentiment)
 
 
     @agent.tool
@@ -144,7 +144,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
     agent = Agent(
-        'openai:gpt-6-sol',
+        '{{ openai:medium }}',
         instructions='Research the topic and write a structured brief.',
         name='researcher',
         capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
@@ -161,7 +161,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
             return result.output
     ```
 
-    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, and Absurd](durable_execution/overview.md) integrations besides.
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](durable_execution/overview.md) integrations besides.
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
@@ -189,7 +189,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         """Look up the status of an order."""
         return f'Order {order_id}: shipped, arriving Thursday.'
 
-    async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         microphone = asyncio.create_task(session.send_audio(microphone_chunks()))  # your microphone → the model
         speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
         async for part in session.stream_transcripts():
@@ -213,7 +213,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     from pydantic_ai import ImageGenerator
 
-    generator = ImageGenerator('openai:gpt-image-2')
+    generator = ImageGenerator('{{ openai:image }}')
     result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
     Path('logo.png').write_bytes(result.image.data)
     ```
@@ -247,7 +247,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** [Durable execution](durable_execution/overview.md) on eight engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Kitaru, Airflow, and Absurd, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** [Durable execution](durable_execution/overview.md) on nine engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
 - **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 
@@ -335,7 +335,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(  # (9)!
-    'openai:gpt-6-sol',  # (10)!
+    '{{ openai:medium }}',  # (10)!
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # (11)!
     instructions=(
@@ -381,7 +381,7 @@ async def main():
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
 8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), like an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-10. Here we configure the agent to use [OpenAI's GPT-6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
+10. Here we configure the agent to use an [OpenAI](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
 12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md), like [web search](capabilities/web-search.md) or anything from the [Harness](https://pydantic.dev/docs/ai/harness/), snap on alongside them in the same list.
 13. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
@@ -414,7 +414,7 @@ logfire.instrument_sqlite3()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-6-sol',
+    '{{ openai:medium }}',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     instructions=(
@@ -459,7 +459,7 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 **Run something right now.** One command puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
+uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
 ```
 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.

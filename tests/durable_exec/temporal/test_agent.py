@@ -718,6 +718,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     assert failing_events == ['enter', 'cancel:failing', 'exit:RuntimeError']
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):
@@ -1957,6 +1958,13 @@ async def test_temporal_agent_realtime_session_outside_workflow():
     async with simple_temporal_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
+
+
+async def test_temporal_agent_rejects_connect():
+    """Runs use the Temporal model, so a connection would open a socket that no run uses."""
+    with pytest.raises(UserError, match='`TemporalAgent` does not support explicit connections'):
+        async with simple_temporal_agent.connect():
+            pytest.fail('TemporalAgent runs cannot use a connection')  # pragma: no cover
 
 
 async def simple_event_stream_handler(

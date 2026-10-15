@@ -42,6 +42,10 @@ To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS accoun
 
 [`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
 
+### Data retention
+
+Claude Fable 5 and 5.1 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
+
 ### Environment variables
 
 You can set your AWS credentials as environment variables ([among other options](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html#using-environment-variables)):
@@ -59,7 +63,7 @@ You can then use `BedrockConverseModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent('{{ bedrock:medium }}')
 ...
 ```
 
@@ -69,7 +73,7 @@ Or initialize the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
-model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0')
+model = BedrockConverseModel('{{ bedrock:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -184,7 +188,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 handbook = '...'  # a long document, above the model's minimum cacheable length
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
@@ -209,7 +213,7 @@ Combine multiple cache settings for maximum savings:
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 
-model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+model = BedrockConverseModel('{{ bedrock:medium.name }}')
 agent = Agent(
     model,
     instructions='Detailed instructions...',
@@ -239,7 +243,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     instructions='Instructions...',
 )
 
@@ -259,7 +263,7 @@ Access cache usage statistics via [`RequestUsage`][pydantic_ai.usage.RequestUsag
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 
-agent = Agent('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent('{{ bedrock:medium }}')
 
 
 async def main():
@@ -298,7 +302,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     instructions='Instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,      # 1 cache point
@@ -341,7 +345,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 
 # Using AWS credentials directly
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='your-access-key',
@@ -364,7 +368,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 # Using a pre-configured boto3 client
 bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(bedrock_client=bedrock_client),
 )
 agent = Agent(model)
@@ -456,6 +460,9 @@ pip/uv-add "pydantic-ai-slim[bedrock-mantle]"
 ```
 
 The [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider] authenticates with the same AWS credentials as the [Converse route](#environment-variables) — a bearer token via `AWS_BEARER_TOKEN_BEDROCK`, or AWS access keys / profile via SigV4 — and derives its endpoint from `region_name` (or the `AWS_DEFAULT_REGION` / `AWS_REGION` environment variables).
+
+!!! note
+    The default Bedrock Mantle SDK client cannot authenticate a Responses WebSocket, with either SigV4 credentials or `AWS_BEARER_TOKEN_BEDROCK`; `connect()` raises [`UserError`][pydantic_ai.exceptions.UserError]. For an endpoint that explicitly supports WebSocket mode with bearer authentication, supply a plain `AsyncOpenAI` client via `BedrockMantleProvider(openai_client=...)`. HTTP authentication is unchanged.
 
 The model name determines the endpoint family:
 

@@ -111,7 +111,7 @@ from pydantic_ai.durable_exec.temporal import (
 )
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     instructions="You're an expert in geography.",
     name='geography',  # (1)!
     capabilities=[TemporalDurability()],  # (2)!
@@ -184,7 +184,7 @@ Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.tempora
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalAgent
 
-agent = Agent('openai:gpt-5.6-sol', name='geography')
+agent = Agent('{{ openai:medium }}', name='geography')
 temporal_agent = TemporalAgent(agent)
 # Use `temporal_agent` from inside a workflow, list it in `__pydantic_ai_agents__`,
 # and connect with `PydanticAIPlugin()` exactly like the capability example above.
@@ -356,7 +356,7 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.durable_exec.temporal import AgentEventStream, TemporalDurability
 
 durability = TemporalDurability(event_stream_topic='agent-events')
-agent = Agent('openai:gpt-5.6-sol', name='assistant', capabilities=[durability])
+agent = Agent('{{ openai:medium }}', name='assistant', capabilities=[durability])
 
 
 @workflow.defn
@@ -565,7 +565,7 @@ This has a few operational implications:
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'{{ openai:medium }}'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
 
 - pre-register it by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then reference it by name or by passing the registered instance directly to `agent.run(model=...)`;
 - pass a model-name string and build the instance on the worker with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials.
@@ -591,9 +591,9 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 # Create models from different providers
-default_model = OpenAIResponsesModel('gpt-5.6-sol')
-fast_model = AnthropicModel('claude-haiku-4-5')
-reasoning_model = GoogleModel('gemini-3-pro-preview')
+default_model = OpenAIResponsesModel('{{ openai:medium.name }}')
+fast_model = AnthropicModel('{{ anthropic:small.name }}')
+reasoning_model = GoogleModel('{{ google:large.name }}')
 
 
 # Optional: customize how model-name strings are built.
@@ -631,7 +631,7 @@ class MultiModelWorkflow:
             result = await agent.run(prompt, model=fast_model)
         else:
             # Or pass a model string (resolved by `ResolveModelId` if it matches)
-            result = await agent.run(prompt, model='openai:gpt-5.6-luna')
+            result = await agent.run(prompt, model='{{ openai:small }}')
         return result.output
 ```
 
@@ -689,7 +689,7 @@ async def now() -> str:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     name='research',
     toolsets=[toolset],
     capabilities=[

@@ -80,7 +80,7 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
-from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
+from ..providers._bedrock_model_names import bedrock_claude_cache_retentions, bedrock_lacks_claude_structured_output
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
@@ -99,7 +99,7 @@ from . import (
     get_user_agent,
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
-from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import (
     excess_cache_points,
     previous_tail_needing_breakpoint,
@@ -395,6 +395,14 @@ def _error_status_code(error: APIStatusError) -> int:
     return error.status_code
 
 
+def _reported_error_body(body: object | None) -> object | None:
+    """The object in an error body that reports the failure.
+
+    The direct API wraps it in an `error` object; Bedrock returns it at the top level.
+    """
+    return body.get('error', body) if _utils.is_str_dict(body) else None
+
+
 def _is_expired_container_error(error: APIStatusError) -> bool:
     """Whether Anthropic rejected a request because the container it reuses has expired.
 
@@ -403,11 +411,10 @@ def _is_expired_container_error(error: APIStatusError) -> bool:
     status_code = _error_status_code(error)
     if status_code == 500:
         return True
-    body = error.body
+    error_body = _reported_error_body(error.body)
     return (
         status_code == 404
-        and _utils.is_str_dict(body)
-        and _utils.is_str_dict(error_body := body.get('error'))
+        and _utils.is_str_dict(error_body)
         and str(error_body.get('message', '')).startswith('Container not found')
     )
 
@@ -811,10 +818,9 @@ def _is_stale_thinking_block_error(
         return False
     if not _can_add_drop_block(thinking):
         return False
-    body: object | None = error.body
+    reported = _reported_error_body(error.body)
     return (
-        _utils.is_str_dict(body)
-        and _utils.is_str_dict(reported := body.get('error'))
+        _utils.is_str_dict(reported)
         and isinstance(message := reported.get('message'), str)
         and _STALE_THINKING_BLOCK_MARKER in message
     )
@@ -1093,10 +1099,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
-            # AWS grants the 1-hour cache TTL to only a subset of Claude models, matching `BedrockConverseModel`.
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models, and withholds structured output
+            # from some that have it on the direct API, matching `BedrockConverseModel`.
             _profile = merge_profile(
                 _profile,
-                AnthropicModelProfile(supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name)),
+                AnthropicModelProfile(
+                    supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name),
+                    supports_json_schema_output=_profile.get('supports_json_schema_output', False)
+                    and not bedrock_lacks_claude_structured_output(self._model_name),
+                ),
             )
         return cast(AnthropicModelProfile, _profile)
 
@@ -1129,6 +1140,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
             return self._process_response(response, model_request_parameters, model_settings)
         # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
@@ -1157,7 +1169,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             messages, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
 
-        return usage.RequestUsage(input_tokens=response.input_tokens)
+        return usage.RequestUsage(input_tokens=check_json_response(self.model_name, response).input_tokens)
 
     @asynccontextmanager
     async def request_stream(
