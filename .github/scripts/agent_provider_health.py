@@ -24,6 +24,8 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
+# Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
+NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
 _RETIRED_PROVIDER_REASON = (
     'Workflow passes retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`; update the workflow from `main`'
 )
@@ -106,6 +108,7 @@ class Issue:
     body: str
     state: str
     html_url: str
+    created_at: str | None
 
 
 @dataclass(frozen=True)
@@ -530,7 +533,7 @@ def _issue(value: object) -> Issue | None:
         return None
     if state is None or url is None:
         return None
-    return Issue(number, title, body, state, url)
+    return Issue(number, title, body, state, url, _iso_time(data.get('created_at')))
 
 
 def _marker_from_body(body: str) -> IncidentMarker | None:
@@ -983,16 +986,17 @@ def _recover_issue(
                 f'{_quota_diagnostic_suffix(quota)}'
             )
         return False
-    if marker.kind in ('rate_limit', 'quota_exhausted'):
-        if marker.reset_at is None:
-            if automatic:
-                return False
-        else:
-            reset_at = dt.datetime.fromisoformat(marker.reset_at.replace('Z', '+00:00'))
-            if now < reset_at:
-                if not automatic:
-                    print(f'Incident #{issue.number} remains open until the recorded reset time')
-                return False
+    if marker.kind in ('rate_limit', 'quota_exhausted') and marker.reset_at is not None:
+        reset_at = dt.datetime.fromisoformat(marker.reset_at.replace('Z', '+00:00'))
+        if now < reset_at:
+            if not automatic:
+                print(f'Incident #{issue.number} remains open until the recorded reset time')
+            return False
+    elif automatic and (
+        issue.created_at is None
+        or now < dt.datetime.fromisoformat(issue.created_at.replace('Z', '+00:00')) + NULL_RESET_COOL_DOWN
+    ):
+        return False
     if dry_run:
         print(f'DRY RUN: recovery checks passed; would close incident #{issue.number}')
     else:
@@ -1073,7 +1077,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             continue
         if marker.key != 'zai':
             continue
-        if marker.kind not in ('rate_limit', 'quota_exhausted') or marker.reset_at is None:
+        if marker.kind not in ('rate_limit', 'quota_exhausted', 'quota_unknown'):
             continue
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=True)
     return 0
