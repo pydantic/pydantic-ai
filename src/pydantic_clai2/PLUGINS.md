@@ -1405,7 +1405,7 @@ the plugin keeps between tool calls and closes when it unloads; the CLAIs keep r
 | `workspace_create(kind, repo='', ref='')` | a new workspace; nothing runs in it yet |
 | `workspace_destroy(workspace)` | stop its CLAI and remove it, only once the user confirmed (below) |
 | `session_start(workspace, prompt)` | start its CLAI unless it runs, and send `prompt` |
-| `session_send(workspace, text)` | another prompt or `/command`, queued behind a running turn |
+| `session_send(workspace, text)` | another prompt, queued behind a running turn |
 | `session_read(workspace, last=5)` | in short: whether a turn runs, how the last one ended, what is asked, and the last items, each cut to 600 characters |
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
@@ -1414,6 +1414,9 @@ the plugin keeps between tool calls and closes when it unloads; the CLAIs keep r
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
 conversation picked the option `Destroy ID` for that workspace; the model is told to ask that way.
 The answer comes from you, through the terminal or the browser, so the model cannot give it itself.
+`session_start` and `session_send` send prompts only: a `/command` would run in the workspace's CLAI
+with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse it and
+the model asks you to type it in the workspace's page.
 
 The model never sees a token: tools return addresses without one, and problems (an unknown
 workspace, a CLAI that stopped) come back as `Error: ...` lines rather than failing the run.

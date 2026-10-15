@@ -209,6 +209,7 @@ class Orchestrator:
 
     async def session_start(self, workspace: str, prompt: str) -> str:
         """Start the workspace's CLAI, unless it runs already, and send it `prompt`; then `session_wait`."""
+        _prompt_only(prompt)
         started = await self.workspaces().start(workspace)
         view = await self.view(started)
         await view.send(prompt)
@@ -216,7 +217,8 @@ class Orchestrator:
         return f'Workspace {workspace} runs at {started.session.url}; the prompt is sent. Wait with `session_wait`.'
 
     async def session_send(self, workspace: str, text: str) -> str:
-        """Send another prompt, or a `/command`, to the workspace's CLAI; it queues behind a running turn."""
+        """Send another prompt to the workspace's CLAI; it queues behind a running turn."""
+        _prompt_only(text)
         view = await self.view(await self.workspaces().get(workspace))
         await view.send(text)
         return 'Sent. Wait with `session_wait`.'
@@ -274,6 +276,15 @@ class Orchestrator:
         given = None if answers is None else [_answer(answer) for answer in answers]
         await view.answer(request, given)
         return 'Answered. Wait with `session_wait`.'
+
+
+def _prompt_only(text: str) -> None:
+    """Refuse a `/command`: in a workspace's CLAI one would run with no one there to confirm it."""
+    if text.lstrip().startswith('/'):
+        raise ValueError(
+            'Send prompts only. A `/command`, such as `/workspaces destroy`, would run in the workspace with no one '
+            "to confirm it; ask the user to type it in the workspace's page."
+        )
 
 
 def _answer(answer: SessionAnswer) -> AskUserAnswer:

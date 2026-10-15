@@ -450,6 +450,20 @@ async def test_without_the_workspaces_plugin(tmp_path: Path, monkeypatch: pytest
     assert 'is off' in await orchestrator_module.reported(alone.plugin.orchestrator.workspace_list)()
 
 
+async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `/command` would run in the workspace with no one to confirm it, as `/workspaces destroy` would."""
+    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
+        workspace = await created(made.tools, repository)
+        refusal = 'Error: Send prompts only. A `/command`, such as `/workspaces destroy`'
+        starting = orchestrator_module.reported(made.tools.session_start)
+        assert (await starting(workspace, ' /workspaces destroy other')).startswith(refusal)
+        assert (await made.tools.workspaces().get(workspace)).status == 'ready', 'nothing started'
+        await made.tools.session_start(workspace, 'hi')
+        sending = orchestrator_module.reported(made.tools.session_send)
+        assert (await sending(workspace, '/plugins add evil evil:Plugin')).startswith(refusal)
+        await made.tools.session_wait(workspace, timeout=10)
+
+
 def test_items_in_short() -> None:
     tool = Item(id='t', kind='tool', name='run_code', args='{"code": "print(1)"}', text='1', state='done')
     assert summarize(tool) == '- tool `run_code` (done): {"code": "print(1)"} -> 1'
