@@ -18,6 +18,7 @@ from .ws_cassettes import (
     CassettePlan,
     ProviderName,
     RealtimeCassette,
+    RealtimeCassetteInteraction,
     RecordingWebSocket,
     ReplayWebSocket,
     patched_ws_connect,
@@ -459,6 +460,41 @@ async def test_replay_waits_for_a_direct_recv_reader() -> None:
     await asyncio.sleep(0)
     assert json.loads(await replay.recv()) == {'type': 'server.event'}
     await send
+
+
+async def test_replay_session_close_overtakes_unread_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit test: GPT-Live's `session.close` doesn't wait for a reader to take the frames recorded before it.
+
+    The session sends it once it has stopped reading, and only reads the rest (up to `session.closed`)
+    after the send returns, so waiting for a reader would stall until the grace period ran out.
+    """
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
+    close = {'type': 'session.close'}
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data=close),
+            CassetteMessage(direction='received', data={'type': 'session.closed'}),
+        ]
+    )
+    replay = ReplayWebSocket(cassette)
+    await replay.send(json.dumps(close))
+    assert [json.loads(await replay.recv()) for _ in range(2)] == [{'type': 'server.event'}, {'type': 'session.closed'}]
+    # The recording itself is left as it was recorded.
+    assert cassette.interactions[1] == CassetteMessage(direction='sent', data=close)
+
+    # It never overtakes a close, nor turns into a send the recording doesn't have.
+    stalled: list[list[RealtimeCassetteInteraction]] = [
+        [CassetteMessage(direction='received', data={'type': 'server.event'})],
+        [
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteClose(code=1000, reason='', ok=True),
+            CassetteMessage(direction='sent', data=close),
+        ],
+    ]
+    for interactions in stalled:
+        with pytest.raises(AssertionError, match='no matching recorded send'):
+            await ReplayWebSocket(RealtimeCassette(interactions=interactions)).send(json.dumps(close))
 
 
 @pytest.mark.parametrize(

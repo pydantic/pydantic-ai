@@ -51,6 +51,13 @@ agent without a reason: both rewrite history.
   a 180,000-token trigger in tests: set `context_window=` there.
 - Token counts anchor on the last response's provider usage, then estimate the suffix with
   `tokenizer=` or ~4 chars per token.
+- `keep_tokens=` is measured per message with provider usage too (`estimate_message_tokens`):
+  responses count their `output_tokens`, including thinking returned without text.
+- A positive `keep_tokens` is a minimum, not a cap: `SlidingWindowCompaction` and
+  `SummarizingCompaction` keep the shortest unchanged suffix reaching it, including the message that
+  crosses it and the tool calls its results need, so it can overshoot by whole messages. Summaries,
+  receipts, pins and kept user turns are added on top. Leave headroom below the trigger; `0` and
+  `None` (`keep_messages`) keep their previous behavior.
 
 ## TieredCompaction (recommended default)
 

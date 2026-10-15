@@ -45,7 +45,7 @@ import asyncio
 from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a concise voice assistant.')
-realtime = agent.realtime('openai:gpt-realtime')
+realtime = agent.realtime('{{ openai:realtime }}')
 sideband_tasks: set[asyncio.Task[None]] = set()
 
 
@@ -135,7 +135,7 @@ async def voice_socket(websocket: WebSocket):
         while True:
             yield await websocket.receive_bytes()
 
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
 
         async def playback():
             async for chunk in session.stream_audio():

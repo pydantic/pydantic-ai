@@ -4,15 +4,18 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import gc
 import hashlib
 import io
 import json
 import re
 import wave
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, cast, get_args, get_origin
+from typing import Any, Literal, TypeAlias, cast, get_args, get_origin
 from unittest.mock import patch
 
 import anyio
@@ -38,15 +41,20 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -5375,7 +5383,7 @@ async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> Non
 
 
 @pytest.mark.anyio
-async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> None:
+async def test_audio_that_fails_to_go_out_never_reaches_the_core() -> None:
     class _FailingAudio(_QueuedWebSocket):
         async def send(self, data: str) -> None:
             raise OSError('gone')  # (the audio is all this session sends)
@@ -5397,8 +5405,8 @@ async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> N
 
 
 @pytest.mark.anyio
-async def test_a_failed_send_takes_back_its_own_audio_while_another_waits_to_go_out() -> None:
-    """Two chunks sent at once go out one after the other: the first failing takes back its own audio, not the second's."""
+async def test_a_failed_send_leaves_its_audio_out_while_another_waits_to_go_out() -> None:
+    """Two chunks sent at once go out one after the other: the first failing never adds its audio, and the second's goes in."""
 
     class _FirstAudioFails(_QueuedWebSocket):
         def __init__(self) -> None:
@@ -5435,6 +5443,74 @@ async def test_a_failed_send_takes_back_its_own_audio_while_another_waits_to_go_
         core = session._core  # pyright: ignore[reportPrivateUsage]
         assert core is not None
         assert bytes(core._input_audio) == second  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
+    """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails.
+
+    The provider committed its buffer before it had the chunk, so the chunk is no part of that turn whether or not
+    its send succeeds: history and the streamed part both hold only the audio that went out ahead of the commit.
+    """
+
+    class _SecondAudioFails(_QueuedWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = asyncio.Event()
+            self.fail = asyncio.Event()
+            self.sends = 0
+
+        async def send(self, data: str) -> None:
+            self.sends += 1
+            if self.sends == 2:  # (the audio is all this session sends)
+                self.sending.set()
+                await self.fail.wait()
+                raise OSError('gone')
+            await super().send(data)
+
+    ws = _SecondAudioFails()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    sent, unsent = b'\x01\x00' * 100, b'\x02\x00' * 50
+    streamed: list[SpeechPart] = []
+    async with session:
+        await session.send_audio(sent)
+        failing_send = asyncio.create_task(session.send_audio(unsent))
+        await ws.sending.wait()
+        for frame in [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'item_id': 'item_u1',
+                'content_index': 0,
+                'transcript': 'Hi.',
+            },
+        ]:
+            ws.push(frame)
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                streamed.append(event.part)
+                break
+        # The turn is recorded while the chunk is still going out; then its send fails.
+        assert session.all_messages()
+        ws.fail.set()
+        with pytest.raises(RealtimeError):
+            await failing_send
+        history = session.all_messages()
+
+    [request] = history
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.transcript == 'Hi.' and part.audio is not None
+    assert part.audio.data[44:] == sent
+    [streamed_part] = streamed
+    assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
 
 
 @pytest.mark.anyio
@@ -5495,3 +5571,505 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
     assert [part.transcript for part in speech(legacy)] == ['Hello.']
     assert all(part.audio is None for part in speech(legacy))
     assert [part.audio is not None for part in streamed] == [True]
+
+
+def _assistant_item(item_id: str, phase: str, content: list[dict[str, Any]], *, done: bool) -> dict[str, Any]:
+    status = 'completed' if done else 'in_progress'
+    return {'id': item_id, 'type': 'message', 'status': status, 'role': 'assistant', 'phase': phase, 'content': content}
+
+
+def _item_done(item_id: str, output_index: int, phase: str, transcript: str, *, text: bool) -> list[dict[str, Any]]:
+    """The frames that finish an item, in the order https://github.com/pydantic/pydantic-ai/issues/10095 lists them."""
+    common = {'response_id': 'resp_1', 'item_id': item_id, 'output_index': output_index, 'content_index': 0}
+    if text:
+        content: dict[str, Any] = {'type': 'output_text', 'text': transcript}
+        part: dict[str, Any] = {'type': 'text', 'text': transcript}
+        finished = [{'type': 'response.output_text.done', **common, 'text': transcript}]
+    else:
+        content = {'type': 'output_audio', 'transcript': transcript}
+        part = {'type': 'audio', 'transcript': transcript}
+        finished = [
+            {'type': 'response.output_audio.done', **common},
+            {'type': 'response.output_audio_transcript.done', **common, 'transcript': transcript},
+        ]
+    item = _assistant_item(item_id, phase, [content], done=True)
+    return [
+        *finished,
+        {'type': 'response.content_part.done', **common, 'part': part},
+        {'type': 'response.output_item.done', 'response_id': 'resp_1', 'output_index': output_index, 'item': item},
+        {'type': 'conversation.item.done', 'previous_item_id': None, 'item': item},
+    ]
+
+
+def _two_item_response(
+    *steps: tuple[Literal['delta', 'text', 'audio', 'done'], str, str], text: bool = False
+) -> list[dict[str, Any]]:
+    """A response with items `a` (`commentary`) and `b` (`final_answer`), each added before its first step.
+
+    Each step is a transcript delta in the response's output modality, an output-text delta whatever the modality,
+    a base64 audio delta, or the frames that finish the item, with its final transcript.
+    """
+    items = {'a': (0, 'commentary'), 'b': (1, 'final_answer')}
+    frames: list[dict[str, Any]] = [
+        {'type': 'response.created', 'response': {'id': 'resp_1', 'status': 'in_progress', 'output': []}}
+    ]
+    opened: set[str] = set()
+    for kind, item, payload in steps:
+        output_index, phase = items[item]
+        common = {'response_id': 'resp_1', 'item_id': item, 'output_index': output_index}
+        if item not in opened:
+            opened.add(item)
+            added = _assistant_item(item, phase, [], done=False)
+            frames += [
+                {
+                    'type': 'response.output_item.added',
+                    'response_id': 'resp_1',
+                    'output_index': output_index,
+                    'item': added,
+                },
+                {'type': 'conversation.item.added', 'previous_item_id': None, 'item': added},
+                {
+                    'type': 'response.content_part.added',
+                    **common,
+                    'content_index': 0,
+                    'part': {'type': 'text', 'text': ''} if text else {'type': 'audio', 'transcript': ''},
+                },
+            ]
+        if kind == 'done':
+            frames += _item_done(item, output_index, phase, payload, text=text)
+        elif kind == 'audio':
+            frames.append({'type': 'response.output_audio.delta', **common, 'content_index': 0, 'delta': payload})
+        else:
+            delta_type = (
+                'response.output_text.delta' if text or kind == 'text' else 'response.output_audio_transcript.delta'
+            )
+            frames.append({'type': delta_type, **common, 'delta': payload})
+    frames.append({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}})
+    return frames
+
+
+RecordedPart: TypeAlias = tuple[str, str | None, dict[str, Any] | None]
+"""A recorded part's type name, text, and provider details."""
+
+StreamStep: TypeAlias = tuple[Literal['start', 'delta', 'end'], int, str | None]
+"""A streamed part event's kind, index relative to the first streamed part, and text."""
+
+
+@dataclass(frozen=True)
+class LateTranscriptCase:
+    id: str
+    frames: list[dict[str, Any]]
+    history: list[RecordedPart]
+    stream: list[StreamStep]
+
+
+LATE_TRANSCRIPT_CASES = [
+    LateTranscriptCase(
+        id='in-order',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello world.'),
+            ('done', 'a', 'Hello world.'),
+            ('delta', 'b', 'Bonjour.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # The order https://github.com/pydantic/pydantic-ai/issues/10095 reports: every item's deltas, then every
+        # item's `done` frames.
+        id='late-done',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'a', ' world.'),
+            ('delta', 'b', 'Bonjour'),
+            ('delta', 'b', ' tout le monde.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour tout le monde.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour tout le monde.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour'),
+                ('delta', 1, ' tout le monde.'),
+                ('end', 1, 'Bonjour tout le monde.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        id='late-done-empty',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello world.'),
+            ('delta', 'b', 'Bonjour.'),
+            ('done', 'a', ''),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Text the stream has not shown yet streams the item's part again under its own index, which replaces it,
+        # while the part under way keeps streaming.
+        id='late-delta',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Each late delta streams the item's part again, with the transcript so far.
+        id='late-deltas',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' there'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello there world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello there world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' there'),
+                ('end', 0, 'Hello there'),
+                ('start', 0, 'Hello there'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello there world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Text output for an item whose part is speech isn't the same part's text, so it opens a part of its own.
+        id='late-delta-other-modality',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('text', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+                ('TextPart', ' world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+                ('start', 2, ''),
+                ('delta', 2, ' world.'),
+                ('end', 2, ' world.'),
+                ('start', 3, ''),
+                ('delta', 3, 'Hello world.'),
+                ('end', 3, 'Hello world.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        id='late-delta-text-output',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+            text=True,
+        ),
+        history=snapshot(
+            [
+                ('TextPart', 'Hello world.', {'phase': 'commentary'}),
+                ('TextPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in LATE_TRANSCRIPT_CASES])
+async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscriptCase) -> None:
+    """A transcript that arrives for an item after a later item's content keeps that item to one part.
+
+    Both in history and in the event stream: a late transcript that adds nothing streams nothing, and one that
+    adds text streams the item's part again under the index it ended with. A late transcript of the other
+    modality than the item's part opens a part of its own. Scripted frames rather than a recording: the
+    provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    stream: list[PartStartEvent | PartDeltaEvent | PartEndEvent] = []
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in case.frames:
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent)):
+                    stream.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+
+    def text_of(part: ModelResponsePart) -> str | None:
+        if isinstance(part, TextPart):
+            return part.content
+        assert isinstance(part, SpeechPart)
+        return part.transcript
+
+    def summarize(messages: list[ModelMessage]) -> list[RecordedPart]:
+        (response,) = [message for message in messages if isinstance(message, ModelResponse)]
+        return [(type(part).__name__, text_of(part), part.provider_details) for part in response.parts]
+
+    first_index = stream[0].index
+    streamed: list[StreamStep] = []
+    for event in stream:
+        if isinstance(event, PartDeltaEvent):
+            delta = event.delta
+            if isinstance(delta, TextPartDelta):
+                streamed.append(('delta', event.index - first_index, delta.content_delta))
+            else:
+                assert isinstance(delta, SpeechPartDelta)
+                streamed.append(('delta', event.index - first_index, delta.transcript_delta))
+        else:
+            kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+            streamed.append((kind, event.index - first_index, text_of(event.part)))
+    history = summarize(session.all_messages())
+    assert history == case.history
+    assert [(kind, text) for kind, text, _ in summarize(own)] == [(kind, text) for kind, text, _ in history]
+    assert streamed == case.stream
+
+
+async def test_late_transcript_restarts_a_speech_part_without_its_audio() -> None:
+    """A late transcript streams the item's speech part again with no audio at its start, as the part first did.
+
+    Retained audio arrives with the part's end, both times, and history keeps it on the item's one part. Scripted
+    frames rather than a recording: the provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+    )
+    frames = _two_item_response(
+        ('audio', 'a', base64.b64encode(b'\x01\x00' * 240).decode('ascii')),
+        ('delta', 'a', 'Hello'),
+        ('delta', 'b', 'Bonjour.'),
+        ('done', 'a', 'Hello world.'),
+        ('done', 'b', 'Bonjour.'),
+    )
+    streamed: list[tuple[str, str | None, bool]] = []
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in frames:
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, (PartStartEvent, PartEndEvent)) and isinstance(event.part, SpeechPart):
+                    kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+                    streamed.append((kind, event.part.transcript, event.part.audio is not None))
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        recorded = [
+            (part.transcript, part.audio is not None)
+            for message in session.all_messages()
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, SpeechPart)
+        ]
+    assert streamed == snapshot(
+        [
+            ('start', '', False),
+            ('end', 'Hello', True),
+            ('start', '', False),
+            ('start', 'Hello', False),
+            ('end', 'Hello world.', True),
+            ('end', 'Bonjour.', False),
+        ]
+    )
+    assert recorded == snapshot([('Hello world.', True), ('Bonjour.', False)])
+
+
+async def test_transcript_after_its_response_ended_changes_nothing_recorded() -> None:
+    """An item's transcript that arrives after its response ended doesn't fold into what that response recorded.
+
+    Scripted frames rather than a recording: the provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in _two_item_response(('delta', 'a', 'Hello'), ('delta', 'b', 'Bonjour.')):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    # Frames are handled in order, so the error after the late transcript marks it handled.
+                    for frame in _item_done('a', 0, 'commentary', 'Hello world.', text=False):
+                        ws.push(frame)
+                    ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
+                elif isinstance(event, RealtimeSessionErrorEvent):
+                    break
+        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        recorded = session.all_messages()
+
+    def transcripts(messages: list[ModelMessage]) -> list[list[str | None]]:
+        responses = [message for message in messages if isinstance(message, ModelResponse)]
+        return [[part.transcript for part in response.parts if isinstance(part, SpeechPart)] for response in responses]
+
+    assert transcripts(recorded) == transcripts(own) == [['Hello', 'Bonjour.']]
+
+
+async def test_evicted_output_audio_is_released() -> None:
+    """Output audio `retain_audio_max_seconds` evicts from history is no longer held anywhere in the session.
+
+    Nothing in the messages shows memory that is still held, so a weak reference to the evicted audio checks it,
+    over scripted frames sized to the budget rather than a recording.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+        retain_audio_max_seconds=1.5,
+    )
+    one_second = base64.b64encode(b'\x01\x00' * 24000).decode('ascii')
+
+    def reply(response_id: str) -> list[dict[str, Any]]:
+        item = {'response_id': response_id, 'item_id': f'item-{response_id}'}
+        return [
+            {'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress', 'output': []}},
+            {'type': 'response.output_audio.delta', **item, 'delta': one_second},
+            {'type': 'response.output_audio_transcript.delta', **item, 'delta': 'Hello.'},
+            {'type': 'response.done', 'response': {'id': response_id, 'status': 'completed', 'output': []}},
+        ]
+
+    def retained() -> list[BinaryContent | None]:
+        return [
+            part.audio for message in session.all_messages() for part in message.parts if isinstance(part, SpeechPart)
+        ]
+
+    async with session:
+        await session.send('Hi.')
+        for frame in reply('resp_1'):
+            ws.push(frame)
+        evicted: weakref.ref[BinaryContent] | None = None
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if not isinstance(event, RealtimeTurnCompleteEvent):
+                    continue
+                if evicted is not None:
+                    break
+                (audio,) = retained()
+                assert audio is not None
+                evicted = weakref.ref(audio)
+                del audio
+                await session.send('Again.')
+                await ws.wait_for_creates(2)
+                for frame in reply('resp_2'):
+                    ws.push(frame)
+        assert [audio is not None for audio in retained()] == [False, True]
+        gc.collect()
+        assert evicted is not None and evicted() is None

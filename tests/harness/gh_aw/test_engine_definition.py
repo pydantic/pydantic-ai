@@ -24,13 +24,21 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import ModuleType
+from typing import Literal
 
 import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_ai import Agent, ModelMessage, RunContext, ToolReturnPart
-from pydantic_ai.messages import PartEndEvent, TextPart
+from pydantic_ai import Agent, ModelMessage, NativeToolCallPart, NativeToolReturnPart, RunContext, ToolReturnPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPart,
+    ToolCallPartDelta,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -146,7 +154,6 @@ class _Behaviors(BaseModel):
 class _Engine(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
-    version: str
     behaviors: _Behaviors
 
 
@@ -255,7 +262,6 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         'pydantic-ai-harness==${GH_AW_ENGINE_VERSION}',
         'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
     ]
-    assert definition().engine.version == '0.54.0'
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
 
 
@@ -498,6 +504,7 @@ def test_the_frame_key_is_sent_out_of_band_and_removed_from_the_child_environmen
     assert invocation.stdin == f'{invocation.frame_key}\n'
 
 
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 @requires_clai2
 def test_an_imported_agent_does_not_pass_the_frame_key_to_its_children(tmp_path: Path) -> None:
     invocation = launch(
@@ -808,6 +815,7 @@ async def test_a_failed_stream_emits_one_partial_message_and_failure_result(
     assert all(event.id != 'forged' for event in parsed.log_entries)
 
 
+@pytest.mark.subprocess(reason='connects to `tests/mcp_server.py` over stdio')
 async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -957,6 +965,290 @@ async def test_output_tool_arguments_and_results_are_tool_events(
     }
 
 
+@pytest.mark.parametrize(('outcome', 'success'), [('success', True), ('failed', False)])
+async def test_native_tool_calls_and_returns_are_tool_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: Literal['success', 'failed'],
+    success: bool,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'native_agent.py').write_text(
+        'from pydantic_ai import Agent\nagent = Agent(name="native")\n',
+        encoding='utf-8',
+    )
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'native_agent:agent'})
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    monkeypatch.delitem(sys.modules, 'native_agent', raising=False)
+    module = import_generated_agent(invocation, monkeypatch)
+    agent: Agent[None, str] = module.agent
+    observed_call_counts: list[tuple[str, int]] = []
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
+
+    def observe_call_lifecycle(_ctx: RunContext[None], event: AgentStreamEvent) -> None:
+        if (
+            isinstance(event, (PartStartEvent, PartEndEvent))
+            and isinstance(event.part, NativeToolCallPart)
+            or isinstance(event, PartDeltaEvent)
+            and isinstance(event.delta, ToolCallPartDelta)
+        ):
+            events = [
+                _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+                for line in event_output.getvalue().split('\n')
+                if line.startswith(prefix)
+            ]
+            starts = [event for event in events if event.type == 'tool.execution_start']
+            observed_call_counts.append((type(event).__name__, len(starts)))
+
+    agent.on_event(observe_call_lifecycle)
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | dict[int, NativeToolCallPart | NativeToolReturnPart]]:
+        yield {
+            0: NativeToolCallPart(
+                provider_name='function', tool_name='web_search', tool_call_id='native-id', args='{"query":'
+            )
+        }
+        yield {0: DeltaToolCall(json_args='"Pydantic"}')}
+        yield {
+            1: NativeToolReturnPart(
+                provider_name='function',
+                tool_name='web_search',
+                tool_call_id='native-id',
+                content={'results': ['Pydantic docs']},
+                outcome=outcome,
+            )
+        }
+        yield 'answer'
+
+    async with agent.run_stream_events('search', model=FunctionModel(stream_function=stream)) as events:
+        _ = [type(event).__name__ async for event in events]
+    module._recorder.finish(exit_code=0)
+
+    records = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in event_output.getvalue().split('\n')
+        if line.startswith(prefix)
+    ]
+    starts = [event.data for event in records if event.type == 'tool.execution_start']
+    completions = [event.data for event in records if event.type == 'tool.execution_complete']
+    assert observed_call_counts == [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartEndEvent', 1)]
+    assert starts == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'input': {'query': 'Pydantic'},
+            'sourceType': 'native_tool',
+        }
+    ]
+    assert completions == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'success': success,
+            'status': outcome,
+            'output': {'results': ['Pydantic docs']},
+            **({} if success else {'error': {'results': ['Pydantic docs']}}),
+            'sourceType': 'native_tool',
+        }
+    ]
+
+
+async def test_native_tool_part_replacement_is_recorded_once_per_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'native_agent.py').write_text(
+        'from pydantic_ai import Agent\nagent = Agent(name="native")\n',
+        encoding='utf-8',
+    )
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'native_agent:agent'})
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    monkeypatch.delitem(sys.modules, 'native_agent', raising=False)
+    module = import_generated_agent(invocation, monkeypatch)
+    agent: Agent[None, str] = module.agent
+
+    @agent.tool_plain
+    def continue_run() -> str:
+        return 'continue'
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | dict[int, NativeToolCallPart | NativeToolReturnPart]]:
+        if len(messages) == 1:
+            yield {0: NativeToolCallPart(provider_name='function', tool_name='web_search', tool_call_id='native-id')}
+            yield {
+                0: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    args={'query': 'canonical input'},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['stale first result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['first final result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['first last result']},
+                )
+            }
+            yield {2: DeltaToolCall(name='continue_run', json_args='{}', tool_call_id='continue-id')}
+        else:
+            yield {
+                0: NativeToolCallPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    args={'query': 'later response'},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['stale later result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['later final result']},
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    provider_name='function',
+                    tool_name='web_search',
+                    tool_call_id='native-id',
+                    content={'results': ['later last result']},
+                )
+            }
+            yield 'answer'
+
+    async with agent.run_stream_events('search', model=FunctionModel(stream_function=stream)) as events:
+        _ = [type(event).__name__ async for event in events]
+    module._recorder.finish(exit_code=0)
+
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
+    events = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in event_output.getvalue().split('\n')
+        if line.startswith(prefix)
+    ]
+    parsed = parse_log(tmp_path, invocation.stdout + event_output.getvalue())
+    starts = [event.data for event in events if event.type == 'tool.execution_start']
+    completions = [event.data for event in events if event.type == 'tool.execution_complete']
+    native_completions = [event for event in completions if event.get('sourceType') == 'native_tool']
+    assert parsed.log_entries == events
+    assert starts == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'input': {'query': 'canonical input'},
+            'sourceType': 'native_tool',
+        },
+        {'toolCallId': 'continue-id', 'toolName': 'continue_run', 'input': {}},
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'input': {'query': 'later response'},
+            'sourceType': 'native_tool',
+        },
+    ]
+    assert native_completions == [
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'success': True,
+            'status': 'success',
+            'output': {'results': ['first last result']},
+            'sourceType': 'native_tool',
+        },
+        {
+            'toolCallId': 'native-id',
+            'toolName': 'web_search',
+            'success': True,
+            'status': 'success',
+            'output': {'results': ['later last result']},
+            'sourceType': 'native_tool',
+        },
+    ]
+    assert [event.type for event in events].count('tool.execution_start') == 3
+    assert '**Tool calls:** 3' in parsed.markdown.split(' · ')
+
+
+async def test_native_tool_return_is_flushed_when_stream_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    module = import_generated_agent(invocation, monkeypatch)
+    agent: Agent[None, str] = module.agent
+
+    async def broken_stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | dict[int, NativeToolCallPart | NativeToolReturnPart]]:
+        yield {
+            0: NativeToolReturnPart(
+                provider_name='function',
+                tool_name='web_search',
+                tool_call_id='native-id',
+                content={'results': ['observed before failure']},
+            )
+        }
+        raise RuntimeError('provider failed')
+
+    with pytest.raises(RuntimeError, match='provider failed'):
+        async with agent.run_stream_events('search', model=FunctionModel(stream_function=broken_stream)) as events:
+            _ = [type(event).__name__ async for event in events]
+    module._recorder.finish(exit_code=1)
+
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
+    events = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in event_output.getvalue().split('\n')
+        if line.startswith(prefix)
+    ]
+    parsed = parse_log(tmp_path, invocation.stdout + event_output.getvalue())
+    completions = [event for event in events if event.type == 'tool.execution_complete']
+    assert parsed.log_entries == events
+    assert len(completions) == 1
+    assert completions[0].data == {
+        'toolCallId': 'native-id',
+        'toolName': 'web_search',
+        'success': True,
+        'status': 'success',
+        'output': {'results': ['observed before failure']},
+        'sourceType': 'native_tool',
+    }
+    assert events[-1].type == 'session.result'
+    assert events[-1].data['status'] == 'failure'
+
+
 async def test_tool_event_inputs_preserve_json_scalars_arrays_null_and_malformed_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1059,6 +1351,19 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
     assert events[-1].data['status'] == 'failure'
 
 
+def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
+    """CLI arguments that point CLAI at a settings database with code mode off.
+
+    CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
+    """
+    from pydantic_clai2.config.settings_store import SettingsStore
+
+    database = tmp_path / 'clai2.db'
+    SettingsStore(database).set('run.code_mode', False)
+    return '--database', str(database)
+
+
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 @pytest.mark.parametrize(
     ('cli_fails', 'expected_exit_code', 'expected_status'),
     [(False, 0, 'success'), (True, 2, 'failure')],
@@ -1105,7 +1410,7 @@ sys.__stdout__ = _FailTerminalWrites(sys.__stdout__)
     extra_cli_args = ('--gh-aw-invalid',) if cli_fails else ()
 
     completed = subprocess.run(
-        [sys.executable, *arguments, *extra_cli_args],
+        [sys.executable, *arguments, *code_mode_off_args(tmp_path), *extra_cli_args],
         cwd=invocation.cwd,
         env=invocation.env,
         input=invocation.stdin,
@@ -1165,9 +1470,20 @@ class TestLauncherProgram:
             check=False,
         )
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
     def test_the_agent_module_is_imported_once_and_not_from_the_checkout(self, tmp_path: Path) -> None:
-        completed = self.run(tmp_path, 'gh_aw_agent:agent', '-a', 'gh_aw_agent:agent', '-m', 'test', '-p', 'hello')
+        completed = self.run(
+            tmp_path,
+            'gh_aw_agent:agent',
+            '-a',
+            'gh_aw_agent:agent',
+            '-m',
+            'test',
+            '-p',
+            'hello',
+            *code_mode_off_args(tmp_path),
+        )
 
         assert completed.returncode == 0, completed.stderr
         # One line, from the module directory: the CLI reused the module the launcher
@@ -1176,6 +1492,7 @@ class TestLauncherProgram:
         assert (tmp_path / 'imports.txt').read_text(encoding='utf-8') == 'module-directory\n'
         assert re.search(rf'\x1eGH-AW-SESSION/{FRAME_KEY} \{{"type"\s*:\s*"session\.result"', completed.stdout)
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_a_target_that_is_not_an_agent_names_what_it_found(self, tmp_path: Path) -> None:
         (tmp_path / 'module').mkdir(parents=True, exist_ok=True)
         (tmp_path / 'module' / 'not_an_agent.py').write_text('agent = 1\n', encoding='utf-8')
@@ -1185,6 +1502,7 @@ class TestLauncherProgram:
         assert completed.returncode != 0
         assert 'TypeError: not_an_agent:agent is int, not pydantic_ai.Agent' in completed.stderr
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_an_agent_that_raises_on_import_fails_with_its_traceback(self, tmp_path: Path) -> None:
         (tmp_path / 'module').mkdir(parents=True, exist_ok=True)
         (tmp_path / 'module' / 'broken_agent.py').write_text(
@@ -1199,6 +1517,7 @@ class TestLauncherProgram:
         # The message `pai` prints instead of a traceback when its own load fails.
         assert 'Could not load agent' not in completed.stderr + completed.stdout
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
     def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
         invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=CLAI2_SOURCE)
@@ -1231,6 +1550,7 @@ class TestLauncherProgram:
         assert event.type == 'session.result'
         assert event.data == {'status': 'failure', 'sourceType': 'pydantic-ai'}
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_a_custom_agent_import_failure_keeps_one_full_traceback(self, tmp_path: Path) -> None:
         workspace = tmp_path / 'workspace'
         workspace.mkdir()
