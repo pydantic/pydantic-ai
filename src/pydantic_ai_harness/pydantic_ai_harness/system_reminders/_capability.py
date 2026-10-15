@@ -15,16 +15,14 @@ from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
     TextContent,
     TextPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._cache_points import has_cache_point_target
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
@@ -200,7 +198,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 content: list[CachePoint | str] = []
                 # A leading `CachePoint` is only valid when the request already carries a
                 # user-content block for it to attach to; Anthropic and Bedrock raise otherwise.
-                if _has_user_content(last.parts):
+                if has_cache_point_target(last.parts):
                     content.append(CachePoint(ttl=self.cache_ttl))
                 content.append('\n\n'.join(texts))
                 messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
@@ -419,37 +417,6 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     if reminder.tag is not None:
         return f'<{reminder.tag}>\n{reminder.content}\n</{reminder.tag}>'
     return reminder.content
-
-
-def _has_user_content(parts: Sequence[ModelRequestPart]) -> bool:
-    """Whether these request parts already carry a block a `CachePoint` can attach to.
-
-    Anthropic and Bedrock reject a `CachePoint` that is the first content of a user message,
-    so the tail reminder leads with one only when the request already contributes user-mappable
-    content: a non-empty user prompt, a tool return, or a retry prompt. `SystemPromptPart` maps
-    to the system field, not user content, so it does not count.
-    """
-    for part in parts:
-        if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-            return True
-        if isinstance(part, UserPromptPart):
-            content = part.content
-            if isinstance(content, str):
-                if content:
-                    return True
-            elif any(_is_user_content_item(item) for item in content):
-                return True
-    return False
-
-
-def _is_user_content_item(item: object) -> bool:
-    if isinstance(item, CachePoint):
-        return False
-    if isinstance(item, str):
-        return bool(item)
-    if isinstance(item, TextContent):
-        return bool(item.content)
-    return True
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:

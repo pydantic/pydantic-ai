@@ -14,7 +14,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import WorkspaceError
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.')],
 )
 
@@ -62,7 +62,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
@@ -143,7 +143,7 @@ from pydantic_ai.workspaces import ReadOnlyWorkspace
 
 from workspace_agent import agent
 
-reviewer = Agent('anthropic:claude-opus-5-5', instructions='Review code. Be brief.')
+reviewer = Agent('{{ anthropic:large }}', instructions='Review code. Be brief.')
 
 
 @reviewer.tool
@@ -184,7 +184,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.', env={'UV_OFFLINE': '1'})],
 )
 ```
@@ -244,7 +244,7 @@ Pass `read_only=True` to let tools read and list files while refusing commands a
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.', read_only=True)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.', read_only=True)])
 ```
 
 A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
@@ -308,7 +308,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('~/projects/current', id='current'),  # new conversations
         LocalWorkspace('~/projects/archive', id='archive'),  # conversations that started here
@@ -354,7 +354,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     name='fizzbuzz',  # names the agent's Temporal activities
     capabilities=[LocalWorkspace('.'), TemporalDurability()],
 )
