@@ -5,7 +5,7 @@ These run local tasks and evaluators, so there's no provider boundary to record.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Generator, Sequence
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -69,6 +69,23 @@ class AsyncCallable:
 
     async def _evaluate(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorOutput:
         return ctx.output == 'HELLO'
+
+
+class Deferred:
+    """An awaitable that isn't a coroutine, like an `asyncio.Task`."""
+
+    def __init__(self, value: EvaluatorOutput) -> None:
+        self.value = value
+
+    def __await__(self) -> Generator[Any, Any, EvaluatorOutput]:
+        return self._resolve().__await__()
+
+    async def _resolve(self) -> EvaluatorOutput:
+        return self.value
+
+
+def deferred(ctx: EvaluatorContext[str, str, None]) -> Awaitable[EvaluatorOutput]:
+    return Deferred(ctx.output == 'HELLO')
 
 
 def upper(inputs: str) -> str:
@@ -377,3 +394,24 @@ def test_non_function_evaluators_rejected():
 
     with pytest.raises(TypeError, match="Expected an evaluator instance or function, got 'nope'"):
         Case[str, str, None](inputs='x', evaluators=['nope'])  # pyright: ignore[reportArgumentType]
+
+
+async def test_non_coroutine_awaitable():
+    """A function returning an awaitable that isn't a coroutine has its result awaited."""
+    results, failures = await run_evaluators([deferred], _make_context('HELLO'))
+
+    assert failures == []
+    assert results == snapshot(
+        [
+            EvaluationResult(
+                name='deferred', value=True, reason=None, source=EvaluatorSpec(name='deferred', arguments=None)
+            )
+        ]
+    )
+
+
+def test_evaluate_sync():
+    """`evaluate_sync` returns a sync function's result and runs an awaitable one to completion."""
+    context = _make_context('HELLO')
+    assert FunctionEvaluator(exact_match).evaluate_sync(context) is False
+    assert FunctionEvaluator(deferred).evaluate_sync(context) is True

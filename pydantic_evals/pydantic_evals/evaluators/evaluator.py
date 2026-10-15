@@ -305,6 +305,19 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
     ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:
         return self.function(ctx)
 
+    # `EvaluatorFunc` allows any awaitable (e.g. an `asyncio.Task`), not just the coroutines the base class handles.
+    def evaluate_sync(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
+        output = self.evaluate(ctx)
+        if inspect.isawaitable(output):
+            return run_until_complete(output)
+        return output
+
+    async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
+        output = self.evaluate(ctx)
+        if inspect.isawaitable(output):
+            return await output
+        return output
+
     def get_default_evaluation_name(self) -> str:
         return self.evaluation_name or get_unwrapped_function_name(self.function)
 
