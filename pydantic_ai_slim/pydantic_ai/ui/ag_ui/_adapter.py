@@ -291,20 +291,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """
 
     mcp_app_toolsets: Sequence[MCPToolset[Any]] = ()
-    """MCP toolsets whose [MCP Apps](../mcp/client.md#mcp-apps) pages may send requests to their server through this endpoint.
+    """MCP toolsets whose [MCP Apps](../mcp/client.md#mcp-apps) pages can send requests through this endpoint.
 
     Renderers built for the AG-UI MCP Apps middleware, such as CopilotKit's, send a page's `tools/call` and
-    `resources/read` requests as runs. When such a run names the [`id`][pydantic_ai.mcp.MCPToolset.id] of
-    one of these toolsets, the adapter answers it from that toolset with
-    [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] or
+    `resources/read` requests as runs. A run that names one of these toolsets by [`id`][pydantic_ai.mcp.MCPToolset.id]
+    is answered with [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] or
     [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] instead of running the agent.
-    Tool calls are limited to tools visible to apps and don't go through
-    [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call]; any resource on these servers can be read.
-    Anyone who can post to this endpoint can make these requests, so check that the request belongs to the user
-    before dispatching it.
+    Anyone who can post to this endpoint can make these requests, so check the user before dispatching.
 
-    Only [`run_stream`][pydantic_ai.ui.UIAdapter.run_stream], and so `dispatch_request`, answers these runs;
-    `run_stream_native` still runs the agent. Defaults to no toolsets, which runs the agent for every request.
+    Only [`run_stream`][pydantic_ai.ui.UIAdapter.run_stream], and so `dispatch_request`, answers these runs.
     """
 
     @classmethod
