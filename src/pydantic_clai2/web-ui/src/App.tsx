@@ -16,6 +16,11 @@ import { initial, reduce } from './state'
 
 type Theme = 'dark' | 'light'
 
+interface Opening {
+  id: string
+  title: string
+}
+
 function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
   if (saved === 'dark' || saved === 'light') return saved
@@ -29,6 +34,9 @@ export function App() {
   const [sidebar, setSidebar] = useState(true)
   const [repl, setRepl] = useState(() => localStorage.getItem('clai-repl') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
+  // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
+  const [opening, setOpening] = useState<Opening | null>(null)
+  const picked = useRef(0)
   const [toast, setToast] = useState<string | null>(null)
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
@@ -81,32 +89,64 @@ export function App() {
     document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
   }, [state.session?.title])
 
-  // A switch of the live session ends any read-only preview.
-  useEffect(() => setPreview(null), [state.session?.id])
+  // A switch of the live session ends any read-only preview, and the wait for it if it is the one picked.
+  const sessionId = state.session?.id
+  useEffect(() => {
+    setPreview(null)
+    setOpening((current) => (current?.id === sessionId ? null : current))
+  }, [sessionId])
+
+  // The shell may not switch at all (it reports a failed `/resume` in the terminal), so stop waiting eventually.
+  useEffect(() => {
+    if (!opening) return
+    const timer = window.setTimeout(() => setOpening(null), 15000)
+    return () => window.clearTimeout(timer)
+  }, [opening])
 
   const showError = useCallback((message: string) => {
     setToast(message)
     window.setTimeout(() => setToast((current) => (current === message ? null : current)), 5000)
   }, [])
 
-  const view = useCallback(
-    async (session: SessionEntry) => {
-      if (session.current) {
-        setPreview(null)
-        return
-      }
+  const open = useCallback(
+    async (session: Opening) => {
+      setOpening(session)
       try {
-        const saved = await api.transcript(session.id)
-        if (saved.openable && !state.running) {
-          await api.open(session.id)
-        } else {
-          setPreview(saved)
-        }
+        await api.open(session.id)
       } catch (error) {
+        setOpening(null)
         showError(error instanceof Error ? error.message : String(error))
       }
     },
-    [state.running, showError],
+    [showError],
+  )
+
+  const view = useCallback(
+    async (session: SessionEntry) => {
+      // Only the last session clicked is shown, however the requests for earlier ones resolve.
+      const request = ++picked.current
+      if (session.current) {
+        setPreview(null)
+        setOpening(null)
+        return
+      }
+      setOpening(session)
+      try {
+        const saved = await api.transcript(session.id)
+        if (request !== picked.current) return
+        if (saved.openable && !state.running) {
+          await open(session)
+        } else {
+          setPreview(saved)
+          setOpening(null)
+        }
+      } catch (error) {
+        if (request !== picked.current) return
+        setOpening(null)
+        showError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [state.running, showError, open],
   )
 
   useEffect(() => {
@@ -165,6 +205,7 @@ export function App() {
           ref={sidebarRef}
           version={state.sessionsVersion}
           viewing={preview?.id ?? null}
+          opening={opening?.id ?? null}
           theme={theme}
           connected={connection === 'open'}
           onTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -214,7 +255,7 @@ export function App() {
               ? 'A turn is running. You can switch to this session once it ends.'
               : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
             {preview.openable && !state.running && (
-              <button className="primary small" onClick={() => void api.open(preview.id)}>
+              <button className="primary small" onClick={() => void open(preview)}>
                 Continue here
               </button>
             )}
@@ -250,6 +291,14 @@ export function App() {
               {!preview && composerElement}
             </footer>
           </>
+        )}
+        {opening && (
+          <div className="opening-overlay" role="status">
+            <span className="spinner" />
+            <span>
+              Opening <span className="opening-title">{opening.title}</span>…
+            </span>
+          </div>
         )}
         {connection === 'expired' && (
           <div className="toast expired" role="alert">

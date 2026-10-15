@@ -22,6 +22,8 @@ export interface SidebarHandle {
 interface Props {
   version: number
   viewing: string | null
+  /** The session being opened, which shows a spinner. */
+  opening: string | null
   theme: 'dark' | 'light'
   connected: boolean
   onTheme: () => void
@@ -43,7 +45,7 @@ export function ago(iso: string): string {
 
 /** Saved sessions grouped by project, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { version, viewing, theme, connected, onTheme, themeInfo, onPickTheme, onView, onCollapse, onError },
+  { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onCollapse, onError },
   ref,
 ) {
   const [query, setQuery] = useState('')
@@ -162,7 +164,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                 project.sessions.map((session) => (
                   <div
                     key={session.id}
-                    className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''}`}
+                    className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''}`}
                   >
                     {renaming === session.id ? (
                       <input
@@ -186,6 +188,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                       <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
                         <span className={`state ${session.state}`} />
                         <span className="session-title">{session.title}</span>
+                        {opening === session.id && <span className="spinner" aria-label="Opening" />}
                         <span className="session-time">{session.state === 'running' ? '' : ago(session.updated_at)}</span>
                       </button>
                     )}

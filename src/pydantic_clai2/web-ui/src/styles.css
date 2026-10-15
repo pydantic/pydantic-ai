@@ -375,6 +375,10 @@ pre {
   display: none;
 }
 
+.session.opening .session-time {
+  display: none;
+}
+
 .session-more {
   display: none;
   place-items: center;
@@ -541,6 +545,55 @@ pre {
 
 .activity.busy {
   color: var(--text-soft);
+}
+
+/* Shown only when opening a session takes long enough to notice; a quick switch never flashes it. */
+.spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation:
+    spin 0.7s linear infinite,
+    appear 0.15s ease 0.12s both;
+}
+
+.opening-overlay {
+  position: absolute;
+  inset: 52px 0 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+  animation: appear 0.15s ease 0.12s both;
+}
+
+.opening-overlay .spinner {
+  width: 18px;
+  height: 18px;
+  animation: spin 0.7s linear infinite;
+}
+
+.opening-title {
+  color: var(--text);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
 }
 
 .preview-banner {
