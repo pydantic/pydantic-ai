@@ -1143,17 +1143,15 @@ class OpenRouterModel(OpenAIChatModel):
                 self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
             # A turn-scoped prompt ends the request as its own user message (see `_turn_scoped_tail_texts`),
             # and the next request won't send it, so the breakpoint goes on the message before it.
+            # Matched from the end, in order, so a lasting message with the same text as a reminder stays.
             turn_scoped_texts = _turn_scoped_tail_texts(messages)
-            anchor = next(
-                (
-                    message
-                    for message in reversed(openai_messages)
-                    if not _is_text_message_in(message, turn_scoped_texts)
-                ),
-                None,
-            )
-            if anchor is not None:
-                self._add_cache_control_to_message(anchor, cache_messages)
+            end = len(openai_messages)
+            remaining = len(turn_scoped_texts)
+            while end and remaining and _is_text_message(openai_messages[end - 1], turn_scoped_texts[remaining - 1]):
+                end -= 1
+                remaining -= 1
+            if end:
+                self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
 
         if (
             model_settings
@@ -1465,7 +1463,6 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
 
-def _is_text_message_in(message: chat.ChatCompletionMessageParam, texts: frozenset[str]) -> bool:
-    """Whether `message` is a user message whose content is one of `texts`, as a turn-scoped prompt renders."""
-    content = message.get('content')
-    return message['role'] == 'user' and isinstance(content, str) and content in texts
+def _is_text_message(message: chat.ChatCompletionMessageParam, text: str) -> bool:
+    """Whether `message` is a user message whose content is `text`, as a turn-scoped prompt renders."""
+    return message['role'] == 'user' and message.get('content') == text

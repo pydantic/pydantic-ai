@@ -1621,8 +1621,13 @@ class BedrockConverseModel(Model[BaseClient]):
                     # before it. One with nothing ahead of it in the message gets no breakpoint.
                     turn_scoped_texts = _turn_scoped_tail_texts(messages)
                     end = len(last_user_content)
-                    while end and last_user_content[end - 1].get('text') in turn_scoped_texts:
+                    remaining = len(turn_scoped_texts)
+                    # Matched from the end, in order, so lasting text equal to a reminder ahead of it stays.
+                    while (
+                        end and remaining and last_user_content[end - 1].get('text') == turn_scoped_texts[remaining - 1]
+                    ):
                         end -= 1
+                        remaining -= 1
                     lasting_content = last_user_content[:end]
                     if lasting_content and 'cachePoint' not in lasting_content[-1]:
                         _insert_cache_point_before_trailing_documents(

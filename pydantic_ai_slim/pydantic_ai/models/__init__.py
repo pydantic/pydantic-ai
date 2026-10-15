@@ -2613,19 +2613,21 @@ def _move_turn_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[Mode
     return moved
 
 
-def _turn_scoped_tail_texts(messages: Sequence[ModelMessage]) -> frozenset[str]:  # pyright: ignore[reportUnusedFunction]
-    """The texts the current turn's turn-scoped prompts render as, for a model that can't clear them itself.
+def _turn_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, ...]:  # pyright: ignore[reportUnusedFunction]
+    """The texts the current turn's turn-scoped prompts render as, in order, for a model that can't clear them itself.
 
-    Adapters that place a cache breakpoint automatically skip wire blocks carrying these texts, so the
-    breakpoint lands on the last block the next request will still contain. Empty for a model that
-    clears turn-scoped prompts itself; its adapter recognizes them on the wire instead.
+    They end the request, so adapters that place a cache breakpoint automatically skip the wire blocks at
+    the end of the request carrying these texts, matched from the end in order, and the breakpoint lands on
+    the last block the next request will still contain. Matching only that suffix keeps lasting content
+    with the same text as a reminder in the cached prefix. Empty for a model that clears turn-scoped
+    prompts itself; its adapter recognizes them on the wire instead.
     """
     request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
     namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if request else None
     count = namespace.get(_TURN_SCOPED_TAIL_KEY) if _utils.is_str_dict(namespace) else None
     if request is None or not isinstance(count, int) or count <= 0:
-        return frozenset()
-    return frozenset(
+        return ()
+    return tuple(
         part.content
         for part in request.parts[-count:]
         if isinstance(part, SystemPromptPart | UserPromptPart) and isinstance(part.content, str)

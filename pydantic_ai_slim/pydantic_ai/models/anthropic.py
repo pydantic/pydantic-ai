@@ -2974,7 +2974,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         resolved_ttl: Literal['5m', '1h'] | None,
         anthropic_messages: list[BetaMessageParam],
-        turn_scoped_texts: frozenset[str] = frozenset(),
+        turn_scoped_texts: tuple[str, ...] = (),
     ) -> None:
         """Apply per-block message caching where `anthropic_cache`'s automatic breakpoint can't be relied on.
 
@@ -3000,7 +3000,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         model_settings: AnthropicModelSettings,
         anthropic_messages: list[BetaMessageParam],
-        turn_scoped_texts: frozenset[str] = frozenset(),
+        turn_scoped_texts: tuple[str, ...] = (),
     ) -> None:
         """Apply per-block message caching when `anthropic_cache_messages` is enabled.
 
@@ -3014,7 +3014,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         anthropic_messages: list[BetaMessageParam],
         ttl: Literal['5m', '1h'],
-        turn_scoped_texts: frozenset[str] = frozenset(),
+        turn_scoped_texts: tuple[str, ...] = (),
     ) -> None:
         """Apply per-block `cache_control` to the last content block the next request will still send.
 
@@ -3045,17 +3045,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             previous_tail = previous_tail_needing_breakpoint([message['role'] for message in lasting], block_counts)
             if previous_tail is not None:
                 self._add_message_cache_control(lasting[previous_tail], ttl)
-        nothing_to_cache: list[BetaContentBlockParam] = []
-        lasting_blocks = next(
-            (
-                blocks
-                for message in reversed(anthropic_messages)
-                if message.get('clear_at') != 'next_user_message'
-                and (blocks := _blocks_before_turn_scoped_text(message, turn_scoped_texts))
-            ),
-            nothing_to_cache,
-        )
-        self._add_cache_control_to_last_cacheable_param(lasting_blocks, ttl)
+        remaining = turn_scoped_texts
+        for message in reversed(anthropic_messages):
+            if message.get('clear_at') == 'next_user_message':
+                continue
+            blocks, remaining = _blocks_before_turn_scoped_text(message, remaining)
+            if blocks:
+                self._add_cache_control_to_last_cacheable_param(blocks, ttl)
+                return
 
     def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:
         """Add `cache_control` to the last cacheable content block of `message`, unless it already has one."""
@@ -4111,20 +4108,32 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
-def _blocks_before_turn_scoped_text(message: BetaMessageParam, texts: frozenset[str]) -> list[BetaContentBlockParam]:
-    """`message`'s content blocks up to its trailing text blocks carrying one of `texts`.
+def _blocks_before_turn_scoped_text(
+    message: BetaMessageParam, texts: tuple[str, ...]
+) -> tuple[list[BetaContentBlockParam], tuple[str, ...]]:
+    """`message`'s content blocks up to the trailing text blocks rendering the last of `texts`, and the texts left over.
 
-    The blocks are the message's own, so `cache_control` added to one lands on the wire. A `str`
-    content body is turned into a single text block first, so it can carry one.
+    `texts` are the turn-scoped prompts ending the request, in order, so they're matched from the end: a lasting
+    block with the same text as a reminder, ahead of it, stays. The blocks are the message's own, so
+    `cache_control` added to one lands on the wire. A `str` content body is turned into a single text block first,
+    so it can carry one.
     """
     content = message['content']
     if isinstance(content, str):  # pragma: no cover
         content = message['content'] = [BetaTextBlockParam(type='text', text=content)]
     blocks = cast(list[BetaContentBlockParam], content)
     end = len(blocks)
-    while end and is_str_dict(block := blocks[end - 1]) and block.get('type') == 'text' and block.get('text') in texts:
+    remaining = len(texts)
+    while (
+        end
+        and remaining
+        and is_str_dict(block := blocks[end - 1])
+        and block.get('type') == 'text'
+        and block.get('text') == texts[remaining - 1]
+    ):
         end -= 1
-    return blocks[:end]
+        remaining -= 1
+    return blocks[:end], texts[:remaining]
 
 
 def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901

@@ -40,7 +40,11 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import (
+    ModelRequestContext,
+    ModelRequestParameters,
+    _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -590,6 +594,37 @@ async def test_retry_without_response_drops_the_turn_scoped_prompt():
     assert turn_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
 
 
+async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
+    """Resuming a provider-suspended turn sends the history ending in it unchanged, with nothing added after it.
+
+    That request is a continuation of the paused one, so a reminder a `before_model_request` hook enqueues
+    then waits for the next request instead of landing after the suspended response, which the resume
+    request has to end with.
+    """
+    seen: list[list[ModelMessage]] = []
+    agent = weather_agent(recording_function_model(seen))
+
+    result = await agent.run(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(PROMPT)]),
+            ModelResponse(parts=[TextPart('Checking.')], state='suspended'),
+        ]
+    )
+
+    assert result.output == 'done'
+    assert 'Reminder' not in str(seen[0])
+    assert [
+        [str(part.content) for part in messages[-1].parts if 'Reminder' in str(part.content)] for messages in seen[1:]
+    ] == [
+        [
+            '<system>Reminder: be terse. This is request 1.</system>',
+            '<system>Reminder: be terse. This is request 2.</system>',
+        ],
+        ['<system>Reminder: be terse. This is request 3.</system>'],
+    ]
+    assert turn_scoped_texts(result.all_messages()) == [f'Reminder: be terse. This is request {n}.' for n in (1, 2, 3)]
+
+
 async def test_fallback_attempts_keep_the_turn_scoped_prompt():
     """A fallback attempt is still the same step's turn, so the next model is sent the same reminder."""
     seen: list[list[ModelMessage]] = []
@@ -879,3 +914,66 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
         for block_index, block in enumerate(cast(list[dict[str, Any]], message['content']))
         if 'cache_control' in block
     ] == [(0, 0), (3, 11)]
+
+
+def duplicate_text_history() -> list[ModelMessage]:
+    """A tool round whose lasting user text is the same as the turn-scoped reminder after it, as rendered."""
+    return [
+        ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Paris: 18C', tool_call_id='call_1'),
+                UserPromptPart('<system>Reminder.</system>'),
+            ]
+        ),
+        ModelRequest(parts=[SystemPromptPart('Reminder.', scope='turn')]),
+    ]
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic():
+    """Only the reminder ending the request is skipped: lasting text with the same content gets the breakpoint."""
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='not-used'))
+
+    prepared = model.prepare_messages(duplicate_text_history(), ModelRequestParameters())
+    _, anthropic_messages = await model._map_message(prepared, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    model._apply_message_cache_control(anthropic_messages, '5m', _turn_scoped_tail_texts(prepared))  # pyright: ignore[reportPrivateUsage]
+
+    blocks = cast(list[dict[str, Any]], anthropic_messages[-1]['content'])
+    assert [block.get('text') for block in blocks[-2:]] == ['<system>Reminder.</system>', '<system>Reminder.</system>']
+    assert [index for index, block in enumerate(blocks) if 'cache_control' in block] == [len(blocks) - 2]
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock():
+    """Only the reminder ending the request is skipped: lasting text with the same content stays ahead of the cache point."""
+    model = BedrockConverseModel(
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        provider=BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x'),
+    )
+    settings: BedrockModelSettings = {'bedrock_cache_messages': True}
+
+    prepared = model.prepare_messages(duplicate_text_history(), ModelRequestParameters())
+    _, bedrock_messages = await model._map_messages(prepared, ModelRequestParameters(), settings)  # pyright: ignore[reportPrivateUsage]
+
+    content = cast(list[dict[str, Any]], bedrock_messages[-1]['content'])
+    assert content[-3:] == [
+        {'text': '<system>Reminder.</system>'},
+        {'cachePoint': {'type': 'default'}},
+        {'text': '<system>Reminder.</system>'},
+    ]
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrouter():
+    """Only the reminder message ending the request is skipped: a lasting one with the same content is marked."""
+    model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(api_key='not-used'))
+    settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
+
+    prepared = model.prepare_messages(duplicate_text_history(), ModelRequestParameters())
+    openai_messages = await model._map_messages(prepared, ModelRequestParameters(), model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+
+    marked = [message for message in openai_messages if 'cache_control' in str(message)]
+    assert marked == [openai_messages[-2]]
+    assert openai_messages[-1] == {'role': 'user', 'content': '<system>Reminder.</system>'}
