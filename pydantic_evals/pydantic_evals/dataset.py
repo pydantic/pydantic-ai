@@ -319,7 +319,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 raises `TimeoutError`, which counts as a failed attempt for `retry_task` and, once no attempt
                 succeeds, is reported as a case failure while the other cases continue. Lifecycle hooks and
                 evaluators are not bounded. A sync task runs in a worker thread that can't be interrupted, so
-                on timeout it keeps running in the background and its result is discarded.
+                on timeout it keeps running in the background, outside `max_concurrency`, and its result is discarded.
                 If None (the default), tasks run without a time limit.
 
         Returns:
@@ -466,7 +466,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 raises `TimeoutError`, which counts as a failed attempt for `retry_task` and, once no attempt
                 succeeds, is reported as a case failure while the other cases continue. Lifecycle hooks and
                 evaluators are not bounded. A sync task runs in a worker thread that can't be interrupted, so
-                on timeout it keeps running in the background and its result is discarded.
+                on timeout it keeps running in the background, outside `max_concurrency`, and its result is discarded.
                 If None (the default), tasks run without a time limit.
 
         Returns:
