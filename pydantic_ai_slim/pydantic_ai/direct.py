@@ -118,8 +118,7 @@ async def model_request_batch(
 
     Batch APIs cost less, typically half, but can take up to a day to finish. The requests are submitted in as few
     batches as the provider accepts, or `batch_settings['max_requests']` allows, and each batch is checked on with a
-    growing interval until it ends. Cancelling
-    the call cancels the batches that haven't ended.
+    growing interval until it ends. Cancelling the call cancels the batches that haven't ended.
 
     ```py title="model_request_batch_example.py"
     from pydantic_ai import ModelRequest

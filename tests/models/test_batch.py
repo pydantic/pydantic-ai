@@ -24,6 +24,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult, BatchSettings, EncodedBatchRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 
@@ -442,21 +443,27 @@ async def test_a_request_checked_after_the_results_arrived_reads_them_from_memor
 
 async def test_a_paused_turn_keeps_its_content_when_the_result_names_a_dated_model() -> None:
     """Results often name a dated model, which must not make the graph drop what the turn accumulated before."""
-    calls = 0
 
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        state = 'suspended' if calls == 1 else 'complete'
-        return ModelResponse(
-            parts=[TextPart(f'segment {calls} ')],
-            model_name='model-2026-01-01',
-            state=state,
-            provider_response_id=str(calls),
-        )
+    @dataclass(init=False)
+    class DatedModel(TestModel):
+        calls: int = 0
 
-    result = await Agent(
-        BatchModel(FunctionModel(respond, model_name='model'), batch_settings=FAST_BATCH_SETTINGS)
-    ).run('Hello')
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            self.calls += 1
+            return ModelResponse(
+                parts=[TextPart(f'segment {self.calls} ')],
+                model_name=f'{self.model_name}-2026-01-01',
+                state='suspended' if self.calls == 1 else 'complete',
+                provider_response_id=str(self.calls),
+            )
+
+    wrapped = DatedModel()
+    wrapped.calls = 0
+    result = await Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
 
     assert result.output == 'segment 1 segment 2 '
