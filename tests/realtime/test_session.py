@@ -305,6 +305,15 @@ def _profile(
     )
 
 
+def _own_record(session: _RealtimeSession) -> list[ModelMessage]:
+    """The session's own record of the conversation, as it streams it: what a tool sees as `RunContext.messages`.
+
+    History (`all_messages()`) is the session core's, from the connection's lifecycle; this one is built from the
+    events the session streams, which is what tests driving those directly (`_translate_event`) can observe.
+    """
+    return session._own_messages()  # pyright: ignore[reportPrivateUsage]
+
+
 class FakeRealtimeConnection(InferredConnection):
     """A connection that replays a fixed list of events and records what is sent."""
 
@@ -3891,7 +3900,8 @@ def test_parallel_tool_returns_are_inserted_in_call_order() -> None:
     session._insert_tool_return(call_two, second_return)  # pyright: ignore[reportPrivateUsage]
     session._insert_tool_return(call_one, first_return)  # pyright: ignore[reportPrivateUsage]
 
-    assert session.new_messages() == [response, first_return, second_return]
+    # The session's own record, which a tool sees as `RunContext.messages`.
+    assert _own_record(session) == [response, first_return, second_return]
 
 
 def test_insert_tool_return_skips_existing_parallel_returns() -> None:
@@ -3905,7 +3915,8 @@ def test_insert_tool_return_skips_existing_parallel_returns() -> None:
 
     session._insert_tool_return(call_two, second_return)  # pyright: ignore[reportPrivateUsage]
 
-    assert session.new_messages() == [response, first_return, second_return]
+    # The session's own record, which a tool sees as `RunContext.messages`.
+    assert _own_record(session) == [response, first_return, second_return]
 
 
 class AwaitBetweenConnection(InferredConnection):
@@ -5864,7 +5875,7 @@ async def test_text_request_reserved_before_response_finishes_during_send() -> N
     conn = _FinishingSend([])
     session = RealtimeSession(conn)
     await session.send('question')
-    assert session.new_messages() == snapshot(
+    assert _own_record(session) == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='question', timestamp=IsDatetime())], timestamp=IsDatetime()),
             ModelResponse(
@@ -5891,9 +5902,7 @@ async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
     conn = _BoundarySend([], input_transcription_enabled=False)
     session = RealtimeSession(conn, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
-    assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
-    )
+    assert _own_record(session) == snapshot([ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())])
     assert bytes(session._input_audio) == b'\xaa\xbb'  # pyright: ignore[reportPrivateUsage]
 
 
@@ -5917,7 +5926,7 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     conn.fail = False
     await session.send_audio(b'\xcc')
     session._translate_event(InputTranscript(text='successful', is_final=True))  # pyright: ignore[reportPrivateUsage]
-    assert session.new_messages() == snapshot(
+    assert _own_record(session) == snapshot(
         [
             ModelRequest(
                 parts=[SpeechPart(speaker='user', transcript='successful', audio=_wav_content(b'\xcc'))],
@@ -5931,7 +5940,7 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     unretained = RealtimeSession(_FailingSend([]))
     with pytest.raises(RuntimeError, match='send failed'):
         await unretained.send_audio(b'\xaa')
-    assert unretained.new_messages() == []
+    assert _own_record(unretained) == []
 
 
 async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
@@ -5952,7 +5961,7 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     conn.fail = True
     with pytest.raises(RuntimeError, match='send failed'):
         await session.send_audio(b'\xcc\xdd')
-    assert session.new_messages() == snapshot(
+    assert _own_record(session) == snapshot(
         [
             ModelRequest(
                 parts=[SpeechPart(speaker='user', transcript='Hi.', audio=_wav_content(b'\xaa\xbb'))],
@@ -6893,16 +6902,16 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
         PartStartEvent(index=2, part=second_user),
         PartEndEvent(index=2, part=second_user),
     ]
-    assert session.new_messages() == snapshot(
+    assert _own_record(session) == snapshot(
         [
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))], timestamp=IsDatetime()),
+            ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='first')],
                 model_name='m',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
             ),
-            ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))], timestamp=IsDatetime()),
+            ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='second')],
                 model_name='m',
