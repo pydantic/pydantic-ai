@@ -292,7 +292,7 @@ async def _user_email(settings: LogfireSettings) -> str | None:
 
 
 NOT_SENDING = (
-    'Traces stay on this machine: no Logfire project is set up. Choose one with Logfire project in '
+    'Traces stay on this machine: no Logfire project is set up. Pick one on the Logfire project row of '
     "this plugin's settings, and its live view shows here."
 )
 """The live view panel without a project to show."""

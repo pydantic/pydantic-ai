@@ -4,6 +4,7 @@ import type {
   JsonValue,
   MenuEdited,
   MenuInfo,
+  PanelInfo,
   PluginAction,
   PluginRow,
   Project,
@@ -87,6 +88,7 @@ export const api = {
   runAction: (name: string, key: string) =>
     call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}/action`),
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
+  panels: () => call<PanelInfo[]>('GET', '/api/panels'),
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */

@@ -10,8 +10,9 @@ import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
 import { DialogLayer } from './components/DialogLayer'
 import { ReplPanel } from './components/ReplPanel'
+import { PanelGlyph, SidePanel, followWindows, panelKey } from './components/SidePanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
-import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
+import type { PanelInfo, ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
 import { initial, reduce } from './state'
@@ -41,8 +42,17 @@ export function App() {
   const picked = useRef(0)
   const [toast, setToast] = useState<{ text: string; level: 'info' | 'error' } | null>(null)
   const [plugins, setPlugins] = useState(false)
-  const openPlugins = useCallback(() => setPlugins(true), [])
+  // The plugin the plugins panel opens on, when a side panel asks to set its plugin up.
+  const [pluginFocus, setPluginFocus] = useState<string | null>(null)
+  const openPlugins = useCallback(() => {
+    setPluginFocus(null)
+    setPlugins(true)
+  }, [])
   const closePlugins = useCallback(() => setPlugins(false), [])
+  const [panels, setPanels] = useState<PanelInfo[]>([])
+  // Which plugin side panel is open, and how wide, as this browser last left them.
+  const [sidePanel, setSidePanel] = useState(() => localStorage.getItem('clai-side-panel'))
+  const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem('clai-side-panel-width')) || 440)
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
@@ -74,6 +84,41 @@ export function App() {
   }, [])
 
   useEffect(() => localStorage.setItem('clai-repl', repl ? 'open' : 'closed'), [repl])
+  useEffect(() => {
+    if (sidePanel) localStorage.setItem('clai-side-panel', sidePanel)
+    else localStorage.removeItem('clai-side-panel')
+  }, [sidePanel])
+
+  // Panels follow the conversation: ask again on connecting, switching sessions, each turn's start and end, and
+  // every command, which may have changed a plugin; while a turn runs, every few seconds too.
+  const loadPanels = useCallback(async () => {
+    try {
+      const found = await api.panels()
+      setPanels((current) => (JSON.stringify(current) === JSON.stringify(found) ? current : found))
+    } catch {
+      // Keep what is shown; the next turn or command asks again.
+    }
+  }, [])
+  useEffect(() => {
+    if (connection === 'open') void loadPanels()
+  }, [connection, state.session?.id, state.running, state.pluginsVersion, loadPanels])
+  useEffect(() => {
+    if (!state.running || panels.length === 0) return
+    const timer = window.setInterval(() => void loadPanels(), 3000)
+    return () => window.clearInterval(timer)
+  }, [state.running, panels.length, loadPanels])
+  useEffect(() => followWindows(panels), [panels])
+  const shownPanel = panels.find((panel) => panelKey(panel) === sidePanel) ?? null
+  const firstPanel = panels[0]
+  // With no key, the shortcut: close the open panel, or open the first.
+  const shownKey = shownPanel ? panelKey(shownPanel) : null
+  const togglePanel = useCallback(
+    (key?: string) => {
+      if (key !== undefined) setSidePanel(shownKey === key ? null : key)
+      else setSidePanel(shownKey || !firstPanel ? null : panelKey(firstPanel))
+    },
+    [shownKey, firstPanel],
+  )
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -171,6 +216,9 @@ export function App() {
       } else if (mod && event.key === 'j') {
         event.preventDefault()
         setRepl((open) => !open)
+      } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
+        event.preventDefault()
+        togglePanel()
       } else if (mod && event.key === ',') {
         event.preventDefault()
         setPlugins(true)
@@ -189,7 +237,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.running, showError])
+  }, [state.running, showError, togglePanel])
 
   const status = state.status
   const title = preview ? preview.title : (state.session?.title ?? 'New session')
@@ -212,7 +260,18 @@ export function App() {
   )
 
   return (
-    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''}`}>
+    <div
+      className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''}`}
+      style={
+        shownPanel
+          ? {
+              gridTemplateColumns: [sidebar && '268px', 'minmax(0, 1fr)', repl && 'minmax(320px, 34vw)', `${panelWidth}px`]
+                .filter(Boolean)
+                .join(' '),
+            }
+          : undefined
+      }
+    >
       {sidebar && (
         <Sidebar
           ref={sidebarRef}
@@ -254,6 +313,21 @@ export function App() {
               {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
             </div>
           )}
+          {panels.map((panel) => {
+            const key = panelKey(panel)
+            const active = shownKey === key
+            return (
+              <button
+                key={key}
+                className={`icon-button repl-toggle ${active ? 'active' : ''}`}
+                onClick={() => togglePanel(key)}
+                title={`${active ? 'Hide' : 'Show'} ${panel.title}${panel === firstPanel ? ` (${MOD}⇧L)` : ''}`}
+                aria-pressed={active}
+              >
+                <PanelGlyph panel={panel} size={16} />
+              </button>
+            )
+          })}
           <button
             className={`icon-button repl-toggle ${repl ? 'active' : ''}`}
             onClick={() => setRepl(!repl)}
@@ -334,6 +408,7 @@ export function App() {
         <PluginsPanel
           version={state.pluginsVersion}
           running={state.running}
+          initial={pluginFocus}
           onClose={closePlugins}
           onError={showError}
           onNotice={showNotice}
@@ -345,6 +420,22 @@ export function App() {
           status={status}
           running={state.running}
           onClose={() => setRepl(false)}
+          onError={showError}
+        />
+      )}
+      {shownPanel && (
+        <SidePanel
+          panel={shownPanel}
+          width={panelWidth}
+          onResize={(width, done) => {
+            setPanelWidth(width)
+            if (done) localStorage.setItem('clai-side-panel-width', String(width))
+          }}
+          onClose={() => setSidePanel(null)}
+          onSettings={(plugin) => {
+            setPluginFocus(plugin)
+            setPlugins(true)
+          }}
           onError={showError}
         />
       )}
