@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import os
 import re
 import socket
 import sys
@@ -83,6 +84,7 @@ from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime.repl_cells import ReplCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.worktrees import Worktree
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -602,11 +604,23 @@ def test_web_flag_reads_a_private_token_file(
     token = tmp_path / 'token'
     token.write_text('a' * 40 + '\n')
     token.chmod(0o600)
-    argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--port', '4567', '--token-file', str(token)]
+    # Relative to where CLAI was started, though `--worktree` changes directory before the file is read.
+    monkeypatch.chdir(tmp_path)
+    elsewhere = tmp_path / 'checkout'
+    elsewhere.mkdir()
+
+    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+        os.chdir(elsewhere)
+        return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
+
+    monkeypatch.setattr(_cli, '_enter_worktree', enter_worktree)
+    argv = ['clai2', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
     monkeypatch.setattr(sys, 'argv', argv)
     _cli.run()
     [call] = calls
     assert (call['token'], call['port']) == ('a' * 40, 4567)
+    argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
+    monkeypatch.setattr(sys, 'argv', argv)
     for mode, text, error in (
         (0o644, 'a' * 40, 'must belong to you and be readable by you alone'),
         (0o600, 'short', 'must hold one URL-safe token of at least 32 characters'),

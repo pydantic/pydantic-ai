@@ -125,12 +125,14 @@ class FakeProcesses:
     def spawn(self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], log: Path) -> int:
         self.pid += 1
         self.spawned.append(Spawned(argv=list(argv), cwd=cwd, env=env, log=log))
-        if self.exits:
-            log.write_text('Traceback: it broke\n', encoding='utf-8')
-        else:
-            # As `clai2 --web --port 0 --token-file` prints once it listens.
-            log.write_text(f'Web UI running at http://127.0.0.1:{40000 + self.pid}/\n', encoding='utf-8')
-            self.running.add(self.pid)
+        # Appended, as `LocalProcesses` opens the log.
+        with log.open('a', encoding='utf-8') as output:
+            if self.exits:
+                output.write('Traceback: it broke\n')
+            else:
+                # As `clai2 --web --port 0 --token-file` prints once it listens.
+                output.write(f'Web UI running at http://127.0.0.1:{40000 + self.pid}/\n')
+                self.running.add(self.pid)
         return self.pid
 
     def alive(self, pid: int) -> bool:
@@ -616,6 +618,17 @@ def test_git_helpers_report_failures(repository: Path, tmp_path: Path, monkeypat
         remove_worktree(path=repository)
     with pytest.raises(ValueError, match='Cannot fetch x: no git'):
         clone_or_fetch(url='x', path=tmp_path / 'clone')
+
+
+async def test_a_restart_reads_its_own_port(rig: Rig, repository: Path) -> None:
+    """Started again, a workspace's CLAI is found on its new port, not the one the last launch logged."""
+    workspaces = rig.workspaces()
+    workspace = await workspaces.create(kind='local-worktree', repo=str(repository))
+    first = await workspaces.start(workspace.id)
+    await workspaces.stop(workspace.id)
+    second = await workspaces.start(workspace.id)
+    assert first.session is not None and second.session is not None
+    assert (first.session.port, second.session.port) == (40000 + rig.processes.pid - 1, 40000 + rig.processes.pid)
 
 
 async def test_a_token_gone_meanwhile(rig: Rig, repository: Path) -> None:
