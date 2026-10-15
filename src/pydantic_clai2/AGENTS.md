@@ -113,7 +113,8 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   the prompt. `customization_guide()` orders itself after the guidance plugins
   contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists the library's built-ins; `STOCK_PLUGINS` opts the CLI-owned
+  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
@@ -357,6 +358,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
+| `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
