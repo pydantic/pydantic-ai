@@ -2424,7 +2424,9 @@ class RealtimeSession:
                             input_id=input_index,
                             request=request if position == 0 else None,
                             solicits=reply_asked and isinstance(content, (str, CreateResponse, ToolResult)),
-                            tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
+                            tool_call_id=content.tool_call_id
+                            if isinstance(content, (ToolResult, NativeToolApproval))
+                            else None,
                         )
                     )
                     if settled := await self._connection.send(content):
