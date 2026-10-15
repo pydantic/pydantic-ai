@@ -138,7 +138,7 @@ def _mcp_protocol_error_message(error: Exception) -> str | None:
 
 
 @dataclass
-class _RecoverMCPToolErrors(AbstractCapability[object]):
+class RecoverMCPToolErrors(AbstractCapability[object]):
     """Hand escaped MCP protocol errors back to the model as recoverable `error:` results.
 
     Without this, a bare `McpError` from an MCP server crashes the whole run (an unhandled
@@ -320,7 +320,7 @@ DEFAULT_JOB_TIMEOUT_MINS = 30
 JOB_TIMEOUT_HEADROOM_MINS = 2
 
 
-def _run_timeout_secs() -> int:
+def run_timeout_secs() -> int:
     """Wall-clock budget for one agent run, derived from the job's own timeout."""
     raw = os.environ.get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES') or os.environ.get('GH_AW_TIMEOUT_MINUTES') or ''
     try:
@@ -347,12 +347,12 @@ TIME_BUDGET_NOTICE = (
 )
 
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
-_run_deadline: float | None = None
+run_deadline: float | None = None
 
 
 def _run_seconds_left() -> float | None:
     """Wall-clock seconds before the run is cancelled, or `None` when no run budget applies."""
-    return None if _run_deadline is None else _run_deadline - time.monotonic()
+    return None if run_deadline is None else run_deadline - time.monotonic()
 
 
 def time_budget_notice() -> str | None:
@@ -394,7 +394,7 @@ INSTRUCTIONS = (
     'provide `/tmp/gh-aw/agent/github-context/open-issues.json` and '
     '`open-pull-requests.json`; filter their local JSON with jq. PR reviewers '
     'use `$GITHUB_WORKSPACE/.review-context/`; the stale-issues workflow uses '
-    '`/tmp/gh-aw/agent/open-issues.tsv` and `/tmp/gh-aw/agent/issues/`. Do NOT '
+    '`$GITHUB_WORKSPACE/.github/.issue-context/open-issues.tsv` and `$GITHUB_WORKSPACE/.github/.issue-context/issues/`. Do NOT '
     'run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list `gh api` '
     'request from inside the agent. Narrow per-item reads may still be used '
     'after the local corpus identifies a specific item. If required prefetched '
@@ -563,7 +563,7 @@ _SYNTHETIC_SUMMARY_TAG = '[compacted history]'
 
 
 def _is_synthetic_summary(message: ModelMessage) -> bool:
-    """A `ModelRequest` we synthesised in a prior `_compact_history` round."""
+    """A `ModelRequest` we synthesised in a prior `compact_history` round."""
     if not isinstance(message, ModelRequest):
         return False
     parts = message.parts
@@ -574,8 +574,15 @@ def _is_synthetic_summary(message: ModelMessage) -> bool:
     )
 
 
-async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]) -> list[ModelMessage]:
+async def compact_history(
+    ctx: RunContext[object], messages: list[ModelMessage], *, preserve_prompt: bool = False
+) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
+    # CLAI supplies the workflow task as the first user message. Keep that exact
+    # contract outside the summary, including when summarisation fails.
+    if preserve_prompt and messages and isinstance(messages[0], ModelRequest):
+        if any(isinstance(part, UserPromptPart) for part in messages[0].parts):
+            return [messages[0], *await compact_history(ctx, messages[1:])]
     if len(messages) <= COMPACTION_KEEP_RECENT:
         return messages
     trimmed = _trim_tool_results(messages)
@@ -616,7 +623,9 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     assert isinstance(model, Model)
     try:
         r = await asyncio.wait_for(
-            Agent(cast('Model[Any]', model), instructions=COMPACTION_SUMMARY_INSTRUCTIONS).run(
+            Agent(
+                cast('Model[Any]', model), name='workflow-compaction', instructions=COMPACTION_SUMMARY_INSTRUCTIONS
+            ).run(
                 f'Transcript to summarise:\n\n{transcript[:COMPACTION_TRANSCRIPT_MAX_CHARS]}',
                 usage_limits=UsageLimits(request_limit=2),
                 usage=sub_usage,
@@ -629,12 +638,12 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
         # stack is kept available (`exc_info`) without escalating the log level.
         # A bare `TimeoutError` stringifies to '' — fall back to the type name so
         # the emitted `error` is never empty.
-        ctx.usage.incr(sub_usage)
         detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
         logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
         emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
         return [prior_synthetic, *tail] if prior_synthetic else tail
-    ctx.usage.incr(sub_usage)
+    finally:
+        ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
     # the next compaction round would trip on the same too-large synthetic
     # and never converge — fall back to the prior synthetic + tail.
@@ -944,7 +953,7 @@ def emit_result(
         'run_attempt': run_attempt,
     }
     if is_error:
-        provider_health['failure'] = _failure_details(error)
+        provider_health['failure'] = failure_details(error)
     result: dict[str, object] = {
         'type': 'result',
         'subtype': 'error' if is_error else 'success',
@@ -960,7 +969,7 @@ def emit_result(
     emit(result)
 
 
-def _failure_details(error: BaseException | None) -> dict[str, object]:
+def failure_details(error: BaseException | None) -> dict[str, object]:
     """Return a safe, machine-readable classification while preserving the original error text."""
     kind = 'other'
     http_status: int | None = None
@@ -1106,6 +1115,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     assert isinstance(model, Model)
     sub = Agent(
         cast('Model[Any]', model),
+        name='workflow-delegate',
         instructions=[INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt],
         toolsets=[sub_toolset],
         capabilities=[
@@ -1126,19 +1136,17 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
-        ctx.usage.incr(sub_usage)
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
         return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
         # full stack so the failure isn't reduced to a one-line repr in the logs.
-        ctx.usage.incr(sub_usage)
         logger.exception('sub-agent failed: %s', description[:120])
         return f'error: sub-agent failed: {exc}'
     finally:
         _subagent_requests_in_flight -= sub_request_limit
-    ctx.usage.incr(sub_usage)
+        ctx.usage.incr(sub_usage)
     logger.info('Task done: +%d sub-requests (run total now %d)', sub_usage.requests, ctx.usage.requests)
     return str(result.output or '')
 
@@ -1152,9 +1160,9 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
-    global _run_deadline
-    budget = _run_timeout_secs()
-    _run_deadline = time.monotonic() + budget
+    global run_deadline
+    budget = run_timeout_secs()
+    run_deadline = time.monotonic() + budget
     usage = RunUsage()
     try:
         async with AsyncExitStack() as stack:
@@ -1187,7 +1195,7 @@ async def _run_with_timeout(
         )
         return 1
     finally:
-        _run_deadline = None
+        run_deadline = None
 
 
 async def run(
@@ -1210,9 +1218,9 @@ async def run(
         capabilities=[
             # The Claude tools act on `ctx.workspace`: the checkout at `$GITHUB_WORKSPACE`.
             local_workspace(),
-            _RecoverMCPToolErrors(),
+            RecoverMCPToolErrors(),
             *_anthropic_native_capabilities(),
-            ProcessHistory(_compact_history),
+            ProcessHistory(compact_history),
             ProcessEventStream(_stream_events),
         ],
     )

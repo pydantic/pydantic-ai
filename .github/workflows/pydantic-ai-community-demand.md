@@ -106,14 +106,10 @@ pre-agent-steps:
       repository: ${{ job.workflow_repository }}
       ref: ${{ job.workflow_sha }}
       persist-credentials: false
-  - name: Stage Pydantic AI gh-aw shim launcher
-    run: |
-      mkdir -p /tmp/gh-aw/bin
-      install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  - name: Install repository workflow policy
+    run: bash .github/scripts/stage-gh-aw-agent.sh
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
-  - name: Pre-warm Pydantic AI gh-aw shim uv environment
-    run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
   - name: Install the typed-boundary dependency
     run: python3 -m pip install --quiet 'pydantic==2.13.4'
   - name: Build bounded community demand snapshot
@@ -127,13 +123,19 @@ pre-agent-steps:
       path: community-candidates.json
       retention-days: 1
       overwrite: true
+# Keep the existing conclusion token permissions across compiler upgrades.
+jobs:
+  conclusion:
+    permissions:
+      actions: write
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
 ---
 <!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
 

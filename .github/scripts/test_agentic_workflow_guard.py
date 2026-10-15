@@ -669,42 +669,39 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
     assert check_compiler_versions([a, b]) == []
 
 
-def test_compiled_runner_contract_rejects_drift_from_the_gh_aw_shim(tmp_path: Path):
-    """The generated agent command is the seam between gh-aw and our custom runner."""
+def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
+    """A legacy runner must not silently bypass CLAI 2 and canonical capture."""
     lock = _write(
         tmp_path / 'w.lock.yml',
-        """
-jobs:
-  agent:
-    steps:
-      - name: Run agent
-        run: |
-          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch --allowed-tools "Read,mcp__safeoutputs_fake"' --output-format stream-json --mcp-config ignored
-""",
+        'jobs: {agent: {steps: [{id: agentic_execution, run: pydantic-ai-runner-launch}]}}',
     )
-
     violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'public CLAI 2 harness' in violations[0].message
 
-    assert [v.check for v in violations] == ['compiled-runner-contract']
-    assert '`mcp__safeoutputs`' in violations[0].message
 
-
-def test_compiled_runner_contract_accepts_the_supported_interface(tmp_path: Path):
+def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
+    """The public engine retains policy, model and proxy credential exclusion."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         """
 jobs:
   agent:
+    env:
+      GH_AW_ENGINE_VERSION: '0.56.0'
     steps:
-      - name: Run agent
+      - id: agentic_execution
         run: >-
-          awf -- /bin/bash -c '/tmp/gh-aw/bin/pydantic-ai-runner-launch
-          --allowed-tools "Read,mcp__safeoutputs"
-          --output-format stream-json
-          --mcp-config mcp-servers.json'
+          awf --exclude-env ANTHROPIC_API_KEY -- /bin/bash -c
+          'node /tmp/gh-aw/actions/pydantic-ai_harness.cjs clai2'
+        env:
+          PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
+          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
+          PYDANTIC_AI_TASK_ID: stable-task
 """,
     )
-
     assert check_compiled_runner_contract(lock) == []
 
 

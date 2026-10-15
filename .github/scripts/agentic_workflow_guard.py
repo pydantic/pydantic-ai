@@ -23,11 +23,10 @@ budget before anyone noticed, documented in #6766:
   killed before it could emit anything.
 - `compiler_versions` — a partial `gh aw compile` leaves locks on mixed compiler
   versions, which is how source and lock drift apart unnoticed.
-- `compiled_runner_contract` — every generated agent job must keep the command-line
-  contract required by the Pydantic AI runner shim.
-- `awf_binary_version` — `engine.command` makes gh-aw skip its own AWF install, so
-  `shared/pre-steps.md` re-runs the installer with a hand-written version. #8041 moved
-  gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
+- `compiled_runner_contract` — every generated agent job must use the public
+  engine with the pinned runtime, repository policy and isolated Z.ai credentials.
+- `awf_binary_version` — the installed firewall must match the compiler bundle.
+  #8041 moved gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
   binary rejected the v0.27.44 config (`config.apiProxy.providers is not supported`).
   The agent job died before the model started, on every workflow using the shim.
 - `ai_credits_accounting` — `apiProxy.providers` is the API proxy's AI-credits pricing
@@ -50,11 +49,9 @@ import argparse
 import json
 import posixpath
 import re
-import shlex
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeGuard, cast
@@ -497,67 +494,49 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
 
 
 def check_compiled_runner_contract(lock: Path) -> list[Violation]:
-    """The generated agent command must retain the interface our runner implements."""
+    """Require the public engine, workflow policy and isolated Z.ai credentials."""
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
     agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
     steps = agent.get('steps')
-    commands: list[list[str]] = []
-    for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
-        run = _as_mapping(raw_step).get('run')
-        if not isinstance(run, str) or 'pydantic-ai-runner-launch' not in run:
-            continue
-        with suppress(ValueError):
-            outer_arguments = shlex.split(run)
-            for index, argument in enumerate(outer_arguments[:-1]):
-                if argument != '-c' or 'pydantic-ai-runner-launch' not in outer_arguments[index + 1]:
-                    continue
-                with suppress(ValueError):
-                    inner_arguments = shlex.split(outer_arguments[index + 1])
-                    for runner_index, inner_argument in enumerate(inner_arguments):
-                        if inner_argument.endswith('/pydantic-ai-runner-launch'):
-                            commands.append(inner_arguments[runner_index:])
-    if len(commands) != 1:
-        return [
-            Violation(
-                str(lock),
-                'compiled-runner-contract',
-                'the `agent` job must contain exactly one invocation of '
-                '`pydantic-ai-runner-launch`. The custom runner is the compatibility '
-                'boundary between gh-aw and Pydantic AI.',
-            )
-        ]
-
-    command = commands[0]
+    executions: list[Mapping[str, object]] = []
+    for raw_step in steps if _is_object_sequence(steps) else ():
+        step = _as_mapping(raw_step)
+        if step.get('id') == 'agentic_execution':
+            executions.append(step)
     missing: list[str] = []
-    if '--output-format' not in command or command.index('--output-format') == len(command) - 1:
-        missing.append('`--output-format stream-json`')
-    elif command[command.index('--output-format') + 1] != 'stream-json':
-        missing.append('`--output-format stream-json`')
-    if '--mcp-config' not in command or command.index('--mcp-config') == len(command) - 1:
-        missing.append('`--mcp-config`')
-    if '--allowed-tools' not in command or command.index('--allowed-tools') == len(command) - 1:
-        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
-    elif 'mcp__safeoutputs' not in command[command.index('--allowed-tools') + 1].split(','):
-        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
+    if _as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION') != '0.56.0':
+        missing.append('the published 0.56.0 runtime pin')
+    if len(executions) != 1:
+        missing.append('exactly one public engine execution')
+    else:
+        execution = executions[0]
+        run = execution.get('run')
+        command = run if isinstance(run, str) else ''
+        env = _as_mapping(execution.get('env'))
+        if 'pydantic-ai_harness.cjs clai2' not in command:
+            missing.append('the public CLAI 2 harness')
+        if env.get('XDG_CONFIG_HOME') != '/tmp/gh-aw/clai2-config':
+            missing.append('isolated CLAI settings for the workflow budgets')
+        if '--exclude-env ANTHROPIC_API_KEY' not in command:
+            missing.append('AWF exclusion of the provider credential')
+        if not env.get('PYDANTIC_AI_TASK_ID') or '--exclude-env PYDANTIC_AI_TASK_ID' in command:
+            missing.append('task identity available inside the agent sandbox')
+        if env.get('PAI_AGENT') != 'pydantic_ai_gh_aw_shim.agent:agent':
+            missing.append('the repository workflow policy')
+        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
+            missing.append('the unchanged Z.ai model selected through Anthropic')
+        if env.get('ANTHROPIC_API_KEY') != '${{ secrets.ZAI_API_KEY }}':
+            missing.append('ZAI_API_KEY injection at the provider proxy')
     if not missing:
         return []
-    return [
-        Violation(
-            str(lock),
-            'compiled-runner-contract',
-            f'the generated Pydantic AI runner invocation is missing {", ".join(missing)}. '
-            'Recompiling changed the gh-aw interface that the custom runner implements.',
-        )
-    ]
+    return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')]
 
 
 def check_awf_binary_version(lock: Path) -> list[Violation]:
-    """The hand-pinned AWF binary must be the one gh-aw compiled the lock against.
+    """The installed AWF binary must match the version of its compiled configuration.
 
-    `GH_AW_INFO_AWF_VERSION` is what gh-aw bundles and what it writes the firewall
-    config against; the install step's argument is maintained by hand because
-    `engine.command` makes gh-aw skip its own install. A gh-aw upgrade moves the
-    first and leaves the second, and the older binary then refuses the newer config.
+    Built-in engines report the bundled version in `GH_AW_INFO_AWF_VERSION`.
+    Custom engines can leave it empty, so their schema URL supplies the reference.
 
     A lock that pins a version but declares none also fails: the comparison has lost
     its reference, and passing there would disarm the check on a gh-aw rename.
@@ -576,8 +555,13 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
             if isinstance(run, str):
                 pinned.update(match.group(1) for match in AWF_INSTALL_VERSION.finditer(run))
             version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
-            if isinstance(version, str):
+            if isinstance(version, str) and version:
                 bundled.add(version)
+
+    # Custom engines may leave the info field empty. The generated configuration
+    # still declares its AWF schema version, independently of the installer pin.
+    if not bundled:
+        bundled.update(re.findall(r'gh-aw-firewall/releases/download/(v[0-9.]+)/', lock.read_text(encoding='utf-8')))
 
     # No install step means this lock does not use the shim, so there is no hand-written
     # pin to drift.
@@ -901,7 +885,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     engine = engine_path.read_text(encoding='utf-8')
     health = health_path.read_text(encoding='utf-8')
     assignment = re.compile(r'^\s*PYDANTIC_AI_TASK_KEY:\s*(.+?)\s*$', re.MULTILINE)
-    engine_match = assignment.search(engine)
+    engine_match = re.search(r'^\s*PYDANTIC_AI_TASK_(?:ID|KEY):\s*(.+?)\s*$', engine, re.MULTILINE)
     health_match = assignment.search(health)
     attempt_assignment = re.compile(r'^\s*PYDANTIC_AI_RUN_ATTEMPT:\s*(.+?)\s*$', re.MULTILINE)
     engine_attempt_match = attempt_assignment.search(engine)
@@ -953,7 +937,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
             engine_env.get('GITHUB_WORKFLOW') != '${{ github.workflow }}'
             or engine_env.get('PYDANTIC_AI_TRIGGER_EVENT') != '${{ github.event_name }}'
             or engine_env.get('PYDANTIC_AI_RUN_ATTEMPT') != expected_attempt
-            or engine_env.get('PYDANTIC_AI_TASK_KEY') != expected_task_key
+            or (engine_env.get('PYDANTIC_AI_TASK_ID') or engine_env.get('PYDANTIC_AI_TASK_KEY')) != expected_task_key
         ):
             return [
                 Violation(

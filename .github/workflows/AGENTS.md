@@ -155,6 +155,12 @@ Two consequences of the trigger, both easy to get backwards:
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
 
+Use gh-aw v0.91.1 to compile these workflows. `shared/engine-zai.md` imports the
+public Pydantic AI engine and explicitly pins runtime 0.56.0. Keep each workflow's
+root engine block model-only; the shared import owns identity and credentials.
+`stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
+settings store. Workflow `engine.args` is ignored by this compiler's public-engine path.
+
 - **Never hand-edit a `*.lock.yml`.** It is generated — the header says so. Manual edits are silently overwritten on the next recompile, and until then the running workflow diverges from its source.
 - **After editing a workflow `*.md` source, recompile and commit the regenerated `*.lock.yml` in the same change** — a `*.md` edit without its recompiled lock is incomplete, and source and lock drift apart:
 
@@ -264,8 +270,9 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `job-timeout-env-missing` / `job-timeout-env-mismatch` | a source whose `env.PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is absent, or set to something other than its `timeout-minutes` | The shim derives the agent's own wall-clock budget from that variable, because gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never reaches the agent container. Drift means the agent either stops early and wastes the time it was granted, or overruns and is killed with nothing emitted. Every new workflow trips this until it declares the pair. |
 | `job-timeout-too-short` | `timeout-minutes:` at or below the shim's teardown headroom (2) | The shim reserves that headroom for container teardown and artifact upload, so it falls back to 30 minutes rather than granting a non-positive budget — the agent then runs far past the point Actions kills the job. |
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
-| `awf-binary-version` | a lock whose `install_awf_binary.sh` pin differs from the `GH_AW_INFO_AWF_VERSION` gh-aw compiled it against, or that carries a pin the lock declares no such version for | `engine.command` makes gh-aw skip its own AWF install, so `shared/pre-steps.md` re-runs the installer with a version written by hand. A gh-aw upgrade moves the bundled version and leaves that pin behind, and the older binary then rejects the newer firewall config — the agent job dies before the model starts. Bump the pin in the same change as the compiler. The skip is tracked upstream at [github/gh-aw#58340](https://github.com/github/gh-aw/issues/58340) — retire this check and the hand-written pre-step once gh-aw installs the firewall binary independently of the engine. |
-| `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | That key is the API proxy's AI-credits *pricing* table, not reporting metadata — a model priced there gets charged, and AWF caps a run at 10,000 credits that no frontmatter field lifts (`max-ai-credits` only drops gh-aw's own budget, and the schema types it `exclusiveMinimum: 0`). One ordinary request costs tens of thousands, so every agent job 403s on its first call with `ai_credits_limit_exceeded`. The weekly spend report reads token counts from each run's `agent_usage.json`, so nothing here needs the overlay. |
+| `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy or Z.ai credential exclusion | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
+| `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
+| `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | Provider overlays charge actual AI credits; they are not reporting-only metadata. AWF retains a 10,000-credit hard cap even with negative configurable budgets. The token-based weekly report needs no pricing overlay, so these workflows retain their no-overlay policy. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
 Run it locally before pushing:
