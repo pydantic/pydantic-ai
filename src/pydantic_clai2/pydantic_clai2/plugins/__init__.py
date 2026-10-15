@@ -28,7 +28,6 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
 from pydantic_clai2.plugins.menus import SettingsMenu
-from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
@@ -787,6 +786,9 @@ class Plugin(Generic[SettingsT, DepsT]):
             raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
         if not self.host.console.is_terminal:
             return f'Configure {menu.source.title} from a terminal: /plugins configure {self.host.name}'
+        # Imported here: the terminal menus import this package, and `/reload` refuses an import cycle.
+        from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+
         messages = await run_settings_menu(menu)
         return '\n'.join(messages) or f'{menu.source.title}: nothing changed.'
 
