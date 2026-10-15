@@ -66,7 +66,7 @@ def until_finished(socket: WebSocketTestSession) -> tuple[list[ServerMessage], T
 
 
 def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
-    release, asking = asyncio.Event(), threading.Event()
+    release, asking, blocking = asyncio.Event(), threading.Event(), threading.Event()
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         said, latest = prompts(messages), prompts(messages[-1:])
@@ -78,6 +78,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
                 await release.wait()
                 yield 'child done'
         elif said[0] == 'blocker':
+            blocking.set()
             await asyncio.Event().wait()
             yield 'unreachable'  # pragma: no cover
         elif latest == ['go']:
@@ -147,6 +148,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         messages, _ = receive_until(socket, TaskItems)
         blocker = task_changes(messages)[-1].task
         assert blocker.prompt == 'blocker'
+        assert blocking.wait(10), 'stopped while it waits on its model'
         assert web_.post(f'/api/tasks/{blocker.id}/stop').status_code == 204
         assert until_finished(socket)[1].outcome == 'cancelled'
         assert web_.post(f'/api/tasks/{blocker.id}/resume').status_code == 204, 'a user stop is lifted by asking'
