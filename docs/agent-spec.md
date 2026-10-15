@@ -18,7 +18,7 @@ This is useful for:
 A spec file defines the agent's configuration in YAML or JSON:
 
 ```yaml {title="agent.yaml" test="skip"}
-model: anthropic:claude-opus-4-6
+model: {{ anthropic:large }}
 instructions: You are a helpful research assistant.
 model_settings:
   max_tokens: 8192
@@ -54,7 +54,7 @@ class UserContext:
 
 agent = Agent.from_spec(
     {
-        'model': 'anthropic:claude-opus-4-6',
+        'model': '{{ anthropic:large }}',
         'instructions': 'You are helping {{user_name}}.',
         'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
     },
@@ -101,7 +101,7 @@ class UserProfile:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=UserProfile,
     instructions=TemplateStr('You are assisting {{name}}, who is a {{role}}.'),
 )
@@ -156,7 +156,7 @@ When provided (and no `output_type` keyword argument is passed to `from_spec`), 
     The model's response is not validated against the schema's `properties` or `required` fields — it is accepted as a plain dict. The schema serves as an instruction to the model, not a runtime validation constraint.
 
 ```yaml {title="agent_with_schema.yaml" test="skip"}
-model: anthropic:claude-opus-4-6
+model: {{ anthropic:large }}
 deps_schema:
   type: object
   properties:
@@ -186,7 +186,7 @@ from pydantic_ai import AgentSpec
 
 spec = AgentSpec.model_validate(
     {
-        'model': 'anthropic:claude-opus-4-6',
+        'model': '{{ anthropic:large }}',
         'instructions': 'You are a helpful assistant.',
         'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
     }

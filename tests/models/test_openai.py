@@ -75,7 +75,7 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, RequestCapture, TestEnv, message, try_import
+from ..conftest import IsDatetime, IsNow, IsSameStr, IsStr, RequestCapture, TestEnv, message, try_import
 from .conftest import json_objects
 from .mock_openai import (
     MockOpenAI,
@@ -4363,6 +4363,112 @@ async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: N
 
     response = await agent.run('What is the current time?')
     assert response.output == snapshot('The current time is Noon.')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_compatible_api_gemini_3_tool_call_thought_signature(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture, stream: bool
+):
+    """Gemini 3 rejects the request after a tool call unless each call's `extra_content` thought signature comes back.
+
+    Of parallel calls, only the first carries one, so the second goes back without.
+    """
+    provider = OpenAIProvider(
+        base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+        api_key=gemini_api_key,
+        http_client=request_capture.client,
+    )
+    agent = Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get today's weather for a city."""
+        return 'sunny, 28°C'
+
+    prompt = (
+        "What's the weather in Taipei and Kaohsiung? Call get_weather once for each city in parallel, then summarize."
+    )
+    if stream:
+        async with agent.run_stream(prompt) as streamed_result:
+            output = await streamed_result.get_output()
+        messages = streamed_result.all_messages()
+    else:
+        result = await agent.run(prompt)
+        output, messages = result.output, result.all_messages()
+
+    expected_output = {
+        False: snapshot(
+            'The weather is currently sunny in both Taipei and Kaohsiung, with a temperature of 28°C in both cities.'
+        ),
+        True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
+    }
+    assert output == expected_output[stream]
+    taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
+    assert messages[1].parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='get_weather',
+                args='{"city":"Taipei"}',
+                tool_call_id=taipei_call_id,
+                provider_name='openai',
+                provider_details={'extra_content': {'google': {'thought_signature': signature}}},
+            ),
+            ToolCallPart(tool_name='get_weather', args='{"city":"Kaohsiung"}', tool_call_id=kaohsiung_call_id),
+        ]
+    )
+    assert [
+        message['tool_calls']
+        for message in json_objects(request_capture.body('/chat/completions', index=1)['messages'])
+        if message['role'] == 'assistant'
+    ] == snapshot(
+        [
+            [
+                {
+                    'id': taipei_call_id,
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'},
+                    'extra_content': {'google': {'thought_signature': signature}},
+                },
+                {
+                    'id': kaohsiung_call_id,
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city":"Kaohsiung"}'},
+                },
+            ]
+        ]
+    )
+
+
+async def test_tool_call_extra_content_not_sent_to_other_provider(allow_model_requests: None):
+    """`extra_content` that another provider returned isn't sent with its tool call, like every replayed signature.
+
+    A unit test rather than a VCR one: no single recording produces another provider's tool call, so the history is
+    hand-built, and the claim is only about the outgoing body.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')))
+    model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Weather in Taipei?'),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'get_weather',
+                    '{"city": "Taipei"}',
+                    tool_call_id='call_1',
+                    provider_name='litellm',
+                    provider_details={'extra_content': {'google': {'thought_signature': 'c2lnbmF0dXJl'}}},
+                )
+            ],
+            provider_name='litellm',
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+    ]
+
+    await direct_model_request(model, messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1]['tool_calls'] == snapshot(
+        [{'id': 'call_1', 'type': 'function', 'function': {'name': 'get_weather', 'arguments': '{"city": "Taipei"}'}}]
+    )
 
 
 def test_openai_response_timestamp_milliseconds(allow_model_requests: None):

@@ -456,7 +456,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # and the GPT-6 family verified live). Like the other gates in
     # this function, this enumerates known versions rather than matching open-endedly, so a new
     # family must be added here explicitly once confirmed; until then it falls back to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES))
+    # gpt-5.4-nano (incl. its dated snapshots) rejects `tool_search` with a 400, and its model page
+    # leaves it out of the supported tools: https://developers.openai.com/api/docs/models/gpt-5.4-nano
+    supports_tool_search = model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the

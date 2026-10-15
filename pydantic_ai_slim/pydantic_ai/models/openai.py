@@ -22,7 +22,7 @@ from functools import cached_property
 from typing import Any, Literal, Never, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -362,6 +362,12 @@ class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
     """Provider details for OpenAI Responses API continuation."""
 
     last_sequence_number: int
+
+
+class _ChatCompletionMessageFunctionToolCallParam(ChatCompletionMessageFunctionToolCallParam, total=False):
+    """A Chat Completions tool call carrying the `extra_content` vendor extension, see `_map_tool_call_provider_details`."""
+
+    extra_content: JsonValue
 
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
@@ -1591,7 +1597,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                    part_provider_details = _map_tool_call_provider_details(c)
+                    part = ToolCallPart(
+                        c.function.name,
+                        c.function.arguments,
+                        tool_call_id=c.id,
+                        provider_name=self.system if part_provider_details else None,
+                        provider_details=part_provider_details,
+                    )
                 elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
                     # NOTE: Custom tool calls are not supported.
                     # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
@@ -1909,7 +1922,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling tool call parts.
             """
-            self.tool_calls.append(self._model._map_tool_call(item))
+            tool_call = self._model._map_tool_call(item)
+            if (
+                item.provider_name == self._model.system
+                and item.provider_details
+                and (extra_content := item.provider_details.get('extra_content'))
+            ):
+                tool_call = _ChatCompletionMessageFunctionToolCallParam(**tool_call, extra_content=extra_content)
+            self.tool_calls.append(tool_call)
 
         def _map_response_builtin_part(self, item: NativeToolCallPart | NativeToolReturnPart) -> None:
             """Maps a built-in tool call or return part to the response context.
@@ -3504,7 +3524,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tool_choice = ToolChoiceAllowedParam(
                     type='allowed_tools',
                     mode=effective_mode,
-                    tools=[{'type': 'function', 'name': n} for n in tool_names],
+                    # Ignore names that are not currently available, keeping declaration order.
+                    # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
+                    # `additional_tools` item instead of `tools`, and the API accepts it in `allowed_tools`.
+                    tools=[
+                        {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
+                    ],
                 )
         else:
             assert_never(resolved_tool_choice)
@@ -4647,11 +4672,14 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         for dtc in choice.delta.tool_calls or []:
+            provider_details = _map_tool_call_provider_details(dtc)
             maybe_event = self._parts_manager.handle_tool_call_delta(
                 vendor_part_id=dtc.index,
                 tool_name=dtc.function.name if dtc.function is not None else None,
                 args=dtc.function.arguments if dtc.function is not None else None,
                 tool_call_id=dtc.id,
+                provider_name=self.provider_name if provider_details else None,
+                provider_details=provider_details,
             )
             if maybe_event is not None:
                 if isinstance(maybe_event, PartStartEvent):
@@ -5868,6 +5896,17 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
+
+
+def _map_tool_call_provider_details(
+    tool_call: ChatCompletionMessageFunctionToolCall | chat_completion_chunk.ChoiceDeltaToolCall,
+) -> dict[str, Any] | None:
+    # Gemini 3 puts each tool call's thought signature in this vendor extension, and rejects the next request unless
+    # it's sent back unchanged:
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking/thought-signatures
+    if extra_content := (tool_call.model_extra or {}).get('extra_content'):
+        return {'extra_content': extra_content}
+    return None
 
 
 def _group_settled_portable_function_calls(

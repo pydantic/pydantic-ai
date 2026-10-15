@@ -1295,6 +1295,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
 def bedrock_provider():
     try:
         import boto3
+        from botocore.config import Config
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -1307,10 +1308,14 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
+            # `BedrockProvider`'s default read timeout; botocore's 60s cuts off a Nova code-interpreter
+            # sandbox timeout, which takes longer to come back.
+            config = Config(read_timeout=300)
             if os.getenv('AWS_PROFILE'):
                 bedrock_client = boto3.client(
                     'bedrock-runtime',
                     region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    config=config,
                 )
             else:
                 bedrock_client = boto3.client(
@@ -1321,6 +1326,7 @@ def bedrock_provider():
                         'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
                     ),
                     aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                    config=config,
                 )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()

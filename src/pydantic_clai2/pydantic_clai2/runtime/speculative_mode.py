@@ -20,6 +20,9 @@ and, when the run's `FileSystem` allows it (`_mount_mode`) and the run's workspa
 a mount of the workspace's working directory at its real path (`_workspace_mount`). A sandbox
 plugin's workspace is not mounted: the host directory is not the filesystem its tools act on.
 There is no network in the sandbox; anything remote goes through a wrapped tool such as `shell`.
+
+With `ReplStates`, the session's REPL outlives the run: `CodeMode` restores it on the next prompt, and
+the guidance says so only to runs whose state is kept.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -52,6 +55,7 @@ from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.subagents import DelegationTasks, SubAgents
 from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sandbox_calls import (
     DelegationCallStartedEvent,
     SandboxCallFinishedEvent,
@@ -151,8 +155,7 @@ determines how fast it runs:
    names, keep processing blocks brief, and never rebind a name a pending
    call's line already used. `print(...)` what matters and make the
    snippet's final expression the value you want returned.
-7. State persists between snippets within a run: variables and functions
-   carry over. Do not re-fetch what you already hold. Prefer the read
+7. {state} Do not re-fetch what you already hold. Prefer the read
    functions over `pathlib` for discovery (they start early); use
    `pathlib` for surgical follow-ups on paths you already hold.
 8. Read before you write, and verify after you change: re-read the file
@@ -178,12 +181,20 @@ your code determines how fast it runs:
    task-creation APIs exist in the sandbox).
 4. Keep mutable state small and local. `print(...)` what matters and make
    the snippet's final expression the value you want returned.
-5. State persists between snippets within a run: variables and functions
-   carry over. Do not re-fetch what you already hold.
+5. {state} Do not re-fetch what you already hold.
 6. Read before you write, and verify after you change: re-read the file
    or run the tests in a follow-up snippet.
 """
 """The snippet shape for eager execution alone: each statement runs as it closes, nothing earlier."""
+
+_RUN_STATE = """\
+State persists between snippets within a run: variables and functions
+   carry over."""
+_SESSION_STATE = """\
+State persists between snippets and is saved with the session:
+   variables, functions, and imports carry over to later prompts, also
+   after the session is resumed. `restart: true` clears it."""
+"""The `{state}` line of each snippet shape: a sub-agent's or unsaved run's REPL ends with the run."""
 
 
 _MountMode = Literal['read-write', 'read-only']
@@ -209,9 +220,10 @@ _WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
 `'remote'` when it would but the workspace is a sandbox rather than this machine."""
 
 
-def guidance(mount: _MountMode | Literal['remote'] | None, *, speculate: bool = True) -> str:
-    """Code Puppy's guidance, describing the workspace the sandbox actually has and whether it speculates."""
+def guidance(mount: _MountMode | Literal['remote'] | None, *, speculate: bool = True, keeps_state: bool = False) -> str:
+    """Code Puppy's guidance, describing the workspace the sandbox has, whether it speculates, and whether the REPL is saved."""
     mode, how = ('Speculative execution', _SPECULATIVE_HOW) if speculate else ('Code mode', _EAGER_HOW)
+    how = how.format(state=_SESSION_STATE if keeps_state else _RUN_STATE)
     return GUIDANCE.format(mode=mode, how=how, workspace=_WORKSPACE_GUIDANCE[mount])
 
 
@@ -354,13 +366,16 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """The sandbox's `_mount_mode`, so the guidance describes it."""
     speculate: bool = True
     """Whether read-only calls launch early, so the guidance teaches the snippet shape that suits it."""
+    repl_states: ReplStates | None = None
+    """Where `WorkspaceCodeMode` keeps the session's REPL, so the guidance says whether state outlives the run."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
-        """Code Puppy's guidance, with CLAI's tool and argument names and the run's actual mount."""
+        """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
 
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)
-            return guidance(self.mount if local else 'remote', speculate=self.speculate)
+            keeps_state = self.repl_states is not None and self.repl_states.keeps(ctx)
+            return guidance(self.mount if local else 'remote', speculate=self.speculate, keeps_state=keeps_state)
 
         return describe
 
@@ -480,11 +495,13 @@ def speculative_capabilities(
     granted: Sequence[AgentCapability[AgentDepsT]] | None,
     *,
     speculate: bool = True,
+    repl_states: ReplStates | None = None,
 ) -> 'list[AbstractCapability[AgentDepsT]]':
     """Fold tools into `run_code` with eager execution, and read-only speculation when `speculate`.
 
     `granted` is every other capability the run binds, or `None` when they are not all known; the
-    sandbox mount follows their `FileSystem` and guardrails.
+    sandbox mount follows their `FileSystem` and guardrails. `repl_states` keeps each session's REPL
+    between prompts; without it the REPL ends with the run.
     """
     mode = _mount_mode(granted)
     return [
@@ -497,8 +514,9 @@ def speculative_capabilities(
             eager=True,
             mount_mode=mode,
             os_access=OSAccess(),
+            repl_store=repl_states,
         ),
         EagerTiming(),
-        SpeculativeExecution(counters, mode, speculate),
+        SpeculativeExecution(counters, mode, speculate, repl_states),
         ShowSandboxCalls(),
     ]
