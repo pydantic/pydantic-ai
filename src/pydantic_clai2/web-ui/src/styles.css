@@ -449,6 +449,11 @@ pre {
   right: 4px;
 }
 
+.session-menu.up {
+  top: auto;
+  bottom: 30px;
+}
+
 .sidebar-foot {
   display: flex;
   justify-content: flex-end;
