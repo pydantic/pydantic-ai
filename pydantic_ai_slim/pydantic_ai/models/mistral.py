@@ -11,6 +11,7 @@ import pydantic_core
 from pydantic import JsonValue
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -112,10 +113,6 @@ except ImportError as e:  # pragma: lax no cover
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
-
-# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
-# is what users should see, not `ModuleNotFoundError: httpx`.
-from httpx import Timeout
 
 
 @contextmanager
@@ -584,7 +581,7 @@ class MistralModel(Model[Mistral]):
         return 'Any'
 
     @staticmethod
-    def _get_timeout_ms(timeout: Timeout | int | float | None) -> int | None:
+    def _get_timeout_ms(timeout: HTTPTimeout | int | float | None) -> int | None:
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None

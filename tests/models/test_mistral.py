@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
+import importlib
 import json
 import re
+import sys
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -4012,3 +4014,44 @@ async def test_mistral_enum_member_docstrings_reach_the_wire(
             'type': 'object',
         }
     )
+
+
+#####################
+## No legacy httpx
+#####################
+
+
+def test_mistral_importable_without_legacy_httpx(monkeypatch: pytest.MonkeyPatch):
+    """The mistral model module must import without legacy `httpx` installed (fresh `pydantic-ai-slim[mistral]`)."""
+    # `None` in `sys.modules` makes `import httpx` raise even when httpx is installed in the environment.
+    monkeypatch.setitem(sys.modules, 'httpx', None)
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.models.mistral')
+
+    module = importlib.import_module('pydantic_ai.models.mistral')
+
+    assert module.MistralModel is not None
+
+
+async def test_mistral_request_round_trip_without_legacy_httpx(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """A full request round trip must work with legacy `httpx` blocked out of the mistral path."""
+    completions = [
+        completion_message(
+            MistralAssistantMessage(content='world'),
+            usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
+            with_created=False,
+        ),
+    ]
+    mock_client = MockMistralAI.create_mock(completions)
+    monkeypatch.setitem(sys.modules, 'httpx', None)
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.models.mistral')
+    mistral_module = importlib.import_module('pydantic_ai.models.mistral')
+    model = mistral_module.MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+
+    assert result.output == 'world'
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
