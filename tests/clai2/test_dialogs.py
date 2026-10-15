@@ -1,5 +1,6 @@
 """`Dialogs` in the terminal, and settings menus declared with `Plugin.settings_menu`."""
 
+import asyncio
 import io
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
@@ -147,6 +148,14 @@ async def test_wait_closes_when_the_task_finishes_and_raises_its_error() -> None
             await TerminalDialogs(script.runners).wait(title='Signing in', description='Finish it.', task=fails)
 
 
+def _on_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 class Fields:
     """One row, `name`, kept in memory."""
 
@@ -154,8 +163,10 @@ class Fields:
 
     def __init__(self) -> None:
         self.value = 'ada'
+        self.read_on_loop: list[bool] = []
 
     def rows(self) -> Sequence[FieldRow]:
+        self.read_on_loop.append(_on_loop())
         return (
             FieldRow(key='name', label='Name', description='Who.', default='ada'),
             FieldRow(key='token', label='Token', description='A /keys entry.', default='(not set)'),
@@ -197,6 +208,8 @@ async def test_settings_menu_runs_actions_with_terminal_dialogs_under_one_hold()
     with holding_output(hold):
         messages = await run_settings_menu(menu, script.runners)
     assert messages == ['Saved Name.', 'Picked a token.']
+    # The rows may read the keyring or `/keys`, so the terminal menu never reads them on the event loop.
+    assert fields.read_on_loop and not any(fields.read_on_loop)
     assert fields.value == 'grace'
     [name, _] = fields.rows()
     assert (fields.problem(name, 'x'), fields.reset(name), fields.value) == (None, 'Reset Name.', 'ada')
