@@ -253,6 +253,7 @@ import { experimental_MCPAppRenderer as MCPAppRenderer } from '@ai-sdk/react';
 type Message = UIMessage<unknown, { 'mcp-apps': { resourceUri: string; result: Record<string, unknown> } }>;
 
 const app = message.parts.find(p => p.type === 'data-mcp-apps' && p.id === part.toolCallId);
+const handlers = { allowedTools: ['select_day'], callTool, readResource };
 
 return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
   <MCPAppRenderer
@@ -262,7 +263,7 @@ return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
       output: app.data.result,
     }}
     loadResource={loadResource}
-    handlers={{ allowedTools: ['select_day'], callTool, readResource }}
+    handlers={handlers}
     sandbox={sandbox}
   />
 ) : null;
