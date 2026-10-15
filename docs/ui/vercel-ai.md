@@ -52,8 +52,6 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 !!! note
     This example uses FastAPI, but can be modified to work with any web framework.
 
-If you serialize [`VercelAIAdapter.dump_messages()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] output yourself, use `model_dump(mode='json', by_alias=True)` so unset fields are omitted, as the AI SDK requires.
-
 ### Cancellation
 
 When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
@@ -230,6 +228,8 @@ Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes application keys from [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those application keys and the timestamp on the way back. The framework-reserved `__pydantic_ai__` namespace is excluded in both directions.
 
 `load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
+
+If you serialize `dump_messages` output yourself, use `model_dump_json(by_alias=True)` or `model_dump(mode='json', by_alias=True)` so unset fields are omitted, as the AI SDK requires.
 
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 

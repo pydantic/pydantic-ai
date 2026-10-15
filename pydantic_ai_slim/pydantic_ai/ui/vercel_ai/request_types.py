@@ -30,7 +30,8 @@ class BaseUIPart(CamelBaseModel, ABC):
     """Abstract base class for all UI parts."""
 
     # The AI SDK types optional part fields as `field?: T`, so `validateUIMessages` rejects `null` for them.
-    # `input`, `output` and `data` are typed `unknown`, so `null` is a real value there.
+    # `input`, `output` and `data` are typed `unknown`, so `null` is a real value there. `rawInput` is too,
+    # but Pydantic AI never sets it and AI SDK 7 deprecates it, warning on any value that is present.
     # Only JSON output goes to the AI SDK, so Python-mode dumps keep their `None` fields.
     # No return annotation: one would replace the part's serialization JSON schema with a bare `object`.
     @model_serializer(mode='wrap')
