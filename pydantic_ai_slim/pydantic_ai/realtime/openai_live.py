@@ -689,7 +689,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
         # Which response, user turn, and input each frame is about (see `frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
-        self._lifecycle = InferredLifecycle(transcribes=True, audio_starts_response=False)
+        self._lifecycle = InferredLifecycle(transcripts_lag_replies=False, audio_starts_response=False)
         # Whether the frame just mapped had the model take the turn (see `_open_response()`).
         self._took_turn = False
 

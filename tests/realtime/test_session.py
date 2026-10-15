@@ -317,8 +317,13 @@ class FakeRealtimeConnection(InferredConnection):
         interrupts_response_on_speech: bool = False,
         model_name: str | None = None,
         reconnect_restores_in_flight_state: bool = True,
+        after_input: bool = False,
     ) -> None:
         self._events = events
+        # Whether the scripted events answer an input, and so only come once one was sent: a provider can't
+        # answer what it hasn't received.
+        self._after_input = after_input
+        self._input_sent = asyncio.Event()
         self._release = release
         self._input_transcription_enabled = input_transcription_enabled
         self._interrupts_response_on_speech = interrupts_response_on_speech
@@ -344,8 +349,11 @@ class FakeRealtimeConnection(InferredConnection):
 
     async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
+        self._input_sent.set()
 
     async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        if self._after_input:
+            await self._input_sent.wait()
         for event in self._events:
             yield event
         if self._release is not None:
@@ -3908,8 +3916,11 @@ class AwaitBetweenConnection(InferredConnection):
 
     async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
+        self._input_sent.set()
 
     async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        if self._after_input:
+            await self._input_sent.wait()
         for event in self._events:
             yield event
             await asyncio.sleep(0)

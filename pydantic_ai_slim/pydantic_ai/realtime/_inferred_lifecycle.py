@@ -12,6 +12,7 @@ from ..messages import (
     PartStartEvent,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeResponseInterruptedEvent,
 )
 from ._lifecycle import (
@@ -85,15 +86,16 @@ class InferredLifecycle:
     """
 
     def __init__(
-        self, *, transcribes: bool, transcripts_lag_replies: bool = False, audio_starts_response: bool = True
+        self, *, transcribes: bool = True, transcripts_lag_replies: bool = True, audio_starts_response: bool = True
     ) -> None:
         """Track a connection's lifecycle.
 
         Args:
             transcribes: Whether the user's speech is transcribed: if not, audio alone makes a spoken turn.
             transcripts_lag_replies: Whether the provider can transcribe the user's words after the model started
-                answering them (Gemini does): a transcript that starts while a reply nobody asked for is under way
-                is then the speech that reply answers, rather than speech over it.
+                answering them, as most do: a transcript that starts while a reply nobody asked for is under way is
+                then the speech that reply answers, rather than speech over it (which a provider that transcribes
+                as the user speaks, like GPT-Live, reports while the reply is still going).
             audio_starts_response: Whether output audio is the model speaking. GPT-Live's output is a continuous
                 track, silent between replies: its connection says where the model takes the turn instead
                 (`message(takes_turn=True)`), and audio outside a reply is no response.
@@ -122,7 +124,7 @@ class InferredLifecycle:
         """Inputs sent while a reply was under way or owed, which join the conversation after that reply."""
         self._turns = 0
         self._turn: _Turn | None = None
-        self._turn_reply: str | None = None
+        self._turn_reply: tuple[str, str] | None = None
         """The response replying to the joined turn, whose end closes the turn's transcript."""
         self._unprompted_reply: str | None = None
         """The response under way, if the model started it on its own with no transcript of speech to reply to yet."""
@@ -130,6 +132,8 @@ class InferredLifecycle:
         """Audio went out since the last reply started: without transcription, the next turn of speech."""
         self._continues: str | None = None
         """A response the model ended saying the exchange goes on, which the next response carries on from."""
+        self._spoken_unanswered: str | None = None
+        """A spoken turn that joined the conversation ahead of a reply that hasn't started yet."""
         self._identified: set[str] = set()
         """The turns the provider named, by item id."""
 
@@ -170,8 +174,7 @@ class InferredLifecycle:
             turn = self._turn = _Turn(f'pydantic_ai_user_turn_{self._turns}')
             self._pending.append(UserTurnStarted(turn_id=turn.id))
         self._audio_since_reply = False
-        turn.joined = True
-        self._pending.append(UserTurnEnded(turn_id=turn.id))
+        self._join(turn, self._pending)
 
     def input_failed(self, input_id: InputId) -> None:
         """The input never went out (its send raised): forget it."""
@@ -278,7 +281,7 @@ class InferredLifecycle:
                 # A tool-call frame's report: the calls' response is over, and the answer comes once every result
                 # is in.
                 self._end(after, status='completed', finish_reason='tool_call')
-        elif isinstance(event, InputTranscript):
+        elif isinstance(event, (InputTranscript, RealtimeInputTranscriptionErrorEvent)):
             self._input_transcript(event, before)
         elif isinstance(event, RealtimeResponseInterruptedEvent):
             # The user (or a tool result) cut in: what was sent meanwhile follows what the model had said, and so
@@ -315,59 +318,76 @@ class InferredLifecycle:
             provider_details=event.provider_details,
         )
 
+    def _end_turn(self, turn: _Turn, events: list[LifecycleEvent]) -> None:
+        """Another turn starts: `turn` is over, and joined the conversation, if it hadn't."""
+        self._turn = None
+        if not turn.joined:
+            self._join(turn, events)
+
+    def _join(self, turn: _Turn, events: list[LifecycleEvent]) -> None:
+        """`turn` joins the conversation here, ahead of the reply to it."""
+        turn.joined = True
+        self._spoken_unanswered = turn.id
+        events.append(UserTurnEnded(turn_id=turn.id))
+
     def _speech_started(self, event: RealtimeInputSpeechStartEvent, before: list[LifecycleEvent]) -> None:
         """The provider heard the user start speaking: a spoken turn starts, named by its item id if it has one."""
         turn = self._turn
-        if turn is not None and not turn.joined:
-            return
-        self._turns += 1
-        identified = event.item_id is not None and event.item_id not in self._identified
-        turn = self._turn = _Turn(event.item_id if identified else f'pydantic_ai_user_turn_{self._turns}')
-        if identified:
-            turn.identified = True
-            self._identified.add(turn.id)
-        before.append(UserTurnStarted(turn_id=turn.id))
+        if turn is not None:
+            if not turn.joined and (event.item_id is None or event.item_id == turn.id):
+                return  # (the turn its words already started)
+            self._end_turn(turn, before)
+        known = event.item_id is not None and event.item_id in self._identified
+        # Speech starting while the model answers is the user speaking over it, not the speech it answers.
+        self._start_turn(None if known else event.item_id, before, transcribed=False)
 
     def _speech_ended(self, event: RealtimeInputSpeechEndEvent, after: list[LifecycleEvent]) -> None:
         """The provider heard the user stop: the turn joins the conversation, as the provider commits it now."""
         turn = self._turn
         if turn is None or turn.joined or (event.item_id is not None and turn.identified and turn.id != event.item_id):
             return
-        turn.joined = True
         self._audio_since_reply = False
-        after.append(UserTurnEnded(turn_id=turn.id))
+        self._join(turn, after)
 
-    def _input_transcript(self, event: InputTranscript, before: list[LifecycleEvent]) -> None:
+    def _input_transcript(
+        self, event: InputTranscript | RealtimeInputTranscriptionErrorEvent, before: list[LifecycleEvent]
+    ) -> None:
+        """Some of the user's words, or word that they can't be transcribed (which is the last there will be)."""
+        final = isinstance(event, RealtimeInputTranscriptionErrorEvent) or event.is_final
         turn = self._turn
         if event.item_id is not None and event.item_id in self._identified:
             # More of a turn the provider named, which needn't be the one being said now.
-            if turn is not None and turn.id == event.item_id and event.is_final:
+            if turn is not None and turn.id == event.item_id and final:
                 turn.final = True
                 if turn.joined:
                     self._turn = None
             return
-        if turn is not None and event.item_id is not None and turn.id != event.item_id:
-            # The provider names a turn of its own: the one before it is over.
-            self._turn = None
+        if turn is not None and (turn.final or (event.item_id is not None and turn.id != event.item_id)):
+            # The provider names a turn of its own, or the one before it said all it had: that one is over, and in
+            # the conversation.
+            self._end_turn(turn, before)
             turn = None
         if turn is None:
-            self._turns += 1
-            turn_id = event.item_id or f'pydantic_ai_user_turn_{self._turns}'
-            turn = self._turn = _Turn(turn_id, identified=event.item_id is not None)
-            if turn.identified:
-                self._identified.add(turn_id)
-            before.append(UserTurnStarted(turn_id=turn.id))
-            if (reply := self._unprompted_reply) is not None:
-                # The model started replying to speech before its transcript came (as Gemini usually does): this
-                # is that speech, which joined the conversation ahead of the reply.
-                self._unprompted_reply = None
-                turn.joined = True
-                self._turn_reply = reply
-                before.append(UserTurnEnded(turn_id=turn.id, before_response=reply))
-        if event.is_final:
+            turn = self._start_turn(event.item_id, before)
+        if final:
             turn.final = True
             if turn.joined:
                 self._turn = None
+
+    def _start_turn(self, item_id: str | None, before: list[LifecycleEvent], *, transcribed: bool = True) -> _Turn:
+        self._turns += 1
+        turn = self._turn = _Turn(item_id or f'pydantic_ai_user_turn_{self._turns}', identified=item_id is not None)
+        if item_id is not None:
+            self._identified.add(item_id)
+        before.append(UserTurnStarted(turn_id=turn.id))
+        if transcribed and (reply := self._unprompted_reply) is not None:
+            # The model started replying to speech before its transcript came (as most providers do): this is that
+            # speech, which joined the conversation ahead of the reply.
+            self._unprompted_reply = None
+            turn.joined = True
+            self._turn_reply = (turn.id, reply)
+            before.append(UserTurnEnded(turn_id=turn.id, before_response=reply))
+        return turn
 
     # --- responses ----------------------------------------------------------------------------------
 
@@ -382,11 +402,15 @@ class InferredLifecycle:
         self._unanswered.clear()
         self._held = [input_id for input_id in self._held if input_id not in answers]
         turn_id = self._join_turn(events, replying=not answers)
+        if turn_id is None and not answers:
+            # A spoken turn that joined the conversation before (at its speech end, say) and had no reply yet.
+            turn_id = self._spoken_unanswered
+        self._spoken_unanswered = None
         self._responses += 1
         self._open = named or f'pydantic_ai_response_{self._responses}'
         self._open_named = named is not None
         if turn_id is not None:
-            self._turn_reply = self._open
+            self._turn_reply = (turn_id, self._open)
         elif not answers and self._transcribes and self._transcripts_lag_replies:
             self._unprompted_reply = self._open
         continues, self._continues = self._continues, None
@@ -443,8 +467,9 @@ class InferredLifecycle:
                 response_id=response_id, status=status, finish_reason=finish_reason, provider_details=provider_details
             )
         )
-        if self._turn_reply == response_id:
-            self._close_turn(events)
+        if (reply := self._turn_reply) is not None and reply[1] == response_id:
+            self._turn_reply = None
+            self._close_turn(events, turn_id=reply[0])
         self._place_held(events)
 
     def _end_deferred(self, events: list[LifecycleEvent]) -> None:
@@ -457,13 +482,14 @@ class InferredLifecycle:
 
     # --- user turns and inputs ----------------------------------------------------------------------
 
-    def _close_turn(self, events: list[LifecycleEvent]) -> None:
-        """The joined turn's reply is over (or was cut off): no more of its transcript is coming."""
+    def _close_turn(self, events: list[LifecycleEvent], *, turn_id: str | None = None) -> None:
+        """The joined turn's reply (to `turn_id`, if given) is over, or was cut off: no more of its transcript is coming."""
         turn = self._turn
-        if turn is None or not turn.joined:
+        if turn is None or not turn.joined or (turn_id is not None and turn.id != turn_id):
             return
         # (A joined turn whose transcript was marked finished is done with already.)
-        self._turn = self._turn_reply = None
+        self._turn = None
+        self._turn_reply = None
         if not turn.identified:
             # The provider doesn't say when it has transcribed all of it: what it has is all there is.
             events.append(UserTurnDiscarded(turn_id=turn.id))

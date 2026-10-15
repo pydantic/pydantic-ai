@@ -1539,7 +1539,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # completes.
         self._tool_call_turn_unanswered = False
         # Which response, user turn, and input each message is about (see `frames()`).
-        self._lifecycle = InferredLifecycle(transcribes=input_transcription_enabled, transcripts_lag_replies=True)
+        self._lifecycle = InferredLifecycle(transcribes=input_transcription_enabled)
 
     @property
     def _can_reconnect(self) -> bool:

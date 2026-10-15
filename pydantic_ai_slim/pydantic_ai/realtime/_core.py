@@ -209,6 +209,8 @@ class _Response:
     """The model serving the session when the response started, which it is priced as."""
     provider_id: bool = True
     """Whether `id` is the provider's, recorded as the message's `provider_response_id`."""
+    reported_id: str | None = None
+    """The id its terminal named, for a response whose `id` is made up."""
     native_parts: list[ModelResponsePart] = field(default_factory=list[ModelResponsePart])
     """Native tool calls and returns (grounding, code execution), which lead the message, as on a standard run."""
     parts: list[ModelResponsePart] = field(default_factory=list[ModelResponsePart])
@@ -403,7 +405,9 @@ class SessionCore:
         elif isinstance(item, InputTranscript):
             self._input_transcript(item)
         elif isinstance(item, RealtimeInputTranscriptionErrorEvent):
-            if item.item_id is not None and (turn := self._turns.get(item.item_id)) is not None:
+            # One naming no item is the latest turn's, as a transcript is.
+            turn = self._turns.get(item.item_id) if item.item_id is not None else self._latest_turn()
+            if turn is not None and not turn.transcribed:  # (a stray one, after its transcript, changes nothing)
                 self._transcribed(turn, failed=True)
         elif isinstance(item, RealtimeInputSpeechStartEvent):
             self._user_speaking = True
@@ -421,7 +425,6 @@ class SessionCore:
         elif isinstance(
             item,
             (
-                ResponseDone,  # the lifecycle's `ResponseEnded` says the same, once per response
                 RealtimeOutputSpeechStartEvent,
                 RealtimeOutputSpeechEndEvent,
                 RealtimeResponseInterruptedEvent,
@@ -431,6 +434,10 @@ class SessionCore:
             ),
         ):
             pass
+        elif isinstance(item, ResponseDone):
+            # The lifecycle's `ResponseEnded` ends the response; its terminal can still name it, if nothing had.
+            if item.provider_response_id and (response := self._open_response(None)) is not None:
+                response.reported_id = response.reported_id or item.provider_response_id
         elif isinstance(item, PartStartEvent):
             if (response := self._open_response(None)) is not None:
                 response.native_parts.append(item.part)
@@ -709,7 +716,7 @@ class SessionCore:
             provider_name=self._provider_name,
             provider_url=self._provider_url,
             provider_details={**(response.usage_details or {}), **(event.provider_details or {})} or None,
-            provider_response_id=response.id if response.provider_id else None,
+            provider_response_id=response.id if response.provider_id else response.reported_id,
             finish_reason=finish_reason,
             conversation_id=self._conversation_id,
             state='interrupted' if interrupted else 'complete',
