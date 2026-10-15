@@ -1503,6 +1503,23 @@ async def test_resumed_run_does_not_count_the_attempts_of_the_response_it_resume
     assert response.failed_attempts == [rejected]
 
 
+@pytest.mark.parametrize('shape', list(_RESUMED_SHAPES))
+async def test_resumed_stream_live_usage_counts_only_what_it_billed(shape: str) -> None:
+    """Mid-stream, a resumed run's live usage leaves out the suspended response the run that walked away counted."""
+    segments, billed = _RESUMED_SHAPES[shape]
+    messages, walked_away = await _walk_away()
+
+    live: list[int] = []
+    async with Agent(_ScriptedModel(segments=list(segments))).run_stream(message_history=messages) as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            live.append(result.usage.total_tokens)
+
+    assert live
+    # Each reading is what this run billed so far, never more than the turn's rest.
+    assert all(tokens <= billed - walked_away.total_tokens for tokens in live)
+    assert result.usage.total_tokens == billed - walked_away.total_tokens
+
+
 def test_usage_beyond_subtracts_every_counter() -> None:
     usage = RequestUsage(input_tokens=10, cache_read_tokens=4, details={'reasoning_tokens': 3}, cost=Decimal('0.5'))
     usage.__dict__['provider_note'] = 'kept'

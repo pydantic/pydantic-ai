@@ -52,7 +52,7 @@ from ..messages import (
     PartStartEvent,
 )
 from ..settings import ModelSettings
-from ..usage import RequestUsage
+from ..usage import RequestUsage, _add_usage_tokens  # pyright: ignore[reportPrivateUsage]
 from . import Model, ModelRequestContext, StreamedResponse
 
 __all__ = [
@@ -268,16 +268,7 @@ def usage_beyond(usage: RequestUsage, baseline: RequestUsage) -> RequestUsage:
     towards counting too much rather than too little.
     """
     beyond = copy(usage)
-    # Usage carries arbitrary provider-specific counters next to its declared fields, so this walks them
-    # all the way `RequestUsage.incr` does.
-    for key in (usage.__dict__.keys() | baseline.__dict__.keys()) - {'details', 'cost'}:
-        value = getattr(usage, key, 0)
-        base = getattr(baseline, key, 0)
-        if isinstance(value, (int, float)) and isinstance(base, (int, float)):
-            setattr(beyond, key, value - base)
-    for key, base in baseline.details.items():
-        if isinstance(base, int):  # pragma: no branch
-            beyond.details[key] = beyond.details.get(key, 0) - base
+    _add_usage_tokens(beyond, baseline, -1)
     if usage.cost is not None and baseline.cost is not None:
         beyond.cost = usage.cost - baseline.cost
     return beyond
