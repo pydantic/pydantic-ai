@@ -1006,7 +1006,7 @@ Markdown file. Save and quit the editor to keep your changes. Unchanged text
 changes nothing, and an editor that exits with an error, such as Vim's `:cq`,
 cancels. A graphical editor must wait for its window to close, for example
 `code --wait`. On Windows, when neither variable is set, or when the editor
-cannot start, a built-in editor opens instead: Ctrl-S saves, Esc cancels.
+cannot start, a built-in editor opens instead: Ctrl+S saves, Esc cancels.
 
 Your instructions are the `run.instructions` setting, saved with your other
 preferences, so later sessions and `/fork` use them too. They apply from your
