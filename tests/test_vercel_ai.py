@@ -115,6 +115,7 @@ with try_import() as starlette_import_successful:
         TextUIPart,
         ToolApprovalRequested,
         ToolApprovalResponded,
+        ToolApprovalRespondedPart,
         ToolInputAvailablePart,
         ToolInputStreamingPart,
         ToolOutputAvailablePart,
@@ -5059,6 +5060,150 @@ async def test_adapter_dump_messages():
                 'parts': [{'type': 'text', 'text': 'Hi there!', 'state': 'done', 'provider_metadata': None}],
             },
         ]
+    )
+
+
+async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: BinaryImage):
+    """The AI SDK's `validateUIMessages` rejects `null` for optional part fields, so unset ones are omitted."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', tiny_image, ImageUrl(url='https://example.com/a.png')])]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Thinking'),
+                TextPart(content='Hi'),
+                FilePart(content=tiny_image),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1'),
+                ToolCallPart(tool_name='noop', args={}, tool_call_id='call_2'),
+                ToolCallPart(tool_name='flaky', args={}, tool_call_id='call_3'),
+                NativeToolCallPart(tool_name='web_search', args={'query': 'x'}, tool_call_id='call_4'),
+                NativeToolReturnPart(tool_name='web_search', content={'results': []}, tool_call_id='call_4'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='Sunny', tool_call_id='call_1'),
+                ToolReturnPart(tool_name='noop', content=None, tool_call_id='call_2'),
+                RetryPromptPart(tool_name='flaky', content='Try again', tool_call_id='call_3'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='deferred', args={}, tool_call_id='call_5')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dumped = [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages]
+
+    # `output: null` is a real tool result, which the AI SDK accepts and `load_messages` restores.
+    null_keys = [
+        (part['type'], key) for msg in dumped for part in msg['parts'] for key, value in part.items() if value is None
+    ]
+    assert null_keys == snapshot([('tool-noop', 'output')])
+    # An optional `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata.
+    assert 'metadata' not in dumped[0]
+
+    reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
+    noop_return = next(
+        part for part in iter_message_parts(reloaded, ModelRequest, ToolReturnPart) if part.tool_call_id == 'call_2'
+    )
+    assert noop_return.content is None
+
+
+async def test_adapter_dump_messages_system_only_request_keeps_metadata():
+    """A request with only system parts carries its metadata on the system message, and it survives a reload."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.')], metadata={'tenant': 'acme'}),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'system',
+                'metadata': {'tenant': 'acme'},
+                'parts': [{'type': 'text', 'text': 'Be brief.', 'state': 'done'}],
+            }
+        ]
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert reloaded[0].metadata == snapshot({'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': IsStr()}})
+
+
+def test_client_message_serializes_as_sent():
+    """A client-sent message, stored and sent back as JSON, keeps its explicit `metadata: null` and gains no `reason: null`.
+
+    Not a `dump_messages` test: the adapter always sets `reason` on the approvals it builds, and never sets `null`
+    metadata. An app's `metadataSchema` may be nullable, so the client's `null` must round-trip.
+    """
+    message = UIMessage.model_validate(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+    assert message.model_dump(mode='json', by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+
+
+def test_python_mode_dump_keeps_unset_optional_fields():
+    """Only JSON output goes to the AI SDK, so Python-mode dumps keep their `None` fields."""
+    message = UIMessage(
+        id='msg_1',
+        role='assistant',
+        parts=[
+            TextUIPart(text='Hi'),
+            ToolApprovalRespondedPart(
+                type='tool-delete_file',
+                tool_call_id='call_1',
+                input={'path': 'a.txt'},
+                approval=ToolApprovalResponded(id='approval_1', approved=True),
+            ),
+        ],
+    )
+    assert message.model_dump(by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {'type': 'text', 'text': 'Hi', 'state': None, 'providerMetadata': None},
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'title': None,
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'providerExecuted': None,
+                    'callProviderMetadata': None,
+                    'toolMetadata': None,
+                    'approval': {'id': 'approval_1', 'approved': True, 'reason': None},
+                },
+            ],
+        }
     )
 
 

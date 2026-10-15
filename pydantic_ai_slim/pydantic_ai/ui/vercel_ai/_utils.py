@@ -7,13 +7,7 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 from typing_extensions import TypedDict
 
-from pydantic_ai._mcp_apps import (
-    MCP_APP_MIME_TYPE,
-    MCP_APPS_UI_TYPE,
-    get_mcp_app_tool_result,
-    get_mcp_tool_info,
-    mcp_app_ui_payload,
-)
+from pydantic_ai._mcp_apps import get_mcp_app_tool_result, get_mcp_tool_info
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
@@ -23,7 +17,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     tool_return_ta,
 )
-from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY
+from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY, MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -59,6 +53,9 @@ COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
+
+MCP_APP_MIME_TYPE = 'text/html;profile=mcp-app'
+"""MIME type of an MCP Apps page."""
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'

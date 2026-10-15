@@ -138,7 +138,6 @@ __all__ = (
     'EmbeddedResource',
     'ContentBlock',
     'PromptRole',
-    'ResourceContents',
     'MCPAppToolResult',
     'MCPToolInfo',
 )
@@ -556,45 +555,6 @@ class EmbeddedResource:
 
 ContentBlock = messages.TextContent | messages.BinaryContent | ResourceLink | EmbeddedResource
 """A content block that can be used in prompts and tool results."""
-
-
-@dataclass(repr=False, kw_only=True)
-class ResourceContents:
-    """One content item read from a resource, with the MIME type and `_meta` the server sent alongside it.
-
-    Returned by [`MCPToolset.read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents].
-
-    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#reading-resources).
-    """
-
-    uri: str
-    """The URI of the content item."""
-
-    content: str | messages.BinaryContent
-    """The content: text as `str`, binary data as [`BinaryContent`][pydantic_ai.messages.BinaryContent]."""
-
-    mime_type: str | None = None
-    """The MIME type of the content, if known."""
-
-    metadata: dict[str, Any] | None = None
-    """
-    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
-    for notes on _meta usage.
-    """
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-    @classmethod
-    def from_mcp_sdk(
-        cls, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> ResourceContents:
-        """Convert from MCP SDK resource contents to Pydantic AI `ResourceContents`."""
-        return cls(
-            uri=str(resource.uri),
-            content=_resource_content_to_pai(resource),
-            mime_type=mcp_optional_field(resource, 'mime_type', str),
-            metadata=resource.meta,
-        )
 
 
 @dataclass(repr=False, kw_only=True)
@@ -1366,8 +1326,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
-            # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
-            if not _visible_to(mcp_tool, 'model'):
+            if not _is_visible_to(mcp_tool, 'model'):
                 continue
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
@@ -1576,38 +1535,37 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return _with_metadata(return_value, {MCP_TOOL_METADATA_KEY: info})
 
         # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
-        # take the same steps, but keep the arguments and raw result of the last call to this tool: mapping it
-        # for the model drops `structuredContent` (when text mirrors it) and `_meta`, which the app needs.
+        # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
+        # for the model, and the mapping drops `_meta` and sometimes the content blocks, which the app needs.
         tool_name = name
-        last_call: tuple[dict[str, Any], CallToolResult, ToolResult] | None = None
+        sent: CallToolResult | None = None
 
         async def call_tool_func(
             name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
         ) -> ToolResult:
-            nonlocal last_call
+            nonlocal sent
             result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
-            mapped = _map_mcp_call_tool_result(result)
             if name == tool_name:
-                # A copy, so a hook that edits the returned value in place still reads as a rewrite.
-                last_call = args, result, copy.deepcopy(mapped)
-            return mapped
+                # A copy, as the mapped value shares objects with the result and a hook may edit it in place.
+                sent = copy.deepcopy(result)
+            return _map_mcp_call_tool_result(result)
 
-        # A copy, so a hook that edits the arguments in place still reads as a rewrite.
+        # The app gets the model's arguments, which the frontend already has, not ones a hook added (such as a key).
+        # A copy, as a hook may edit them in place.
         model_args = copy.deepcopy(tool_args)
         if self.process_tool_call is not None:
             return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
         else:
             return_value = await call_tool_func(name, tool_args)
 
-        # The app gets the result only when the model's call produced it and the model got it unchanged: a
-        # `process_tool_call` hook that changes the arguments or the result decides what leaves the toolset.
+        # Mapping the kept result again gives what the model would have got, so a `process_tool_call` hook that
+        # changed the result keeps the raw one from reaching the app.
         metadata: dict[str, Any] = {MCP_TOOL_METADATA_KEY: info}
-        if last_call is not None and last_call[0] == model_args and return_value == last_call[2]:
-            _, result, _ = last_call
+        if sent is not None and return_value == _map_mcp_call_tool_result(sent):
             metadata[MCP_APP_METADATA_KEY] = MCPAppToolResult(
                 resource_uri=resource_uri,
                 tool_input=model_args,
-                result=_call_tool_result_to_wire(result),
+                result=_call_tool_result_to_wire(sent),
                 toolset_id=self.id,
             )
         return _with_metadata(return_value, metadata)
@@ -1734,27 +1692,18 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        contents = await self._read_resource(uri)
+        resource_uri = uri if isinstance(uri, str) else uri.uri
+        async with self:
+            try:
+                contents = await self.client.read_resource(AnyUrl(resource_uri))
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+
         return (
             _resource_content_to_pai(contents[0])
             if len(contents) == 1
             else [_resource_content_to_pai(c) for c in contents]
         )
-
-    async def read_resource_contents(self, uri: str | Resource) -> list[ResourceContents]:
-        """Read a resource, keeping each content item's URI, MIME type and `_meta`.
-
-        Use this over [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource] when the metadata matters,
-        such as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) UI resource, whose
-        `_meta.ui` carries the Content Security Policy and permissions its sandbox needs.
-
-        Args:
-            uri: The URI of the resource to read, or a [`Resource`][pydantic_ai.mcp.Resource] object.
-
-        Raises:
-            MCPError: If the server returns an error.
-        """
-        return [ResourceContents.from_mcp_sdk(c) for c in await self._read_resource(uri)]
 
     async def call_tool_for_app(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call a tool for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
@@ -1787,7 +1736,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         async with self:
             try:
                 tool = next((t for t in await self.list_tools() if t.name == name), None)
-                if tool is None or not _visible_to(tool, 'app'):
+                if tool is None or not _is_visible_to(tool, 'app'):
                     raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
                 result = await self.client.call_tool(name=name, arguments=arguments, raise_on_error=False)
             except McpError as e:
@@ -1797,12 +1746,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     async def read_resource_for_app(self, uri: str) -> dict[str, Any]:
         """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
 
-        The counterpart of [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] for the page's
-        `resources/read` requests. Send the result back to the page as is. MCP Apps has no visibility setting for
-        resources, so any resource on the server can be read; check `uri` first if a page should only reach some.
+        Unlike [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource], this keeps each item's MIME type and
+        `_meta`, where `_meta.ui` holds the Content Security Policy and permissions for the page's iframe. Use it to
+        load the page itself, and to answer the page's own `resources/read` requests: send the result back as is.
+        MCP Apps has no visibility setting for resources, so any resource on the server can be read; check `uri`
+        first if a page should only reach some.
 
         Args:
-            uri: The URI of the resource the page asked for.
+            uri: The URI of the resource.
 
         Returns:
             The MCP `ReadResourceResult` in wire format (camelCase keys), with its `contents`.
@@ -1816,16 +1767,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)
-
-    async def _read_resource(
-        self, uri: str | Resource
-    ) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
-        resource_uri = uri if isinstance(uri, str) else uri.uri
-        async with self:
-            try:
-                return await self.client.read_resource(AnyUrl(resource_uri))
-            except McpError as e:
-                raise MCPError.from_mcp_sdk(e) from e
 
     def __repr__(self) -> str:
         repr_args = [f'client={self.client!r}']
@@ -2020,8 +1961,12 @@ def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
             return None
 
 
-def _visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool:
-    """Whether an MCP Apps `_meta.ui.visibility` lets the model or the app see a tool; omitted means both."""
+def _is_visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool:
+    """Whether `audience` can see `tool`, per MCP Apps (SEP-1865).
+
+    A server lists who can see a tool in `_meta.ui.visibility`, such as `["app"]` for a tool only its page calls.
+    A tool without that list is visible to both the model and the app.
+    """
     match tool.meta:
         case {'ui': {'visibility': visibility}} if isinstance(visibility, list):
             return audience in visibility

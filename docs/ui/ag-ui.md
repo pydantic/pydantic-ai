@@ -64,7 +64,7 @@ from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -117,7 +117,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -150,7 +150,7 @@ from starlette.routing import Route
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 
 async def run_agent(request: Request) -> Response:
@@ -228,7 +228,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -280,7 +280,7 @@ class ChannelDeps:
     context: list[Context]  # (2)!
 
 
-agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+agent = Agent('{{ openai:medium }}', deps_type=ChannelDeps)
 app = FastAPI()
 
 
@@ -348,7 +348,7 @@ from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -380,7 +380,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @dataclass(kw_only=True)
@@ -450,7 +450,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -522,32 +522,9 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 ### MCP Apps
 
-After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries an `ACTIVITY_SNAPSHOT` with `activityType: "mcp-apps"` (`ag-ui-protocol` 0.1.19 or later). Its `content`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). This is the shape the AG-UI MCP Apps middleware emits, so CopilotKit's renderer accepts it. Dumped history keeps it as an `ActivityMessage`; loading ignores it.
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries an `ACTIVITY_SNAPSHOT` with `activityType: "mcp-apps"` (`ag-ui-protocol` 0.1.19 or later). Its `content`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). This is the shape the AG-UI [MCP Apps middleware](https://www.npmjs.com/package/@ag-ui/mcp-apps-middleware) emits, so renderers built for it can show it; they load the page through your route, as below. Dumped history keeps it as an `ActivityMessage`; loading ignores it.
 
-CopilotKit's renderer loads the page and relays its requests by starting a run with `forwardedProps.__proxiedMCPRequest` and reading `RUN_FINISHED.result`. Pass `mcp_app_toolsets` to answer those runs without running the agent:
-
-```python {title="ag_ui_mcp_apps.py"}
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.routing import Route
-
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-weather = MCPToolset('http://localhost:8000/mcp', id='weather')
-agent = Agent('openai:gpt-5.2', toolsets=[weather])
-
-
-async def run_agent(request: Request) -> Response:
-    return await AGUIAdapter.dispatch_request(request, agent=agent, mcp_app_toolsets=[weather])
-
-
-app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
-```
-
-Toolsets are matched by `id`. Tool calls go through [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] (app-visible tools only, no `process_tool_call`) and resource reads through [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] (any resource). MCP errors come back as `{"error": ...}` in the result; other failures end the run with `RUN_ERROR`. Keep the toolsets entered (`async with weather:`) while your app runs.
+CopilotKit's MCP Apps renderer loads the page and relays its requests by posting a run with `forwardedProps.__proxiedMCPRequest` (`serverId`, `method`, `params`) to your AG-UI endpoint, and reads the answer from `RUN_FINISHED.result`. `AGUIAdapter` runs the agent for these, so answer them in your route before calling `dispatch_request`: get the result from the [MCP Apps relay](../mcp/client.md#mcp-apps), and send it as `RUN_STARTED` followed by `RUN_FINISHED` with that `result`.
 
 ### Assistant message identity
 
@@ -591,7 +568,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 

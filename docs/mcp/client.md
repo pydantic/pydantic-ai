@@ -74,7 +74,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])  # (2)!
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])  # (2)!
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -117,7 +117,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:3001/sse')
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ### Stdio
@@ -131,7 +131,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset(StdioTransport(command='python', args=['mcp_server.py']))
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ### In-process FastMCP server
@@ -151,7 +151,7 @@ async def add(a: int, b: int) -> int:
     return a + b
 
 toolset = MCPToolset(fastmcp_server)
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -244,7 +244,7 @@ from pydantic_ai.mcp import load_mcp_toolsets
 toolsets = load_mcp_toolsets('mcp_config.json')
 
 # Create an agent with all loaded toolsets
-agent = Agent('openai:gpt-5.2', toolsets=toolsets)
+agent = Agent('{{ openai:medium }}', toolsets=toolsets)
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -350,7 +350,7 @@ calculator = MCPToolset('http://localhost:3002/sse').prefixed('calc')   # `calc_
 
 # Both servers may expose a `get_data` tool, but they're disambiguated as
 # `weather_get_data` and `calc_get_data`.
-agent = Agent('openai:gpt-5.2', toolsets=[weather, calculator])
+agent = Agent('{{ openai:medium }}', toolsets=[weather, calculator])
 ```
 
 ## Server instructions
@@ -362,7 +362,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp', include_instructions=True)
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ## Tool metadata
@@ -414,7 +414,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset('http://localhost:8000/mcp', prefer_tasks=False)
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 ## Resources
@@ -426,7 +426,7 @@ MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concept
 - [`list_resources()`][pydantic_ai.mcp.MCPToolset.list_resources] — list all available resources on the server
 - [`list_resource_templates()`][pydantic_ai.mcp.MCPToolset.list_resource_templates] — list resource templates with parameter placeholders
 - [`read_resource(uri)`][pydantic_ai.mcp.MCPToolset.read_resource] — read the contents of a specific resource by URI
-- [`read_resource_contents(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_contents] — read a resource as [`ResourceContents`][pydantic_ai.mcp.ResourceContents], keeping each item's MIME type and `_meta`
+- [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] — read a resource as the MCP result, keeping each item's MIME type and `_meta`
 
 Text content is returned as `str`, and binary content as [`BinaryContent`][pydantic_ai.messages.BinaryContent].
 
@@ -483,33 +483,32 @@ _(This example is complete, it can be run "as is")_
 
 An [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) is an HTML page a server attaches to a tool through the tool's `_meta.ui.resourceUri`. Pydantic AI doesn't render it; it gives your frontend what it needs to.
 
-Every tool call through `MCPToolset` returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata['mcp_tool']` is an [`MCPToolInfo`][pydantic_ai.mcp.MCPToolInfo]: the toolset `id` and the tool's title and annotations, so a frontend can label the call. When the agent calls a tool with a page, the `ToolReturn` also carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the tool input, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model doesn't see it. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the arguments or the result, it isn't attached.
+Every tool call through `MCPToolset` returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata['mcp_tool']` is an [`MCPToolInfo`][pydantic_ai.mcp.MCPToolInfo]: the toolset `id` and the tool's title and annotations, so a frontend can label the call. When the agent calls a tool with a page, the `ToolReturn` also carries an [`MCPAppToolResult`][pydantic_ai.mcp.MCPAppToolResult] in `metadata['mcp_app']`: the resource URI, the model's arguments, the full MCP result with `structuredContent` and `_meta`, and the toolset `id`. The model sees neither. The [AG-UI](../ui/ag-ui.md#mcp-apps) and [Vercel AI](../ui/vercel-ai.md#mcp-apps) adapters send it to the frontend. If a [`process_tool_call`](#tool-call-customization) hook changes the result or doesn't call the tool, `mcp_app` isn't attached. A [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] around the toolset that edits results gets this `ToolReturn` for app tools, so it should edit `return_value`, and drop `metadata` if the page mustn't see the original.
 
 Your frontend needs three things from your backend:
 
-- The page: [`read_resource_contents(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_contents] returns the HTML with its MIME type and `_meta`; `_meta.ui` holds the CSP and permissions for the iframe.
+- The page: [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] returns the MCP result as is, the shape app hosts expect: each item in `contents` has the HTML, its `mimeType` and its `_meta`, where `_meta.ui` holds the CSP and permissions for the iframe.
 - Tool calls the page makes: [`call_tool_for_app(name, arguments)`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] returns the MCP result as is, including `isError` results. Only tools whose `_meta.ui.visibility` includes `"app"`, or omits `visibility`, can be called. `process_tool_call` doesn't apply.
-- Resource reads the page makes: [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] returns the MCP result as is. Any resource on the server can be read.
+- Resource reads the page makes: the same [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. Any resource on the server can be read.
 
 Protocol errors raise [`MCPError`][pydantic_ai.mcp.MCPError]; send its `code`, `message` and `data` back to the page as the JSON-RPC error. Other failures, such as an unreachable server, raise as they are.
 
 ```python {title="mcp_apps.py"}
 from typing import Any
 
-from mcp.types import METHOD_NOT_FOUND
+from mcp.types import INVALID_PARAMS, METHOD_NOT_FOUND
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPError, MCPToolset
 
 weather = MCPToolset('http://localhost:8000/mcp', id='weather')
-agent = Agent('openai:gpt-5.2', toolsets=[weather])
+agent = Agent('{{ openai:medium }}', toolsets=[weather])
 
 
 async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
     """Return the page's HTML and its `_meta.ui`."""
-    [contents] = await weather.read_resource_contents(resource_uri)
-    assert isinstance(contents.content, str)
-    return contents.content, (contents.metadata or {}).get('ui', {})
+    [contents] = (await weather.read_resource_for_app(resource_uri))['contents']
+    return contents['text'], contents.get('_meta', {}).get('ui', {})
 
 
 async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -519,6 +518,8 @@ async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return await weather.call_tool_for_app(name, rest.get('arguments'))
         case 'resources/read', {'uri': str(uri)}:
             return await weather.read_resource_for_app(uri)
+        case 'tools/call' | 'resources/read', _:
+            raise MCPError(message=f'Invalid params for {method!r}', code=INVALID_PARAMS)
         case _:
             raise MCPError(message=f'Method {method!r} is not supported', code=METHOD_NOT_FOUND)
 ```
@@ -562,7 +563,7 @@ class UserDeps:
     mcp_token: str
 
 
-agent = Agent('openai:gpt-5.2', deps_type=UserDeps)
+agent = Agent('{{ openai:medium }}', deps_type=UserDeps)
 
 
 @agent.toolset(per_run_step=False)  # (1)!
@@ -605,7 +606,7 @@ ssl_ctx.load_cert_chain(certfile='/etc/ssl/certs/client.crt', keyfile='/etc/ssl/
 http_client = httpx2.AsyncClient(verify=ssl_ctx, timeout=httpx2.Timeout(10.0))
 
 toolset = MCPToolset('http://localhost:3001/sse', http_client=http_client)  # (1)!
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. The toolset never closes the client, so it can be reused across runs and you are responsible for closing it. On FastMCP 3, build the client with legacy `httpx` instead.
@@ -717,7 +718,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 toolset = MCPToolset(StdioTransport(command='python', args=['generate_svg.py']))
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 
 async def main():
@@ -848,7 +849,7 @@ toolset = MCPToolset(
     elicitation_handler=handle_elicitation,
 )
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 
 async def main():

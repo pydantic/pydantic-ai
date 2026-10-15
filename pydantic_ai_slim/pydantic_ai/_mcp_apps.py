@@ -1,11 +1,11 @@
-"""The records `MCPToolset` attaches to a tool return, and the MCP Apps (SEP-1865) UI wire payload.
+"""The records `MCPToolset` attaches to a tool return: which tool a call went to, and its MCP Apps (SEP-1865) data.
 
 This module has no `mcp` dependency, so the UI adapters can read the record without the `mcp` extra.
 """
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
@@ -17,12 +17,6 @@ MCP_TOOL_METADATA_KEY: Final = 'mcp_tool'
 
 MCP_APP_METADATA_KEY: Final = 'mcp_app'
 """Key under which the `MCPAppToolResult` record sits in `ToolReturnPart.metadata`."""
-
-MCP_APPS_UI_TYPE: Final = 'mcp-apps'
-"""Name of the UI event that carries the record: the AG-UI activity type and the Vercel AI `data-*` suffix."""
-
-MCP_APP_MIME_TYPE: Final = 'text/html;profile=mcp-app'
-"""MIME type of an MCP Apps page."""
 
 
 class MCPToolInfo(TypedDict):
@@ -54,7 +48,7 @@ class MCPAppToolResult(TypedDict):
 
     resource_uri: str
     """The `ui://` URI of the app's HTML resource, read with
-    [`MCPToolset.read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents]."""
+    [`MCPToolset.read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]."""
 
     tool_input: dict[str, Any]
     """The arguments the model called the tool with."""
@@ -90,19 +84,28 @@ def get_mcp_app_tool_result(metadata: Any) -> MCPAppToolResult | None:
         return None
 
 
-def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:
-    """Build the payload UI adapters send for an MCP App tool call.
+def redact_mcp_app_binary(metadata: Any) -> Any:
+    """Return tool return metadata with the binary data in its MCP Apps record's result dropped.
 
-    The keys match the `mcp-apps` activity content of the AG-UI MCP Apps middleware, so frontends can
-    share one renderer across protocols. The middleware identifies the server by both `serverId` and
-    `serverHash` (a digest of its connection config), and renderers such as CopilotKit's require
-    `serverHash`, so the toolset ID fills both.
+    The record keeps the result in wire form, so image, audio and blob data are base64 strings that
+    instrumentation's `include_binary_content=False` can't recognize as binary on its own.
     """
-    payload: dict[str, Any] = {
-        'resourceUri': app['resource_uri'],
-        'toolInput': app['tool_input'],
-        'result': app['result'],
-    }
-    if app['toolset_id'] is not None:
-        payload['serverId'] = payload['serverHash'] = app['toolset_id']
-    return payload
+    if not (
+        is_str_dict(metadata)
+        and is_str_dict(app := metadata.get(MCP_APP_METADATA_KEY))
+        and is_str_dict(result := app.get('result'))
+        and isinstance(content := result.get('content'), list)
+    ):
+        return metadata
+    blocks = [_redact_wire_block(block) for block in cast(list[Any], content)]
+    return {**metadata, MCP_APP_METADATA_KEY: {**app, 'result': {**result, 'content': blocks}}}
+
+
+def _redact_wire_block(block: Any) -> Any:
+    match block:
+        case {'type': 'image' | 'audio'}:
+            return {key: value for key, value in block.items() if key != 'data'}
+        case {'type': 'resource', 'resource': {'blob': _} as resource}:
+            return {**block, 'resource': {key: value for key, value in resource.items() if key != 'blob'}}
+        case _:
+            return block

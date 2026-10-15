@@ -29,7 +29,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -76,7 +76,7 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -135,7 +135,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @dataclass(kw_only=True)
@@ -191,7 +191,7 @@ Unlike emitted events, these are part of the message and survive a message-histo
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.tool_plain
@@ -229,6 +229,8 @@ Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool
 
 `load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
 
+If you serialize `dump_messages` output yourself, use `model_dump_json(by_alias=True)` or `model_dump(mode='json', by_alias=True)` so unset fields are omitted, as the AI SDK requires.
+
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 
 `UIMessage.metadata` is fully client-controlled, so `timestamp` is the only server-owned field that is round-tripped. The `__pydantic_ai__` namespace and fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Keep framework and provider state in trusted server-side storage instead. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
@@ -260,12 +262,15 @@ return part.toolMetadata?.app ? (
 
 What the model saw is in the chunk's `providerMetadata`; send parts back unchanged and history loads as on `sdk_version=6`. If that metadata is missing, the model gets the result's `structuredContent` or text, never its `_meta`. `ToolDefinition.metadata` is never sent as is.
 
-On `sdk_version` 5 and 6, give the renderer the resource URI and the full result from the chunk:
+With an earlier `sdk_version`, give the renderer the resource URI as `toolMetadata.app` and the full result as `output`, both from the chunk. The tool part's own `output` is what the model saw, without the `structuredContent` and `_meta` the page needs:
 
 ```tsx
+import { experimental_MCPAppRenderer as MCPAppRenderer } from '@ai-sdk/react';
+
 type Message = UIMessage<unknown, { 'mcp-apps': { resourceUri: string; result: Record<string, unknown> } }>;
 
 const app = message.parts.find(p => p.type === 'data-mcp-apps' && p.id === part.toolCallId);
+const handlers = { allowedTools: ['select_day'], callTool, readResource };
 
 return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
   <MCPAppRenderer
@@ -275,13 +280,13 @@ return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
       output: app.data.result,
     }}
     loadResource={loadResource}
-    handlers={{ allowedTools: ['select_day'], callTool, readResource }}
+    handlers={handlers}
     sandbox={sandbox}
   />
 ) : null;
 ```
 
-`loadResource` returns `{ uri, mimeType, html, meta }` from [`read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents]. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
+`loadResource` returns `{ uri, mimeType, html, meta }` built from the first item of [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]: its `uri`, `mimeType`, `text` and `_meta`. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
 
 ## Tool Approval
 
@@ -339,7 +344,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 

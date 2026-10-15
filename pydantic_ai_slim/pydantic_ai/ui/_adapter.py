@@ -701,10 +701,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         return stream_events()
 
-    def _answer_without_run(self) -> AsyncIterator[EventT] | None:
-        """Return the events answering a request that doesn't run the agent, or `None` to run it."""
-        return None
-
     def run_stream(
         self,
         *,
@@ -756,8 +752,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
         """
-        if (answer := self._answer_without_run()) is not None:
-            return answer
         return self.transform_stream(
             self.run_stream_native(
                 output_type=output_type,

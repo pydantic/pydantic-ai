@@ -171,8 +171,8 @@ Four things about that module.
 - **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
-- **No third-party imports.** The engine installs `pydantic-clai2==0.55.0`,
-  `pydantic-ai-harness==0.55.0` and
+- **No third-party imports.** The engine installs `pydantic-clai2` and
+  `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
   `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
