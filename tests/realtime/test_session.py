@@ -11758,8 +11758,13 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             await events
 
 
-async def test_tool_failure_leaves_a_reply_requested_before_it_owed() -> None:
-    """A turn sent while a tool ran is still waited for after that tool fails: only its exchange ended."""
+async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None:
+    """A turn sent while a tool ran waits behind that tool's round, which the failure ends: so does the wait for it.
+
+    The provider queues a reply asked for during a tool round behind it (SIM-15), so once the result never comes,
+    nothing the session can see promises that reply: `wait_for_reply()` returns, and the reply, if it comes, is
+    recorded all the same.
+    """
     fail_now = asyncio.Event()
     answer = asyncio.Event()
 
@@ -11795,14 +11800,14 @@ async def test_tool_failure_leaves_a_reply_requested_before_it_owed() -> None:
         await session.send('B')  # reserved while A's tool runs
         fail_now.set()
         await _until(lambda: bool(errors))
-        waiting = asyncio.create_task(session.wait_for_reply())
-        for _ in range(10):
-            await asyncio.sleep(0)
-        assert not waiting.done(), "returned before B's answer"
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
         answer.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await waiting
             await events
+    assert 'B answered' in [
+        part.transcript for message in session.all_messages() for part in message.parts if isinstance(part, SpeechPart)
+    ]
 
 
 async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None:
