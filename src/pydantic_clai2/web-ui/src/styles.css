@@ -1789,3 +1789,11 @@ pre {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--faint);
 }
+
+.repl-divider.restart {
+  color: var(--amber);
+}
+
+.repl-foot code {
+  font-size: 11px;
+}

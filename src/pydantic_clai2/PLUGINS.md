@@ -1191,9 +1191,10 @@ and a change made in the terminal shows in the browser once the command ends.
 
 The **REPL** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
 cells: each cell's code as the model writes it, the tools it calls from the sandbox as they run
-(speculative launches marked), and what it printed and returned. Cells are numbered within each
-turn because each turn's run starts a fresh REPL. The panel is read-only, and a saved session
-keeps no sandbox call log, so its cells list the calls found in their code.
+(speculative launches marked), and what it printed and returned. Code mode keeps the REPL with
+the session between turns and on resume, so cells are numbered across the session, as a
+notebook numbers them, until a `restart: true` clears it. The panel is read-only, and a saved
+session keeps no sandbox call log, so its cells list the calls found in their code.
 
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as

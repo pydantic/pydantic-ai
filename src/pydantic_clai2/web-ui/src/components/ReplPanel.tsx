@@ -9,25 +9,26 @@ import { CloseIcon, TerminalIcon } from './icons'
 interface Cell {
   item: Item
   number: number
-  /** The first cell of a turn, whose run started a fresh REPL. */
-  fresh: number | null
+  /** The turn this cell starts, shown as a divider above it. */
+  turn: number | null
+  /** Whether this cell's `restart: true` cleared the REPL before it ran. */
+  restart: boolean
 }
 
-/** The conversation's `run_code` cells, numbered within each turn's REPL. */
+/** The conversation's `run_code` cells, numbered as one REPL kept with the session until a restart clears it. */
 function cells(entries: Entry[]): Cell[] {
   const found: Cell[] = []
   let turn = 0
   let number = 0
-  let fresh = true
+  let shownTurn = 0
   for (const entry of entries) {
     if (entry.kind === 'user') {
       turn += 1
-      number = 0
-      fresh = true
     } else if (entry.kind === 'tool' && entry.name === 'run_code') {
-      number += 1
-      found.push({ item: entry, number, fresh: fresh ? Math.max(turn, 1) : null })
-      fresh = false
+      const restart = cell(entry.args).restart
+      number = restart ? 1 : number + 1
+      found.push({ item: entry, number, turn: turn !== shownTurn ? Math.max(turn, 1) : null, restart })
+      shownTurn = turn
     }
   }
   return found
@@ -43,8 +44,8 @@ function callSubject(call: SubCall): string {
   }
 }
 
-const CellView = memo(function CellView({ item, number, fresh }: Cell) {
-  const { code, restart } = cell(item.args)
+const CellView = memo(function CellView({ item, number, turn, restart }: Cell) {
+  const { code } = cell(item.args)
   const running = item.state === 'running'
   const result = item.text ? codeResult(item.text) : ''
   // History keeps no sandbox calls, so a saved cell lists the calls its code makes instead.
@@ -61,8 +62,8 @@ const CellView = memo(function CellView({ item, number, fresh }: Cell) {
       }))
   return (
     <>
-      {fresh !== null && <div className="repl-divider">Fresh REPL · turn {fresh}</div>}
-      {restart && fresh === null && <div className="repl-divider">REPL restarted</div>}
+      {turn !== null && <div className="repl-divider">Turn {turn}</div>}
+      {restart && <div className="repl-divider restart">REPL restarted</div>}
       <section className={`repl-cell ${item.state}`}>
         <div className="repl-prompt">
           <span className="repl-label">In [{number}]</span>
@@ -138,7 +139,9 @@ export function ReplPanel({
           found.map((entry) => <CellView key={entry.item.id} {...entry} />)
         )}
       </div>
-      <footer className="repl-foot">Read-only. Each turn runs in a fresh REPL; its variables end with the turn.</footer>
+      <footer className="repl-foot">
+        Read-only. The REPL is kept with the session between turns and on resume; <code>restart</code> clears it.
+      </footer>
     </aside>
   )
 }
