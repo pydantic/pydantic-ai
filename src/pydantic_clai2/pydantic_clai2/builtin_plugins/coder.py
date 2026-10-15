@@ -266,7 +266,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             if skill.ignored_behavioral_fields
         ]
         if ignored:
-            notices.append('Ignoring unsupported Agent Skill frontmatter fields: ' + '; '.join(ignored))
+            notices.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
         self._skill_notices = tuple(notices)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:

@@ -246,8 +246,8 @@ class TestSkillInvocationFrontmatter:
 
         _, output = await load_coder()
 
-        assert (
-            output.getvalue() == 'Ignoring unsupported Agent Skill frontmatter fields: review: allowed-tools, context\n'
+        assert output.getvalue() == (
+            'Ignoring unsupported Agent Skill behavioral frontmatter fields: review: allowed-tools, context\n'
         )
 
 
