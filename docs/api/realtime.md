@@ -102,8 +102,9 @@ turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],
 [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse],
 [`CancelResponse`][pydantic_ai.realtime.codec.CancelResponse], and
 [`TruncateOutput`][pydantic_ai.realtime.codec.TruncateOutput]) that those session methods emit, plus
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] — which the session sends itself as each tool
-completes.
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and
+[`NativeToolApproval`][pydantic_ai.realtime.codec.NativeToolApproval] — which the session sends itself as
+each tool completes, or as its approval handler decides on a call the provider runs itself.
 
 **Connection events** — [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent], the low-level codec
 vocabulary yielded by a connection:
@@ -123,6 +124,7 @@ vocabulary yielded by a connection:
 [`ConversationCreated`][pydantic_ai.realtime.codec.ConversationCreated],
 [`ConversationItemCreated`][pydantic_ai.realtime.codec.ConversationItemCreated],
 [`InputRejected`][pydantic_ai.realtime.codec.InputRejected],
+[`NativeToolApprovalRequest`][pydantic_ai.realtime.codec.NativeToolApprovalRequest],
 [`PartStartEvent`][pydantic_ai.messages.PartStartEvent],
 [`PartEndEvent`][pydantic_ai.messages.PartEndEvent],
 [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage],

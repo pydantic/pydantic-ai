@@ -77,6 +77,7 @@ from .codec import (
     ConversationItemCreated,
     InputRejected,
     InputTranscript,
+    NativeToolApprovalRequest,
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
@@ -429,6 +430,7 @@ class SessionCore:
                 RealtimeSessionErrorEvent,
                 ConversationCreated,
                 PartEndEvent,  # a native tool part is whole at its start
+                NativeToolApprovalRequest,  # the session's approval handler answers it; its call is a native part
             ),
         ):
             pass
