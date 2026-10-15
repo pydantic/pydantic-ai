@@ -1,0 +1,315 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://api.openai.com/v1/batches/batch_6ad159e419948190baa0ffb67262b22c
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "23"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: batch_6ad159e419948190baa0ffb67262b22c
+        object: batch
+        endpoint: /v1/responses
+        model: gpt-4.1-nano-2025-04-14
+        errors: null
+        input_file_id: file-3Z77Bc7BeBZi4TJNkkbNGU
+        completion_window: 24h
+        status: in_progress
+        output_file_id: null
+        error_file_id: null
+        created_at: 1792104932
+        in_progress_at: 1792104933
+        expires_at: 1792191332
+        finalizing_at: null
+        completed_at: null
+        failed_at: null
+        expired_at: null
+        cancelling_at: null
+        cancelled_at: null
+        request_counts:
+          total: 1
+          completed: 0
+          failed: 0
+        usage:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+        metadata: null
+  recorded_at: 2026-10-15T22:55:47.402188+00:00
+- request:
+    method: GET
+    uri: https://api.openai.com/v1/batches/batch_6ad159e419948190baa0ffb67262b22c
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "19"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: batch_6ad159e419948190baa0ffb67262b22c
+        object: batch
+        endpoint: /v1/responses
+        model: gpt-4.1-nano-2025-04-14
+        errors: null
+        input_file_id: file-3Z77Bc7BeBZi4TJNkkbNGU
+        completion_window: 24h
+        status: completed
+        output_file_id: file-6X7c3wQySDkS8T89uZsduc
+        error_file_id: null
+        created_at: 1792104932
+        in_progress_at: 1792104933
+        expires_at: 1792191332
+        finalizing_at: 1792104949
+        completed_at: 1792104951
+        failed_at: null
+        expired_at: null
+        cancelling_at: null
+        cancelled_at: null
+        request_counts:
+          total: 1
+          completed: 1
+          failed: 0
+        usage:
+          input_tokens: 60
+          output_tokens: 10
+          total_tokens: 70
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+        metadata: null
+  recorded_at: 2026-10-15T22:56:02.537128+00:00
+- request:
+    method: GET
+    uri: https://api.openai.com/v1/files/file-6X7c3wQySDkS8T89uZsduc/content
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename="batch_6ad159e419948190baa0ffb67262b22c_output.jsonl"
+      content-length:
+      - "2170"
+      content-type:
+      - application/octet-stream
+      openai-processing-ms:
+      - "352"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: text
+      content: |
+        {"id": "batch_req_6ad159f6a668819080c3a63e2f25ac6d", "custom_id": "400d94ba99d83e31c153e0e49776c1a5", "response": {"status_code": 200, "request_id": "09fdbd19-d5f9-4924-b65a-6c664f703e07", "body": {"id": "resp_00784fd03f90050e006ad159f15b1c87d1852f0daf3f62ed3c", "object": "response", "created_at": 1792104945, "status": "completed", "access_programs": null, "background": false, "billing": {"payer": "developer"}, "completed_at": 1792104945, "error": null, "frequency_penalty": 0.0, "incomplete_details": null, "instructions": null, "max_output_tokens": null, "max_tool_calls": null, "model": "gpt-4.1-nano-2025-04-14", "moderation": null, "output": [{"id": "fc_00784fd03f90050e006ad159f1dbcc87d191dad07de90c1ce2", "type": "function_call", "status": "completed", "arguments": "{\"city\":\"Paris\",\"country\":\"France\"}", "call_id": "call_UrStyqSZbWAMvj9CebNeXIcf", "name": "final_result"}], "parallel_tool_calls": true, "presence_penalty": 0.0, "previous_response_id": null, "prompt_cache_key": null, "prompt_cache_retention": "in_memory", "reasoning": {"context": null, "effort": null, "summary": null}, "safety_identifier": null, "service_tier": "default", "store": true, "temperature": 1.0, "text": {"format": {"type": "text"}, "verbosity": "medium"}, "tool_choice": "required", "tool_usage": {"image_gen": {"input_tokens": 0, "input_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "output_tokens": 0, "output_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "total_tokens": 0}, "web_search": {"num_requests": 0}}, "tools": [{"type": "function", "description": "The final response which ends this conversation", "name": "final_result", "output_schema": null, "parameters": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false}, "strict": true}], "top_logprobs": 0, "top_p": 1.0, "truncation": "disabled", "usage": {"input_tokens": 60, "input_tokens_details": {"cache_write_tokens": 0, "cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 70}, "user": null, "metadata": {}}}, "error": null}
+  recorded_at: 2026-10-15T22:56:02.977312+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/batches
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "100"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        completion_window: 24h
+        endpoint: /v1/responses
+        input_file_id: file-3Z77Bc7BeBZi4TJNkkbNGU
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "247"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: batch_6ad159e419948190baa0ffb67262b22c
+        object: batch
+        endpoint: /v1/responses
+        model: null
+        errors: null
+        input_file_id: file-3Z77Bc7BeBZi4TJNkkbNGU
+        completion_window: 24h
+        status: validating
+        output_file_id: null
+        error_file_id: null
+        created_at: 1792104932
+        in_progress_at: null
+        expires_at: 1792191332
+        finalizing_at: null
+        completed_at: null
+        failed_at: null
+        expired_at: null
+        cancelling_at: null
+        cancelled_at: null
+        request_counts:
+          total: 0
+          completed: 0
+          failed: 0
+        usage:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+        metadata: null
+  recorded_at: 2026-10-15T22:55:32.193368+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/files
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "784"
+      content-type:
+      - multipart/form-data; boundary=7b20d1708e280eef62d134951500b26f
+      host:
+      - api.openai.com
+    body:
+      type: text
+      content: "--7b20d1708e280eef62d134951500b26f\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nbatch\r\n--7b20d1708e280eef62d134951500b26f\r\nContent-Disposition: form-data; name=\"file\"; filename=\"batch.jsonl\"\r\nContent-Type: application/octet-stream\r\n\r\n{\"custom_id\":\"400d94ba99d83e31c153e0e49776c1a5\",\"method\":\"POST\",\"url\":\"/v1/responses\",\"body\":{\"model\":\"gpt-4.1-nano\",\"input\":[{\"role\":\"user\",\"content\":\"Which city is the Eiffel Tower in?\"}],\"tools\":[{\"name\":\"final_result\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"},\"country\":{\"type\":\"string\"}},\"required\":[\"city\",\"country\"],\"type\":\"object\",\"additionalProperties\":false},\"type\":\"function\",\"description\":\"The final response which ends this conversation\",\"strict\":true}],\"tool_choice\":\"required\"}}\r\n--7b20d1708e280eef62d134951500b26f--\r\n"
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "195"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        object: file
+        id: file-3Z77Bc7BeBZi4TJNkkbNGU
+        purpose: batch
+        filename: batch.jsonl
+        bytes: 504
+        created_at: 1792104931
+        expires_at: 1794696931
+        status: processed
+        status_details: null
+  recorded_at: 2026-10-15T22:55:31.872504+00:00

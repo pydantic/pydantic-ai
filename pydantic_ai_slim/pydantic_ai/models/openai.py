@@ -136,6 +136,7 @@ from ._tool_choice import (
 
 if TYPE_CHECKING:
     from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketStream
+    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
@@ -213,6 +214,8 @@ try:
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     OMIT = omit
+
+    from . import _openai_batch
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -2547,6 +2550,39 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return str(self.client.base_url)
 
     @property
+    def batch_max_requests(self) -> int | None:
+        # Azure batches need a batch deployment, and other providers that speak the Responses API have no batch API.
+        if (
+            self.system != 'openai'
+            or _is_azure(self.client, self.system)
+            or self.profile.get('openai_responses_requires_streaming', False)
+        ):
+            return None
+        return 50_000
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _openai_batch.batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _openai_batch.batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _openai_batch.batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _openai_batch.batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _openai_batch.batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _openai_batch.batch_decode(self, result, request)
+
+    @property
     def model_name(self) -> OpenAIModelName:
         """The model name."""
         return self._model_name
@@ -3387,6 +3423,63 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
+        create_params, model_settings = await self._prepare_responses_create(
+            messages, model_settings, model_request_parameters
+        )
+        extra_headers, timeout = self._build_request_options(model_settings)
+
+        if self._websocket is not None:
+            if model_settings.get('openai_background'):
+                raise UserError('Background responses are not supported over a Responses WebSocket.')
+            request_headers: dict[str, str] = {
+                key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
+            }
+            request_headers.setdefault('user-agent', get_user_agent())
+            effective_headers = self._websocket.effective_headers(self.client, request_headers)
+            if effective_headers != self._websocket.headers:
+                # Name the differing headers without their values, which can carry credentials.
+                differing_headers = ', '.join(
+                    f'`{name}`'
+                    for name in sorted(effective_headers.keys() | self._websocket.headers.keys())
+                    if effective_headers.get(name) != self._websocket.headers.get(name)
+                )
+                raise UserError(
+                    'Request `extra_headers` must match the headers configured for the open WebSocket connection. '
+                    f'Differing headers: {differing_headers}. '
+                    'Configure headers in the model defaults or `model.connect(extra_headers=...)`; '
+                    'headers passed through agent or run `model_settings` do not configure the handshake.'
+                )
+            body = self._responses_body(create_params, model_settings.get('extra_body'), 'Responses WebSocket')
+            if body.pop('background', False) or any(key in body for key in ('stream', 'stream_id', 'type')):
+                raise UserError(
+                    'Responses WebSocket `extra_body` cannot set `background`, `stream`, `stream_id`, or `type`.'
+                )
+            return await self._websocket.request(
+                body, HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout)
+            )
+
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            try:
+                return await self.client.responses.create(
+                    **create_params,
+                    stream=stream,
+                    background=model_settings.get('openai_background', OMIT),
+                    timeout=timeout,
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
+                    return model_response
+                raise
+
+    async def _prepare_responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[_ResponsesCreateParams, OpenAIResponsesModelSettings]:
+        """Build the body arguments of a create call, and the settings that carry its request options."""
         profile = self.profile
 
         include = self._build_include(model_settings)
@@ -3403,7 +3496,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         _keep_implicit_cache_without_breakpoints(model_settings, request_params.input)
         _drop_unsupported_params(profile, model_settings)
         store = self._resolve_store(model_settings)
-        extra_headers, timeout = self._build_request_options(model_settings)
 
         # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
         prompt_cache_options: ResponsesPromptCacheOptions | Omit = OMIT
@@ -3444,56 +3536,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             prompt_cache_options=prompt_cache_options,
             moderation=model_settings.get('openai_moderation', OMIT),
         )
+        return create_params, model_settings
 
-        if self._websocket is not None:
-            if model_settings.get('openai_background'):
-                raise UserError('Background responses are not supported over a Responses WebSocket.')
-            request_headers: dict[str, str] = {
-                key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
-            }
-            request_headers.setdefault('user-agent', get_user_agent())
-            effective_headers = self._websocket.effective_headers(self.client, request_headers)
-            if effective_headers != self._websocket.headers:
-                # Name the differing headers without their values, which can carry credentials.
-                differing_headers = ', '.join(
-                    f'`{name}`'
-                    for name in sorted(effective_headers.keys() | self._websocket.headers.keys())
-                    if effective_headers.get(name) != self._websocket.headers.get(name)
-                )
-                raise UserError(
-                    'Request `extra_headers` must match the headers configured for the open WebSocket connection. '
-                    f'Differing headers: {differing_headers}. '
-                    'Configure headers in the model defaults or `model.connect(extra_headers=...)`; '
-                    'headers passed through agent or run `model_settings` do not configure the handshake.'
-                )
-            body: dict[str, object] = dict(create_params)
-            if (extra_body := model_settings.get('extra_body')) is not None:
-                if not _is_str_dict(extra_body):
-                    raise UserError('Responses WebSocket `extra_body` must be a mapping with string keys.')
-                body.update(extra_body)
-            if body.pop('background', False) or any(key in body for key in ('stream', 'stream_id', 'type')):
-                raise UserError(
-                    'Responses WebSocket `extra_body` cannot set `background`, `stream`, `stream_id`, or `type`.'
-                )
-            body = {key: value for key, value in body.items() if not isinstance(value, Omit)}
-            return await self._websocket.request(
-                body, HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout)
-            )
-
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            try:
-                return await self.client.responses.create(
-                    **create_params,
-                    stream=stream,
-                    background=model_settings.get('openai_background', OMIT),
-                    timeout=timeout,
-                    extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
-                )
-            except APIStatusError as e:
-                if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
-                    return model_response
-                raise
+    @staticmethod
+    def _responses_body(create_params: _ResponsesCreateParams, extra_body: object, transport: str) -> dict[str, object]:
+        """The JSON body of a create call that the SDK doesn't send: its parameters merged with `extra_body`."""
+        body: dict[str, object] = dict(create_params)
+        if extra_body is not None:
+            if not _is_str_dict(extra_body):
+                raise UserError(f'{transport} `extra_body` must be a mapping with string keys.')
+            body.update(extra_body)
+        return {key: value for key, value in body.items() if not isinstance(value, Omit)}
 
     def _resolve_store(self, model_settings: OpenAIResponsesModelSettings) -> bool | Omit | None:
         if self.profile.get('openai_responses_requires_store_false', False):

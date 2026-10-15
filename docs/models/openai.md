@@ -646,6 +646,17 @@ Because the request is queued server-side, the time to the first token is higher
 !!! note
     If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
 
+## Batch API
+
+`OpenAIResponsesModel` supports [batch processing](../batch.md) through OpenAI's
+[Batch API](https://platform.openai.com/docs/guides/batch), which charges 50% of the standard price. A batch
+targets one model and holds up to 50,000 requests.
+
+The Batch API is only available on OpenAI's own API: not with `OpenAIChatModel`, Azure OpenAI, or other providers
+that implement the Responses API. Through the [Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key.
+Batch requests can't use background mode or a [WebSocket connection](#websocket-mode), and per-request `timeout`
+and `extra_headers` are unsupported: configure them on the client instead.
+
 ## Chat Completions API
 
 If you need the [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead of the default [Responses API](https://platform.openai.com/docs/api-reference/responses), pin to it with the `'openai-chat:'` prefix or [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]:
