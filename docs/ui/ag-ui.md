@@ -64,7 +64,7 @@ from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -117,7 +117,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -150,7 +150,7 @@ from starlette.routing import Route
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 
 async def run_agent(request: Request) -> Response:
@@ -228,7 +228,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -280,7 +280,7 @@ class ChannelDeps:
     context: list[Context]  # (2)!
 
 
-agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+agent = Agent('{{ openai:medium }}', deps_type=ChannelDeps)
 app = FastAPI()
 
 
@@ -348,7 +348,7 @@ from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -380,7 +380,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @dataclass(kw_only=True)
@@ -450,7 +450,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -562,7 +562,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
