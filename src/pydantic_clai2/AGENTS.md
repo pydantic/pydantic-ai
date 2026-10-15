@@ -31,7 +31,8 @@ needs. `get_capabilities` for tools, instructions, and agent-run hooks (a `Hooks
 capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, and `on_plugin_load_failed` for CLAI's own moments. The
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, and `on_plugin_load_failed` for CLAI's own moments;
+`prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
 (console, conversation, `session_id`, status, full screen, saved settings); it
@@ -42,9 +43,11 @@ they agree in the same PR.
 ## Rules for the plugin API
 
 - **Declare, do not register.** A plugin returns what it offers from `get_*`
-  methods, which the loader calls once per load (`collect`). No registration
-  calls, no module-level dicts, no import-time side effects. Tests call
-  `load_plugin(PluginClass, host)`.
+  methods, which the loader calls once per load (`collect`), after awaiting
+  `prepare()`. No registration calls, no module-level dicts, no import-time side
+  effects. Tests call `load_plugin(PluginClass, host)`; it raises `TypeError` for
+  a plugin that overrides `prepare`, whose tests call `from_host`, then
+  `await plugin.prepare()`, then `collect`.
 - **One method per moment, one typed event per method.** A handler never receives
   `*args`, `**kwargs`, `dict`, or `context: object = None`.
 - **No string sub-dispatch.** A handler does not receive `event_type: str` and
@@ -110,7 +113,8 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   the prompt. `customization_guide()` orders itself after the guidance plugins
   contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists the library's built-ins; `STOCK_PLUGINS` opts the CLI-owned
+  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
@@ -252,7 +256,9 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. The default theme's diff lines use Claude Code's
+streamed fences, shell command headers, and theme previews. Shell command headers
+add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette.
 
@@ -295,6 +301,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
+| `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
@@ -306,6 +313,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
 | `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
+| `cli/shell_passthrough.py` | `!command`: captured runs (pipes, or a `PtyRun` on CLAI's terminal), and `run_in_terminal` for `!!command`, which hands the terminal over from the start (`full_terminal()` hold, terminal modes kept, Ctrl-C left to the child) and saves only its exit status |
+| `cli/shell_terminal.py` | `PtyRun`: a `!` command on a pseudo-terminal (controlling terminal, `PAGER=cat`, keys relayed, Ctrl-C to CLAI's interrupt), `TerminalText` for transcript text, and the hand-over when the program switches to the alternate screen; no list of programs |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
@@ -326,7 +335,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
-| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation` and pointing `Agent.instrument_all` at it while loaded (restored on unload); `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
+| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation` and pointing `Agent.instrument_all` at it while loaded (restored on unload); `token` picks a `/keys` write token, `variables_key` a `/keys` API key for managed variables, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: which Logfire, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `builtin_plugins/logfire_destination.py` | "which Logfire", shared by `observability` setup and `logfire_mcp`: regions from harness, a host, UI URL, or MCP URL parsed to one origin, the picker, and the last pick remembered for the other plugin |
@@ -349,6 +358,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
+| `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
@@ -356,15 +366,17 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), and its settings menu (file access, sub-agents, agent folders) |
+| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder` and `Skills`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), skill folders read in `prepare` with a `/skill-name` command each (`overridable`, submitted with `host.submit_prompt`), and its settings menu (file access, sub-agents, agent folders, skill folders), which hands **Agent folders** to `coder_folders.py` |
+| `builtin_plugins/coder_folders.py` | the Coder agent-folder list (add, edit, remove, validation, duplicate detection) and its local directory browser, reading and saving through `CoderSource` |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
 | `plugins/sign_in.py` | the shared sign-in API: `SignInMethod`, the Esc-cancellable waiting screen (`sign_in_now`), `/NAME login\|logout\|status`, the signed-out notice, `SignInRequired` |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
 | `runtime/agent_instrumentation.py` | reads core's process-wide `Agent.instrument_all` setting (core has no getter) and its tracer; `claim`/`release` hand it between live `observability` instances, outside the plugin module so `/plugins reload` keeps the claims |
-| `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
-| `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
+| `runtime/speculation.py` | the `run.code_mode` (on by default; tests default it off in `conftest.py`) and `run.speculative_code_mode` switches, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
+| `runtime/speculative_mode.py` | harness `CodeMode` wiring (eager execution, native writes, read-only speculation allowlist, guidance for each), imported only when a run binds it |
+| `runtime/repl_state.py` | `ReplStates`, the harness `CodeModeReplStore` that keeps the session's own `run_code` REPL in `sessions.repl/<id>.bin` between prompts: hard-linked for forks, removed with the session; sub-agent runs keep theirs to the run |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
@@ -374,7 +386,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
 | `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
 
-The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp` (shown as Logfire; its id cannot become `logfire`, the `observability` plugin's stored id), `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
+The other built-in plugin implementations (`notifications`, `herdr`, `aoe`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp` (shown as Logfire; its id cannot become `logfire`, the `observability` plugin's stored id), `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
@@ -459,6 +471,11 @@ The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports
 PageUp/PageDown and wheel input scroll the transcript, not the draft.
 Wheel and drag reports arrive in bursts, so they paint once after the input
 callback (`PromptSurface._paint_soon`), never once per report.
+An idle session must cost next to no CPU, since users keep dozens open. The
+editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
+turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise;
+`PromptSurface.paint` skips a frame identical to the last one. Input, output,
+and resizes paint at once. Do not add a timer that repaints unconditionally.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
@@ -469,7 +486,9 @@ anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)` and pin the question text in their rows, not the
 transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
-and a tool-call group its call names, for width/theme repaint; tool output keeps styled lines, each tagged with the
+a tool-call group its call names, and a shell call's header its command, for width/theme repaint
+(syntax colours share hex values with brand roles under a palette, so translating them would guess);
+tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`
 prints retained output into native scrollback once, skipping startup output

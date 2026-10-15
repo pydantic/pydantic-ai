@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import logging
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
+
+_LOGGER = logging.getLogger(__name__)
 
 # Local settings databases from before the package move, or from before plugins were declared as
 # `Plugin` classes, can still name the old factories.
@@ -181,13 +184,14 @@ class PluginLoader(Generic[DepsT]):
         status: Status | None = None,
         full_screen: FullScreen = bare_screen,
         enabled: bool = True,
+        submit_prompt: Callable[[str], None] | None = None,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, and `submit_prompt` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -197,6 +201,7 @@ class PluginLoader(Generic[DepsT]):
         self._conversation = conversation
         self._session_id = session_id
         self._status = status
+        self._submit_prompt = submit_prompt
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
@@ -411,10 +416,11 @@ class PluginLoader(Generic[DepsT]):
                     if not _module_absent(entry, exc.error):
                         failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
                         self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-                # `load` refreshed the entries, so read the notice from the current one.
+                # Settings another build saved are expected in a shared database, not a problem to
+                # announce on every start: `/plugins` shows the notice. `load` refreshed the entries.
                 ignored = self._entries[entry.name].ignored
                 if ignored is not None:
-                    self._console.print(ignored, style=theme.color(theme.WARNING), markup=False)
+                    _LOGGER.debug('%s', ignored)
         # Observers can load after a failing plugin, so report only once startup loading finishes.
         for failure in failures:
             await self.fire(failure)
@@ -444,6 +450,7 @@ class PluginLoader(Generic[DepsT]):
             status=self._status,
             save_settings=save,
             requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),
+            submit_prompt=self._submit_prompt,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
@@ -454,9 +461,15 @@ class PluginLoader(Generic[DepsT]):
             built = settings_capability(plugin)
             if built is not None:
                 self._from_settings[name] = built
-            loaded = collect(plugin)
             activating = False
-            self._commands.register_many(loaded.commands)
+            await plugin.prepare()
+            loaded = collect(plugin)
+            for hidden in self._commands.register_many(loaded.commands):
+                self._console.print(
+                    f'/{hidden.name} ({hidden.description}) is hidden by another /{hidden.name} command.',
+                    style=theme.color(theme.WARNING),
+                    markup=False,
+                )
             entry.loaded = loaded
             self._loaded[name] = loaded
             await loaded.dispatch(self._session_start())
@@ -589,7 +602,7 @@ class PluginLoader(Generic[DepsT]):
 
     def _drop(self, entry: PluginEntry[DepsT]) -> None:
         if entry.loaded is not None:
-            self._commands.unregister(command.name for command in entry.loaded.commands)
+            self._commands.unregister(entry.loaded.commands)
         entry.loaded = None
         self._loaded.pop(entry.name, None)
         self._suspended.pop(entry.name, None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -17,7 +18,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import MagicMock, patch
 
 import httpx2
@@ -176,6 +177,7 @@ from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..workspace_fakes import ref_workspace
+from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 
@@ -1393,6 +1395,13 @@ async def test_realtime_session_outside_flow() -> None:
         assert [event async for event in session] == []
 
 
+async def test_prefect_agent_rejects_connect() -> None:
+    """Runs use the Prefect model, so a connection would open a socket that no run uses."""
+    with pytest.raises(UserError, match='`PrefectAgent` does not support explicit connections'):
+        async with simple_prefect_agent.connect():
+            pytest.fail('PrefectAgent runs cannot use a connection')  # pragma: no cover
+
+
 async def test_iter_in_flow(allow_model_requests: None) -> None:
     """Test that iter works inside a Prefect flow."""
 
@@ -2503,6 +2512,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
     projected_via_derived_key = {
         'workspace',  # projected as `workspace_id`, known without connecting a deferred workspace
     }
+    projected_only_when_set = {
+        '_tool_name_path',  # so keys of toolsets listed outside a name-changing wrapper don't change
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
     all_fields = set(RunContext.__dataclass_fields__)
@@ -2510,7 +2522,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key | projected_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
@@ -2847,6 +2859,36 @@ async def test_prefect_durability_simple_agent() -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello Prefect'
+
+
+class _ConnectableDurabilityModel(FunctionModel):
+    """Connecting yields a distinct model, as a real connection does."""
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        yield type(self)(_durability_model_fn, model_name='connected')
+
+
+async def test_prefect_durability_rejects_connect_in_flow() -> None:
+    """A connection can't be opened in flow code, so `connect()` is rejected inside a flow — but the same
+    durable-capable agent still uses one when run outside a flow."""
+    agent = Agent(
+        _ConnectableDurabilityModel(_durability_model_fn, model_name='source'),
+        name='durability_connect',
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_connected_agent() -> str:
+        async with agent.connect():
+            return (await agent.run('Hello')).output  # pragma: no cover
+
+    with pytest.raises(UserError, match=re.escape('`agent.connect()` is not supported inside a Prefect flow')):
+        await run_connected_agent()
+
+    async with agent.connect():
+        result = await agent.run('Hello')
+    assert result.response.model_name == 'connected'
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:
@@ -4015,6 +4057,50 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
     await run_twice()
     assert attempts == 2
     assert calls == 2
+
+
+# Each lists a toolset's `fail` tool as `<prefix>_fail`: a prefix as a string layer, a rename as a mapping one.
+WRAPPERS_EXPOSING_FAIL: dict[str, Callable[[DynamicToolset[object], str], AbstractToolset[object]]] = {
+    'prefixed': lambda toolset, prefix: toolset.prefixed(prefix),
+    'renamed': lambda toolset, prefix: toolset.renamed({f'{prefix}_fail': 'fail'}),
+}
+
+
+@pytest.mark.parametrize('wrapper', WRAPPERS_EXPOSING_FAIL)
+async def test_prefect_dynamic_toolset_under_two_wrappers_replays_each_listing(wrapper: str) -> None:
+    """One dynamic toolset listed under two prefixes, or two renames, keeps a discovery result per wrapper.
+
+    `a_fail` fails once and its `prepare` hides it, while `b_fail` keeps its own count and stays listed. The flow
+    retry replays the cached discovery results, and must not serve the listing made under one wrapper to the other.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+
+    def call_a_fail_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        names = sorted(tool.name for tool in info.function_tools)
+        if 'a_fail' in names:
+            return ModelResponse(parts=[ToolCallPart('a_fail', {})])
+        return ModelResponse(parts=[TextPart(f'final tools={names}')])
+
+    dynamic = DynamicToolset[object](lambda ctx: failing_toolset('inner', retries=3), id='shared')
+    wrap = WRAPPERS_EXPOSING_FAIL[wrapper]
+    agent = Agent(
+        FunctionModel(call_a_fail_while_listed),
+        deps_type=object,
+        name=f'two_{wrapper}',
+        toolsets=[wrap(dynamic, 'a'), wrap(dynamic, 'b')],
+        capabilities=[PrefectDurability()],
+    )
+    outputs: list[str] = []
+
+    @flow(retries=1)
+    async def run_twice() -> None:
+        outputs.append((await agent.run('go')).output)
+        if len(outputs) == 1:
+            raise RuntimeError('retry after the run, replaying its cached tasks')
+
+    await run_twice()
+    assert outputs == ["final tools=['b_fail']"] * 2
 
 
 async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:

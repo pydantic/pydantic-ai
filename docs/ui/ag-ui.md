@@ -64,7 +64,7 @@ from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -117,7 +117,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -150,7 +150,7 @@ from starlette.routing import Route
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 
 async def run_agent(request: Request) -> Response:
@@ -228,7 +228,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -280,7 +280,7 @@ class ChannelDeps:
     context: list[Context]  # (2)!
 
 
-agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+agent = Agent('{{ openai:medium }}', deps_type=ChannelDeps)
 app = FastAPI()
 
 
@@ -348,7 +348,7 @@ from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -380,7 +380,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @dataclass(kw_only=True)
@@ -450,7 +450,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -520,6 +520,12 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through AG-UI activity messages (`pydantic_ai_compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when the frontend holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
+### MCP Apps
+
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries an `ACTIVITY_SNAPSHOT` with `activityType: "mcp-apps"` (`ag-ui-protocol` 0.1.19 or later). Its `content`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). This is the shape the AG-UI [MCP Apps middleware](https://www.npmjs.com/package/@ag-ui/mcp-apps-middleware) emits, so renderers built for it can show it; they load the page through your route, as below. Dumped history keeps it as an `ActivityMessage`; loading ignores it.
+
+CopilotKit's MCP Apps renderer loads the page and relays its requests by posting a run with `forwardedProps.__proxiedMCPRequest` (`serverId`, `method`, `params`) to your AG-UI endpoint, and reads the answer from `RUN_FINISHED.result`. `AGUIAdapter` runs the agent for these, so answer them in your route before calling `dispatch_request`: get the result from the [MCP Apps relay](../mcp/client.md#mcp-apps), and send it as `RUN_STARTED` followed by `RUN_FINISHED` with that `result`.
+
 ### Assistant message identity
 
 Every streamed tool call carries a `parentMessageId` naming the assistant message that owns it, and that message is always announced by a [`TEXT_MESSAGE_START`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L170-L187) first — including when the model's response is nothing but tool calls, in which case the message carries no content and is closed immediately. A frontend that rebuilds the conversation from the event stream alone therefore never has to infer that a message exists.
@@ -570,7 +576,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 

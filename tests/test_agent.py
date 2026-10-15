@@ -116,6 +116,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
@@ -137,6 +138,7 @@ else:
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
+        from pydantic_ai.providers.meta import MetaProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
         from pydantic_ai.providers.ollama import OllamaProvider
@@ -150,7 +152,7 @@ else:
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
-        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
+        MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
@@ -9314,6 +9316,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
+        pytest.param(lambda: MetaProvider(api_key='t'), marks=[requires_openai], id='meta'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
         pytest.param(lambda: NebiusProvider(api_key='t'), marks=[requires_openai], id='nebius'),
         pytest.param(
@@ -9745,6 +9748,13 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
+
+
+async def test_third_party_agent_rejects_connect():
+    """A third-party `AbstractAgent` that doesn't implement connections says so by type."""
+    with pytest.raises(UserError, match=re.escape('`_ToolsetOnlyAgent` does not support explicit connections.')):
+        async with _ToolsetOnlyAgent([]).connect():
+            pytest.fail('A third-party agent without connection support cannot connect')  # pragma: no cover
 
 
 def test_construction_toolsets_ignores_overrides():
@@ -10194,6 +10204,22 @@ def test_set_mcp_sampling_model():
     agent.set_mcp_sampling_model(function_model2)
     assert server1.sampling_model is function_model2
     assert server2.sampling_model is function_model2
+
+    agent.model = 'test'
+    agent.set_mcp_sampling_model()
+    assert isinstance(server1.sampling_model, TestModel)
+    assert server1.sampling_model.model_name == 'test'
+    assert server2.sampling_model is server1.sampling_model
+
+    class StaticModelCapability(AbstractCapability[None]):
+        def get_model(self) -> str:
+            return 'test'
+
+    static_agent = Agent(None, capabilities=[StaticModelCapability()], deps_type=type(None), toolsets=[toolset])
+    static_agent.set_mcp_sampling_model()
+    assert isinstance(server1.sampling_model, TestModel)
+    assert server1.sampling_model.model_name == 'test'
+    assert server2.sampling_model is server1.sampling_model
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')

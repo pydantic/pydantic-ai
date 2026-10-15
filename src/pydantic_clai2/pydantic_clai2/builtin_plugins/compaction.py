@@ -58,7 +58,7 @@ class CompactionSettings(BaseModel):
     protected_tokens: int = Field(
         default=50_000,
         ge=0,
-        description='Tokens of the most recent messages that are never compacted; /compact keeps at most half.',
+        description='Tokens of the most recent messages that are never compacted; /compact caps it at half.',
     )
     context_window: int | None = Field(
         default=None,
@@ -227,8 +227,9 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             raise ValueError('Choose a model first: /set model <Tab>')
         # Counted as the provider reported them, so thinking returned without text is not missed.
         tokens = sum(estimate_message_tokens(before))
-        # Protect at most half the history: a conversation just over the protected tail would
-        # otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+        # Cap the protected target at half the history: a conversation just over the protected tail
+        # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+        # The kept messages can still exceed it by the whole message that crosses it.
         tail = min(self.settings.protected_tokens, tokens // 2)
         chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
         after = await compact_now(

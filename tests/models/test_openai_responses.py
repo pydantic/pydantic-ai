@@ -4423,7 +4423,7 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.response.provider_response_id)
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
@@ -7833,7 +7833,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             details={'reasoning_tokens': 448},
                             output_reasoning_tokens=448,
                             requests=1,
-                            cost=Decimal('0.00475625'),
+                            cost=Decimal('0.002378125'),
                         )
                     )
                     # The run counts the step once its response is committed, after the stream.
@@ -7845,7 +7845,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                         details={'reasoning_tokens': 448},
                         output_reasoning_tokens=448,
                         requests=1,
-                        cost=Decimal('0.00475625'),
+                        cost=Decimal('0.002378125'),
                     )
                 )
     assert run.usage == snapshot(
@@ -7855,7 +7855,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
             details={'reasoning_tokens': 448},
             output_reasoning_tokens=448,
             requests=1,
-            cost=Decimal('0.00475625'),
+            cost=Decimal('0.002378125'),
         )
     )
 

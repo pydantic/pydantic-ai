@@ -21,6 +21,7 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -44,6 +45,7 @@ from pydantic_clai2.commands import (
     set_completions,
 )
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -68,6 +70,7 @@ from pydantic_clai2.runtime._session import (
     Session,
     SessionModels,
     StockAgent,
+    agent_capabilities,
     current_session_id,
     local_workspace,
     resolve_model_name,
@@ -120,63 +123,17 @@ _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'conf
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 
 
-DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
-    PluginSettings(
-        id='coder',
-        factory='pydantic_clai2.builtin_plugins.coder',
-        settings={
-            'unrestricted_filesystem': True,
-            'repo_context': False,
-            'sub_agents': False,
-            'agent_folders': ['agents'],
-        },
-    ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
-    PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
-    PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
-    PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
-    PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
-    PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
-    PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
-    PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
-    PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),
-    PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False),
-    PluginSettings(id='ordinal', factory='pydantic_clai2.builtin_plugins.ordinal', enabled=False),
-    PluginSettings(id='notion', factory='pydantic_clai2.builtin_plugins.notion', enabled=False),
-    PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False),
-    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.builtin_plugins.logfire_mcp', enabled=False),
-    PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
-    PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
-    PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
-    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
-)
-"""Built-in declarations, each integrated with the shell. `remove` restores their defaults.
-
-Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
-
-`coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
-`compaction` runs alongside `coder`, whose `ClearToolResults` only empties old tool results; see `plugins.compatibility`.
-"""
-
-STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
-    plugin.model_copy(update={'settings': {**plugin.settings, 'sub_agents': True}}) if plugin.id == 'coder' else plugin
-    for plugin in DEFAULT_PLUGINS
-)
-"""CLI-owned agents bind plugins at construction, so Coder can delegate safely.
-
-`DEFAULT_PLUGINS` keeps its run-level delegation opt-out for caller-supplied agents.
-"""
-
-
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
     return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
-    """Build the CLI-owned template; caller-supplied agents are never reconstructed."""
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
+    """Build the CLI-owned template; caller-supplied agents are never reconstructed.
+
+    It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
+    """
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
 
 
 @asynccontextmanager
@@ -805,6 +762,7 @@ def create_shell(
         session_id=lambda: shell.session_id,
         status=status,
         enabled=load_plugins,
+        submit_prompt=lambda text: shell.submit_prompt(text),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -869,7 +827,7 @@ def create_shell(
         interrupts=Interrupts(),
         screen=screen,
         sessions=sessions,
-        speculation=Speculation(context=context, console=console),
+        speculation=Speculation(context=context, console=console, repl_states=session.repl_states),
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
@@ -950,6 +908,8 @@ class _Shell(Generic[DepsT, OutputT]):
     updates: Updates
     transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     images: ImageInput = field(default_factory=ImageInput)
+    submitted: list[str] | None = None
+    """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
     editor: LivePrompt | None = None
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -996,14 +956,17 @@ class _Shell(Generic[DepsT, OutputT]):
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
+        mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities())
         bound = (*self.plugins, *self.loader.run_capabilities())
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
-        return (*bound, *self.speculation.capabilities(granted))
+        own = agent_capabilities(self.agent)
+        # An agent that hides its capabilities may guard tools a mount would bypass, so it gets none.
+        return (*bound, *self.speculation.capabilities(None if own is None else (*own, *granted)))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
         """Report that a failing settings-built capability is left out of later turns."""
@@ -1028,6 +991,8 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
+        if child.repl_states is not None:
+            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -1051,6 +1016,12 @@ class _Shell(Generic[DepsT, OutputT]):
             f'resume={record.id!r}. Continue from its saved history and report the result.'
         )
         return f'Resume requested for task {record.id[:8]}.'
+
+    def submit_prompt(self, text: str) -> None:
+        """Queue `text` to run as a turn once the running `/command` returns."""
+        if self.submitted is None:
+            raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
+        self.submitted.append(text)
 
     def request_reload(self, args: list[str]) -> str:
         if args:
@@ -1226,6 +1197,9 @@ class _Shell(Generic[DepsT, OutputT]):
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
+        return await self._prompt(text)
+
+    async def _prompt(self, text: str) -> bool:
         if self.session.model is None and self.agent.model is None:
             self.images.retry_text = text
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
@@ -1240,19 +1214,34 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _command(self, text: str) -> bool:
         if self.plugins_busy(text):
             return False
-        if self.editor is not None and self.commands.runs_live(text):
-            return await self._live_command(text, self.editor)
-        async with self.forks.busy(), self._released():
-            await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
-        return (
-            text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
-        )
+        self.submitted = submitted = list[str]()
+        try:
+            if self.editor is not None and self.commands.runs_live(text):
+                completed = await self._live_command(text, self.editor)
+                exiting = self.interrupts.exit_requested
+            else:
+                async with self.forks.busy(), self._released():
+                    completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
+                exiting = (
+                    text == '/exit'
+                    or self.interrupts.exit_requested
+                    or self.reload_requested
+                    or self.updates.restart_required
+                )
+        finally:
+            self.submitted = None
+        # A cancelled command's prompts are cancelled with it.
+        while completed and submitted and not exiting:
+            exiting = await self._prompt(submitted.pop(0))
+        return exiting
 
     async def _live_command(self, text: str, editor: LivePrompt) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
 
         Suspending the editor instead would freeze its last frame, an idle prompt and a `ready`
         footer, for as long as the command runs, and echo keys raw into the terminal.
+
+        Returns whether the command completed: `False` when the user cancelled it.
         """
         async with self.forks.busy():
             self.status.activity = 'working'
@@ -1264,7 +1253,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if not completed:
             self.console.print('Command cancelled.', style=theme.color(theme.MUTED))
             self.console.print()
-        return self.interrupts.exit_requested
+        return completed
 
     async def _turn(self, text: str | None) -> bool:
         automated = text is None
@@ -1549,7 +1538,7 @@ async def _run_prompt(
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
-                status.context_tokens = message.usage.total_tokens or None
+                status.context_tokens = context_tokens(message) or None
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)

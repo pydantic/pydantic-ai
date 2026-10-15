@@ -87,7 +87,7 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .cassette_utils import request_json
-from .conftest import iter_message_parts, message, message_part, try_import
+from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -2911,6 +2911,37 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
         p for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart) if p.tool_name == 'bar'
     ]
     assert [p.content for p in bar_returns] == [1]
+
+
+@pytest.mark.vcr
+async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`gpt-5.4-nano` rejects native `tool_search` with a 400, unlike the rest of the gpt-5.4 family,
+    so a deferred tool is discovered through local `search_tools` and the run completes.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIResponsesModel('gpt-5.4-nano', provider=provider))
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the weather in Paris? Find a tool for it.')
+
+    messages = result.all_messages()
+    assert list(iter_message_parts(messages, ModelResponse, ToolSearchCallPart))
+    assert not list(iter_message_parts(messages, ModelResponse, NativeToolSearchCallPart))
+    weather_returns = [
+        p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'get_weather'
+    ]
+    assert [p.content for p in weather_returns] == ['Sunny in Paris']
+    first_request_tools = request_capture.body('/responses')['tools']
+    assert isinstance(first_request_tools, list)
+    assert [(tool.get('type'), tool.get('name')) for tool in first_request_tools if isinstance(tool, dict)] == [
+        ('function', 'search_tools')
+    ]
 
 
 def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:

@@ -1268,6 +1268,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         ) as session:
             yield session
 
+    def _get_connection_model_selection(self) -> models.Model | str:
+        raise UserError(
+            f'`{type(self).__name__}` does not support explicit connections, '
+            'as its runs use the durable model set at agent creation.'
+        )
+
     @contextmanager
     def override(
         self,

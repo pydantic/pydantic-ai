@@ -292,6 +292,13 @@ Gotchas:
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
 result as a follow-up message when done.
 
+Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
+`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
+including handled failure notifications. This identifies the entire completion part, including any
+files and extra content. The metadata is not sent to the model and survives native message
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata. `ToolReturn.metadata` is discarded.
+
 ```python
 import asyncio
 

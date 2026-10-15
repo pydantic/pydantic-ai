@@ -75,6 +75,7 @@ from pydantic_ai.realtime.codec import (
 )
 
 from .conftest import TestEnv, legacy_retry_prompt_part, try_import
+from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -331,10 +332,10 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
         example_dir = work_dir / f'py{python_version}' / str(index)
         example_dir.mkdir(parents=True)
         for req in filter(None, prefix_settings.get('requires', '').split(',')):
-            (example_dir / req).write_text(code_examples[req].source, encoding='utf-8')
+            (example_dir / req).write_text(resolve_model_aliases(code_examples[req].source), encoding='utf-8')
         title = prefix_settings.get('title', '')
         file = example_dir / (title if title.endswith('.py') else 'example.py')
-        file.write_text(example.source, encoding='utf-8')
+        file.write_text(resolve_model_aliases(example.source), encoding='utf-8')
         files[file.resolve()] = example
         environments.setdefault(python_version, []).append(
             {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
@@ -546,6 +547,7 @@ def test_docs_examples(
     env.set('GITHUB_COPILOT_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
+    env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
@@ -599,7 +601,7 @@ def test_docs_examples(
         for req in requires.split(','):
             known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
-                (tmp_path_cwd / req).write_text(ex.source, encoding='utf-8')
+                (tmp_path_cwd / req).write_text(resolve_model_aliases(ex.source), encoding='utf-8')
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
@@ -646,10 +648,16 @@ def test_docs_examples(
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
-        if eval_example.update_examples:  # pragma: lax no cover
-            eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
-        else:
-            eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        # Lint the example as written, but run it against the models its aliases stand for.
+        source = example.source
+        example.source = resolved = resolve_model_aliases(source)
+        try:
+            if eval_example.update_examples:  # pragma: lax no cover
+                eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
+            else:
+                eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        finally:
+            example.source = restore_model_aliases(source, resolved, example.source)
 
 
 def print_callback(s: str) -> str:

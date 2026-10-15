@@ -113,7 +113,7 @@ async def log_request(
     return request_context
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[request_logging_hooks])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[request_logging_hooks])
 ```
 
 Pydantic AI skips hooks owned by a deferred `Hooks` instance until its capability is loaded.

@@ -16,6 +16,7 @@ from uuid import uuid4
 from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -45,6 +46,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -71,7 +73,8 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
 
-def _supports_local_workspace() -> bool:
+def supports_local_workspace() -> bool:
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
     return sys.platform != 'win32'
 
 
@@ -195,15 +198,16 @@ async def resolve_model_name(resolve: ModelNameResolver, model_id: str) -> Model
     return infer_model(model) if model != model_id else None
 
 
-def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
-    """The capabilities the agent was built with, so a sandbox configured on it counts too.
+def agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]] | None:
+    """The capabilities the agent was built with, so a sandbox or guardrail configured on it counts too.
 
-    A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win.
+    A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win. `None` when
+    a custom `AbstractAgent` does not expose its capabilities.
     """
     try:
         return [agent.root_capability]
-    except NotImplementedError:  # A custom `AbstractAgent` need not expose its capabilities.
-        return []
+    except NotImplementedError:
+        return None
 
 
 def _command_env() -> dict[str, str]:
@@ -227,7 +231,7 @@ def local_workspace(
     None is added on platforms without a local workspace, or when a capability loaded up front supplies
     the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
     """
-    if not _supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
         return None
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
@@ -279,6 +283,7 @@ class StockAgent(Agent[DepsT, OutputT]):
         deps_type: type[DepsT],
         output_type: OutputSpec[OutputT],
         capabilities: Sequence[AgentCapability[DepsT]],
+        name: str | None = None,
         defer_model_check: bool = False,
     ) -> None:
         super().__init__(
@@ -286,6 +291,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=deps_type,
             output_type=output_type,
             capabilities=capabilities,
+            name=name,
             defer_model_check=defer_model_check,
         )
         self._stock_deps_type = deps_type
@@ -302,6 +308,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=self._stock_deps_type,
             output_type=self.output_type,
             capabilities=[self.root_capability, *plugins],
+            name=self.name,
             defer_model_check=model is not None,
         )
 
@@ -336,6 +343,12 @@ class Session(Generic[DepsT, OutputT]):
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
+        self.repl_states: ReplStates | None = (
+            ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
+            if conversations
+            else None
+        )
+        """Where code mode keeps each saved conversation's `run_code` REPL between prompts."""
         self.model: str | None = None
         self.model_chosen = True
         """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
@@ -410,6 +423,9 @@ class Session(Generic[DepsT, OutputT]):
         """
         if conversation_id is not None:
             await self._ensure_unused(conversation_id)
+            if self.repl_states is not None:
+                # A REPL left by a session deleted outside CLAI must not reach the new conversation.
+                self.repl_states.delete(conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
@@ -440,9 +456,15 @@ class Session(Generic[DepsT, OutputT]):
             model=self.model,
         )
         self.summary = await self.conversations.save(summary=copy, messages=self._messages)
+        self._copy_repl(source.id, self.summary.id)
         telemetry.record('conversation forked', messages=len(self._messages))
         await self._publish()
         return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
+
+    def _copy_repl(self, source: str, target: str) -> None:
+        """Give the fork `target` its own copy of the `run_code` REPL `source` saved."""
+        if self.repl_states is not None:
+            self.repl_states.copy(source=source, target=target)
 
     async def _ensure_unused(self, conversation_id: str) -> None:
         if self.conversations is None:
@@ -527,6 +549,7 @@ class Session(Generic[DepsT, OutputT]):
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
             if busy is not None:
                 summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
                     'The original keeps running there and may still change files. No tools were replayed.'
@@ -674,7 +697,7 @@ class Session(Generic[DepsT, OutputT]):
                                 )
                             )
                         workspace: Literal['new'] | None = None
-                        configured = [*_agent_capabilities(self.agent), *self.plugins]
+                        configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
                         if (local := local_workspace(configured, self.workspace)) is not None:
                             capabilities.append(local)
                             if _stale_local_workspace(previous, self.workspace):
@@ -750,7 +773,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(message.usage.total_tokens)
+                            self.on_context_usage(context_tokens(message))
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)

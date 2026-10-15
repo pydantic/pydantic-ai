@@ -1,6 +1,7 @@
 """One command registry for execution, help, and Termflow completion."""
 
 import json
+import re
 import shlex
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -23,11 +24,15 @@ from pydantic_clai2.config import (
     UPDATE_CHANNELS,
     PluginSettings,
 )
+from pydantic_clai2.config.builtins import STOCK_PLUGINS
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
+
+_COMMAND_NAME = re.compile(r'\w[\w-]*')
+"""Letters, digits, underscores, and hyphens, not starting with a hyphen: what a skill such as `code-review` is called."""
 
 
 def is_command_input(text: str) -> bool:
@@ -93,6 +98,12 @@ class Command:
     handlers that may take a while and only print through the console: one that reads keys or
     opens a menu needs the suspended editor every other command gets.
     """
+    overridable: bool = False
+    """Give way to another command with the same name, whichever registers first, instead of clashing.
+
+    For commands named after something the user names, such as a skill, which may collide with a
+    built-in like `/model`. The hidden command is reported, not dropped silently.
+    """
 
 
 class Commands(Completer):
@@ -106,19 +117,40 @@ class Commands(Completer):
         """Register one command, rejecting ambiguous duplicate names."""
         self.register_many((command,))
 
-    def register_many(self, commands: Iterable[Command]) -> None:
-        """Validate a provider's declarations atomically, including collisions."""
+    def register_many(self, commands: Iterable[Command]) -> list[Command]:
+        """Validate a provider's declarations atomically, including collisions.
+
+        Returns the `overridable` commands hidden by another of the same name: new ones that found
+        their name taken, and registered ones that a new command took it from.
+        """
         pending: dict[str, Command] = {}
+        hidden: list[Command] = []
         for command in commands:
-            if command.name in self._commands or command.name in pending or not command.name.isidentifier():
+            if not _COMMAND_NAME.fullmatch(command.name):
                 raise ValueError(f'Invalid or duplicate command: {command.name}')
+            existing = pending.get(command.name) or self._commands.get(command.name)
+            if existing is not None and command.overridable:
+                hidden.append(command)
+                continue
+            if existing is not None and not existing.overridable:
+                raise ValueError(f'Invalid or duplicate command: {command.name}')
+            if existing is not None:
+                hidden.append(existing)
             pending[command.name] = command
         self._commands.update(pending)
+        return hidden
 
-    def unregister(self, names: Iterable[str]) -> None:
-        """Remove commands a plugin registered; unknown names are ignored."""
-        for name in names:
-            self._commands.pop(name, None)
+    def unregister(self, commands: Iterable[str | Command]) -> None:
+        """Remove commands a plugin registered; unknown names are ignored.
+
+        A name removes the command registered under it. A `Command` is removed only while it is the
+        one registered, so a command that took the name of a hidden `overridable` one stays.
+        """
+        for command in commands:
+            if isinstance(command, str):
+                self._commands.pop(command, None)
+            elif self._commands.get(command.name) is command:
+                del self._commands[command.name]
 
     def __contains__(self, name: object) -> bool:
         """Whether a command called `name` (without its slash) is registered."""
@@ -318,7 +350,9 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
         # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
         store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
     elif len(args) == 2 and args[0] in ('enable', 'disable'):
-        plugin = next((p for p in declarations if p.id == args[1]), None)
+        # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
+        builtin = {p.id: p for p in STOCK_PLUGINS}
+        plugin = next((p for p in declarations if p.id == args[1]), builtin.get(args[1]))
         if plugin is None:
             raise ValueError(f'Unknown plugin: {args[1]}')
         store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))

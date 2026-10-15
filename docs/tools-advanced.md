@@ -24,7 +24,7 @@ class User(BaseModel):
     age: int
 
 
-agent = Agent(model=OpenAIResponsesModel('gpt-5.2'))
+agent = Agent(model=OpenAIResponsesModel('{{ openai:medium.name }}'))
 
 
 @agent.tool_plain
@@ -196,7 +196,7 @@ class Reservation(BaseModel):
     dietary_notes: list[str]
 
 
-agent = Agent('openai:gpt-5')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.tool_plain(strict=True)
@@ -517,7 +517,7 @@ class RequireFirstCall(AbstractCapability):
         return settings
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[RequireFirstCall('get_weather')])
+agent = Agent('{{ openai:medium }}', capabilities=[RequireFirstCall('get_weather')])
 
 
 @agent.tool_plain
@@ -601,7 +601,7 @@ def my_flaky_tool(query: str) -> str:
 
 Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence. The agent-wide default can also be overridden per run via [`agent.run(retries={'tools': N})`][pydantic_ai.agent.Agent.run] (and `run_sync`/`run_stream`/`iter`, or for a block of runs via [`agent.override()`][pydantic_ai.agent.Agent.override]); a per-run value replaces the agent-wide default at the bottom of the precedence chain, so explicit per-tool and per-toolset limits still win. A bare `int` at these run-time call sites overrides both budgets (matching construction) — pass a dict such as `retries={'tools': N}` or `retries={'output': N}` to change just one.
 
-Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. The tool's [`prepare`](#tool-prepare) function reads the same counter, also when its toolset is [prefixed](toolsets.md#prefixing-tool-names) or [renamed](toolsets.md#renaming-tools), unless `prepare` renames the tool itself (it then reads the counter for the name the tool would otherwise have) or another wrapper in the chain renames the tools too. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'`. User-provided toolsets inherit the agent-wide tool-retry default — or its per-run override — as their default when no per-toolset value is set.
 
 ### Which retry limit wins
 
@@ -847,7 +847,7 @@ from pydantic_ai.capabilities import UseThreadExecutor
 
 # Per-agent: pass as a capability
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-agent = Agent('openai:gpt-5.2', capabilities=[UseThreadExecutor(executor)])
+agent = Agent('{{ openai:medium }}', capabilities=[UseThreadExecutor(executor)])
 
 # Global: wrap your server lifespan
 @asynccontextmanager
@@ -886,7 +886,7 @@ To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Too
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
-* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility.
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+ except GPT-5.4 nano). Deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility.
 * **Custom callable** via [`ToolSearch(strategy=...)`][pydantic_ai.capabilities.ToolSearch] — a user-supplied search function. Executed on our side, but routed through the provider's client-executed native surface (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) where supported so the model sees a tool-search call rather than a regular function tool.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
@@ -907,7 +907,7 @@ For the model to find tools well, give them descriptive names with consistent pr
 ```python {title="tool_search.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 
 
 @agent.tool_plain(defer_loading=True)
@@ -926,7 +926,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 mcp = MCPToolset('http://localhost:8000/mcp')
-agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
+agent = Agent('{{ anthropic:medium }}', toolsets=[mcp.defer_loading()])
 ```
 
 ### Configuring `ToolSearch`
@@ -953,7 +953,7 @@ def fuzzy_search(
     ]
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=fuzzy_search)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(strategy=fuzzy_search)])
 
 
 @agent.tool_plain(defer_loading=True)
@@ -969,7 +969,7 @@ Available strategy values:
 
 | `strategy` | Algorithm | Behavior |
 |---|---|---|
-| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+ except GPT-5.4 nano, local keyword matching elsewhere. |
 | `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
 | `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
 | Callable `(ctx, queries, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
@@ -1027,7 +1027,7 @@ See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_load
 
 Prompt caching keys on a **stable prefix**: providers cache the longest unchanged run of tokens from the start of the request, in roughly the order tool definitions → system/instructions → message history. A change at any layer invalidates the cache for that layer and everything after it — so on most providers **changing, adding, removing, or reordering a tool definition invalidates the cache**, because tool definitions sit at the very front.
 
-Tool search works on **every model**, but it only *preserves* the cache where the model supports native tool search — Anthropic Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+, and OpenAI Responses on GPT-5.4+. There, discovery is [append-only](#tool-search) and the deferred tools never enter the prompt prefix, so an identical prefix is re-read from cache across discovery rounds. On every other model — including Google, and older Anthropic and OpenAI models — the local `search_tools` fallback reveals a discovered tool by adding it to the tools array, which **invalidates the cached prefix from the tool definitions onward on each discovery turn** (on Google, a stable `system_instruction` sits ahead of the tool block and can still be reused — see [Related caching controls](#related-caching-controls) below).
+Tool search works on **every model**, but it only *preserves* the cache where discovery leaves the tool definitions untouched: on models with native tool search — Anthropic Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+, and OpenAI Responses on GPT-5.4+ except GPT-5.4 nano — and on first-party OpenAI Responses models without it, whose local fallback reveals each discovered tool in an `additional_tools` input item. There, discovery is [append-only](#tool-search) and the deferred tools never enter the prompt prefix, so an identical prefix is re-read from cache across discovery rounds. On every other model — including Google, older Anthropic models, OpenAI Chat Completions, and OpenAI-compatible Responses endpoints — the local `search_tools` fallback reveals a discovered tool by adding it to the tools array, which **invalidates the cached prefix from the tool definitions onward on each discovery turn** (on Google, a stable `system_instruction` sits ahead of the tool block and can still be reused — see [Related caching controls](#related-caching-controls) below).
 
 !!! note "Why Gemini tool search never keeps the prefix warm"
     Native tool search preserves the cache by handing discovery off to a provider-side primitive that keeps the discovered tools out of the request prefix. Gemini's API exposes no such primitive — unlike Anthropic's `bm25`/`regex` tool search or OpenAI Responses' `tool_search` — so tool search on Gemini always falls back to the local `search_tools` function tool, which reveals each match by adding it to the tools array. Because Gemini caches on the request prefix and tool definitions sit at its front, every discovery turn that reveals a new tool invalidates the cache from the tool block onward. This is a missing-primitive limitation, not a version gate: with Anthropic and OpenAI a newer model *does* support native tool search, but no Gemini model does.

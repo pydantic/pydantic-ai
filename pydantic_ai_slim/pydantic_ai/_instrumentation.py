@@ -278,6 +278,7 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
 
 def _redact_binary_content(value: Any, active: set[int]) -> object:
     from pydantic_ai._deferred import DeferredToolRequests
+    from pydantic_ai._mcp_apps import redact_mcp_app_binary
     from pydantic_ai.messages import BinaryContent, ToolReturn
 
     identity = id(value)
@@ -303,7 +304,7 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
             return {
                 'return_value': _redact_binary_content(value.return_value, active),
                 'content': _redact_binary_content(value.content, active),
-                'metadata': _redact_binary_content(value.metadata, active),
+                'metadata': _redact_binary_content(redact_mcp_app_binary(value.metadata), active),
                 # Tool names, so never binary.
                 'tools': value.tools,
                 'kind': value.kind,
@@ -610,6 +611,7 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_api_url=response.provider_url,
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
+        price_context=response.provider_details,
     )
 
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import patch
 
 import httpx2
@@ -1269,6 +1269,13 @@ async def test_dbos_agent_realtime_session_outside_workflow():
         assert [event async for event in session] == []
 
 
+async def test_dbos_agent_rejects_connect():
+    """Runs use the DBOS model, so a connection would open a socket that no run uses."""
+    with pytest.raises(UserError, match='`DBOSAgent` does not support explicit connections'):
+        async with simple_dbos_agent.connect():
+            pytest.fail('DBOSAgent runs cannot use a connection')  # pragma: no cover
+
+
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
     # DBOS allows calling `iter` inside a workflow as a step.
     @DBOS.workflow()
@@ -2502,6 +2509,36 @@ async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS
     # Outside a workflow the capability is transparent, so the token works like a normal run.
     result = await agent.run('Hello', cancellation_token=CancellationToken())
     assert result.output == 'Echo: Hello'
+
+
+class _ConnectableDurabilityModel(FunctionModel):
+    """Connecting yields a distinct model, as a real connection does."""
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        yield type(self)(_durability_model_fn, model_name='connected')
+
+
+async def test_dbos_durability_rejects_connect_in_workflow(dbos: DBOS) -> None:
+    """A connection can't be opened in workflow code, so `connect()` is rejected inside a workflow — but the
+    same durable-capable agent still uses one when run outside a workflow."""
+    agent = Agent(
+        _ConnectableDurabilityModel(_durability_model_fn, model_name='source'),
+        name='durability_connect',
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_connected_agent() -> str:
+        async with agent.connect():
+            return (await agent.run('Hello')).output  # pragma: no cover
+
+    with pytest.raises(UserError, match=re.escape('`agent.connect()` is not supported inside a DBOS workflow')):
+        await run_connected_agent()
+
+    async with agent.connect():
+        result = await agent.run('Hello')
+    assert result.response.model_name == 'connected'
 
 
 def _cancel_own_workflow_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4776,6 +4813,94 @@ async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> N
     assert result.usage.output_tokens == 6
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+class _DelayedContinuationModel(ScriptedContinuationModel):
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 0.01
+
+
+def _delayed_continuation_model() -> _DelayedContinuationModel:
+    return _DelayedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['The answer '], state='suspended', provider_response_id='cont1', input_tokens=5, output_tokens=2
+            ),
+            scripted_response(texts=['is 42.'], provider_response_id='cont2', input_tokens=3, output_tokens=4),
+        ]
+    )
+
+
+async def test_dbos_durability_continuation_delay_is_a_durable_sleep(dbos: DBOS) -> None:
+    """The wait before re-polling a suspended segment is a recorded `DBOS.sleep` step.
+
+    Recovery then skips a completed wait instead of sleeping it again.
+    """
+    agent = Agent(_delayed_continuation_model(), name='durability_continuation_delay', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+
+    assert output == 'The answer is 42.'
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == [
+        'durability_continuation_delay__model.request',
+        'DBOS.sleep',
+        'durability_continuation_delay__model.request',
+    ]
+
+
+async def test_dbos_durability_continuation_delay_outside_workflow_and_in_step(dbos: DBOS) -> None:
+    """Outside workflow code (no workflow, or a nested run inside a step) the wait is a plain sleep.
+
+    DBOS rejects its durable sleep there, and a nested run inside a step inherits the workflow-level registration.
+    """
+    agent = Agent(
+        _delayed_continuation_model(), name='durability_continuation_delay_outside', capabilities=[DBOSDurability()]
+    )
+    assert (await agent.run('go')).output == 'The answer is 42.'
+
+    @DBOS.step()
+    async def nested_run() -> str:
+        return (await Agent(_delayed_continuation_model()).run('go')).output
+
+    outer = Agent(
+        TestModel(call_tools=['delegate']), name='durability_continuation_delay_nested', capabilities=[DBOSDurability()]
+    )
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return await nested_run()
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await outer.run('go')
+        return result.output
+
+    assert await run_durable_agent() == snapshot('{"delegate":"The answer is 42."}')
+
+
+async def test_dbos_agent_continuation_delay_is_a_durable_sleep(dbos: DBOS) -> None:
+    """The deprecated `DBOSAgent` wrapper records the wait between continuation polls as a `DBOS.sleep` step too."""
+    dbos_agent = DBOSAgent(Agent(_delayed_continuation_model(), name='dbos_agent_continuation_delay'))  # pyright: ignore[reportDeprecated]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await dbos_agent.run('go')
+
+    assert result.output == 'The answer is 42.'
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == [
+        'dbos_agent_continuation_delay__model.request',
+        'DBOS.sleep',
+        'dbos_agent_continuation_delay__model.request',
+    ]
 
 
 async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():

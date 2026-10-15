@@ -10,8 +10,12 @@ from typing import IO
 
 from termflow.ansi import make_clipboard_copy
 
-COPY_TIMEOUT = 5.0
-"""Seconds a clipboard command may take before the copy is abandoned."""
+COPY_TIMEOUT = 30.0
+"""Seconds a clipboard command may take before the copy is abandoned.
+
+Generous because only a hung command should reach it: copies run off the input thread, and Windows
+PowerShell can take well over five seconds to start cold, which a shorter limit kills before it copies.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
@@ -125,6 +126,11 @@ class FallbackModel(Model):
                 Handler type is auto-detected by inspecting type hints on the first parameter.
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+                Response handlers only apply to non-streamed requests. A streamed request accepts
+                the response as is and emits a `UserWarning`. A request is streamed whenever
+                something consumes the run's events, including `run()` with an
+                `event_stream_handler` or an event listener.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -332,6 +338,9 @@ class FallbackModel(Model):
         to the pinned continuation model, bypassing the fallback chain. If the pinned model
         raises a fallback-eligible error while opening the stream, the messages are rewound
         and the normal fallback chain is tried. Mid-stream failures still propagate.
+
+        Response handlers are not applied: the response has already been streamed by the time
+        it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
         """
         exceptions: list[Exception] = []
         attempts: list[ModelRequestAttempt] = []
@@ -375,6 +384,15 @@ class FallbackModel(Model):
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
                     return
+
+        if self._response_handlers:
+            warnings.warn(
+                '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests, '
+                'so the streamed response is accepted as is. A request is streamed whenever something consumes '
+                "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
+                'an `event_stream_handler`, or an event listener or hook.',
+                UserWarning,
+            )
 
         for model in self.models:
             async with AsyncExitStack() as stack:
