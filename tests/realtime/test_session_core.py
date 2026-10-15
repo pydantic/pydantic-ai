@@ -45,6 +45,7 @@ from pydantic_ai.realtime._core import (
     Interrupted,
     Owed,
     ReceiveEnded,
+    ResponseRefused,
     SessionCore,
     ToolCallRefused,
     ToolReturned,
@@ -1235,4 +1236,47 @@ def test_a_tool_result_the_backend_will_never_take_doesnt_join_the_conversation(
     tracker.input_unanswerable(input_id)
     assert [type(event).__name__ for event in tracker.message([ResponseDone()])] == snapshot(
         ['InputLost', 'ResponseDone', 'ResponseEnded']
+    )
+
+
+@pytest.mark.parametrize('responses_are_requests', [True, False])
+def test_a_refused_response_recorded_within_its_frame_is_taken_back(responses_are_requests: bool) -> None:
+    """The session refuses a response as it handles the frame that started it, which can have ended it, audio and all."""
+    session_core = feed(
+        core(retain_output_audio=True, responses_are_requests=responses_are_requests),
+        started('r1'),
+        AudioDelta(b'\x00\x00', response_id='r1'),
+        said('r1', 'Hi.'),
+        ended('r1'),
+        ResponseRefused(response_id='r1'),
+    )
+    assert session_core.all_messages() == []
+    assert session_core.usage.requests == 0
+
+
+def test_a_refused_response_that_made_tool_calls_stays_for_its_calls_to_be_refused() -> None:
+    session_core = feed(
+        core(),
+        started('r1'),
+        ToolCall(tool_call_id='c1', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1'),
+        ResponseRefused(response_id='r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:c1] complete stop'])
+
+
+def test_a_turn_still_transcribing_when_the_next_starts_holds_no_history_back() -> None:
+    """Words naming no turn are the latest one's, so a joined turn the next one replaces has all of its words."""
+    tracker = InferredLifecycle(transcribes=True)
+    session_core = core()
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechStartEvent())
+    lifecycle_message(tracker, session_core, InputTranscript('Hello'))
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechEndEvent())
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechStartEvent())
+    lifecycle_message(tracker, session_core, InputTranscript('again', is_final=True))
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechEndEvent())
+    lifecycle_message(tracker, session_core, OutputTranscript('Hi.'), ResponseDone())
+    assert session_core.transcript_holding_history() is None
+    assert summary(session_core.all_messages()) == snapshot(
+        ['{user:Hello}', '{user:again}', 'None [assistant:Hi.] complete stop']
     )

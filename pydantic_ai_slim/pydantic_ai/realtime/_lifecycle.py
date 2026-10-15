@@ -7,7 +7,7 @@ vocabulary back.
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypeAliasType
 
@@ -89,8 +89,8 @@ class UserTurnEnded:
 class UserTurnClosed:
     """No more audio or transcript is coming for a spoken turn.
 
-    It was cleared, its connection lost, or its transcript is over. One that hadn't joined the conversation (`UserTurnEnded`) is dropped, as it never will; one that had keeps
-    what it has.
+    It was cleared, its connection lost, or its transcript is over. One that hadn't joined the conversation
+    (`UserTurnEnded`) is dropped, as it never will; one that had keeps what it has.
     """
 
     turn_id: str
@@ -173,7 +173,7 @@ class StaleEvent:
     event: RealtimeCodecEvent
 
 
-RealtimeFrame: TypeAlias = 'list[RealtimeCodecEvent | LifecycleEvent | StaleEvent]'
+RealtimeFrame = TypeAliasType('RealtimeFrame', 'list[RealtimeCodecEvent | LifecycleEvent | StaleEvent]')
 """What one message from the provider (or one transition of the connection's own, like a reconnect) makes.
 
 The events are in order, and the session applies a frame whole before it streams any of it, so whatever reacts

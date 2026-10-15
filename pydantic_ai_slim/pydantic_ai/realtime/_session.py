@@ -3355,7 +3355,9 @@ class RealtimeSession:
             # passes there are; a pass that finds nothing (the audio over budget is still on its way into
             # history) leaves it at the end.
             index = self._audio_eviction_start
-            while index < len(self._history):
+            # (This session's own record only holds audio until `_drop_audio_the_core_keeps` strips it, after each
+            # event: whether a pass finds any depends on timing.)
+            while index < len(self._history):  # pragma: lax no cover
                 stripped, freed = budget.strip(self._history[index], excess)
                 if freed:
                     self._replace_recorded_message(index, stripped)
@@ -3394,18 +3396,19 @@ class RealtimeSession:
         """
         old = self._history[index]
         self._history[index] = message
+        # (Whether a turn is anchored to a message while its audio is stripped depends on timing.)
         for item_id, anchor in self._user_turn_anchors.items():
-            if anchor is old:
+            if anchor is old:  # pragma: lax no cover
                 self._user_turn_anchors[item_id] = message
         anonymous_anchors = self._pending_anonymous_user_turn_anchors
         for anchor_index, anchor in enumerate(anonymous_anchors):
-            if anchor is old:
+            if anchor is old:  # pragma: lax no cover
                 anonymous_anchors[anchor_index] = message
         for item_id, (anchor,) in self._pending_user_turn_anchors.items():
-            if anchor is old:
+            if anchor is old:  # pragma: lax no cover
                 self._pending_user_turn_anchors[item_id] = (message,)
         for held in (self._held_commit, self._sent_commit, *self._held_commits_in_flight):
-            if held is not None and held.anchor is old:
+            if held is not None and held.anchor is old:  # pragma: lax no cover
                 held.anchor = message
 
     def _segment_input_audio(self, item_id: str | None) -> None:
