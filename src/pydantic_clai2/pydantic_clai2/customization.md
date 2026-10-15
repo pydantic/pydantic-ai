@@ -33,7 +33,9 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
-- Offer a settings menu: override async configure().
+- Offer a settings menu: return SettingsMenu(source=..., actions=...) from settings_menu();
+  an action asks through the Dialogs it gets (choose, text, confirm, wait). Override async
+  configure() only for a menu that cannot be declared; it opens in the terminal alone.
 - Use a custom model/provider: return ModelProvider(prefix=..., resolve=...,
   models=...) from get_model_providers, where resolve returns a Pydantic AI
   Model, or supply a Pydantic AI Agent to chat from a Python launcher.

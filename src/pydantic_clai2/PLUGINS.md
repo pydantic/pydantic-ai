@@ -1389,7 +1389,7 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 #### Configuring Pylon
 
 Turning the plugin on opens its settings menu, like any plugin with a
-[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `c` in
+[settings menu](#offer-a-settings-menu-def-settings_menuself). `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
 change anything, including the key. Type to filter the rows. Enter edits a row,
 `R` restores its default, and **Save & close** or Esc leaves the menu. Each
@@ -1811,7 +1811,7 @@ pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
 close.
 
 Turning a plugin on with Space opens its settings menu straight away when it
-offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
+offers one (see [settings menu](#offer-a-settings-menu-def-settings_menuself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
 Turning a plugin off never opens a menu, and a plugin without a settings menu
@@ -2433,7 +2433,7 @@ your plugin. A plugin with an agent dependency type names it second, as
 
 `self.settings` is what the plugin loaded with. To edit settings from inside the
 plugin, call `self.host.save_settings(model)` (see
-[`configure`](#offer-a-settings-menu-async-def-configureself));
+[settings menu](#offer-a-settings-menu-def-settings_menuself));
 `self.host.settings(Model)` returns them from then on. Read them per run (for
 example in a capability function returned from `get_capabilities`) so an edit
 also reaches the next turn from a plugin command, without a reload.
@@ -2525,45 +2525,74 @@ returns a `KeyReference` to a saved key, a masked new value for you to
 declaration as `plugins add` would, and `self.host.settings(Model)` returns the new
 values from then on.
 
-### Offer a settings menu: `async def configure(self)`
+### Offer a settings menu: `def settings_menu(self)`
 
-Override `configure` with an async method that shows a settings menu and returns
-a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
-`/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`, and on
-`/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
-the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
-and save only a key's name: let the user pick one with
-`prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to
-it. When the saved settings changed, CLAI loads the plugin again afterwards, so a
-fresh instance is built from them.
+Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
+CLAI opens it when the plugin is turned on (Space in `/plugins`, `/plugins enable`,
+or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
+the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
+it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
+not tied to the terminal.
 
-Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
-`pydantic_clai2.ui.menus.field_menu`, run through `run_worker` from
-`pydantic_clai2.ui.menus.menu_worker`), the same one `/set` uses. Its last row is
-**Save & close**: every edit is already saved, so choosing it, like Esc, just
-leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
-treats a result as closed when `picked(result)` is `None`.
+A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 
-The built-in `logfire_mcp` plugin is a complete example.
+- `source`, your `FieldSource`: its `title`, its `rows()` (a `FieldRow` each), and
+  `current`, `problem`, `apply`, and `reset` for a row. Each method is synchronous
+  and may block, such as on the keyring, so CLAI calls them off the event loop.
+  `apply` and `reset` save the change with `self.host.save_settings(model)` as the
+  user makes it and return a line to show.
+- `actions`, for rows that need more than one value typed or picked, such as
+  choosing a `/keys` entry or signing in: the row's key maps to an async function
+  that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `searchable`, whether typing filters the list (default `True`).
+
+`Dialogs` asks the user wherever the menu was opened, and every method waits for the
+answer. Backing out returns `None` or `False`, never raises:
+
+| Method | Asks for |
+|---|---|
+| `choose(title=..., options=[Option(value=..., label=..., description=...)], current=...)` | one of the options; returns its `value` |
+| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable |
+| `confirm(title=..., yes=..., no=..., description=...)` | `yes` or `no`, with `no` selected first |
+| `wait(title=..., description=..., task=...)` | nothing: it runs `task(show)` behind a screen the user can cancel, showing the latest text passed to `show` (a sign-in link, a code), and returns whether it finished |
 
 ```python
+from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
+
+
 class Notify(Plugin[NotifySettings]):
-    async def configure(self) -> str:
+    def settings_menu(self) -> SettingsMenu:
         # `NotifySource` is your `FieldSource`: rows, current values, validation, apply, and reset.
-        messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(self.host))))
-        return '\n'.join(messages) or 'Notify settings unchanged.'
+        return SettingsMenu(source=NotifySource(self.host), actions={'sound': self._pick_sound})
+
+    async def _pick_sound(self, dialogs: Dialogs) -> list[str]:
+        sound = await dialogs.choose(
+            title='Notification sound',
+            options=[Option(value='bell', label='Bell'), Option(value='chime', label='Chime')],
+            current=self.settings.sound,
+        )
+        if sound is None:
+            return []
+        self.host.save_settings(self.settings.model_copy(update={'sound': sound}))
+        return [f'Sound set to {sound}.']
 ```
 
-For a row that opens something other than a plain value, pass `submenus` to
-`run_flow` to map the row's key to a function that returns messages. When that
-function is itself async, such as `api_keys.prompt_api_key`, await
-`field_menu.run_flow_async` from the `configure` function instead of running
-`run_flow` in a worker: it runs each widget in its own `run_worker`, so the
-submenu can open its own.
+When the saved settings changed, CLAI loads the plugin again after the menu closes,
+so a fresh instance is built from them. The built-in `compaction` plugin is a
+complete example. In the terminal the whole menu, its actions' dialogs included,
+keeps the screen to itself until it closes.
 
-The built-in `github`, `grain`, `linear`, `notion`, and [`pylon`](#configuring-pylon) plugins are
-complete examples; `linear` uses `run_flow_async`, and `pylon` steps out of the menu
-worker to run the async key picker.
+A menu that cannot be declared this way can still override `async def
+configure(self) -> str` instead, show its own widgets, and return a line to show.
+It opens only in a terminal. Build it with the shared field editor (`FieldMenu` and
+`run_flow` from `pydantic_clai2.ui.menus.field_menu`, run through `run_worker`
+from `pydantic_clai2.ui.menus.menu_worker`) so it ends with the same **Save &
+close** row; a list you build yourself ends with `save_and_close_item()` and treats
+a result as closed when `picked(result)` is `None`. For a row that opens something
+other than a plain value, pass `submenus` to `run_flow`, or await
+`field_menu.run_flow_async` when the submenu is itself async, such as
+`api_keys.prompt_api_key`. The built-in `github`, `grain`, `linear`, `notion`, and
+[`pylon`](#configuring-pylon) plugins still work this way.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only

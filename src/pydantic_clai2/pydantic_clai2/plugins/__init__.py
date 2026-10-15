@@ -27,6 +27,8 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
+from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
@@ -765,14 +767,28 @@ class Plugin(Generic[SettingsT, DepsT]):
         """Draw an event yourself; return `None` to fall back to the default display."""
         return None
 
-    async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
+    def settings_menu(self) -> SettingsMenu | None:
+        """This plugin's settings menu, declared rather than run, so any surface can show it; `None` for none.
 
-        Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
-        change with `host.save_settings` as the user makes it and return a line to show. When the
-        settings changed, the loader loads the plugin again afterwards, so it builds from them.
+        Its `FieldSource` saves each change with `host.save_settings` as the user makes it, and its
+        actions ask through the `Dialogs` they are given, so the menu works wherever it was opened.
+        When the settings changed, the loader loads the plugin again afterwards, so it builds from them.
         """
-        raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
+        return None
+
+    async def configure(self) -> str:
+        """Show the settings menu in the terminal: `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
+
+        By default it shows `settings_menu` and returns what changed. Override it only for a menu
+        that cannot be declared, which then opens in the terminal alone.
+        """
+        menu = self.settings_menu()
+        if menu is None:
+            raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
+        if not self.host.console.is_terminal:
+            return f'Configure {menu.source.title} from a terminal: /plugins configure {self.host.name}'
+        messages = await run_settings_menu(menu)
+        return '\n'.join(messages) or f'{menu.source.title}: nothing changed.'
 
     async def on_session_start(self, event: SessionStart) -> None:
         """CLAI is ready for prompts; called once, when the plugin loads."""
@@ -797,8 +813,9 @@ class Plugin(Generic[SettingsT, DepsT]):
 
     @property
     def has_configure(self) -> bool:
-        """Whether this plugin overrides `configure`, offering a settings menu."""
-        return type(self).configure is not Plugin.configure
+        """Whether this plugin offers a settings menu, by overriding `settings_menu` or `configure`."""
+        cls = type(self)
+        return cls.settings_menu is not Plugin.settings_menu or cls.configure is not Plugin.configure
 
     @property
     def has_render(self) -> bool:

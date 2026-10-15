@@ -310,6 +310,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
+| `plugins/menus.py` | a declared settings menu: `FieldRow`, `FieldSource`, `SettingsMenu`, `Option`, and the `Dialogs` protocol its actions ask through |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
 | `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
@@ -317,7 +318,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/shell_terminal.py` | `PtyRun`: a `!` command on a pseudo-terminal (controlling terminal, `PAGER=cat`, keys relayed, Ctrl-C to CLAI's interrupt), `TerminalText` for transcript text, and the hand-over when the program switches to the alternate screen; no list of programs |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
-| `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
+| `ui/menus/field_menu.py` | the shared field editor (`FieldMenu`, `Runners`, `run_flow`) |
+| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets, and `run_settings_menu`, which shows a `SettingsMenu` under one hold |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
 | `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
 | `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
