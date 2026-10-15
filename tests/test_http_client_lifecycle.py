@@ -8,7 +8,9 @@ that what they count and check is each client the provider itself creates.
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
+import weakref
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -294,8 +296,8 @@ async def test_run_leaves_client_of_passed_model_open(provider_clients: list[htt
     assert [client.is_closed for client in provider_clients] == [False]
 
 
-async def test_entered_agent_enters_model_its_selector_returns_once(provider_clients: list[httpx2.AsyncClient]):
-    """Inside `async with agent:`, a `Model` instance a model selector returns stays open until the agent exits."""
+async def test_entered_agent_keeps_model_its_selector_returns_again(provider_clients: list[httpx2.AsyncClient]):
+    """Inside `async with agent:`, a `Model` instance a selector returns again stays open until the agent exits."""
     model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
 
     def select(ctx: ModelSelectionContext[Any]) -> Model:
@@ -308,20 +310,45 @@ async def test_entered_agent_enters_model_its_selector_returns_once(provider_cli
     assert [client.is_closed for client in provider_clients] == [True]
 
     async with agent:
+        # The first time it's selected, the run enters it, as it may never be selected again.
+        await agent.run('What is the capital of France?')
+        assert [client.is_closed for client in provider_clients] == [True, True]
+        # The next time, the agent enters it once, for these and later runs.
         await asyncio.gather(
             agent.run('What is the capital of France?'),
             agent.run('What is the capital of France?'),
         )
         await agent.run('What is the capital of France?')
-        assert [client.is_closed for client in provider_clients] == [True, False]
-    assert [client.is_closed for client in provider_clients] == [True, True]
+        assert [client.is_closed for client in provider_clients] == [True, True, False]
+    assert [client.is_closed for client in provider_clients] == [True, True, True]
+
+
+async def test_entered_agent_leaves_new_model_its_selector_returns_to_the_run(
+    provider_clients: list[httpx2.AsyncClient],
+):
+    """A selector that builds a new `Model` for each run gets each one closed when its run ends, and released."""
+    models: list[weakref.ref[Model]] = []
+
+    def select(ctx: ModelSelectionContext[Any]) -> Model:
+        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
+        models.append(weakref.ref(model))
+        return model
+
+    agent = Agent(capabilities=[SelectModel(select)])
+
+    async with agent:
+        await agent.run('What is the capital of France?')
+        await agent.run('What is the capital of France?')
+        gc.collect()
+        assert [model() for model in models] == [None, None]
+        assert [client.is_closed for client in provider_clients] == [True, True]
 
 
 @pytest.mark.parametrize('select_by_name', [False, True])
 async def test_entered_agent_keeps_model_selected_after_first_step(
     provider_clients: list[httpx2.AsyncClient], select_by_name: bool
 ):
-    """A model a selector returns for a later step of a run stays open until the agent exits, too."""
+    """A model a selector returns again for a later step of a run stays open until the agent exits, too."""
     model = None if select_by_name else OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
 
     def select(ctx: ModelSelectionContext[Any]) -> Model | str:
@@ -338,8 +365,11 @@ async def test_entered_agent_keeps_model_selected_after_first_step(
     async with agent:
         await agent.run('What is the capital of France?')
         await agent.run('What is the capital of France?')
-        assert [client.is_closed for client in provider_clients] == [False]
-    assert [client.is_closed for client in provider_clients] == [True]
+        await agent.run('What is the capital of France?')
+        # A name is entered on the agent the first time; an instance, the first time it's selected again.
+        expected = [False] if select_by_name else [True, False]
+        assert [client.is_closed for client in provider_clients] == expected
+    assert all(client.is_closed for client in provider_clients)
 
 
 async def test_model_selected_with_resolve_model_id_capability_is_entered_per_run(

@@ -7,6 +7,7 @@ import functools
 import inspect
 import sys
 import warnings
+import weakref
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -846,6 +847,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_model_ids: set[int] = set()
         # Models built from a name with `infer_model` while the agent is entered, reused by later runs.
         self._entered_models_by_name: dict[str, models.Model] = {}
+        # `Model` instances a model selector returned once while the agent is entered, by `id`. Held weakly, so one
+        # that's never selected again is left to its run and then garbage collected.
+        self._selected_models: weakref.WeakValueDictionary[int, models.Model] = weakref.WeakValueDictionary()
 
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
@@ -3215,20 +3219,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return self._entered_models_by_name.get(name)
 
     async def _enter_selected_model(self, model: models.Model) -> bool:
-        """Enter a model a model selector returned on the entered agent's exit stack, so later runs reuse it.
+        """Enter a model a model selector returned again on the entered agent's exit stack, so later runs reuse it.
 
-        Models are told apart by identity, so each new instance a selector returns stays open until the agent exits.
-        Returns `False` when the agent isn't entered, leaving the run to enter the model.
+        The first time an instance is selected, it's only remembered, so a selector that builds a new instance for
+        each run doesn't keep them all open until the agent exits. Returns `False` to leave the run to enter the
+        model: when the agent isn't entered, or the instance hasn't been selected before.
         """
         if self._entered_count == 0:
             return False
         async with self._enter_lock:
             exit_stack = self._exit_stack
             # Concurrent runs can get here for the same model, so only the first one enters it.
-            if exit_stack is not None and id(model) not in self._entered_model_ids:
-                await exit_stack.enter_async_context(model)
-                self._entered_model_ids.add(id(model))
-            return exit_stack is not None
+            if exit_stack is None or id(model) in self._entered_model_ids:
+                return exit_stack is not None
+            if self._selected_models.get(id(model)) is not model:
+                self._selected_models[id(model)] = model
+                return False
+            await exit_stack.enter_async_context(model)
+            self._entered_model_ids.add(id(model))
+            return True
 
     async def _evaluate_model_contribution(
         self,
@@ -4320,6 +4329,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     self._exit_stack = None
                     self._entered_model_ids.clear()
                     self._entered_models_by_name.clear()
+                    self._selected_models.clear()
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
