@@ -97,7 +97,7 @@ class Remote:
         self.host = host
         self.hub = hub
         self.answerer = answerer
-        self.workers = Workers(publish=hub.publish)
+        self.workers = Workers(publish=hub.publish, history=lambda task_id: self.task_catalog.history(task_id))
         """The delegated tasks, which the plugin's `on_task_event` keeps up to date."""
         self.running = False
         self._translator = EventTranslator()

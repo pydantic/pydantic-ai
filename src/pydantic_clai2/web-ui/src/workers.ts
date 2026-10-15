@@ -63,11 +63,13 @@ function delegated(name: string, args: string): string | null {
   }
 }
 
-/** The workers a tool call started: named by ID in its result, or given the task its arguments delegate. */
+/** The workers a tool call started: named by ID in its result, or, until it has one, given the task it delegates. */
 export function startedBy(item: Item, links: WorkerLinks): TaskEntry[] {
   const calls = [item, ...item.calls]
   const results = calls.map((call) => call.text).join('\n')
-  const prompts = new Set(calls.map((call) => delegated(call.name, call.args)).filter((task) => task !== null))
+  // A settled call names its task, so two calls delegating the same text each link only their own.
+  const waiting = calls.filter((call) => !call.text.includes('Task '))
+  const prompts = new Set(waiting.map((call) => delegated(call.name, call.args)).filter((task) => task !== null))
   if (!prompts.size && !results.includes('Task ')) return []
   return links.tasks.filter(
     (task) => task.parent_id === links.parent && (results.includes(task.id) || prompts.has(task.prompt)),

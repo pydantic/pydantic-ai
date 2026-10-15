@@ -1,8 +1,10 @@
 """The delegated tasks as browsers see them: a row for each, and each running one's transcript so far."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.subagents import DelegationStartEvent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     EventTranslator,
     Item,
@@ -14,6 +16,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TaskEntry,
     TaskItems,
     Usage,
+    history_items,
 )
 from pydantic_clai2.plugins import TaskEvent, TaskInfo
 
@@ -56,8 +59,12 @@ class Workers:
     finished one's saved history serves browsers from then on.
     """
 
-    def __init__(self, *, publish: Callable[[ServerMessage], None]) -> None:
+    def __init__(
+        self, *, publish: Callable[[ServerMessage], None], history: Callable[[str], list[ModelMessage]]
+    ) -> None:
+        """`history` reads a task's messages so far, which its transcript here starts from."""
         self._publish = publish
+        self._history = history
         self._sent: dict[str, TaskEntry] = {}
         self._live: dict[str, _Live] = {}
         self._runs = 0
@@ -72,16 +79,23 @@ class Workers:
         if task.status == 'finished':
             self._live.pop(task.id, None)
             return
-        live = self._live.get(task.id) or self._start(task)
+        live = self._live.get(task.id) or self._start(task, event)
         if event.event is not None:
             self._send(task.id, live, live.translator.translate(event.event))
 
-    def _start(self, task: TaskInfo) -> _Live:
+    def _start(self, task: TaskInfo, event: TaskEvent) -> _Live:
         # Each run, a resumed one too, gets its own IDs, as a browser may still show the last run's.
         self._runs += 1
         scope = f'task{self._runs}-'
         live = self._live[task.id] = _Live(translator=EventTranslator(scope=scope), log=ItemLog(), scope=scope)
-        self._send(task.id, live, [ItemAdded(item=Item(id=f'{scope}prompt', kind='user', text=task.prompt))])
+        # What it did before: a resumed task's earlier runs, or this run's, once it is joined midway,
+        # such as when the shell switches back to its conversation.
+        items = [replace(item, id=scope + item.id) for item in history_items(self._history(task.id))]
+        started = event.event
+        if started is None or (isinstance(started, DelegationStartEvent) and started.task_id in (None, task.id)):
+            # A run that starts now has not recorded its own request yet.
+            items.append(Item(id=f'{scope}prompt', kind='user', text=task.prompt))
+        self._send(task.id, live, [ItemAdded(item=item) for item in items])
         return live
 
     def steered(self, task_id: str, text: str) -> None:

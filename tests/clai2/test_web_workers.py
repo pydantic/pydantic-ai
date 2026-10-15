@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from starlette.testclient import WebSocketTestSession
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, PartStartEvent, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -167,7 +167,7 @@ def test_without_a_task_owner(make_web: MakeWeb) -> None:
 
 def test_workers_echo_steering_only_for_a_live_task() -> None:
     published: list[ServerMessage] = []
-    workers = Workers(publish=published.append)
+    workers = Workers(publish=published.append, history=lambda task_id: [])
     workers.steered('gone', 'hello')
     assert published == []
     now = datetime.now(UTC)
@@ -191,3 +191,38 @@ def test_workers_echo_steering_only_for_a_live_task() -> None:
     assert [type(message) for message in published] == [TaskChanged, TaskItems], 'an unchanged row is not sent again'
     workers.steered('t', 'hello')
     assert [item.text for item in workers.items()['t']] == ['look', 'hello']
+
+
+def test_a_resumed_or_joined_run_starts_from_the_tasks_history() -> None:
+    saved: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('look')]),
+        ModelResponse(parts=[TextPart('first run')]),
+    ]
+    published: list[ServerMessage] = []
+    workers = Workers(publish=published.append, history=lambda task_id: saved)
+    task = TaskInfo(
+        id='t',
+        parent_id=None,
+        agent='general-purpose',
+        model=None,
+        prompt='look again',
+        status='running',
+        outcome=None,
+        started_at=datetime.now(UTC),
+        finished_at=None,
+        background=False,
+        resumable=True,
+        activity='starting',
+        usage=RunUsage(),
+    )
+    workers.observe(TaskEvent(task=task))
+    assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'look again'], (
+        'resumed: and its prompt'
+    )
+    assert all(item.id.startswith('task1-') for item in workers.items()['t'])
+
+    workers.reset()
+    workers.observe(TaskEvent(task=task, event=PartStartEvent(index=0, part=TextPart('more'))))
+    assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'more'], (
+        'joined midway: its own request'
+    )
