@@ -36,7 +36,7 @@ with try_import() as imports_successful:
 
 with try_import() as huggingface_imports_successful:
     from huggingface_hub import AsyncInferenceClient
-    from huggingface_hub.utils import _http as huggingface_http
+    from huggingface_hub.utils import _http as huggingface_http  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
