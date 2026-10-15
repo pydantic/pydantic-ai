@@ -2022,8 +2022,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
         # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
         # `prepare_messages` splits into a synthesized `search_tools` turn. Once the history holds a
-        # `ThinkingPart`, `'field'` mode sets the configured field empty on every such turn; the current-turn
-        # backfill after mapping, below, covers the rest.
+        # `ThinkingPart`, `'field'` mode sets the configured field empty on every such turn. The backfill after
+        # mapping, below, covers current-turn tool calls in `'auto'` mode and in a `'field'`-mode request that
+        # thinks.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
@@ -2055,8 +2056,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # DeepSeek's guide asks for the field on every turn of a request with tools, but in practice it
         # rejected a current-turn tool call without it and accepted an earlier-turn one
         # (`test_deepseek_auto_mode_thinking_backfill` records the accepted requests), so this backfill
-        # leaves earlier turns unchanged. A message backfilled here goes out without the field again once a
-        # newer user message follows it.
+        # leaves earlier turns unchanged. In `'auto'` mode, and in `'field'` mode while the history holds no
+        # `ThinkingPart`, a message backfilled here goes out without the field again once a newer user message
+        # follows it.
         current_turn_field: str | None = None
         if send_back_thinking == 'auto':
             # `'auto'` learns the field only from the mapped messages, so it backfills only when they carry

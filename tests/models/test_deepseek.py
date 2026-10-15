@@ -208,14 +208,14 @@ async def test_deepseek_auto_mode_thinking_backfill(
     ] == case.sent_reasoning
 
 
-DeepSeekV4 = Callable[[bool], 'OpenAIChatModel']
-"""Builds `deepseek-v4-flash` through `DeepSeekProvider`, thinking (its default) or not."""
+DeepSeekModelFactory = Callable[[bool], 'OpenAIChatModel']
+"""Builds a `DeepSeekProvider` model: `False` turns thinking off, `True` leaves the model's default."""
 
 
-def _deepseek_v4(*, api_key: str, http_client: httpx2.AsyncClient) -> DeepSeekV4:
+def _deepseek_model_factory(model_name: str, *, api_key: str, http_client: httpx2.AsyncClient) -> DeepSeekModelFactory:
     def build(thinking: bool) -> OpenAIChatModel:
         return OpenAIChatModel(
-            'deepseek-v4-flash',
+            model_name,
             provider=DeepSeekProvider(api_key=api_key, http_client=http_client),
             settings=None if thinking else OpenAIChatModelSettings(thinking=False),
         )
@@ -231,7 +231,7 @@ def get_weather(city: str) -> str:
     return 'sunny'
 
 
-async def _fallback(deepseek: DeepSeekV4, *, thinking: bool = True) -> str:
+async def _fallback(deepseek: DeepSeekModelFactory, *, thinking: bool = True) -> str:
     """A non-thinking primary serves the tool call, then fails over to DeepSeek."""
     primary_calls = 0
 
@@ -247,7 +247,7 @@ async def _fallback(deepseek: DeepSeekV4, *, thinking: bool = True) -> str:
     return result.output
 
 
-async def _model_switch(deepseek: DeepSeekV4) -> None:
+async def _model_switch(deepseek: DeepSeekModelFactory) -> None:
     """The run switches to a thinking model after a step served without thinking."""
     without_thinking, with_thinking = deepseek(False), deepseek(True)
     agent = Agent(
@@ -257,7 +257,7 @@ async def _model_switch(deepseek: DeepSeekV4) -> None:
     await agent.run(_PARIS_PROMPT)
 
 
-async def _resume(deepseek: DeepSeekV4) -> None:
+async def _resume(deepseek: DeepSeekModelFactory) -> None:
     """A run without thinking stops for tool approval, and the approved run resumes with thinking."""
     tools = [Tool(get_weather, requires_approval=True)]
     first = await Agent(deepseek(False), tools=tools, output_type=[str, DeferredToolRequests]).run(_PARIS_PROMPT)
@@ -268,7 +268,7 @@ async def _resume(deepseek: DeepSeekV4) -> None:
     )
 
 
-async def _cross_provider(deepseek: DeepSeekV4) -> None:
+async def _cross_provider(deepseek: DeepSeekModelFactory) -> None:
     """An Anthropic step that searched for the tool and called it, continued on DeepSeek."""
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(_PARIS_PROMPT)]),
@@ -292,7 +292,7 @@ async def _cross_provider(deepseek: DeepSeekV4) -> None:
     await agent.run(message_history=history)
 
 
-async def _earlier_turn(deepseek: DeepSeekV4) -> None:
+async def _earlier_turn(deepseek: DeepSeekModelFactory) -> None:
     """The tool call without thinking sits before a newer user message."""
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(_PARIS_PROMPT)]),
@@ -305,8 +305,9 @@ async def _earlier_turn(deepseek: DeepSeekV4) -> None:
 @dataclass(frozen=True)
 class FieldBackfillCase:
     id: str
-    run: Callable[[DeepSeekV4], Awaitable[object]]
+    run: Callable[[DeepSeekModelFactory], Awaitable[object]]
     sent_reasoning: list[str | None]
+    model_name: str = 'deepseek-v4-flash'
 
 
 FIELD_BACKFILL_CASES = [
@@ -317,6 +318,8 @@ FIELD_BACKFILL_CASES = [
     FieldBackfillCase(id='cross_provider', run=_cross_provider, sent_reasoning=['', '']),
     FieldBackfillCase(id='earlier_turn', run=_earlier_turn, sent_reasoning=[None]),
     FieldBackfillCase(id='thinking_off', run=partial(_fallback, thinking=False), sent_reasoning=[None]),
+    # `DeepSeekProvider` turns thinking on by default only for the V4 models and `deepseek-reasoner`.
+    FieldBackfillCase(id='default_thinking_off', run=_fallback, sent_reasoning=[None], model_name='deepseek-chat'),
 ]
 
 
@@ -327,12 +330,13 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
 ):
     """A thinking request sends `reasoning_content` empty on current-turn tool calls when no step has thought yet.
 
-    `DeepSeekProvider` uses `'field'` mode, which used to backfill only once the history held a
-    `ThinkingPart`. Each path here reaches DeepSeek with thinking on and a tool call from a step that
-    didn't think, after the last user message, where DeepSeek 400s without the field. The controls pin
-    what stays unchanged: a tool call before a newer user message, and a request that doesn't think.
-    A mock transport stands in for a cassette because the claim is the last request each path sends;
-    `test_deepseek_field_mode_thinking_backfill` is the live counterpart.
+    `DeepSeekProvider` uses `'field'` mode, whose history-wide backfill needs a `ThinkingPart`. Each path
+    here reaches DeepSeek with thinking on before one exists, carrying a tool call after the last user
+    message from a step that didn't think, which DeepSeek 400s on without the field. The controls pin
+    what stays unchanged: a tool call before a newer user message, a request with thinking turned off,
+    and a model that doesn't think by default. DeepSeek accepting the empty field is recorded once by
+    `test_deepseek_field_mode_thinking_backfill`; these cases only pin which paths send it, so a mock
+    transport stands in for a recording per path, which would add no evidence about acceptance.
     """
     request_bodies: list[dict[str, JsonValue]] = []
 
@@ -351,7 +355,7 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
         return httpx2.Response(200, json=completion_message(message).model_dump(mode='json'))
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        await case.run(_deepseek_v4(api_key='test', http_client=client))
+        await case.run(_deepseek_model_factory(case.model_name, api_key='test', http_client=client))
 
     assert [
         message.get('reasoning_content')
@@ -370,7 +374,9 @@ async def test_deepseek_field_mode_thinking_backfill(
     ("The reasoning_content in the thinking mode must be passed back to the API"). The run completing is
     the API accepting the request; the request assertion pins it.
     """
-    output = await _fallback(_deepseek_v4(api_key=deepseek_api_key, http_client=request_capture.client))
+    output = await _fallback(
+        _deepseek_model_factory('deepseek-v4-flash', api_key=deepseek_api_key, http_client=request_capture.client)
+    )
 
     assert output == snapshot('The weather in Paris is sunny.')
     messages = request_capture.body('/chat/completions')['messages']
