@@ -78,7 +78,7 @@ def test_saved_anthropic_cache_settings_still_apply(tmp_path: Path, provider: st
     """Native Anthropic cache settings are no longer defaults, but saved ones still reach the run."""
     context, _ = make_context(tmp_path)
     model = f'{provider}:claude-sonnet-4-6'
-    assert context.model_settings(model) == {'cache': True}
+    assert context.model_settings(model) == {'cache': True, 'thinking': True}
     native: dict[str, JsonValue] = {
         'anthropic_cache': False,
         'anthropic_cache_instructions': '1h',
@@ -91,7 +91,7 @@ def test_saved_anthropic_cache_settings_still_apply(tmp_path: Path, provider: st
         assert row is not None
         assert source.current(row) == '(not set)'
     context.store.save_model_settings(model, native)
-    assert context.model_settings(model) == {'cache': True, **native}
+    assert context.model_settings(model) == {'cache': True, 'thinking': True, **native}
 
 
 @pytest.mark.parametrize(
@@ -141,6 +141,9 @@ async def test_cache_defaults_reach_anthropic_request(
     else:
         assert request['cache_control']['type'] == 'ephemeral'
     assert model.resolve_cache_retention(None) is None  # Library defaults remain opt-in.
+    # The thinking default is adaptive, at Anthropic's own default effort.
+    assert request['thinking'] == {'type': 'adaptive'}
+    assert request['output_config'] is OMIT
 
 
 def test_bare_identity_and_override_reset(tmp_path: Path) -> None:
@@ -271,3 +274,33 @@ def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, na
 @pytest.mark.parametrize('model', ['custom:gpt-6', 'custom:o3'])
 def test_unknown_provider_does_not_claim_chat_protocol_support(model: str) -> None:
     assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params', 'cache'}
+
+
+@pytest.mark.parametrize(
+    ('model', 'expected'),
+    [
+        ('anthropic:claude-opus-5-5', {'thinking': True}),
+        ('anthropic@work:claude-opus-5-5', {'thinking': True}),
+        ('gateway/anthropic:claude-sonnet-5-5', {'thinking': True}),
+        ('claude-code:claude-sonnet-4-6', {'thinking': True}),
+        ('anthropic:claude-haiku-4-5', {}),
+        ('openrouter:anthropic/claude-opus-5-5', {}),
+        ('bedrock:us.anthropic.claude-opus-5-5', {}),
+    ],
+)
+def test_claude_thinking_default_follows_adaptive_support(model: str, expected: dict[str, JsonValue]) -> None:
+    """Adaptive-capable Claude models on Anthropic's own APIs default to generic thinking, under any profile."""
+    assert model_defaults(model=model) == {'cache': True, **expected}
+
+
+def test_saved_claude_thinking_mode_takes_precedence(tmp_path: Path) -> None:
+    """A saved native mode reaches the run beside the generic default, and core prefers the native one."""
+    context, _ = make_context(tmp_path)
+    model = 'anthropic:claude-opus-5-5'
+    context.store.save_model_settings(model, {'anthropic_thinking_mode': 'disabled', 'anthropic_effort': 'low'})
+    assert context.model_settings(model) == {
+        'cache': True,
+        'thinking': True,
+        'anthropic_effort': 'low',
+        'anthropic_thinking': {'type': 'disabled'},
+    }

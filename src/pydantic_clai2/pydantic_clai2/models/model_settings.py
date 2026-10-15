@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
+from pydantic_clai2.models.profiles import provider_of
 
 if TYPE_CHECKING:
     # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
@@ -256,19 +258,30 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI's prompt caching default for every model, and reasoning defaults for GPT families.
+    """CLAI's prompt caching default for every model, and thinking defaults for Claude and GPT families.
 
     Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
     saved `anthropic_cache*` override still applies, since provider-specific cache settings take
     precedence over it.
     """
-    return {'cache': True, **gpt_defaults(model=model)}
+    return {'cache': True, **claude_defaults(model=model), **gpt_defaults(model=model)}
+
+
+def claude_defaults(*, model: str) -> dict[str, JsonValue]:
+    """Adaptive thinking for Claude models that support it, on Anthropic's own APIs.
+
+    Generic `thinking`, which core sends as adaptive thinking on these models, so a capability's own
+    thinking or effort still applies and Anthropic's default effort is used otherwise.
+    """
+    if provider_of(model) not in ('anthropic', 'gateway/anthropic', 'claude-code'):
+        return {}
+    claude = anthropic_model_profile(_model_name(model)) or {}
+    return {'thinking': True} if claude.get('anthropic_supports_adaptive_thinking', False) else {}
 
 
 def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
     """CLAI's reasoning defaults for GPT-6 and GPT-5.6 families, whichever provider serves them."""
-    name = model.partition(':')[2] if ':' in model else model
-    name = name.rsplit('/', 1)[-1]
+    name = _model_name(model)
     if not re.match(r'^gpt-(?:6(?:\.\d+)?|5\.6)(?:$|[-:])', name):
         return {}
     return {
@@ -290,6 +303,12 @@ def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> Mod
     """
     defaults = {key: value for key, value in model_defaults(model=model).items() if key not in saved}
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
+
+
+def _model_name(model: str) -> str:
+    """The name without provider or namespace: `openrouter:openai/gpt-6` gives `gpt-6`."""
+    name = model.partition(':')[2] if ':' in model else model
+    return name.rsplit('/', 1)[-1]
 
 
 def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None = None) -> ModelSettingsForm:

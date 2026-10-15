@@ -1151,6 +1151,10 @@ Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
+Claude models that support adaptive thinking default to `thinking=true` on the Anthropic API,
+the Pydantic AI Gateway, and Claude Code, under any profile. Pydantic AI sends that as adaptive
+thinking at Anthropic's default effort; **Extended Thinking** or **Effort** set for the model take
+precedence over it.
 Explicit per-model values win; reset restores the family default without saving
 it as an override. Other models keep their existing defaults. Family defaults
 follow the model each request uses and sit beneath the settings of
