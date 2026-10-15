@@ -122,12 +122,8 @@ def calculate_price_for_usage(
 
 def response_price_context(response: ModelResponse) -> PriceContext | None:
     """The genai-prices `price_context` for a response: the service tier the provider reports it was served at."""
-    return service_tier_price_context((response.provider_details or {}).get('service_tier'))
-
-
-def service_tier_price_context(service_tier: object) -> PriceContext | None:
-    """The genai-prices `price_context` for a provider-reported service tier, if there is one."""
-    return {'service_tier': service_tier} if isinstance(service_tier, str) else None
+    service_tier = (response.provider_details or {}).get('service_tier')
+    return {'service_tier': service_tier} if service_tier else None
 
 
 def best_effort_price(

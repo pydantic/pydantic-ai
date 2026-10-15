@@ -48,7 +48,7 @@ from typing_extensions import TypedDict
 # The delegated backend is an ordinary Responses call, so its usage is mapped by the same code that
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
 from .. import _utils
-from .._genai_prices import best_effort_price, service_tier_price_context
+from .._genai_prices import best_effort_price
 from .._instrumentation import get_instructions
 from .._run_context import get_current_run_context
 from ..exceptions import UserError
@@ -1482,7 +1482,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 model_name=response.model,
                 provider_api_url=self._provider_url,
                 provider_name=self._provider_name,
-                price_context=service_tier_price_context(response.service_tier),
+                price_context={'service_tier': response.service_tier} if response.service_tier else None,
             )
         ) is not None:
             mapped.cost = price.total_price
