@@ -35,6 +35,14 @@ never from `github.event`. For the safe outputs specifically that means frontmat
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
 
+The `CI Review` agent job queues in gh-aw's compiled agent concurrency group, which
+runs one review at a time across all PRs. `eligibility` therefore decides hours
+before the model starts. The last pre-agent step re-reads the PR and writes a `noop`
+to safe outputs when the PR has closed or moved to a new head. That `noop` skips
+inference only because gh-aw's engine harness checks safe outputs before it starts
+the engine (`hasNoopInSafeOutputs` in `claude_harness.cjs`). When you replace the
+engine harness, keep that check. Without it, every stale run spends a full review.
+
 ## What confines `CI Review` to same-repo PRs
 
 Two different gates, guarding two different things. Neither is redundant, and the

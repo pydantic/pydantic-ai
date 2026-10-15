@@ -167,6 +167,28 @@ pre-agent-steps:
       else
         echo "::warning::${script} not present; reviewer will run with less context"
       fi
+  # The agent job waits its turn in gh-aw's repo-wide agent slot (the compiled
+  # `gh-aw-claude-<workflow>` concurrency group, `queue: max`), often for hours, and
+  # `eligibility` ran before that wait. A PR that has since closed or moved to a new
+  # head gets a `noop` here; gh-aw's harness finds it before starting the model, so
+  # the slot is held only for setup. The new head's CI run queues its own review.
+  # An unreadable PR fails open and the review goes ahead.
+  - name: Skip a PR that closed or moved on while queued
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
+      # The file the `Execute` step hands the harness as `GH_AW_SAFE_OUTPUTS`.
+      SAFE_OUTPUTS: ${{ steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS }}
+    run: |
+      set -uo pipefail
+      if ! live=$(gh api "$PR" --jq '"\(.state) at \(.head.sha)"') || [ -z "$SAFE_OUTPUTS" ]; then
+        echo "::warning::could not re-check PR state; reviewing ${HEAD_SHA} anyway"
+        exit 0
+      fi
+      [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
+      jq -cn --arg m "Not reviewing ${HEAD_SHA}: the PR is now ${live}." '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"
+      echo "Not reviewing ${HEAD_SHA}: the PR is now ${live}." >> "$GITHUB_STEP_SUMMARY"
 
 jobs:
   eligibility:
