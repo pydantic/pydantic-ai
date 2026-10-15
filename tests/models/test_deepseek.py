@@ -1,27 +1,35 @@
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
+from functools import partial
 
+import httpx2
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
     ModelRequest,
     ModelResponse,
     RunContext,
     TextPart,
     ThinkingPart,
+    Tool,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Capability
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.capabilities import Capability, SelectModel, ToolSearch
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.messages import ModelMessage, NativeToolSearchCallPart, NativeToolSearchReturnPart
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
@@ -29,8 +37,13 @@ from pydantic_ai.usage import RequestUsage
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import RequestCapture, json_objects
+from .mock_openai import completion_message
 
 with try_import() as imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_tool_call import Function
+
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -193,6 +206,177 @@ async def test_deepseek_auto_mode_thinking_backfill(
     assert [
         message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
     ] == case.sent_reasoning
+
+
+DeepSeekV4 = Callable[[bool], 'OpenAIChatModel']
+"""Builds `deepseek-v4-flash` through `DeepSeekProvider`, thinking (its default) or not."""
+
+
+def _deepseek_v4(*, api_key: str, http_client: httpx2.AsyncClient) -> DeepSeekV4:
+    def build(thinking: bool) -> OpenAIChatModel:
+        return OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=DeepSeekProvider(api_key=api_key, http_client=http_client),
+            settings=None if thinking else OpenAIChatModelSettings(thinking=False),
+        )
+
+    return build
+
+
+_PARIS_PROMPT = 'What is the weather in Paris? Use the get_weather tool, then answer in one short sentence.'
+
+
+def get_weather(city: str) -> str:
+    """Get the weather for a city."""
+    return 'sunny'
+
+
+async def _fallback(deepseek: DeepSeekV4, *, thinking: bool = True) -> str:
+    """A non-thinking primary serves the tool call, then fails over to DeepSeek."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_primary')])
+        raise ModelHTTPError(status_code=503, model_name='primary')
+
+    model = FallbackModel(FunctionModel(primary), deepseek(thinking))
+    result = await Agent(model, tools=[get_weather]).run(_PARIS_PROMPT)
+    return result.output
+
+
+async def _model_switch(deepseek: DeepSeekV4) -> None:
+    """The run switches to a thinking model after a step served without thinking."""
+    without_thinking, with_thinking = deepseek(False), deepseek(True)
+    agent = Agent(
+        tools=[get_weather],
+        capabilities=[SelectModel(lambda ctx: without_thinking if ctx.run_step == 1 else with_thinking)],
+    )
+    await agent.run(_PARIS_PROMPT)
+
+
+async def _resume(deepseek: DeepSeekV4) -> None:
+    """A run without thinking stops for tool approval, and the approved run resumes with thinking."""
+    tools = [Tool(get_weather, requires_approval=True)]
+    first = await Agent(deepseek(False), tools=tools, output_type=[str, DeferredToolRequests]).run(_PARIS_PROMPT)
+    assert isinstance(first.output, DeferredToolRequests)
+    approvals = DeferredToolResults(approvals={call.tool_call_id: True for call in first.output.approvals})
+    await Agent(deepseek(True), tools=tools, output_type=[str, DeferredToolRequests]).run(
+        message_history=first.all_messages(), deferred_tool_results=approvals
+    )
+
+
+async def _cross_provider(deepseek: DeepSeekV4) -> None:
+    """An Anthropic step that searched for the tool and called it, continued on DeepSeek."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(_PARIS_PROMPT)]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['weather']}, tool_call_id='srvtoolu_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='srvtoolu_1',
+                    provider_name='anthropic',
+                ),
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='toolu_2'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='toolu_2')]),
+    ]
+    agent = Agent(deepseek(True), tools=[Tool(get_weather, defer_loading=True)], capabilities=[ToolSearch()])
+    await agent.run(message_history=history)
+
+
+async def _earlier_turn(deepseek: DeepSeekV4) -> None:
+    """The tool call without thinking sits before a newer user message."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(_PARIS_PROMPT)]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_primary')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_primary')]),
+    ]
+    await Agent(deepseek(True), tools=[get_weather]).run('Thanks! Reply with one word.', message_history=history)
+
+
+@dataclass(frozen=True)
+class FieldBackfillCase:
+    id: str
+    run: Callable[[DeepSeekV4], Awaitable[object]]
+    sent_reasoning: list[str | None]
+
+
+FIELD_BACKFILL_CASES = [
+    FieldBackfillCase(id='fallback', run=_fallback, sent_reasoning=['']),
+    FieldBackfillCase(id='model_switch', run=_model_switch, sent_reasoning=['']),
+    FieldBackfillCase(id='resume', run=_resume, sent_reasoning=['']),
+    # The Anthropic native tool search goes out as a synthesized `search_tools` turn ahead of the call.
+    FieldBackfillCase(id='cross_provider', run=_cross_provider, sent_reasoning=['', '']),
+    FieldBackfillCase(id='earlier_turn', run=_earlier_turn, sent_reasoning=[None]),
+    FieldBackfillCase(id='thinking_off', run=partial(_fallback, thinking=False), sent_reasoning=[None]),
+]
+
+
+@pytest.mark.vcr(ignore_hosts=['api.deepseek.com'])
+@pytest.mark.parametrize('case', FIELD_BACKFILL_CASES, ids=lambda case: case.id)
+async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
+    allow_model_requests: None, case: FieldBackfillCase
+):
+    """A thinking request sends `reasoning_content` empty on current-turn tool calls when no step has thought yet.
+
+    `DeepSeekProvider` uses `'field'` mode, which used to backfill only once the history held a
+    `ThinkingPart`. Each path here reaches DeepSeek with thinking on and a tool call from a step that
+    didn't think, after the last user message, where DeepSeek 400s without the field. The controls pin
+    what stays unchanged: a tool call before a newer user message, and a request that doesn't think.
+    A mock transport stands in for a cassette because the claim is the last request each path sends;
+    `test_deepseek_field_mode_thinking_backfill` is the live counterpart.
+    """
+    request_bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = TypeAdapter(dict[str, JsonValue]).validate_json(request.content)
+        request_bodies.append(body)
+        if any(message['role'] == 'tool' for message in json_objects(body['messages'])):
+            message = ChatCompletionMessage(content='Sunny.', role='assistant')
+        else:
+            tool_call = ChatCompletionMessageFunctionToolCall(
+                id='call_deepseek',
+                function=Function(name='get_weather', arguments='{"city": "Paris"}'),
+                type='function',
+            )
+            message = ChatCompletionMessage(content=None, role='assistant', tool_calls=[tool_call])
+        return httpx2.Response(200, json=completion_message(message).model_dump(mode='json'))
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        await case.run(_deepseek_v4(api_key='test', http_client=client))
+
+    assert [
+        message.get('reasoning_content')
+        for message in json_objects(request_bodies[-1]['messages'])
+        if message['role'] == 'assistant'
+    ] == case.sent_reasoning
+
+
+async def test_deepseek_field_mode_thinking_backfill(
+    allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
+):
+    """DeepSeek accepts the empty `reasoning_content` a thinking request sends on a tool call no step thought on.
+
+    A non-thinking `FallbackModel` primary serves the tool call, then fails over to DeepSeek with thinking
+    on, so the history holds no `ThinkingPart`. Without the field DeepSeek rejects the request with a 400
+    ("The reasoning_content in the thinking mode must be passed back to the API"). The run completing is
+    the API accepting the request; the request assertion pins it.
+    """
+    output = await _fallback(_deepseek_v4(api_key=deepseek_api_key, http_client=request_capture.client))
+
+    assert output == snapshot('The weather in Paris is sunny.')
+    messages = request_capture.body('/chat/completions')['messages']
+    assert [
+        message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
+    ] == ['']
 
 
 async def test_deepseek_model_thinking_part(
