@@ -741,6 +741,11 @@ PROXIED_REQUEST_CASES = [
         result=snapshot({'error': 'Tool arguments must be an object (code: -32602)'}),
     ),
     ProxiedRequestCase(
+        id='non-ui-resource-refused',
+        request={'serverId': 'weather', 'method': 'resources/read', 'params': {'uri': 'file:///etc/hosts'}},
+        result=snapshot({'error': 'Unsupported MCP request'}),
+    ),
+    ProxiedRequestCase(
         id='unknown-server',
         request={'serverId': 'other', 'method': 'resources/read', 'params': {'uri': 'ui://weather/forecast'}},
         result=snapshot({'error': 'Unknown MCP server: other'}),

@@ -292,9 +292,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     mcp_app_toolsets: Sequence[MCPToolset[Any]] = ()
     """MCP toolsets whose [MCP Apps](../mcp/client.md#mcp-apps) pages can load and call tools through this endpoint.
 
-    CopilotKit's MCP Apps renderer sends the request for a page, and the page's own requests, as runs with `forwardedProps.__proxiedMCPRequest`. The
-    adapter answers these from the toolset with that [`id`][pydantic_ai.mcp.MCPToolset.id] instead of running the
-    agent, using [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] and
+    CopilotKit's MCP Apps renderer sends the request for a page, and the page's own requests, as runs with
+    `forwardedProps.__proxiedMCPRequest`. The adapter answers these from the toolset with that
+    [`id`][pydantic_ai.mcp.MCPToolset.id] instead of running the agent: `ui://` resources with
+    [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app], and tools visible to apps with
     [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app]. Anyone who can post to this endpoint can
     send these requests.
     """
@@ -391,7 +392,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         else:
             try:
                 match request:
-                    case {'method': 'resources/read', 'params': {'uri': str(uri)}}:
+                    case {'method': 'resources/read', 'params': {'uri': str(uri)}} if uri.startswith('ui://'):
                         result = await toolset.read_resource_for_app(uri)
                     case {'method': 'tools/call', 'params': {'name': str(name), **params}}:
                         result = await toolset.call_tool_for_app(name, params.get('arguments'))
