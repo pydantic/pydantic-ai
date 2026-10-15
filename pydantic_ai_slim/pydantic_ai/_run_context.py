@@ -611,10 +611,22 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Because it grows step by step, where you read it in the
         [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
         loaded during one step is not reflected until the next step's hooks.
+
+        A capability inside a deferred group (a `CombinedCapability` with an `id` and
+        `defer_loading=True`) is active only once the group is loaded.
         """
+        loaded = self.loaded_capability_ids
+        registered_ids = {id(cap): capability_id for capability_id, cap in self.capabilities.items()}
+        withheld: set[str] = set()
+        for capability_id, cap in self.capabilities.items():
+            if cap.defer_loading is True and capability_id not in loaded:
+                # `apply` visits the capability itself first, then what is registered beneath it.
+                beneath: list[AbstractCapability[RunContextAgentDepsT]] = []
+                cap.apply(beneath.append)
+                withheld.update(registered_ids[id(inner)] for inner in beneath[1:] if id(inner) in registered_ids)
         return {
-            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
-        } | self.loaded_capability_ids
+            id for id, cap in self.capabilities.items() if cap.defer_loading is not True and id not in withheld
+        } | loaded
 
     @property
     def _dispatch_active_capability_ids(self) -> set[str]:

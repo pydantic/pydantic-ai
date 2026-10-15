@@ -756,7 +756,10 @@ def test_deferred_capability_inside_deferred_capability_raises() -> None:
 
 @pytest.mark.parametrize('wrap', [False, True], ids=['combined', 'wrapped-combined'])
 async def test_deferred_capability_group_loads_all_members_together(wrap: bool) -> None:
-    """A deferred group hides its members' tools, instructions and hooks until it loads, then activates all of them."""
+    """A deferred group hides its members' tools, instructions and hooks until it loads, then activates all of them.
+
+    Its members are not reported as active capabilities before then either.
+    """
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -772,9 +775,17 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
         return request_context
 
     members: list[AbstractCapability[object]] = [
-        Capability[object](instructions='Editing instructions.', toolsets=[toolset]),
+        Capability[object](id='editing_tools', instructions='Editing instructions.', toolsets=[toolset]),
         hooks,
     ]
+    observer = Hooks()
+    active_ids: list[list[str]] = []
+
+    @observer.on.before_model_request
+    async def observe(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        active_ids.append(sorted(i for i in ctx.active_capability_ids if not i.startswith('<')))
+        return request_context
+
     group = (
         WrapperCapability[object](CombinedCapability(members), id='editing', description='Editing.', defer_loading=True)
         if wrap
@@ -790,12 +801,17 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
             return ModelResponse(parts=[ToolCallPart('edit_document', {'doc_id': 'd1'})])
         return make_text_response('done')
 
-    result = await Agent(FunctionModel(model_fn), capabilities=[group]).run('Edit d1.')
+    result = await Agent(FunctionModel(model_fn), capabilities=[group, observer]).run('Edit d1.')
 
     assert visible_tools == snapshot(
         [['load_capability'], ['edit_document', 'load_capability'], ['edit_document', 'load_capability']]
     )
     assert hook_steps == [2, 3]
+    assert active_ids == [
+        ['tool_search'],
+        ['editing', 'editing_tools', 'tool_search'],
+        ['editing', 'editing_tools', 'tool_search'],
+    ]
     load_return = next(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
     assert load_return.instructions == 'Editing instructions.'
     assert [
