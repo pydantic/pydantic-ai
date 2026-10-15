@@ -10,7 +10,8 @@ what the connection sends and reads:
   or reports something (an interruption, a finish reason). It ends at `turn_complete`, or at the empty usage
   report that closes a tool-call frame. Its id is made up (`ResponseStarted.provider_id=False`).
 - A response answers every input that asked for one and hadn't been answered when it started (a typed turn,
-  a tool result): Gemini replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
+  a tool result): Gemini names none, and replies to what it has received, so inputs sent before it starts
+  replying share that reply (`ResponseStarted.basis='inferred'`).
 - A spoken turn has no id and no speech frames either: it starts with its first input transcript, joins the
   conversation as the reply to it starts, and has its whole transcript once that reply ends (Gemini rarely
   marks a transcript finished). Without input transcription, audio streamed since the last reply is a turn
