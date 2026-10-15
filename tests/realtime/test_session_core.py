@@ -33,7 +33,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.realtime._core import (
     AudioCleared,
     AudioSent,
-    AudioUnsent,
     Closed,
     CoreInput,
     ExchangeAbandoned,
@@ -894,23 +893,6 @@ def test_a_conversation_id_resolved_late_reaches_what_the_core_recorded() -> Non
     assert {message.conversation_id for message in session_core.all_messages()} == {'c1'}
 
 
-def test_input_audio_that_never_went_out_is_taken_back() -> None:
-    session_core = feed(
-        core(input_transcription_enabled=False, retain_input_audio=True),
-        AudioSent(data=b'\x01\x00'),
-        AudioSent(data=b'\x02\x00'),
-        AudioUnsent(),
-        # Only the latest chunk is taken back, once.
-        AudioUnsent(),
-        UserTurnStarted(turn_id='u1'),
-        UserTurnEnded(turn_id='u1'),
-    )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    assert part.audio.data[44:] == b'\x01\x00'
-
-
 def test_a_reconnect_replays_a_held_turns_audio_without_counting_it() -> None:
     """The replay builds the held turn's request with its audio, which isn't retained history, so isn't counted."""
     session_core = feed(
@@ -951,25 +933,6 @@ def test_retained_audio_eviction_passes_over_what_is_not_recorded() -> None:
     assert list(session_core._recorded_audio) == [session_core._turns['u5']]  # pyright: ignore[reportPrivateUsage]
 
 
-def test_input_audio_cut_for_a_turn_before_its_send_failed_is_taken_back_from_the_turn() -> None:
-    session_core = feed(
-        core(retain_input_audio=True),
-        AudioSent(data=b'\x01\x00'),
-        AudioSent(data=b'\x02\x00'),
-        RealtimeInputSpeechStartEvent(item_id='u1'),
-        UserTurnStarted(turn_id='u1'),
-        # The speech end cuts the turn's audio while the last chunk is still on its way, and its send then fails.
-        RealtimeInputSpeechEndEvent(item_id='u1'),
-        AudioUnsent(),
-        UserTurnEnded(turn_id='u1'),
-        InputTranscript('Hi.', item_id='u1', is_final=True),
-    )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    assert part.audio.data[44:] == b'\x01\x00'
-
-
 def test_retained_audio_trims_the_oldest_audio_coming_in_first() -> None:
     """A response whose incoming audio was emptied counts as newest when more comes in for it."""
     session_core = feed(
@@ -1007,38 +970,27 @@ def test_retained_audio_evicted_is_let_go_by_the_core_too() -> None:
     assert len(session_core._recorded_audio) == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_a_failed_send_of_audio_trimmed_by_the_budget_leaves_nothing_of_it() -> None:
-    """A chunk longer than the whole budget is trimmed before its send fails: what is left of it is taken back."""
-    session_core = feed(
-        core(input_transcription_enabled=False, retain_input_audio=True, retain_audio_max_seconds=0.1),
-        AudioSent(data=_tenth_of_a_second(1) * 2),
-        AudioUnsent(),
-        AudioSent(data=b'\x05\x00'),
-        UserTurnStarted(turn_id='u1'),
-        UserTurnEnded(turn_id='u1'),
-    )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    assert part.audio.data[44:] == b'\x05\x00'
+def test_input_audio_that_went_out_after_its_turn_was_recorded_is_left_to_the_next() -> None:
+    """Audio is reported once its send completed, so a chunk still on its way when a turn is recorded comes after it.
 
-
-def test_audio_taken_back_from_a_turn_no_longer_waiting_leaves_it_alone() -> None:
-    """Once its turn is recorded, the core doesn't change the message to take the audio back.
-
-    A known gap, not the intent (the current session core has it too): a turn recorded while the send of its last
-    chunk is still under way keeps that chunk's audio if the send then fails.
+    The provider ended that turn without the chunk, which is the next turn's start, or, if its send fails, no
+    turn's: the recorded turn keeps only the audio that went out ahead of it either way.
     """
     session_core = feed(
         core(input_transcription_enabled=False, retain_input_audio=True),
         AudioSent(data=b'\x01\x00'),
         UserTurnStarted(turn_id='u1'),
         UserTurnEnded(turn_id='u1'),
-        AudioUnsent(),
+        AudioSent(data=b'\x02\x00'),
+        UserTurnStarted(turn_id='u2'),
+        UserTurnEnded(turn_id='u2'),
     )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert [
+        part.audio.data[44:]
+        for message in session_core.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart) and part.audio is not None
+    ] == [b'\x01\x00', b'\x02\x00']
 
 
 def test_retained_audio_eviction_does_not_walk_what_waits_or_has_no_audio(monkeypatch: pytest.MonkeyPatch) -> None:

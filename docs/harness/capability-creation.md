@@ -39,7 +39,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
 ```
 
 The agent can now call `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`. `CapabilityCreation` also contributes static, cache-stable system-prompt guidance explaining these tools. Leave `guidance=None` for the default text, or pass your own string; set `guidance=''` to omit it entirely.
@@ -63,7 +63,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
 
 history = None
 done = False

@@ -1958,6 +1958,25 @@ def test_message_json_schema_keeps_the_multimodal_definitions_intact():
     assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
 
 
+@pytest.mark.parametrize('mode', ['validation', 'serialization'])
+def test_message_json_schema_discriminator_mappings_are_references(mode: Literal['validation', 'serialization']):
+    """OpenAPI requires every discriminator `mapping` value to be a reference, so FastAPI can publish `ModelMessage`."""
+    mapping = ModelMessagesTypeAdapter.json_schema(mode=mode)['$defs']['ToolReturnContent']['anyOf'][1][
+        'discriminator'
+    ]['mapping']
+
+    assert mapping == snapshot(
+        {
+            'audio-url': '#/$defs/AudioUrl',
+            'binary': '#/$defs/BinaryContent',
+            'document-url': '#/$defs/DocumentUrl',
+            'image-url': '#/$defs/ImageUrl',
+            'uploaded-file': '#/$defs/UploadedFile',
+            'video-url': '#/$defs/VideoUrl',
+        }
+    )
+
+
 # Run out-of-process because `PYDANTIC_DISABLE_PLUGINS` is read once, when pydantic is imported.
 _GATE_WITHOUT_PYDANTIC_PLUGINS = """
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -1982,6 +2001,7 @@ assert type(content) is dict, content
 """
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where no pydantic plugin has been registered')
 def test_tool_return_gate_holds_without_a_pydantic_plugin():
     """The gate must not depend on whether anything registered a pydantic plugin.
 
