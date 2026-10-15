@@ -868,6 +868,7 @@ async def test_closing_an_unstarted_view_releases_its_tap() -> None:
         assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.usefixtures('young_gc')
 async def test_abandoned_unstarted_view_releases_its_tap() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
@@ -5862,6 +5863,12 @@ async def test_text_request_reserved_before_response_finishes_during_send() -> N
 
 
 async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
+    """The turn audio opens is reserved before the chunk goes out, so a boundary handled meanwhile still records it.
+
+    The chunk itself isn't in that turn: the provider drew the boundary before it had the chunk, so the chunk
+    is retained for the next turn instead.
+    """
+
     class _BoundarySend(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
             self.sent.append(content)
@@ -5871,8 +5878,9 @@ async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
     session = RealtimeSession(conn, audio_retention='input_audio')
     await session.send_audio(b'\xaa\xbb')
     assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))], timestamp=IsDatetime())]
+        [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
     )
+    assert bytes(session._input_audio) == b'\xaa\xbb'  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
@@ -5910,6 +5918,35 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     with pytest.raises(RuntimeError, match='send failed'):
         await unretained.send_audio(b'\xaa')
     assert unretained.new_messages() == []
+
+
+async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
+    """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails."""
+
+    class _TurnEndsDuringFailingSend(FakeRealtimeConnection):
+        fail = False
+
+        async def send(self, content: RealtimeInput) -> None:
+            if self.fail:
+                session._translate_event(InputTranscript(text='Hi.', is_final=True))  # pyright: ignore[reportPrivateUsage]
+                raise RuntimeError('send failed')
+            self.sent.append(content)
+
+    conn = _TurnEndsDuringFailingSend([])
+    session = RealtimeSession(conn, audio_retention='input_audio')
+    await session.send_audio(b'\xaa\xbb')
+    conn.fail = True
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session.send_audio(b'\xcc\xdd')
+    assert session.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='Hi.', audio=_wav_content(b'\xaa\xbb'))],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert not session._input_audio  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_transport_failure_while_sending_becomes_a_realtime_error() -> None:
@@ -6483,6 +6520,73 @@ async def test_unconsumed_session_queue_never_orphans_a_delta(frames_per_turn: i
         started = {event.index for event in queued if isinstance(event, PartStartEvent)}
         assert {event.index for event in queued if isinstance(event, PartDeltaEvent)} <= started
         assert {event.index for event in queued if isinstance(event, PartEndEvent)} <= started
+
+
+async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evicting a part's start leaves alone a later start under the same index, which carries the part again.
+
+    A late transcript streams its item's ended part again under the part's index, so the eviction of the first
+    start must stop at the restart rather than take its delta and end too. Not a VCR test: the queue bound is
+    internal, and a recording can't produce the late order on demand.
+    """
+    monkeypatch.setattr('pydantic_ai.realtime._session._SESSION_STRUCTURAL_QUEUE_SIZE', 5)
+    events: list[RealtimeCodecEvent] = [
+        OutputTranscript('Hello', is_final=False, item_id='a'),
+        OutputTranscript('Bonjour.', is_final=False, item_id='b'),
+        OutputTranscript(' world.', is_final=False, item_id='a'),
+        ResponseDone(),
+    ]
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+        parts: dict[int, list[tuple[str, str | None]]] = {}
+        for event in _queued_realtime_events(session):
+            if isinstance(event, PartDeltaEvent):
+                assert isinstance(event.delta, SpeechPartDelta)
+                parts.setdefault(event.index, []).append(('delta', event.delta.transcript_delta))
+            elif isinstance(event, (PartStartEvent, PartEndEvent)):
+                assert isinstance(event.part, SpeechPart)
+                kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+                parts.setdefault(event.index, []).append((kind, event.part.transcript))
+        assert list(parts.values()) == [
+            [('start', ''), ('delta', 'Bonjour.'), ('end', 'Bonjour.')],
+            [('start', 'Hello'), ('delta', ' world.'), ('end', 'Hello world.')],
+        ]
+
+
+async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> None:
+    """Text arriving for an ended part while a later item streams re-yields that turn, with the transcript so far.
+
+    `delta=True` carries the part's `index`, so a caption UI replaces that turn rather than adding one. Not a VCR
+    test: a recording can't produce the late order on demand.
+    """
+    events: list[RealtimeCodecEvent] = [
+        OutputTranscript('Hello', is_final=False, item_id='a'),
+        OutputTranscript('Bonjour.', is_final=False, item_id='b'),
+        OutputTranscript(' world.', is_final=False, item_id='a'),
+        ResponseDone(),
+    ]
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        transcripts, updates = await asyncio.gather(
+            aiter_to_list(session.stream_transcripts()), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert transcripts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Hello'),
+            SpeechPart(speaker='assistant', transcript='Hello world.'),
+            SpeechPart(speaker='assistant', transcript='Bonjour.'),
+        ]
+    )
+    assert updates == snapshot(
+        [
+            TranscriptUpdate(index=0, speaker='assistant', delta='Hello', transcript='Hello'),
+            TranscriptUpdate(index=1, speaker='assistant', delta='Bonjour.', transcript='Bonjour.'),
+            TranscriptUpdate(index=0, speaker='assistant', delta=' world.', transcript='Hello world.'),
+        ]
+    )
 
 
 async def test_parked_exception_survives_a_trimmed_queue() -> None:
@@ -11981,6 +12085,16 @@ async def test_closing_records_the_usage_the_provider_reports_as_its_session_end
     assert session.context_window_used == 0.25
 
 
+async def test_closing_records_a_response_report_on_a_provider_whose_responses_are_requests() -> None:
+    """Such a provider counts a request as it records a response: a report made at the close only adds usage."""
+    conn = _EndingConnection([SessionUsage(RequestUsage(input_tokens=10))])
+    async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(request_limit=0)) as session:
+        pass
+
+    assert session.usage.input_tokens == 10
+    assert session.usage.requests == 0
+
+
 async def test_a_session_that_never_read_still_ends_the_provider_session() -> None:
     conn = _EndingConnection([SessionUsage(RequestUsage(audio_seconds=2), response_scoped=False)])
     async with RealtimeSession(conn, _noop_runner) as session:
@@ -12048,3 +12162,19 @@ async def test_usage_reported_as_the_session_ends_counts_against_the_limits() ->
     with pytest.raises(UsageLimitExceeded):
         async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(input_tokens_limit=5)):
             pass
+
+
+async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_report() -> None:
+    """A version 1 connection whose model makes requests of its own (as GPT-Live's backend does) counts each report."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Hi.', is_final=True),
+            SessionUsage(RequestUsage(input_tokens=1)),
+            SessionUsage(RequestUsage(input_tokens=2)),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, profile=RealtimeModelProfile(responses_are_requests=False))
+    async with session:
+        await drain_events(session)
+    assert (session.usage.requests, session.usage.input_tokens) == (2, 3)

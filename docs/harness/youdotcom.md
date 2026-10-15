@@ -45,7 +45,7 @@ Then pass the capabilities to an `Agent` via the `capabilities` parameter:
 from pydantic_ai import Agent
 from pydantic_ai_harness import YouResearch, YouSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[YouSearch(), YouResearch()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[YouSearch(), YouResearch()])
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
@@ -205,7 +205,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import YouSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         YouSearch(),  # web_search, get_page
         PrefixTools(
@@ -304,7 +304,7 @@ config file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - YouSearch:
       num_results: 5

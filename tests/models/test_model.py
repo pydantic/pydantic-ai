@@ -224,6 +224,14 @@ TEST_CASES = [
         GitHubCopilotModel,
     ),
     pytest.param(
+        {'META_API_KEY': 'meta-api-key'},
+        'meta:muse-spark-1.3',
+        'muse-spark-1.3',
+        'meta',
+        'openai',
+        OpenAIResponsesModel,
+    ),
+    pytest.param(
         {'MOONSHOTAI_API_KEY': 'moonshotai-api-key'},
         'moonshotai:kimi-k2-0711-preview',
         'kimi-k2-0711-preview',
@@ -713,3 +721,10 @@ def test_wrapper_model_deepcopy():
     assert copied.wrapped is not model.wrapped
     assert copied.model_name == 'test'
     assert copied.custom_output_text == 'wrapped'
+
+
+async def test_agent_connection_unsupported():
+    agent = Agent(TestModel())
+    with pytest.raises(UserError, match=r'TestModel.*does not support explicit connections'):
+        async with agent.connect():
+            pass

@@ -18,7 +18,7 @@ Use the [`Caching`][pydantic_ai.capabilities.Caching] capability to enable cachi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching()])
+agent = Agent('{{ anthropic:large }}', capabilities=[Caching()])
 ```
 
 `model_settings={'cache': True}` is the equivalent through the `cache` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings].
@@ -58,7 +58,7 @@ from pydantic_ai.capabilities import Caching
 handbook = '...'  # a long document, well above the provider's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     capabilities=[Caching(messages=False)],
 )
@@ -74,18 +74,18 @@ On providers where `Caching()` has no effect, `messages=False` doesn't either: i
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     model_settings={'cache': {'retention': '1h', 'messages': False}},
 )
 ```
 
 ### Provider translation
 
-Where the provider has an automatic caching mode, the unified setting uses it. Elsewhere, Pydantic AI places cache breakpoints, markers that end the content eligible for caching, at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the oldest message breakpoints are dropped first; on OpenAI, which doesn't trim the request client-side, the server instead drops the earliest breakpoints first, starting with the instruction breakpoint (see [OpenAI prompt caching](../models/openai.md#prompt-caching)).
+Pydantic AI places cache breakpoints, markers that end the content eligible for caching, at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. Where the provider has an automatic caching mode, the conversation is cached with it instead of an explicit breakpoint. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the oldest message breakpoints are dropped first; on OpenAI, which doesn't trim the request client-side, the server instead drops the earliest breakpoints first, starting with the instruction breakpoint (see [OpenAI prompt caching](../models/openai.md#prompt-caching)).
 
 | Provider | `Caching()` | `Caching('1h')` | `Caching(messages=False)` | Notes |
 |---|---|---|---|---|
-| Anthropic API and Microsoft Foundry | `anthropic_cache='5m'` | `anthropic_cache='1h'` | `anthropic_cache_instructions` and `anthropic_cache_tool_definitions` set to `'5m'` | |
+| Anthropic API and Microsoft Foundry | `anthropic_cache`, `anthropic_cache_instructions` and `anthropic_cache_tool_definitions` set to `'5m'` | The same, set to `'1h'` | Without `anthropic_cache` | |
 | Anthropic on Bedrock and Vertex AI SDK clients | `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and `anthropic_cache_messages` set to `'5m'` | The same, set to `'1h'` | Without `anthropic_cache_messages` | On Bedrock, `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL |
 | Bedrock (Claude and Nova) | `bedrock_cache_instructions`, `bedrock_cache_tool_definitions` and `bedrock_cache_messages` set to `True` | The same, set to `'1h'` | Without `bedrock_cache_messages` | `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL |
 | OpenRouter (Anthropic and Gemini) | `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` set to `'5m'` | The same, set to `'1h'` | Without `openrouter_cache_messages` | Gemini routes take no tool definition breakpoint and no TTL |
@@ -194,7 +194,7 @@ from pydantic_ai.capabilities import Caching
 handbook = '...'  # a long document, well above the provider's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     capabilities=[Caching()],
 )

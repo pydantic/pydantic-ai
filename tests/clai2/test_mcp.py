@@ -220,6 +220,7 @@ async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Pat
     assert not list(commands)
 
 
+@pytest.mark.subprocess(reason='starts real stdio MCP servers written in Python')
 async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -267,6 +268,7 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     assert 'Stopped local' in await run('/mcp stop-all')
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path, with_tool=False)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -276,6 +278,7 @@ async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
     assert_exited(pid_file)
 
 
+@pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
 async def test_failed_start_is_reported_and_logged(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)
@@ -332,6 +335,7 @@ def test_env_reference_order_and_template_escapes(
     assert servers.state(entry) == 'ready'
 
 
+@pytest.mark.subprocess(reason='starts real stdio MCP servers written in Python')
 async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -353,6 +357,7 @@ async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path)
         servers.get('local')
 
 
+@pytest.mark.subprocess(reason='serves a real HTTP/SSE MCP server from a separate process')
 @pytest.mark.parametrize(('kind', 'path'), [('http', 'mcp'), ('sse', 'sse')])
 async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
     with socket.socket() as probe:
@@ -405,7 +410,7 @@ def test_remote_options_build_the_right_transport(tmp_path: Path) -> None:
     store.put('plain', HTTPServer(type='http', url=HttpUrl('http://localhost:9/mcp'), auth='oauth', timeout=5))
     servers = MCPServers(store, {'legacy': StdioServer(type='stdio', command='x', timeout=7)})
     signin = servers.get('signin').server
-    assert isinstance(signin, HTTPServer) and signin.init_timeout() == 330
+    assert isinstance(signin, HTTPServer) and signin.auth == 'oauth' and signin.timeout is None
     assert servers.get('plain').server.model_dump()['timeout'] == 5
     assert [entry.server.type for entry in servers.entries()] == ['sse', 'http', 'http', 'stdio']
 
@@ -416,10 +421,22 @@ def test_plugin_settings_accept_the_old_transport_key() -> None:
     assert len(plugin.capabilities) == 1
 
 
+@pytest.mark.subprocess(reason='the logger level a fresh interpreter ends up with depends on import order')
 def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
-    assert logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel() >= logging.WARNING
+    """FastMCP sets its logger to INFO as it's imported: the plugin's WARNING must outlast that, whichever comes first."""
+    script = (
+        "import logging, pydantic_clai2.mcp; print(logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel())"
+    )
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name != 'FASTMCP_LOG_LEVEL' and not name.startswith('COVERAGE_')
+    }
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True, env=env)
+    assert int(result.stdout) >= logging.WARNING
 
 
+@pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
 async def test_a_server_that_cannot_connect_does_not_fail_the_prompt(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)

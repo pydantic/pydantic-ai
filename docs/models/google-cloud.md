@@ -42,7 +42,7 @@ If you've set up [application default credentials](https://cloud.google.com/docs
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 
-agent = Agent('google-cloud:gemini-3.7-flash')
+agent = Agent('google-cloud:{{ google:medium.name }}')
 ...
 ```
 
@@ -57,7 +57,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider()
-model = GoogleModel('gemini-3.7-flash', provider=provider)
+model = GoogleModel('{{ google:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -75,7 +75,7 @@ from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 credentials = service_account.Credentials.from_service_account_file('path/to/service-account.json')
 provider = GoogleCloudProvider(credentials=credentials, project='your-project-id')
-model = GoogleModel('gemini-3.7-flash', provider=provider)
+model = GoogleModel('{{ google:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -97,7 +97,7 @@ You can then use `GoogleModel` via [`GoogleCloudProvider`][pydantic_ai.providers
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 
-agent = Agent('google-cloud:gemini-3.7-flash')
+agent = Agent('google-cloud:{{ google:medium.name }}')
 ...
 ```
 
@@ -109,7 +109,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(api_key='your-api-key')
-model = GoogleModel('gemini-3.7-flash', provider=provider)
+model = GoogleModel('{{ google:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -132,7 +132,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(location='global', project='your-google-cloud-project-id')
-model = GoogleModel('gemini-3.7-flash', provider=provider)
+model = GoogleModel('{{ google:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -152,7 +152,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(location='us', project='your-google-cloud-project-id')
-model = GoogleModel('gemini-3.7-flash', provider=provider)
+model = GoogleModel('{{ google:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```

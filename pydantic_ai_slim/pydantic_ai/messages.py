@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
@@ -263,8 +263,8 @@ class FileUrl(ABC):
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
-    - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
@@ -315,6 +315,31 @@ class FileUrl(ABC):
         distinguish multiple files.
         """
         return self._identifier or _multi_modal_content_identifier(self.url)
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        try:
+            return handler(self)
+        except ValueError:
+            try:
+                self.media_type
+            except ValueError:
+                pass
+            else:
+                raise
+        # A URL with no usable extension and no given media type: `media_type` raises, and the computed field
+        # reads it before any serializer of its own could step in. Dumping must not raise, or a history that
+        # ran can't be saved or sent to a frontend (https://github.com/pydantic/pydantic-ai/issues/8388).
+        # So serialize a stand-in that has a media type and write `None` in its place, which validates back
+        # into an equal item. A dump that leaves `media_type` out never reads the property, so it only gets
+        # here when something else failed too, and the stand-in's dump raises that again.
+        serialized: dict[str, object] = handler(replace(self, _media_type='application/octet-stream'))
+        if info.exclude_none:
+            del serialized['media_type']
+        else:
+            serialized['media_type'] = None
+        return serialized
 
     @abstractmethod
     def _infer_media_type(self) -> str:
@@ -590,8 +615,8 @@ class BinaryContent:
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
-    - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata` for video files: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `MistralModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
@@ -877,7 +902,7 @@ class UploadedFile:
     The expected shape of this dictionary depends on the provider:
 
     Supported by:
-    - `GoogleModel`: used as `video_metadata` for video files, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleModel`: used as `video_metadata` for video files, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
@@ -1258,22 +1283,18 @@ class _RequireUrlMediaType:
     """The `MultiModalContent` arm of `ToolReturnContent`, with an explicit `media_type` required of its URL items.
 
     A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
-    from a mapping a tool happened to build. For the four [`FileUrl`][pydantic_ai.messages.FileUrl]
-    kinds, `media_type` draws that line, because those are the items whose media type the URL alone
-    cannot always supply: `FileUrl.media_type` infers one from the URL when it was given none, and a
-    URL with no usable extension raises `Could not infer media type` — on the *dump*, not on the load
-    that built the object, so a history that had loaded cleanly could no longer be saved
-    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here
-    brings its own media type and never reaches that inference, and a URL mapping without one was
-    never dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
-    in it.
+    from a mapping a tool happened to build ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)).
+    For the four [`FileUrl`][pydantic_ai.messages.FileUrl] kinds, the `media_type` key draws that line,
+    because a default dump of ours always writes it: the media type given or inferred from the URL, or
+    `null` for a URL with no usable extension ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
+    which reconstructs into an item with no media type and dumps `null` again. A URL mapping without the
+    key stays a plain `Mapping` and reaches the caller with the keys its tool put in it.
 
-    Nothing is required of the other two kinds, which cannot fail that way and so keep rehydrating
-    from the fields they declare: `media_type` is a required field on `BinaryContent`, and
-    `UploadedFile.media_type` falls back to `application/octet-stream` instead of raising.
+    Nothing is required of the other two kinds, which keep rehydrating from the fields they declare:
+    `media_type` is a required field on `BinaryContent`, and `UploadedFile.media_type` falls back to
+    `application/octet-stream`.
 
-    The requirement is a *non-empty* string. `FileUrl` infers whenever `_media_type` is falsy, so `''`
-    would reconstruct an item that raises on dump after all, and no dump of ours writes one.
+    The key has to hold a *non-empty* string or `null`. No dump of ours writes `''`.
 
     The check is chained onto each URL choice of the tagged union rather than written as a validator,
     because any Python callable on this union is called once per node of the decoded payload — the cost
@@ -1304,25 +1325,44 @@ class _RequireUrlMediaType:
         for kind in _FILE_URL_KINDS:
             choice = schema['choices'][kind]
             assert isinstance(choice, dict), choice
-            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._names_a_media_type(), choice])
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
         return schema
 
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: pydantic_core.CoreSchema, handler: pydantic.GetJsonSchemaHandler
+    ) -> pydantic.json_schema.JsonSchemaValue:
+        """Document each gated URL choice as the choice it gates.
+
+        In validation mode, pydantic documents a chain by its first step. Here that is the anonymous
+        `media_type` mapping, so the discriminator `mapping` would carry an inline object where OpenAPI
+        requires a reference, and FastAPI could not build `/openapi.json` for a route that uses
+        `ModelMessage`.
+        """
+        assert schema['type'] == 'tagged-union', schema['type']
+        choices = dict(schema['choices'])
+        for kind in _FILE_URL_KINDS:
+            gated = choices[kind]
+            assert isinstance(gated, dict) and gated['type'] == 'chain', gated
+            choices[kind] = gated['steps'][-1]
+        return handler({**schema, 'choices': choices})
+
     @staticmethod
-    def _names_a_media_type() -> pydantic_core.CoreSchema:
-        mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
+    def _carries_media_type() -> pydantic_core.CoreSchema:
+        mapping_carrying_media_type = pydantic_core.core_schema.typed_dict_schema(
             {
                 'media_type': pydantic_core.core_schema.typed_dict_field(
-                    pydantic_core.core_schema.str_schema(min_length=1)
+                    pydantic_core.core_schema.nullable_schema(pydantic_core.core_schema.str_schema(min_length=1))
                 )
             },
             extra_behavior='allow',
         )
         return pydantic_core.core_schema.json_or_python_schema(
-            json_schema=mapping_naming_its_media_type,
+            json_schema=mapping_carrying_media_type,
             # An instance is already one of ours and reaches the arm as itself, not as a mapping.
             python_schema=pydantic_core.core_schema.union_schema(
                 [
-                    mapping_naming_its_media_type,
+                    mapping_carrying_media_type,
                     pydantic_core.core_schema.is_instance_schema(FileUrl),
                 ],
                 mode='left_to_right',
@@ -2929,6 +2969,47 @@ class WorkspaceRef:
     """Provider-specific identifier for the environment."""
 
 
+@dataclass(repr=False, kw_only=True, frozen=True)
+class ModelRequestAttempt:
+    """An attempt at a model request that did not produce the response it is recorded on.
+
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records one for each model it moved
+    on from, on the response of the model that answered
+    ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
+    """
+
+    model_name: str
+    """The name of the model that was attempted."""
+
+    provider_name: str | None = None
+    """The name of the provider the attempt was sent to."""
+
+    outcome: Literal['error', 'rejected']
+    """How the attempt failed.
+
+    - `'error'` — the request raised an exception, described by `error`.
+    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it.
+    """
+
+    error: str | None = None
+    """The exception the attempt raised, as `'ExceptionType: message'`, or `None` if it was rejected."""
+
+    timestamp: datetime
+    """When the attempt started."""
+
+    duration: timedelta
+    """How long the attempt took, up to the point it failed or its response was rejected."""
+
+    usage: RequestUsage | None = None
+    """The usage the provider reported for the attempt, including its cost where it can be calculated.
+
+    `None` when the usage is unknown, as it is for an attempt that raised before returning a response.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
@@ -2942,7 +3023,7 @@ class ModelResponse:
     """Usage information for this single request, as a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
 
     Run-level usage accumulated across all requests in a run (e.g. `requests`, `tool_calls`) lives on the run's
-    [`RunUsage`][pydantic_ai.usage.RunUsage], accessible via `result.usage()`; a `RunUsage` should not be assigned to this field.
+    [`RunUsage`][pydantic_ai.usage.RunUsage], accessible via `result.usage`; a `RunUsage` should not be assigned to this field.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
     """
@@ -3002,6 +3083,16 @@ class ModelResponse:
     Each response records the ref when it is produced; the last response is refreshed when the run
     ends. A run with no attached workspace carries the conversation's ref forward, unless it was
     started with `workspace='new'`. Not sent to the model.
+    """
+
+    failed_attempts: list[ModelRequestAttempt] | None = None
+    """Earlier attempts at this request that failed before this response was produced, in order.
+
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records the models it moved on
+    from here. Their usage is not included in `usage`, which is this response's own, but it does
+    count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
+    [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's
+    parts are not kept. Not sent to the model.
     """
 
     state: ModelResponseState = 'complete'
@@ -3099,6 +3190,7 @@ class ModelResponse:
             provider_api_url=self.provider_url,
             provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
+            price_context=self.provider_details,
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:

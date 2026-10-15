@@ -19,6 +19,7 @@ from typing import (
 from pydantic import ValidationError
 
 from ... import ExternalToolset, ToolDefinition
+from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
@@ -64,7 +65,7 @@ from .._adapter import (
     compaction_payload,
     tool_availability_delta_from_payload,
 )
-from .._utils import get_ui_message_id, set_ui_message_id
+from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
 try:
     from ag_ui.core import (
@@ -219,7 +220,11 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
+        try:
+            mime_type = item.media_type
+        except ValueError:
+            mime_type = ''  # reloads as no media type
+        return BinaryInputContent(type='binary', url=item.url, mime_type=mime_type)
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal
@@ -256,6 +261,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
+    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction and
+      [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting, and `build_run_input` skips inbound content types the installed
@@ -746,6 +753,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         ),
                     )
                 )
+                if (app := get_mcp_app_tool_result(part.metadata)) is not None:
+                    result.append(
+                        ActivityMessage(
+                            id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+                        )
+                    )
             elif isinstance(part, InstructionDeltaPart):
                 pass  # Operator instruction state stays in trusted server-side history.
             elif isinstance(part, ToolAvailabilityDeltaPart):
@@ -971,6 +984,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
           union. The same serialization is used for both history (`dump_messages`) and the live
           event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
+        - An MCP Apps record in `ToolReturnPart.metadata` is dumped as an `mcp-apps` activity message
+          after the tool result, which `load_messages` ignores, so the record is not restored.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:

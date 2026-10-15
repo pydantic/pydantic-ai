@@ -14,6 +14,7 @@ from pydantic_clai2.commands import (
     plugins_command,
     set_completions,
 )
+from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 
 
@@ -62,6 +63,19 @@ def test_command_boundaries(tmp_path: Path) -> None:
             plugins_command(store, args)
     with pytest.raises(ValueError):
         store.reset('missing')
+
+
+def test_plugins_command_toggles_never_saved_builtins(tmp_path: Path) -> None:
+    """`clai2 plugins enable aoe`, as the README says to run, saves the built-in declaration turned on."""
+    store = SettingsStore(tmp_path / 'config.db')
+    plugins_command(store, ['enable', 'aoe'])
+    plugins_command(store, ['disable', 'notifications'])
+    assert store.plugins() == [
+        PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=True),
+        PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications', enabled=False),
+    ]
+    with pytest.raises(ValueError, match='Unknown plugin: missing'):
+        plugins_command(store, ['enable', 'missing'])
 
 
 def test_command_availability_is_live() -> None:

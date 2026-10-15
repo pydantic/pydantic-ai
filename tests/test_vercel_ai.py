@@ -115,6 +115,7 @@ with try_import() as starlette_import_successful:
         TextUIPart,
         ToolApprovalRequested,
         ToolApprovalResponded,
+        ToolApprovalRespondedPart,
         ToolInputAvailablePart,
         ToolInputStreamingPart,
         ToolOutputAvailablePart,
@@ -1564,6 +1565,84 @@ async def test_run_stream_text_and_thinking():
             '[DONE]',
         ]
     )
+
+
+async def test_vercel_ai_id_only_tool_call_delta_emits_no_args_fragment():
+    """An ID-only `DeltaToolCall` streams no argument bytes, so it must not contribute a `'null'` fragment."""
+    calls: list[int] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c')}  # ID-only update: no `args_delta`
+            yield {0: DeltaToolCall(json_args='1}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int) -> str:
+        calls.append(x)
+        return 'ok'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    args_fragments: list[str] = [
+        event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
+    ]
+    assert args_fragments == snapshot(['{"x":', '1}'])
+    assert json.loads(''.join(args_fragments)) == {'x': 1}
+    assert calls == [1]
+
+
+async def test_vercel_ai_null_string_args_delta_preserved_verbatim():
+    """A genuine `'null'` `args_delta` string must be emitted verbatim: the skip is `is None`, not falsiness."""
+    calls: list[int | None] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c', json_args='null')}
+            yield {0: DeltaToolCall(json_args='}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int | None) -> str:
+        calls.append(x)
+        return 'ok'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    args_fragments: list[str] = [
+        event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
+    ]
+    assert args_fragments == snapshot(['{"x":', 'null', '}'])
+    assert json.loads(''.join(args_fragments)) == {'x': None}
+    assert calls == [None]
 
 
 async def test_run_stream_thinking_with_signature():
@@ -4953,6 +5032,149 @@ async def test_adapter_dump_messages():
     )
 
 
+async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: BinaryImage):
+    """The AI SDK's `validateUIMessages` rejects `null` for optional part fields, so unset ones are omitted."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', tiny_image, ImageUrl(url='https://example.com/a.png')])]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Thinking'),
+                TextPart(content='Hi'),
+                FilePart(content=tiny_image),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1'),
+                ToolCallPart(tool_name='noop', args={}, tool_call_id='call_2'),
+                ToolCallPart(tool_name='flaky', args={}, tool_call_id='call_3'),
+                NativeToolCallPart(tool_name='web_search', args={'query': 'x'}, tool_call_id='call_4'),
+                NativeToolReturnPart(tool_name='web_search', content={'results': []}, tool_call_id='call_4'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='Sunny', tool_call_id='call_1'),
+                ToolReturnPart(tool_name='noop', content=None, tool_call_id='call_2'),
+                RetryPromptPart(tool_name='flaky', content='Try again', tool_call_id='call_3'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='deferred', args={}, tool_call_id='call_5')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dumped = [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages]
+
+    # `output: null` is a real tool result, which the AI SDK accepts and `load_messages` restores.
+    null_keys = [
+        (part['type'], key) for msg in dumped for part in msg['parts'] for key, value in part.items() if value is None
+    ]
+    assert null_keys == snapshot([('tool-noop', 'output')])
+    # An optional `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata.
+    assert 'metadata' not in dumped[0]
+
+    reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
+    noop_return = next(
+        part for part in iter_message_parts(reloaded, ModelRequest, ToolReturnPart) if part.tool_call_id == 'call_2'
+    )
+    assert noop_return.content is None
+
+
+async def test_adapter_dump_messages_system_only_request_keeps_metadata():
+    """A request with only system parts carries its metadata on the system message, and it survives a reload."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.')], metadata={'tenant': 'acme'}),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'system',
+                'metadata': {'tenant': 'acme'},
+                'parts': [{'type': 'text', 'text': 'Be brief.', 'state': 'done'}],
+            }
+        ]
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert reloaded[0].metadata == snapshot({'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': IsStr()}})
+
+
+def test_client_message_serializes_as_sent():
+    """A client-sent message, stored and sent back as JSON, keeps its explicit `metadata: null` and gains no `reason: null`.
+
+    Not a `dump_messages` test: the adapter always sets `reason` on the approvals it builds, and never sets `null`
+    metadata. An app's `metadataSchema` may be nullable, so the client's `null` must round-trip.
+    """
+    message = UIMessage.model_validate(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+    assert message.model_dump(mode='json', by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+
+
+def test_python_mode_dump_keeps_unset_optional_fields():
+    """Only JSON output goes to the AI SDK, so Python-mode dumps keep their `None` fields."""
+    message = UIMessage(
+        id='msg_1',
+        role='assistant',
+        parts=[
+            TextUIPart(text='Hi'),
+            ToolApprovalRespondedPart(
+                type='tool-delete_file',
+                tool_call_id='call_1',
+                input={'path': 'a.txt'},
+                approval=ToolApprovalResponded(id='approval_1', approved=True),
+            ),
+        ],
+    )
+    assert message.model_dump(by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {'type': 'text', 'text': 'Hi', 'state': None, 'providerMetadata': None},
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'title': None,
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'providerExecuted': None,
+                    'callProviderMetadata': None,
+                    'approval': {'id': 'approval_1', 'approved': True, 'reason': None},
+                },
+            ],
+        }
+    )
+
+
 async def test_adapter_dump_messages_with_tools():
     """Test dumping messages with tool calls and returns."""
     messages = [
@@ -5432,6 +5654,21 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
             id='file-url-media-type-not-inferable',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://e.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://e.com/report')),
+            snapshot(
+                {
+                    'url': 'https://e.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': None,
+                    'identifier': '41cafe',
+                }
+            ),
+            id='file-url-media-type-not-inferable-null',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'},
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
@@ -5468,9 +5705,10 @@ async def test_adapter_load_tool_return_completes_documented_file_shapes(
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
     the type itself would — including when the client left the key `null` or empty, which is what
     `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
-    completed. The dump is asserted for every case because it is the leg the completion protects: a
-    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
-    `Could not infer media type` here. A mapping the type rejects keeps exactly the keys the client
+    completed. The dump is asserted for every case, so every file reconstructed here is proven to dump
+    again. A URL with no readable media type is left as the client sent it: a mapping when `media_type`
+    is absent or empty, and a file with no media type when it is `null`, the value our own dump writes
+    for such a URL. A mapping the type rejects keeps exactly the keys the client
     sent: the completion validates the mapping as it stands, so it never writes a `media_type` into
     something that stays a plain mapping.
     """
@@ -6119,6 +6357,38 @@ async def test_adapter_dump_messages_with_thinking():
             },
         ]
     )
+
+
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_dump_messages_extensionless_url_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
+    """A URL whose media type can't be inferred dumps an empty `media_type`, and comes back as itself.
+
+    `FileUIPart.media_type` is a required string, so a URL Pydantic AI can't read a media type out of is
+    dumped with an empty one rather than raising. That value is also what the load side reads the URL's
+    kind from, and an empty one reads as no kind at all, so the kind rides along in `provider_metadata`
+    instead of every URL kind coming back as a document.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[url_type(url='https://example.com/file')])])
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_part = next(part for part in ui_messages[0].parts if isinstance(part, FileUIPart))
+    assert file_part.model_dump(exclude_none=True) == {
+        'type': 'file',
+        'media_type': '',
+        'url': 'https://example.com/file',
+        'provider_metadata': {'pydantic_ai': {'kind': url_type.kind}},
+    }
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == [
+        UserPromptPart(content=[url_type(url='https://example.com/file')], timestamp=IsDatetime())
+    ]
+    # URL parts compare without their media type, so pin the whole dumped part rather than the part alone.
+    assert VercelAIAdapter.dump_messages(reloaded)[0].parts[-1] == file_part
 
 
 async def test_adapter_dump_messages_with_files():
