@@ -34,7 +34,7 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_clai2.plugins import PluginOrigin, PluginStatus
+from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.repl_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
@@ -552,6 +552,21 @@ class PluginRow:
     """Its settings while it is on, unless it declares a menu, takes none, or its model has no JSON Schema."""
     serving: bool
     """Whether it is the plugin serving this page, which the page must not turn off or reload."""
+
+
+@dataclass(kw_only=True)
+class PanelInfo:
+    """A plugin's side panel, as the page shows it now."""
+
+    plugin: str
+    id: str
+    title: str
+    icon: PanelIcon
+    url: str | None
+    """The page to show; `None` shows `note` alone."""
+    note: str
+    embed: bool
+    """Whether `url` lets this page show it in a frame; otherwise it opens in a window of its own."""
 
 
 @dataclass(kw_only=True)

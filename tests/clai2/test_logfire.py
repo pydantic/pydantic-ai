@@ -101,7 +101,9 @@ class Recorder:
             scrubbing=scrubbing,
             metrics=False,
             additional_span_processors=[SimpleSpanProcessor(exporter)],
-            advanced=logfire.AdvancedOptions(emit_configuration_span=False),
+            advanced=logfire.AdvancedOptions(
+                emit_configuration_span=False, base_url=advanced.base_url if advanced else None
+            ),
         )
         self.exporters.append(exporter)
         self.instances.append(instance)

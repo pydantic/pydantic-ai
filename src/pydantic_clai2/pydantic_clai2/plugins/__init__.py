@@ -123,6 +123,33 @@ class SessionCatalog(Protocol):
         ...
 
 
+PanelIcon = Literal['panel', 'traces']
+"""The icons a side panel can show beside its title."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class PanelView:
+    """What a side panel shows now: a page, or a note saying why there is none, such as how to set it up."""
+
+    url: str | None = None
+    """An `http` or `https` page; `None` shows `note` alone."""
+    note: str = ''
+
+
+@dataclass(frozen=True, kw_only=True)
+class SidePanel:
+    """A page shown beside the conversation in the web UI; return it from `Plugin.get_side_panels`.
+
+    `view` is awaited whenever the page asks, such as when a turn starts, so its page can follow
+    the conversation. Keep it quick: cache anything that needs the network.
+    """
+
+    id: str
+    title: str
+    view: Callable[[], Awaitable[PanelView]]
+    icon: PanelIcon = 'panel'
+
+
 PluginOrigin = Literal['built-in', 'project', 'drop-in', 'installed']
 """Where a plugin's declaration came from, as `/plugins` labels it."""
 PluginStatus = Literal['on', 'off', 'idle', 'failed', 'included']
@@ -192,6 +219,10 @@ class PluginCatalog(Protocol):
 
     def settings_menu(self, name: str) -> SettingsMenu | None:
         """A loaded plugin's declared settings menu, to show; `None` when it is not loaded or declares none."""
+        ...
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        """The side panels of every loaded plugin that declares some, by plugin name, in load order."""
         ...
 
     async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
@@ -779,6 +810,10 @@ class Plugin(Generic[SettingsT, DepsT]):
         """Sign-ins this plugin adds to `/login`, such as for the subscription behind a model provider."""
         return ()
 
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        """Pages the web UI offers beside the conversation, such as a live view of this session's traces."""
+        return ()
+
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         """Draw an event yourself; return `None` to fall back to the default display."""
         return None
@@ -869,6 +904,7 @@ class LoadedPlugin(Generic[DepsT]):
     spinners: tuple[Spinner, ...]
     model_providers: tuple[ModelProvider, ...]
     logins: tuple[PluginLogin, ...]
+    side_panels: tuple[SidePanel, ...]
 
     @property
     def host(self) -> PluginHost[DepsT]:
@@ -904,6 +940,7 @@ def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
         spinners=tuple(replace(spinner, source='plugin') for spinner in plugin.get_spinners()),
         model_providers=tuple(plugin.get_model_providers()),
         logins=tuple(plugin.get_logins()),
+        side_panels=tuple(plugin.get_side_panels()),
     )
 
 

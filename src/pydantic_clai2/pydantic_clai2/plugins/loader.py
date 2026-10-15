@@ -49,6 +49,7 @@ from pydantic_clai2.plugins import (
     SessionEnd,
     SessionEndReason,
     SessionStart,
+    SidePanel,
     TurnStart,
     bare_screen,
     collect,
@@ -811,6 +812,10 @@ class PluginLoader(Generic[DepsT]):
         """A loaded plugin's declared settings menu, for `host.plugins`; see `PluginCatalog`."""
         loaded = self._entry(name).loaded
         return None if loaded is None else loaded.plugin.settings_menu()
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        """Loaded plugins' side panels, for `host.plugins`; see `PluginCatalog`."""
+        return {name: loaded.side_panels for name, loaded in self._loaded.items() if loaded.side_panels}
 
     async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
         """Edit through a loaded plugin's declared menu, then load it again if its settings changed; see `PluginCatalog`."""
