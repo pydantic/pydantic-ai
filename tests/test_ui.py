@@ -1777,6 +1777,123 @@ async def test_adapter_server_mode_with_deferred_agent_reinjector():
     assert [p.content for p in sys_parts] == ['Server prompt']
 
 
+def _system_prompts(messages: Sequence[ModelMessage]) -> list[str]:
+    return [
+        part.content
+        for m in messages
+        if isinstance(m, ModelRequest)
+        for part in m.parts
+        if isinstance(part, SystemPromptPart)
+    ]
+
+
+def _steering_agent(**kwargs: Any) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent whose first model turn calls a tool that enqueues a mid-run `SystemPromptPart`."""
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(parts=[ToolCallPart('steer', {}, tool_call_id='steer_call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_respond(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='steer', json_args='{}', tool_call_id='steer_call')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(respond, stream_function=stream_respond), system_prompt='Server prompt', **kwargs)
+
+    @agent.tool
+    def steer(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart('Mid-run steering'))
+        return 'steered'
+
+    return agent, requests
+
+
+def _contents(messages: Sequence[ModelMessage]) -> list[str]:
+    return [
+        part.content
+        for m in messages
+        if isinstance(m, ModelRequest)
+        for part in m.parts
+        if isinstance(part, (SystemPromptPart, UserPromptPart)) and isinstance(part.content, str)
+    ]
+
+
+async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
+    """`replace_existing=True` replaces the system prompts the run started with, not ones added during it."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert len(requests) == 2
+    assert 'Client prompt' not in str(requests[1])
+    assert any('Mid-run steering' in content for content in _contents(requests[1]))
+    assert _system_prompts(result.all_messages()) == snapshot(['Server prompt', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplicate():
+    """On a fresh conversation the agent's own system prompt is replaced, not doubled, on every step."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    result = await agent.run('Go')
+
+    assert [_system_prompts(request) for request in requests] == snapshot([['Server prompt'], ['Server prompt']])
+    assert _system_prompts(result.all_messages()) == snapshot(['Server prompt', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_rerendered_dynamic_prompt_does_not_duplicate():
+    """A dynamic system prompt in the history is re-rendered as a new part before the first request, yet still replaced."""
+    agent = Agent(TestModel(), capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    @agent.system_prompt(dynamic=True)
+    def server_prompt() -> str:
+        return 'Dynamic server prompt'
+
+    # Not at the head, where the standing prompt would be replaced regardless.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(
+            parts=[UserPromptPart('Again'), SystemPromptPart('Stale', dynamic_ref=server_prompt.__qualname__)]
+        ),
+        ModelResponse(parts=[TextPart('Hello again')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert _system_prompts(result.all_messages()) == snapshot(['Dynamic server prompt'])
+
+
+async def test_adapter_server_mode_keeps_mid_run_system_prompts():
+    """In `manage_system_prompt='server'` mode, a `SystemPromptPart` the server adds during the run survives."""
+    agent, requests = _steering_agent()
+    adapter = DummyUIAdapter(
+        agent,
+        DummyUIRunInput(messages=[ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Go')])]),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('Earlier')]),
+        ModelResponse(parts=[TextPart('Earlier reply')]),
+    ]
+
+    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+        events = [event async for event in adapter.run_stream_native(message_history=history)]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert len(requests) == 2
+    assert any('Mid-run steering' in content for content in _contents(requests[1]))
+    assert _system_prompts(run_result_event.result.all_messages()) == snapshot(['Server prompt', 'Mid-run steering'])
+
+
 def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
