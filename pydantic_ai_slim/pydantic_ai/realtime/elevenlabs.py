@@ -133,10 +133,9 @@ class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
     matching override toggle to be enabled in the agent's Security tab; the connect-time preflight
     raises [`UserError`][pydantic_ai.exceptions.UserError] naming the toggle otherwise.
 
-    Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override.
-    `tool_choice` is unsupported and raises for any value other than `'auto'`: the agent's client
-    tools are workspace state rather than a per-conversation set, so a restriction could not be
-    enforced on the wire; restrict the run's tools with a filtered toolset instead. `max_tokens`,
+    Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override, and
+    a `tool_choice` of `'none'` or an allow-list to the `agent.prompt.tool_ids` override, which narrows
+    the agent's attached tools for the conversation (a choice that forces a tool call raises). `max_tokens`,
     `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation surface on the
     agent WebSocket and are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
     (ElevenLabs' server-side turn model is always on), `input_transcription_model=None` cannot be

@@ -111,19 +111,18 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     It is applied once, when the session is created, and holds for every response. `'none'` and
     function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
-    model. OpenAI, Azure OpenAI, and xAI send the mode too, so they raise
+    model. OpenAI, Azure OpenAI, xAI, and ElevenLabs raise
     [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a choice that forces a tool
     call (`'required'` or a list of tool names): applied to every response, including the one after a
     tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
     Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
-    restrict availability without requiring a tool call. ElevenLabs raises for any value other than
-    `'auto'`: a hosted agent's tools are configured on the agent, not per conversation, so a
-    restriction could not be enforced.
+    restrict availability without requiring a tool call. ElevenLabs restricts a hosted agent's attached
+    tools through its toggle-gated `tool_ids` conversation override.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI, and
-    OpenAI GPT-Live, which raises for `'required'` and lists of tool names: a session applies the
-    choice to every response, including the one after a tool result, so a forced call never lets the
-    model answer.
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI,
+    ElevenLabs (`'none'` and function-tool allow-lists only), and OpenAI GPT-Live, which raises for
+    `'required'` and lists of tool names: a session applies the choice to every response, including the
+    one after a tool result, so a forced call never lets the model answer.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None

@@ -104,11 +104,11 @@ server closing the socket (code 1008, naming the field) after the handshake, not
 Of the shared settings:
 
 - `output_modality='text'` maps to the text-only override, toggle-gated like the rest.
-- `tool_choice` is unsupported: any value other than `'auto'` raises. The agent's client tools are
-  workspace state rather than a per-conversation set, so a restriction could not be enforced on the
-  wire. Restrict the run's tools with a [filtered toolset](../toolsets.md#filtering-tools) or
-  [`prepare_tools`](../tools-advanced.md#prepare-tools) instead, and let the preflight (or sync)
-  reconcile the agent with the result.
+- `tool_choice='none'` and [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] allow-lists restrict
+  the conversation to those tools through the agent's *Tool IDs* override, toggle-gated like the
+  rest: the agent keeps every tool of the run attached, and the conversation leaves the others out.
+  A choice that forces a tool call (`'required'`, or a list of tool names) raises, as on the other
+  providers.
 - `turn_detection` cannot be configured: ElevenLabs' server-side turn model is always on, so any
   value other than `True` raises. There is no [push-to-talk](turns.md#push-to-talk).
 - `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
@@ -166,7 +166,7 @@ parameter's description only when the local schema declares one.
 | Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
 | Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
 | Native tools | Unsupported | Server-side tools live on the agent, outside the session |
-| Usage | Limited parameter support | Context tokens only, and only with `context_usage` in the agent's `client_events` (off by default); no output tokens or credits on the socket, so `usage.cost` is always `None` and `cost_limit` never trips; cost appears post-hoc on the conversations API |
+| Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
 | Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable, and a profile value would not be used: the live limit is `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`, and `session.context_window_used` is the ratio from the same reports |
 | Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |
 | State-restoring reconnect | Unsupported | Conversations cannot be resumed, at the cap or after a drop; `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
@@ -197,39 +197,36 @@ model = ElevenLabsRealtimeModel(
 
 Telephony (`ulaw_8000`) agents are not supported.
 
+## Usage and cost
+
+ElevenLabs reports the LLM's context consumption only, as `input_tokens`, and only when
+`context_usage` is in the agent's `conversation.client_events` list (it is not by default). A report
+arrives after each turn and counts toward the session's usage without belonging to any one
+response. The context window it names is kept on
+[`ElevenLabsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.context_limit_tokens],
+and [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used] is the ratio of
+the two.
+
+No price is known for the platform, so [`usage.cost`][pydantic_ai.usage.RunUsage.cost] is always
+`None` and a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] can't be enforced. Look the
+cost up afterwards through the ElevenLabs conversations API: every
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the conversation's id in
+`provider_details['conversation_id']`, and the live connection has it as
+[`ElevenLabsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.conversation_id].
+
 ## Provider-specific quirks
 
-- In audio mode, the assistant's transcript arrives as one final
-  [`OutputTranscript`][pydantic_ai.realtime.codec.OutputTranscript] per response, after the
-  response's audio has streamed; in text-only mode the text additionally streams as incremental
-  deltas ahead of it. Synthesis outruns playback, so a whole spoken response is typically delivered
-  (audio included) while the user is still hearing its first words.
-- After a barge-in, the server truncates the stored transcript itself. Interrupted while the reply
-  is still being generated, it sends the reply already cut down to what the user heard, so the
-  response is finalized with that truncated transcript and marked interrupted. Interrupted during
-  playback of a reply it had already delivered, it reports the cut as an `agent_response_correction`
-  instead: history keeps the full generated text even though the user heard less of it, and the
-  correction is kept on the response's `provider_details` under `corrected_agent_response` only
-  when it still arrives before the response was finalized.
-- [`send(text, respond=False)`](turns.md#text-turns) is delivered as a `contextual_update`: the
-  agent reads it from its next turn on, without stopping what it is saying or replying to it. It is
-  context, not history, so it does not seed the conversation (see the feature table).
-- Usage reports LLM context consumption only (as `input_tokens`), and only when `context_usage` is
-  in the agent's `conversation.client_events` list (it is not by default). Reports arrive after
-  each turn completes and accumulate into the run total without attaching to a specific response.
-  The same report names the LLM's context window; it is not summed into usage but kept on
-  [`ElevenLabsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.context_limit_tokens],
-  and the ratio of the two is what
-  [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
-  returns after each report.
-  No price is known for the platform, so [`usage.cost`][pydantic_ai.usage.RunUsage.cost] is always
-  `None`; a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] warns that it cannot be enforced and
-  never trips on this provider.
-  Look up conversation cost post-hoc via the ElevenLabs conversations API: every finalized
-  [`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the server-assigned id in
-  `provider_details['conversation_id']`, so it survives into persisted history, and a consumer
-  holding the live connection can read
-  [`ElevenLabsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.conversation_id]
-  directly.
-- Client tools whose ElevenLabs registration sets `expects_response: false` are fire-and-forget:
-  the session still executes them, but their results are never sent back to the agent.
+- In audio mode, a response's transcript arrives whole, after its audio; only text-only mode streams
+  it. Synthesis outruns playback, so a spoken response is usually delivered in full while the user
+  is still hearing its first words.
+- A barge-in on a response still being generated ends it with the transcript cut down to what the
+  user heard (or, when ElevenLabs sends a correction instead, with the cut-down text in
+  `provider_details['corrected_agent_response']`). One on a response already delivered keeps its full
+  text in history; ElevenLabs' correction of it is dropped.
+- [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
+  its next turn on, without stopping or replying.
+- Client tools registered with `expects_response: false` are fire-and-forget: the session still runs
+  them, but their results are never sent back to the agent.
+- A conversation waiting in the workspace's concurrency queue hears ElevenLabs' hold audio, which
+  isn't part of the conversation; one that times out there ends with a
+  [`RealtimeError`][pydantic_ai.realtime.RealtimeError] saying so.
