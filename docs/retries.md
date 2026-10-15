@@ -459,7 +459,7 @@ Not every SDK can take the setting per request:
 | Anthropic | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
 | Groq | ✅ | Full feature support |
 | Cohere | ✅ | Full feature support |
-| Google | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, which retry nothing unless set |
+| Google | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set |
 | Mistral | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
 | TypeSafe | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
 | AWS Bedrock | ❌ | boto3 retries per client; see [Configuring Retries](models/bedrock.md#configuring-retries) |
