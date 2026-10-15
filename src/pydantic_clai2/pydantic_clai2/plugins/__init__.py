@@ -245,7 +245,8 @@ class TaskCatalog(Protocol):
     async def resume(self, task_id: str) -> None:
         """Ask the agent to resume a finished task, as `/tasks resume ID` does, entering the request as a prompt.
 
-        Raises `ValueError` for a task that is running or cannot resume.
+        Raises `ValueError` for a task that is running or cannot resume, and `RuntimeError` on a CLAI with
+        no prompt to enter it at; the task stays as it was then.
         """
         ...
 
@@ -939,6 +940,11 @@ class LoadedPlugin(Generic[DepsT]):
     async def dispatch(self, event: HostEvent) -> None:
         """Hand a host event to the plugin's matching `on_*` method."""
         await getattr(self.plugin, _HANDLERS[type(event)])(event)
+
+    def handles(self, event: type[HostEvent]) -> bool:
+        """Whether the plugin overrides the `on_*` method for `event`, rather than inheriting the no-op."""
+        name = _HANDLERS[event]
+        return getattr(type(self.plugin), name) is not getattr(Plugin, name)
 
     def summary(self) -> str:
         """One line for the `/plugins` menu, naming only what the plugin contributes."""

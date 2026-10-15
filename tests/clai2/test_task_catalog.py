@@ -10,7 +10,7 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.coder import Coder
@@ -124,7 +124,10 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
     parent.model = 'openai:gpt-5'
     parent.messages = [
         ModelRequest(parts=[UserPromptPart('inspect')]),
-        ModelResponse(parts=[TextPart('found')], usage=RequestUsage(input_tokens=10, output_tokens=3)),
+        ModelResponse(
+            parts=[TextPart('found'), ToolCallPart('shell', {'command': 'ls'})],
+            usage=RequestUsage(input_tokens=10, output_tokens=3),
+        ),
     ]
     ui.owner.records = {child.id: child, parent.id: parent, elsewhere.id: elsewhere}
     child.started_at = parent.started_at + 1
@@ -133,6 +136,7 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
     listed = ui.listing()
     assert [info.id for info in listed] == [parent.id, child.id]
     assert (listed[0].model, listed[0].activity, listed[0].usage.output_tokens) == ('openai:gpt-5', 'starting', 3)
+    assert (listed[0].usage.requests, listed[0].usage.tool_calls) == (1, 1)
     assert (listed[1].model, listed[1].activity, listed[1].parent_id) == (
         'anthropic:claude',
         'running: shell',
@@ -144,6 +148,10 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
 
     await ui.observe(DelegationTaskEvent(task=elsewhere))
     assert fired == [], 'only the current conversation is told'
+    ui.listening = lambda: False
+    await ui.observe(DelegationTaskEvent(task=child))
+    assert fired == [], 'no event is built while no plugin handles one'
+    ui.listening = lambda: True
     await ui.observe(DelegationTaskEvent(task=child))
     assert [event.task.id for event in fired] == [child.id]
 
@@ -189,3 +197,16 @@ async def test_resume_needs_a_prompt() -> None:
     ui.owner.records[record.id] = record
     with pytest.raises(RuntimeError, match='no prompt'):
         await ui.resume(record.id)
+
+
+async def test_resume_keeps_the_task_stopped_when_the_prompt_refuses() -> None:
+    def refuse(text: str) -> None:
+        raise RuntimeError('line by line')
+
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, send_input=refuse)
+    record = task()
+    record.status, record.user_stopped = 'finished', True
+    ui.owner.records[record.id] = record
+    with pytest.raises(RuntimeError, match='line by line'):
+        await ui.resume(record.id)
+    assert record.user_stopped, "the user's stop holds when the request cannot be entered"
