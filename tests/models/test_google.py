@@ -5665,6 +5665,74 @@ def test_google_thought_signature_on_thinking_part():
     )
 
 
+async def test_google_foreign_thinking_part_not_sent_as_thought(google_provider: GoogleProvider):
+    """Another provider's reasoning is replayed as tagged text, not as Gemini's own `thought` part."""
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Claude reasoning', signature='anthropic-sig', provider_name='anthropic'),
+                TextPart(content='Claude answer'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='And now?')]),
+        ModelResponse(
+            parts=[
+                # Gemini thinking parts without a signature carry no `provider_name` of their own.
+                ThinkingPart(content='Gemini reasoning'),
+                TextPart(content='Gemini answer', provider_details={'thought_signature': 'c2ln'}),
+            ],
+            provider_name='google',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Last one')]),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': 'Hi'}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'text': """\
+<think>
+Claude reasoning
+</think>\
+"""
+                    },
+                    {'text': 'Claude answer'},
+                ],
+            },
+            {'role': 'user', 'parts': [{'text': 'And now?'}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {'text': 'Gemini reasoning', 'thought': True},
+                    {'text': 'Gemini answer', 'thought_signature': b'sig'},
+                ],
+            },
+            {'role': 'user', 'parts': [{'text': 'Last one'}]},
+        ]
+    )
+
+
+def test_google_thinking_part_from_other_google_api_sent_as_thought():
+    """Gemini API thinking replayed on Google Cloud (e.g. by a `FallbackModel`) stays a native thought."""
+    response = _content_model_response(
+        ModelResponse(
+            parts=[ThinkingPart(content='Gemini reasoning'), TextPart(content='answer')], provider_name='google'
+        ),
+        frozenset({'google-cloud', 'google-vertex'}),
+    )
+    assert response == snapshot(
+        {'role': 'model', 'parts': [{'text': 'Gemini reasoning', 'thought': True}, {'text': 'answer'}]}
+    )
+
+
 def test_google_missing_tool_call_thought_signature():
     google_response = _content_model_response(
         ModelResponse(

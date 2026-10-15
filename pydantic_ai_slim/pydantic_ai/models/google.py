@@ -55,7 +55,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..output import OutputObjectDefinition
-from ..profiles import ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
@@ -220,6 +220,7 @@ _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = get_args
 # still routes correctly through the new model class.
 _GOOGLE_CLOUD_PROVIDER_NAMES: frozenset[str] = frozenset({'google-cloud', 'google-vertex'})
 _GEMINI_API_PROVIDER_NAMES: frozenset[str] = frozenset({'google', 'google-gla'})
+_GOOGLE_PROVIDER_NAMES: frozenset[str] = _GOOGLE_CLOUD_PROVIDER_NAMES | _GEMINI_API_PROVIDER_NAMES
 
 
 GoogleCloudServiceTier = Literal[
@@ -1311,7 +1312,10 @@ class GoogleModel(Model[Client]):
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
                 maybe_content = _content_model_response(
-                    m, self._matching_provider_names, supports_tool_combination=supports_tool_combination
+                    m,
+                    self._matching_provider_names,
+                    supports_tool_combination=supports_tool_combination,
+                    thinking_tags=self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 )
                 if maybe_content:
                     contents.append(maybe_content)
@@ -1833,7 +1837,11 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(
-    m: ModelResponse, accepted_provider_names: frozenset[str], *, supports_tool_combination: bool = False
+    m: ModelResponse,
+    accepted_provider_names: frozenset[str],
+    *,
+    supports_tool_combination: bool = False,
+    thinking_tags: tuple[str, str] = DEFAULT_THINKING_TAGS,
 ) -> ContentDict | None:
     # `accepted_provider_names` includes both the current provider's `name` and any pre-v2 aliases
     # (e.g. `google-cloud` + `google-vertex`) so history replayed from before the v2 rename still
@@ -1862,10 +1870,7 @@ def _content_model_response(
             if item.provider_name in accepted_provider_names and item.signature:
                 # The signature attaches to the _next_ part, not the thinking part itself.
                 pending_thinking_signature = item.signature
-            if item.content:
-                part = _attach_signature({'text': item.content, 'thought': True}, item_signature)
-            else:
-                part = None
+            part = _thinking_part_dict(item, m, accepted_provider_names, item_signature, thinking_tags)
         elif isinstance(item, NativeToolCallPart):
             part = _native_tool_call_part_dict(
                 item, accepted_provider_names, item_signature, supports_tool_combination=supports_tool_combination
@@ -1892,6 +1897,26 @@ def _content_model_response(
     if not parts:
         return None
     return ContentDict(role='model', parts=parts)
+
+
+def _thinking_part_dict(
+    item: ThinkingPart,
+    m: ModelResponse,
+    accepted_provider_names: frozenset[str],
+    signature: bytes | None,
+    thinking_tags: tuple[str, str],
+) -> PartDict | None:
+    if not item.content:
+        return None
+    origin = item.provider_name or m.provider_name
+    # Gemini's thought text isn't tied to the transport the way its signatures are, so thinking from
+    # either Google API (e.g. a `FallbackModel` from the Gemini API to Google Cloud) replays as a thought.
+    if origin is None or origin in accepted_provider_names or origin in _GOOGLE_PROVIDER_NAMES:
+        return _attach_signature({'text': item.content, 'thought': True}, signature)
+    # Another provider's reasoning goes back as tagged text, like the other adapters do,
+    # rather than being presented to Gemini as its own thought.
+    start_tag, end_tag = thinking_tags
+    return _attach_signature({'text': '\n'.join([start_tag, item.content, end_tag])}, signature)
 
 
 def _decode_inline_thought_signature(
