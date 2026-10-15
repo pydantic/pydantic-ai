@@ -911,6 +911,15 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+    commands.register(
+        Command(
+            name='repl',
+            description="Run your own Python in this session's run_code REPL: /repl CODE",
+            handler=shell.repl_command,
+            raw=True,
+            live=True,
+        )
+    )
 
     async def show_resumed(messages: Sequence[ModelMessage]) -> None:
         # The live panel swaps to the restored conversation; startup output above it stays.
@@ -1080,6 +1089,21 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.submitted is None:
             raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
         self.submitted.append(text)
+
+    async def repl_command(self, args: list[str]) -> str:
+        """`/repl CODE`: run a cell in the REPL code mode keeps with the session; the next prompt tells the model."""
+        code = args[0].strip() if args else ''
+        if not code:
+            raise ValueError("Usage: /repl CODE runs your own cell in this session's run_code REPL.")
+        if not (self.speculation.enabled or self.context.settings.code_mode):
+            raise ValueError('Code mode is off, so there is no REPL. Turn it on with /set run.code_mode true.')
+        if self.session.repl_states is None:
+            raise ValueError('This CLAI saves no sessions, so no REPL outlives a run.')
+        self.session.plugins = self.run_plugins()
+        cell = await self.session.run_in_repl(code)
+        if cell.failed:
+            raise ValueError(f'The cell failed:\n{cell.report()}')
+        return cell.report() or '(no output)'
 
     def send_input(self, text: str) -> None:
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.

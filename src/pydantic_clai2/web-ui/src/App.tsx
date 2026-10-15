@@ -258,7 +258,15 @@ export function App() {
           </button>
         )}
       </main>
-      {repl && <ReplPanel entries={entries} status={status} onClose={() => setRepl(false)} />}
+      {repl && (
+        <ReplPanel
+          entries={entries}
+          status={status}
+          running={state.running}
+          onClose={() => setRepl(false)}
+          onError={showError}
+        />
+      )}
     </div>
   )
 }

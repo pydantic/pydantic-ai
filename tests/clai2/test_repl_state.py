@@ -28,14 +28,16 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import create_shell
+from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime import repl_state
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.repl_cells import NOTE_CHARS, ReplCell
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
@@ -365,3 +367,112 @@ class TestReplStates:
         await states.save(run_context(SESSION_ID), b'state')
 
         assert list(tmp_path.iterdir()) == []
+
+
+class Asker:
+    """Answers each prompt with one `run_code` cell, and records the prompts and what the cells returned."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        self.prompts: list[str] = []
+        self.results: list[str] = []
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        part = request.parts[-1]
+        if isinstance(part, UserPromptPart):
+            content = part.content
+            self.prompts.append(content if isinstance(content, str) else '\n'.join(str(item) for item in content))
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': self.code})])
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(part.model_response_str())
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        [part] = self.respond(messages, info).parts
+        if isinstance(part, TextPart):
+            yield part.content
+        else:
+            assert isinstance(part, ToolCallPart)
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+
+def repl_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> '_Shell[None, str]':
+    return create_shell(
+        Agent(FunctionModel(asker.respond, stream_function=asker.stream)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model=None, code_mode=code_mode),
+        store=SettingsStore(workspace / 'config.db'),
+        project=ProjectSettings(),
+        builtin_plugins=[],
+        headless=True,
+    )
+
+
+async def test_a_user_cell_runs_in_the_session_repl(workspace: Path) -> None:
+    """`/repl` runs the user's own cell in the REPL code mode keeps, and the next prompt tells the model."""
+    asker = Asker('x + 1')
+    shell = repl_shell(workspace, asker)
+    assert await shell.commands.execute_async('/repl x = 41') == '(no output)'
+    assert await shell.commands.execute_async('/repl print("x is", x)\nx') == 'x is 41\n-> 41'
+    assert shell.session.messages == [], 'cells stay out of the conversation'
+
+    await shell.run_turn(TurnStart(text='what is x + 1?'), headless=True)
+    assert asker.results == ['42']
+    [prompt] = asker.prompts
+    assert prompt.count('Between turns, the user ran this cell in your `run_code` REPL') == 2
+    assert 'x = 41' in prompt and prompt.endswith('what is x + 1?')
+
+    # Told once: the next prompt carries no note.
+    await shell.run_turn(TurnStart(text='again'), headless=True)
+    assert asker.prompts[-1] == 'again'
+
+
+async def test_a_failing_cell_is_reported_not_retried(workspace: Path) -> None:
+    shell = repl_shell(workspace, Asker('pass'))
+    with pytest.raises(ValueError, match='The cell failed') as failed:
+        await shell.commands.execute_async('/repl 1 / 0')
+    assert 'ZeroDivisionError' in str(failed.value)
+
+
+async def test_notes_stay_with_their_conversation(workspace: Path) -> None:
+    asker = Asker('pass')
+    shell = repl_shell(workspace, asker)
+    await shell.commands.execute_async('/repl y = 1')
+    await shell.commands.execute_async('/new')
+    await shell.run_turn(TurnStart(text='fresh'), headless=True)
+    assert asker.prompts == ['fresh'], 'a cell run in another conversation is not mentioned'
+
+
+async def test_repl_refusals(workspace: Path) -> None:
+    shell = repl_shell(workspace, Asker('pass'), code_mode=False)
+    with pytest.raises(ValueError, match='Usage: /repl CODE'):
+        await shell.commands.execute_async('/repl   ')
+    with pytest.raises(ValueError, match='Code mode is off'):
+        await shell.commands.execute_async('/repl x = 1')
+    on = repl_shell(workspace, Asker('pass'))
+    on.session.repl_states = None
+    with pytest.raises(ValueError, match='saves no sessions'):
+        await on.commands.execute_async('/repl x = 1')
+
+
+async def test_no_cell_runs_during_a_turn(workspace: Path) -> None:
+    shell = repl_shell(workspace, Asker('pass'))
+    shell.session._running = True  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='A turn is running'):
+        await shell.session.run_in_repl('x = 1')
+
+
+def test_a_cell_report_reads_its_result() -> None:
+    assert ReplCell(code='', returned='not json').report() == 'not json'
+    assert ReplCell(code='', returned='[1, 2]').report() == '[1, 2]'
+    assert ReplCell(code='', returned='{"result": {"a": 1}}').report() == '-> {"a": 1}'
+    assert ReplCell(code='', returned='{"result": "text"}').report() == '-> text'
+    assert ReplCell(code='', returned=None).report() == ''
+    long = ReplCell(code='x', returned='y' * (NOTE_CHARS + 3)).note()
+    assert long.endswith('\n... 3 more characters') and 'It returned:' in long
+    assert ReplCell(code='x', returned='', failed=True).note().endswith('It failed:\n(nothing)')

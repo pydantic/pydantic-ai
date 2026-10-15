@@ -2161,6 +2161,13 @@ in the `/resume` browser deletes its state. Sub-agents start each task with an
 empty sandbox. A state Monty cannot load starts a fresh sandbox, and a state over
 32 MiB is not saved, so the next prompt starts with an empty sandbox.
 
+`/repl CODE` runs your own cell in that sandbox between turns, with the same tool
+functions the model's cells get: `/repl x = 41`, then `/repl print(x)`. It prints
+what the cell printed and returned, keeps the state with the session, and stays out
+of the conversation; your next prompt tells the model what you ran, since the
+variables are in its sandbox now. A cell that fails is reported, not retried. In the
+web UI, the REPL panel's input runs `/repl` too.
+
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
 calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's
 working directory at its real path only when a mount can enforce the same limits.

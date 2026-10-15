@@ -148,7 +148,7 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
       <div className="column">
         {entries.length === 0
           ? empty
-          : rows(entries).map((row) =>
+          : rows(entries.filter((entry) => !(entry.kind === 'tool' && entry.by_user))).map((row) =>
               row.kind === 'group' ? (
                 <ToolGroup key={row.id} tools={row.tools} />
               ) : (
