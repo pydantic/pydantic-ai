@@ -599,6 +599,24 @@ async def test_keys_are_read_at_session_start_off_the_event_loop(
     assert isinstance(shell.capability().client, Client)
 
 
+async def test_the_settings_menu_reads_keys_and_sign_in_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    threads: list[int] = []
+
+    def status(*, resource: str, read_only: bool) -> str:
+        threads.append(threading.get_ident())
+        return 'signed out'
+
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.status', status)
+    script(monkeypatch, lists=[])
+    assert await shell.loader.command(['configure', 'logfire_mcp']) == 'Logfire: nothing changed.'
+    assert threads
+    assert threading.get_ident() not in threads
+
+
 async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pick the region once: observability setup, or this menu, remembers it for the other."""
     remember(REGIONS['Logfire EU'])
