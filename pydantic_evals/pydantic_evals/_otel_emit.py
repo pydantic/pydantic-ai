@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry import baggage, trace
@@ -122,19 +121,21 @@ def emit_otel_events(
     if not results and not failures:
         return
 
-    baggage_attrs = _baggage_attrs() if include_baggage else None
-    common = _RecordContext(target=target, scoring_run_id=scoring_run_id, context=context, baggage=baggage_attrs)
+    # Apply baggage first so standard attributes always win on conflict.
+    shared_attrs = _baggage_attrs() if include_baggage else {}
+    shared_attrs[_ATTR_CONTEXT] = context
+    shared_attrs[_ATTR_SCORING_RUN_ID] = scoring_run_id
+    shared_attrs[_ATTR_SCHEMA_VERSION] = _SCHEMA_VERSION
+    shared_attrs[_ATTR_TARGET] = target
     for result in results:
-        _emit_result(result, common)
+        _emit_result(result, shared_attrs)
     for failure in failures:
-        _emit_failure(failure, common)
+        _emit_failure(failure, shared_attrs)
 
 
-def _baggage_attrs() -> Mapping[str, Any] | None:
-    """Snapshot the current OTel baggage as a flat attribute mapping, or `None` if empty."""
-    bag = baggage.get_all()
-    attrs = {str(k): v for k, v in bag.items() if not str(k).startswith(_LOGFIRE_EVAL_PREFIX)}
-    return attrs or None
+def _baggage_attrs() -> dict[str, Any]:
+    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.evaluation.*` keys."""
+    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_EVAL_PREFIX)}
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
@@ -159,26 +160,16 @@ def build_parent_context(span_reference: SpanReference | None) -> Context | None
 # --- emission helpers ---------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _RecordContext:
-    """Attributes shared by every event emitted from one `emit_otel_events` call."""
-
-    target: str
-    scoring_run_id: str
-    context: EvaluationContextKind
-    baggage: Mapping[str, Any] | None
-
-
-def _emit_result(result: EvaluationResult, common: _RecordContext) -> None:
-    attrs = _base_attrs(common, result.name, result.source, result.evaluator_version)
+def _emit_result(result: EvaluationResult, shared_attrs: Mapping[str, Any]) -> None:
+    attrs = _base_attrs(shared_attrs, result.name, result.source, result.evaluator_version)
     _set_score_attrs(attrs, result.value)
     if result.reason is not None:
         attrs[_ATTR_EXPLANATION] = result.reason
     _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs))
 
 
-def _emit_failure(failure: EvaluatorFailure, common: _RecordContext) -> None:
-    attrs = _base_attrs(common, failure.name, failure.source, failure.evaluator_version)
+def _emit_failure(failure: EvaluatorFailure, shared_attrs: Mapping[str, Any]) -> None:
+    attrs = _base_attrs(shared_attrs, failure.name, failure.source, failure.evaluator_version)
     # Prefer the actual raising exception class when available; fall back to the
     # generic marker for legacy `EvaluatorFailure` instances constructed without it.
     attrs[_ATTR_ERROR_TYPE] = failure.error_type or 'pydantic_evals.EvaluatorFailure'
@@ -195,18 +186,13 @@ def _emit_failure(failure: EvaluatorFailure, common: _RecordContext) -> None:
 
 
 def _base_attrs(
-    common: _RecordContext,
+    shared_attrs: Mapping[str, Any],
     name: str,
     source: EvaluatorSpec,
     evaluator_version: str | None,
 ) -> dict[str, Any]:
-    # Apply baggage first so standard attributes always win on conflict.
-    attrs: dict[str, Any] = dict(common.baggage) if common.baggage else {}
+    attrs = dict(shared_attrs)
     attrs[_ATTR_EVAL_ID] = str(uuid.uuid4())
-    attrs[_ATTR_CONTEXT] = common.context
-    attrs[_ATTR_SCORING_RUN_ID] = common.scoring_run_id
-    attrs[_ATTR_SCHEMA_VERSION] = _SCHEMA_VERSION
-    attrs[_ATTR_TARGET] = common.target
     attrs[_ATTR_EVAL_NAME] = name
     attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(source)
     if evaluator_version is not None:
