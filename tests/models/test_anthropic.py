@@ -585,6 +585,104 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
         await agent.run([CachePoint(), 'This should fail'])
 
 
+def _replayed_mcp_tool_result_history() -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[UserPromptPart(content='Search the docs.')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='mcp_server:docs',
+                    args={'action': 'call_tool', 'tool_name': 'ask_question', 'tool_args': {'question': 'Version?'}},
+                    tool_call_id='mcptoolu_01',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='mcp_server:docs',
+                    content={'content': [{'citations': None, 'text': '8.1', 'type': 'text'}], 'is_error': False},
+                    tool_call_id='mcptoolu_01',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+
+async def test_cache_point_after_replayed_mcp_tool_result(allow_model_requests: None):
+    """A `CachePoint` opening a user message puts its boundary on a replayed MCP tool result ending the previous turn.
+
+    Not a VCR test: cassette matchers aren't sensitive to `cache_control` placement in the request body, so this asserts the built payload via the mock client.
+    """
+    c = completion_message([BetaTextBlock(text='9.0', type='text')], BetaUsage(input_tokens=3, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(MCPServerTool(id='docs', url='https://example.com/mcp'))])
+
+    await agent.run([CachePoint(), 'And the 2-year?'], message_history=_replayed_mcp_tool_result_history())
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'][1:] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'mcptoolu_01',
+                        'type': 'mcp_tool_use',
+                        'server_name': 'docs',
+                        'name': 'ask_question',
+                        'input': {'question': 'Version?'},
+                    },
+                    {
+                        'content': [{'citations': None, 'text': '8.1', 'type': 'text'}],
+                        'is_error': False,
+                        'tool_use_id': 'mcptoolu_01',
+                        'type': 'mcp_tool_result',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'And the 2-year?', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_cache_messages_with_trailing_replayed_mcp_tool_result(allow_model_requests: None):
+    """Automatic caching handles a history ending in an assistant turn whose last block is a replayed MCP tool result."""
+    c = completion_message([BetaTextBlock(text='9.0', type='text')], BetaUsage(input_tokens=3, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await m.request(
+        _replayed_mcp_tool_result_history(),
+        AnthropicModelSettings(anthropic_cache_messages=True),
+        ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')]),
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'][-1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'id': 'mcptoolu_01',
+                    'type': 'mcp_tool_use',
+                    'server_name': 'docs',
+                    'name': 'ask_question',
+                    'input': {'question': 'Version?'},
+                },
+                {
+                    'content': [{'citations': None, 'text': '8.1', 'type': 'text'}],
+                    'is_error': False,
+                    'tool_use_id': 'mcptoolu_01',
+                    'type': 'mcp_tool_result',
+                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                },
+            ],
+        }
+    )
+
+
 async def test_cache_point_with_image_content(allow_model_requests: None):
     """Test CachePoint works with image content."""
     c = completion_message(
