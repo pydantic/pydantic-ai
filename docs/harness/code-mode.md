@@ -315,6 +315,8 @@ session.
 Keep these limitations in mind:
 
 - Eager mode cannot undo side effects from code that has already run.
+- With a [parallel `InputGuardrail`](guardrails.md#parallel-input-guards), a nested tool call from an eager statement waits for the guard's verdict
+  before it runs, so a blocked prompt runs no tool.
 - If the model later requests `restart: true`, some work may run again.
 - If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks
   the model to send the code again.
@@ -441,6 +443,8 @@ Keep these limitations in mind:
   comment can start too. It is discarded when the snippet finishes.
 - `sequential` tools never speculate, and nothing speculates when the run's parallel
   execution mode is `sequential`.
+- With a [parallel `InputGuardrail`](guardrails.md#parallel-input-guards), a speculated call waits for the guard's verdict before it runs, so a
+  blocked prompt runs none of them.
 - Hooks on a speculated tool run when it starts, not when the snippet claims it. Hooks,
   approval, and guardrails on `run_code` itself run only after the model has finished writing
   the call, so they cannot stop a call that has already started early; this is the same

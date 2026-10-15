@@ -61,6 +61,7 @@ from pydantic_ai_harness._monty_exec import (
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -641,6 +642,17 @@ class NestedCallOutcome:
 
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
+    ctx = tool_manager.ctx
+    assert ctx is not None, 'Code Mode builds every nested `ToolManager` with the run context'
+    # Eager and speculative execution dispatch while the model is still streaming, possibly before a
+    # parallel input guard has decided. A prompt it does not allow ends the run before `run_code`
+    # returns, so this outcome never reaches the model.
+    if not await input_guardrails_allow(ctx):
+        return NestedCallOutcome(
+            error=RuntimeError(
+                f'Tool {call_part.tool_name!r} did not run: an input guardrail did not allow the prompt.'
+            )
+        )
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
     except (CallDeferred, ApprovalRequired) as e:
