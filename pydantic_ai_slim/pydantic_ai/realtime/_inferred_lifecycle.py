@@ -118,7 +118,7 @@ class InferredLifecycle:
         """The response under way."""
         self._open_named = False
         self._ended_by_usage: str | None = None
-        """The response a usage report just ended, whose terminal, if one follows, ends nothing more."""
+        """The response a usage report or its tool call just ended, whose terminal, if one follows, ends nothing more."""
         self._cut_off = False
         """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`), so more output is another."""
         """Whether the provider named the response under way, by the `response_id` of its content."""
@@ -359,8 +359,11 @@ class InferredLifecycle:
             if event.response_usage_follows:
                 self._calls_awaiting_usage = True
             elif not self._calls_awaiting_usage:
-                # No usage report closes its response: the call does, as the answer comes once its result is in.
+                # No usage report closes its response: the call does, as the answer comes once its result is in. (A
+                # terminal that follows before anything else is said is this response's.)
+                ended = self._open
                 self._end(after, status='completed', finish_reason='tool_call')
+                self._ended_by_usage = ended
 
     def _input_rejected(self, event: InputRejected, after: list[LifecycleEvent]) -> None:
         """The provider refused an input's content (it never joins the conversation), or its request for a reply."""

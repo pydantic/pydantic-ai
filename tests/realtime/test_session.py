@@ -3154,6 +3154,7 @@ async def test_idless_continuous_microphone_keeps_one_user_request_per_turn() ->
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='tc-1')],
                 timestamp=IsDatetime(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
