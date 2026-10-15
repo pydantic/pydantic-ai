@@ -35,13 +35,16 @@ never from `github.event`. For the safe outputs specifically that means frontmat
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
 
-The `CI Review` agent job queues in gh-aw's compiled agent concurrency group, which
-runs one review at a time across all PRs. `eligibility` therefore decides hours
-before the model starts. The last pre-agent step re-reads the PR and writes a `noop`
-to safe outputs when the PR has closed or moved to a new head. That `noop` skips
-inference only because gh-aw's engine harness checks safe outputs before it starts
-the engine (`hasNoopInSafeOutputs` in `claude_harness.cjs`). When you replace the
-engine harness, keep that check. Without it, every stale run spends a full review.
+The `CI Review` agent job queues in gh-aw's per-workflow engine concurrency group
+(`queue: max`), so one review runs at a time across all PRs. `eligibility` can
+therefore decide hours before the model starts. The pre-agent step `Skip a PR that
+closed or moved on while queued` writes a `noop` to safe outputs when the PR has
+closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
+`noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
+(`hasNoopInSafeOutputs`). Any other engine harness, including
+`src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
+spends a full review. The `noop` does not skip the `detection` job, which still runs
+one threat-detection pass outside the agent slot.
 
 ## What confines `CI Review` to same-repo PRs
 
