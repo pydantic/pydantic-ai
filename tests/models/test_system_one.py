@@ -531,7 +531,10 @@ _PNG = BinaryContent(b'\x89PNG', media_type='image/png')
 async def test_images_are_refused_before_a_request(
     allow_model_requests: None, prompt: str | list[str | BinaryContent], history: list[ModelMessage], match: str
 ):
-    """System One judges text only, so an image anywhere in the run is refused rather than sent short."""
+    """System One judges text only, so an image anywhere in the run is refused rather than sent short.
+
+    Not a recording: the refusal comes before any request.
+    """
     captured = Captured(ticket_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match=match):
