@@ -654,6 +654,7 @@ class Declared(Plugin[DeclaredSettings]):
             initial='ignored',
             secret=True,
             check=lambda text: None if text.startswith('tok') else 'Tokens start with tok.',
+            description='Find it at https://example.com/tokens.',
         )
         if not typed:
             return []
@@ -1141,7 +1142,13 @@ def test_a_settings_menu_action_asks_through_browser_dialogs(make_web: 'MakeWeb'
         assert receive_until(socket, DialogClosed)[1].id == choose.id
         text = receive_until(socket, DialogOpened)[1].dialog
         # A secret never starts with text in it.
-        assert (text.kind, text.secret, text.initial, text.label) == ('text', True, '', 'Token')
+        assert (text.kind, text.secret, text.initial, text.label, text.description) == (
+            'text',
+            True,
+            '',
+            'Token',
+            'Find it at https://example.com/tokens.',
+        )
         rejected = web_.post(f'/api/dialogs/{text.id}', {'value': 'nope'})
         assert (rejected.status_code, rejected.json()['detail']) == (400, 'Tokens start with tok.')
         assert web_.post(f'/api/dialogs/{text.id}', {'value': ' tok-1 '}).status_code == 204

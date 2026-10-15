@@ -99,11 +99,13 @@ class BrowserDialogs:
         initial: str = '',
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
+        description: str = '',
     ) -> str | None:
         dialog = Dialog(
             id=self._id(),
             kind='text',
             title=title,
+            description=description,
             label=label,
             placeholder=placeholder,
             initial='' if secret else initial,
