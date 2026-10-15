@@ -360,12 +360,12 @@ async def test_destroying_needs_the_users_pick(
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             last = messages[-1]
-            if isinstance(last, ModelRequest):
-                results.extend(
-                    str(part.content)
-                    for part in last.parts
-                    if isinstance(part, ToolReturnPart) and part.tool_name != 'ask_user_question'
-                )
+            assert isinstance(last, ModelRequest)
+            results.extend(
+                str(part.content)
+                for part in last.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name != 'ask_user_question'
+            )
             return ModelResponse(parts=[script.pop(0)] if script else [TextPart('Done.')])
 
         capabilities = [*made.loader.capabilities(), AskUser[None](answerer=user)]
