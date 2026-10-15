@@ -11,6 +11,7 @@ from pathlib import Path
 import anyio
 import httpx
 import pytest
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
@@ -551,7 +552,7 @@ async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
         (['--web', '--resume'], '--web requires an explicit --resume SESSION-ID'),
         (['--port', '8000'], '--port and --token-file need --web'),
         (['--token-file', 'token'], '--port and --token-file need --web'),
-        (['--web', '--port', '0'], '--port must be between 1 and 65535'),
+        (['--web', '--port', '70000'], '--port must be between 0 and 65535'),
     ],
 )
 def test_web_flag_rejects(
@@ -625,7 +626,11 @@ def test_web_flag_reads_a_private_token_file(
 async def test_run_web_on_a_launchers_port_and_token(
     launcher_token: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A launcher's port replaces the saved one; with its token too, the address is printed without it and no browser opens."""
+    """A launcher's port replaces the saved one; with its token, CLAI listens on loopback whatever the saved address,
+    prints the address without the token, and opens no browser."""
+    store = SettingsStore(tmp_path / 'config.db')
+    saved: dict[str, JsonValue] = {'host': 'localhost', 'port': 1}
+    store.save_plugin(PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings=saved))
     opened: list[str] = []
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
     with socket.socket() as probe:
@@ -638,7 +643,7 @@ async def test_run_web_on_a_launchers_port_and_token(
             group.start_soon(
                 lambda: run_web(
                     settings_for=lambda project: Settings(model='test'),
-                    store=SettingsStore(tmp_path / 'config.db'),
+                    store=store,
                     project=ProjectSettings(),
                     console=Console(file=output, force_terminal=False, width=500),
                     port=port,
@@ -655,7 +660,7 @@ async def test_run_web_on_a_launchers_port_and_token(
     found = re.search(r'Web UI running at (http://\S+)', output.getvalue())
     assert found is not None
     if token is None:
-        assert found[1].startswith(f'http://127.0.0.1:{port}/?token=') and len(opened) == 1
+        assert found[1].startswith(f'http://localhost:{port}/?token=') and len(opened) == 1
     else:
         assert found[1] == f'http://127.0.0.1:{port}/' and opened == []
         assert token not in output.getvalue()

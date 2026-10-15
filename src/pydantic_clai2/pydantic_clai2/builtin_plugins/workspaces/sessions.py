@@ -1,9 +1,9 @@
 """Starting and stopping a workspace's CLAI: `clai2 --web` on a loopback port, with a token only you can read."""
 
 import os
+import re
 import secrets
 import signal
-import socket
 import subprocess
 import sys
 import threading
@@ -86,12 +86,17 @@ async def probe(port: int, token: str) -> bool:
     return response.status_code == 200
 
 
-def free_port() -> int:
-    """A loopback port nothing listens on now."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(('127.0.0.1', 0))
-        port: int = sock.getsockname()[1]
-    return port
+_BOUND = re.compile(r'^Web UI running at http://127\.0\.0\.1:(\d+)/$', re.MULTILINE)
+"""The line `clai2 --web --token-file` prints once it listens, on loopback; see `cli.web.run_web`."""
+
+
+def bound_port(log: Path) -> int | None:
+    """The port a workspace's CLAI says it listens on, in its own log; `None` until it says."""
+    try:
+        found = _BOUND.search(log.read_text(encoding='utf-8', errors='replace'))
+    except FileNotFoundError:
+        return None
+    return None if found is None else int(found[1])
 
 
 def read_token(session: SessionProcess) -> str:
@@ -118,25 +123,15 @@ class Launcher:
         token = secrets.token_urlsafe(32)
         token_file, log = folder / 'token', folder / 'session.log'
         write_private(token_file, token + '\n')
-        port = free_port()
         # `-P`: the checkout, the working directory, must not shadow `pydantic_clai2` with a module of its own.
-        argv = [
-            self.python,
-            '-P',
-            '-m',
-            'pydantic_clai2',
-            '--web',
-            '--port',
-            str(port),
-            '--token-file',
-            str(token_file),
-        ]
+        # `--port 0`: the child binds a free port itself, so no other program can take it first; its log says which.
+        argv = [self.python, '-P', '-m', 'pydantic_clai2', '--web', '--port', '0', '--token-file', str(token_file)]
         if model:
             argv += ['--model', model]
         pid = self.processes.spawn(argv, cwd=cwd, env=env, log=log)
-        session = SessionProcess(pid=pid, port=port, token_file=token_file, log=log, started=datetime.now(UTC))
+        started = datetime.now(UTC)
         deadline = monotonic() + self.startup_timeout
-        while not await self.probe(port, token):
+        while (port := bound_port(log)) is None or not await self.probe(port, token):
             problem = None
             if not self.processes.alive(pid):
                 problem = 'exited while starting'
@@ -147,7 +142,7 @@ class Launcher:
                 token_file.unlink()
                 raise RuntimeError(f'The workspace CLAI {problem}; its output is in {log}.')
             await anyio.sleep(self.interval)
-        return session
+        return SessionProcess(pid=pid, port=port, token_file=token_file, log=log, started=started)
 
     def alive(self, session: SessionProcess) -> bool:
         """Whether the process is still running."""

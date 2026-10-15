@@ -66,7 +66,10 @@ def run(*, splash: Splash | None = None) -> None:
         help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
     )
     parser.add_argument(
-        '--port', type=int, metavar='PORT', help='With --web, listen on PORT for this launch instead of the saved port'
+        '--port',
+        type=int,
+        metavar='PORT',
+        help='With --web, listen on PORT for this launch instead of the saved port; 0 picks a free one',
     )
     parser.add_argument(
         '--token-file',
@@ -335,8 +338,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error('--web requires an explicit --resume SESSION-ID')
     elif args.port is not None or args.token_file is not None:
         parser.error('--port and --token-file need --web')
-    if args.port is not None and not 0 < args.port < 65536:
-        parser.error('--port must be between 1 and 65535')
+    if args.port is not None and not 0 <= args.port < 65536:
+        parser.error('--port must be between 0 and 65535')
     if args.prompt is not None:
         if args.command:
             parser.error('--prompt cannot be combined with config or plugins')
