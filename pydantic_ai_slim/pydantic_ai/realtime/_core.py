@@ -173,6 +173,16 @@ class TranscriptOverdue:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ResponseOverdue:
+    """A response under way held back the user's turns too long: they are recorded ahead of it, where history stands.
+
+    See `response_holding_turns`.
+    """
+
+    response_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class ReceiveEnded:
     """The session stopped reading the connection: nothing more will be said, so nothing is owed any more."""
 
@@ -192,6 +202,7 @@ Command: TypeAlias = (
     | Interrupted
     | ExchangeAbandoned
     | TranscriptOverdue
+    | ResponseOverdue
     | ReceiveEnded
     | Closed
 )
@@ -465,6 +476,8 @@ class SessionCore:
             self._epoch += 1
         elif isinstance(command, TranscriptOverdue):
             self._end_transcriptions([command.turn_id])
+        elif isinstance(command, ResponseOverdue):
+            self._release_held_turns(command.response_id)
         elif isinstance(command, ReceiveEnded):
             self._receiving = False
             # Nothing more will be read: not the rest of a response under way, nor of a turn that joined.
@@ -1065,6 +1078,34 @@ class SessionCore:
             for entry in self._placed[held_from + 1 :]
         )
         return turn.id if later_final else None
+
+    def response_holding_turns(self) -> str | None:
+        """The response under way that holds back a user turn recorded after it, if one does.
+
+        A turn the user spoke while the model answers follows that answer, once it ends. One that never does (the
+        provider stalls) mustn't keep the turn out of history for good: see `ResponseOverdue`.
+        """
+        held_from = self._held_from()
+        if held_from == len(self._placed):
+            return None
+        response = self._placed[held_from]
+        if not isinstance(response, _Response):
+            return None
+        if any(isinstance(entry, _UserTurn) and entry.message is not None for entry in self._placed[held_from + 1 :]):
+            return response.id
+        return None
+
+    def _release_held_turns(self, response_id: str) -> None:
+        response = self._responses.get(response_id)
+        if response is None or response.status is not None:
+            return  # (it ended meanwhile, and the turns after it with it)
+        index = self._placed.index(response)
+        held = [
+            entry for entry in self._placed[index + 1 :] if isinstance(entry, _UserTurn) and entry.message is not None
+        ]
+        for turn in held:
+            self._placed.remove(turn)
+            self._place(turn, before=response)
 
     def _returns_of(self, response: _Response) -> Iterator[ModelRequest]:
         for call_id in response.tool_calls:

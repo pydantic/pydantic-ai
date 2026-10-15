@@ -93,6 +93,7 @@ from ._core import (
     InputWithdrawn,
     Interrupted,
     ReceiveEnded,
+    ResponseOverdue,
     SessionCore,
     ToolCallRefused,
     ToolReturned,
@@ -973,6 +974,7 @@ class RealtimeSession:
         # With the session core: the timer of each spoken turn waiting for its transcript (see
         # `_TRANSCRIPT_HOLD_SECONDS`).
         self._transcript_watchdogs: dict[str, asyncio.TimerHandle] = {}
+        self._barge_in_watchdogs: dict[str, asyncio.TimerHandle] = {}
         # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
         # buffer is no user turn.
         self._audio_uncommitted = False
@@ -1292,9 +1294,10 @@ class RealtimeSession:
         )
         self._loop = None
         self._stop_held_user_turn_watchdog()
-        for watchdog in self._transcript_watchdogs.values():
+        for watchdog in (*self._transcript_watchdogs.values(), *self._barge_in_watchdogs.values()):
             watchdog.cancel()
         self._transcript_watchdogs.clear()
+        self._barge_in_watchdogs.clear()
 
         # Do not hide the caller's own exception, but make sure every receive-side failure has one
         # delivery point even when iteration stopped early or was never started. Stored rather than
@@ -4324,12 +4327,20 @@ class RealtimeSession:
         self._core_advanced(self._core)
 
     def _core_advanced(self, core: SessionCore) -> None:
-        """Wake whoever waits on what the core owes, and bound how long a missing transcript holds history back."""
+        """Wake whoever waits on what the core owes, and bound how long a missing transcript or a stalled response holds history back."""
         self._exchange_progress.set()
         if (turn_id := core.transcript_holding_history()) is not None and turn_id not in self._transcript_watchdogs:
             self._transcript_watchdogs[turn_id] = asyncio.get_running_loop().call_later(
                 _TRANSCRIPT_HOLD_SECONDS, self._transcript_overdue, turn_id
             )
+        if (response_id := core.response_holding_turns()) is not None and response_id not in self._barge_in_watchdogs:
+            self._barge_in_watchdogs[response_id] = asyncio.get_running_loop().call_later(
+                _BARGE_IN_TURN_HOLD_SECONDS, self._response_overdue, response_id
+            )
+
+    def _response_overdue(self, response_id: str) -> None:
+        del self._barge_in_watchdogs[response_id]
+        self._apply_core(ResponseOverdue(response_id=response_id))
 
     def _transcript_overdue(self, turn_id: str) -> None:
         del self._transcript_watchdogs[turn_id]

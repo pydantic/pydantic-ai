@@ -3324,24 +3324,6 @@ async def test_barge_in_user_turn_follows_the_response_it_interrupted(
             [
                 _MIC,
                 InputTranscript(text='Tell me a story.'),
-                AudioDelta(data=b'\x01\x00'),
-                OutputTranscript(text='Once upon a time'),
-                _MIC,
-                InputTranscript(text='Stop, what is two plus two?'),
-                _MIC,
-                RealtimeResponseInterruptedEvent(),
-                ResponseDone(interrupted=True),
-                _MIC,
-                AudioDelta(data=b'\x01\x00'),
-                OutputTranscript(text='Four.'),
-                ResponseDone(),
-            ],
-            id='transcript-before-interrupted',
-        ),
-        pytest.param(
-            [
-                _MIC,
-                InputTranscript(text='Tell me a story.'),
                 _MIC,
                 InputTranscript(text='', is_final=True),
                 AudioDelta(data=b'\x01\x00'),
@@ -3363,9 +3345,8 @@ async def test_idless_barge_in_transcript_follows_the_answer_it_spoke_over(
 ) -> None:
     """An id-less turn first heard of through its transcript, while the model answers, is filed after that answer.
 
-    Audio sent during an answer reserves no place, so the transcript is the turn's first sign: on Gemini when it
-    arrives before the provider reports the interruption, and on a provider that reports no speech boundaries
-    at all (GPT-Live), where the model's next output closes the turn.
+    Audio sent during an answer reserves no place, so the transcript is the turn's first sign: on a provider that
+    reports no speech boundaries at all (GPT-Live), the model's next output closes the turn.
     """
     conn = _ContinuousMicrophoneConnection(script)
     session = RealtimeSession(conn)
@@ -3384,6 +3365,47 @@ async def test_idless_barge_in_transcript_follows_the_answer_it_spoke_over(
         )
     )
     assert first_answer < barge_in
+
+
+async def test_idless_mid_reply_transcript_streams_into_the_turn_being_answered() -> None:
+    """Words Gemini reports mid-reply, before it reports the interruption they caused, are the answered turn's.
+
+    Nothing marks them as new speech when they arrive, so they stream into the turn the reply answers; the
+    interruption that follows settles the split, and the speech after it is a turn of its own.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            InputTranscript(text='Tell me a story.'),
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Once upon a time'),
+            _MIC,
+            InputTranscript(text='Stop, what is two plus two?'),
+            _MIC,
+            RealtimeResponseInterruptedEvent(),
+            ResponseDone(interrupted=True),
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Four.'),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert [
+        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
+        for message in session.all_messages()
+    ] == snapshot(
+        [
+            ('ModelRequest', ['Tell me a story.Stop, what is two plus two?']),
+            ('ModelResponse', ['Once upon a time']),
+            ('ModelRequest', [None]),
+            ('ModelResponse', ['Four.']),
+        ]
+    )
 
 
 async def test_untranscribed_push_to_talk_commit_after_a_reconnect_records_one_turn() -> None:
