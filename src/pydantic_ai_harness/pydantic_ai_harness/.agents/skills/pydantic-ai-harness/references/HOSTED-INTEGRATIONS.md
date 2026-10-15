@@ -41,12 +41,14 @@ All classes except `StackOne` take the same keyword-only fields:
 - `client`: your own FastMCP client or transport, for a custom auth scheme, proxy, or handlers
   (absent on `GoogleWorkspace`). It owns the connection, so combining it with `auth` (and with
   `url`/`toolsets`/`features` where those exist) raises `UserError`.
-- `tool_prefix: str | None`: prepended with `_` to the server's tool names. It defaults to the service
-  (`'github'`, `'linear'`, `'logfire'`, `'grain'`, `'day_ai'`, `'posthog'`, `'pylon'`), so `get_me` reaches
-  the model as `github_get_me`. `Notion`, `Slack`, and `Ordinal` default to `None`, since their servers
-  already name tools after the service (`notion-search`, `slack_send_message`). `None` keeps the server's
-  names, which is what releases before the prefix used for every class except `LogfireMCP`. Filters on `get_toolset()` see the prefixed names; `read_only`,
-  GitHub `toolsets`, and PostHog `features` select before the prefix applies.
+- `tool_prefix: str | None`: prepended with `_` to the server's tool names (absent on `GoogleWorkspace`,
+  which already prefixes by product). It defaults to the service (`'github'`, `'linear'`, `'logfire'`,
+  `'grain'`, `'day_ai'`, `'posthog'`, `'pylon'`), so `get_me` reaches the model as `github_get_me`.
+  `Notion`, `Slack`, and `Ordinal` default to `None`, since their servers already name tools after the
+  service (`notion-search`, `slack_send_message`). `None` keeps the server's names, which is what
+  releases before the prefix used for every class except `LogfireMCP`. Filters on `get_toolset()` see
+  the prefixed names; `read_only`, GitHub `toolsets`, and PostHog `features` select before the prefix
+  applies.
 - `id`, `description`, `defer_loading` from `AbstractCapability`. The default `id` is fixed
   (`'github'`, `'linear'`, `'notion'`, `'slack'`, `'logfire-mcp'`, `'ordinal'`, `'grain'`, `'day_ai'`,
   `'posthog'`, `'pylon'`), so `defer_loading=True` and durable execution need no explicit `id`.
