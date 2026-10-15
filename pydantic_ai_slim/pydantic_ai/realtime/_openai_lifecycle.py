@@ -33,6 +33,7 @@ from ._lifecycle import (
     InputId,
     InputLost,
     LifecycleEvent,
+    OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
@@ -60,6 +61,17 @@ def _is_final_transcription(data: dict[str, Any]) -> bool:
     """Whether a transcription frame settles its item, as in `_map_input_transcription_event`: xAI and Azure send interim `completed` snapshots too."""
     status = data.get('status')
     return status is None or status == 'completed'
+
+
+def _output_item_details(data: dict[str, Any]) -> list[LifecycleEvent]:
+    """The `phase` of an assistant message a response adds (`commentary` or `final_answer`), for its part."""
+    item, response_id = data.get('item'), data.get('response_id')
+    if not is_str_dict(item) or not isinstance(response_id, str) or not response_id:
+        return []
+    item_id, phase = item.get('id'), item.get('phase')
+    if not isinstance(item_id, str) or not item_id or not isinstance(phase, str) or not phase:
+        return []
+    return [OutputItemDetails(response_id=response_id, item_id=item_id, provider_details={'phase': phase})]
 
 
 def frame_response_id(event_type: str | None, data: dict[str, Any]) -> str | None:
@@ -273,6 +285,8 @@ class OpenAILifecycle:
             return []
         if event_type in _CONVERSATION_ITEM_ADDED_FRAMES:
             return self.item_added(data)
+        if event_type == 'response.output_item.added':
+            return _output_item_details(data)
         if event_type == 'error':
             return self.error(data)
         return []
@@ -321,7 +335,7 @@ class OpenAILifecycle:
         self._speaking.pop(item_id, None)
         return events
 
-    def _place(self, item_id: str) -> list[LifecycleEvent]:
+    def _place(self, item_id: str, *, still_speaking: bool = False) -> list[LifecycleEvent]:
         """The spoken turn joins the conversation (once), whatever says so first."""
         if item_id in self._committed:
             return []
@@ -333,7 +347,7 @@ class OpenAILifecycle:
             return []
         # Push-to-talk reports no speech start: the commit both starts and ends the turn.
         events: list[LifecycleEvent] = [] if item_id in self._speaking else [UserTurnStarted(turn_id=item_id)]
-        events.append(UserTurnEnded(turn_id=item_id))
+        events.append(UserTurnEnded(turn_id=item_id, still_speaking=still_speaking))
         self._unclaimed_turn = item_id
         if self._transcribes:
             self._untranscribed.add(item_id)
@@ -348,6 +362,8 @@ class OpenAILifecycle:
         events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
         # One that hadn't joined never will, whatever the provider still reports about it.
         self._committed.update(self._speaking)
+        # Nor is a transcript waited for any more: the turn is settled.
+        self._untranscribed.difference_update(self._speaking)
         self._speaking.clear()
         return events
 
@@ -359,7 +375,7 @@ class OpenAILifecycle:
         elif item.id is not None and item.id in self._speaking:
             # A spoken turn joins the conversation when its item is added. That can be before the user has
             # stopped speaking: xAI adds it at speech start, and starts responding before the commit.
-            return self._place(item.id)
+            return self._place(item.id, still_speaking=True)
         elif not is_user_message_item(item):
             # The model's output, or a spoken turn already committed.
             return []
@@ -403,8 +419,7 @@ class OpenAILifecycle:
     def socket_replaced(self) -> None:
         """A new socket is being dialed: what the old one hadn't acknowledged, it never will.
 
-        Those inputs are in the conversation all the same: a replaying reconnect sends the history that holds
-        them, and a resuming one carries on the conversation they were sent into.
+        Those inputs are in the conversation all the same: the reconnect replays the history that holds them.
         """
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
@@ -415,9 +430,7 @@ class OpenAILifecycle:
         # A commit the old socket never acknowledged won't be on the new one.
         self._sent_before_commits.clear()
 
-    def reconnected(
-        self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]
-    ) -> None:
+    def reconnected(self, *, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]) -> None:
         """A reconnect succeeded: settle what it did not carry over, before it is reported.
 
         `asked_again` are the inputs whose request the connection is about to send again on the new socket.
@@ -426,22 +439,16 @@ class OpenAILifecycle:
         self._carried_over.clear()
         self.requests_dropped(lost_inputs)
         self._pending.extend(self._refusals_unanswered())
-        if not restores_in_flight:
-            # Whatever the connection still thought of it, a request the old socket neither started nor
-            # refused, and that isn't asked for again, will never be answered.
-            self.requests_dropped(
-                [
-                    input_id
-                    for answers, _ in self._requests.values()
-                    for input_id in answers
-                    if input_id not in asked_again
-                ]
-            )
-            self._requests.clear()
-            self._lose_everything_open()
-            # A transcript still to come for a turn of the old connection never will.
-            self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
-            self._untranscribed.clear()
+        # Whatever the connection still thought of it, a request the old socket neither started nor
+        # refused, and that isn't asked for again, will never be answered.
+        self.requests_dropped(
+            [input_id for answers, _ in self._requests.values() for input_id in answers if input_id not in asked_again]
+        )
+        self._requests.clear()
+        self._lose_everything_open()
+        # A transcript still to come for a turn of the old connection never will.
+        self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
+        self._untranscribed.clear()
 
     def closed(self, unanswered: Sequence[InputId]) -> None:
         """The connection is gone for good: nothing still open will ever end on its own, or be answered."""

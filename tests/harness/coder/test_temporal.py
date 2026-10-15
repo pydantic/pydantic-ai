@@ -174,11 +174,14 @@ compacting_agent = Agent(
 class CompactingWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        # About 60,000 tokens: over 85% of the window, and older than the 50,000 tokens compaction keeps.
-        history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('lorem ipsum ' * 20_000)]),
-            ModelResponse(parts=[TextPart('read it')]),
-        ]
+        # About 63,000 tokens: over 85% of the window. Compaction keeps at least the newest 40% of it, so
+        # the oldest response is summarized; the first user message is kept verbatim.
+        history: list[ModelMessage] = []
+        for prompt_text in ('Start', 'Next', 'Next'):
+            history += [
+                ModelRequest(parts=[UserPromptPart(prompt_text)]),
+                ModelResponse(parts=[TextPart('lorem ipsum ' * 7_000)]),
+            ]
         return (await compacting_agent.run(prompt, message_history=history)).output
 
 

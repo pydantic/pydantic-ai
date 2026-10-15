@@ -8,6 +8,7 @@ from datetime import timedelta
 from types import TracebackType
 from typing import Any, Self
 
+from .. import _utils
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import ModelMessage, ModelResponse
@@ -52,6 +53,12 @@ class WrapperModel(Model):
         exc_tb: TracebackType | None,
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        """Connect the wrapped model while preserving this wrapper's behavior."""
+        async with self.wrapped.connect() as connected:
+            yield _utils.replace_no_init(self, wrapped=connected)
 
     async def request(
         self,
@@ -150,9 +157,13 @@ class WrapperModel(Model):
         return self.wrapped.settings
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        # `Model.resolve_cache_retention` returns `None`, so without this override normal attribute
-        # lookup succeeds and `__getattr__` never forwards.
+        # `Model.resolve_cache_retention` is defined on the base class, so without this override normal
+        # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.
+        return self.wrapped._caching_not_enabled(model_settings)
 
     @property
     def base_url(self) -> str | None:

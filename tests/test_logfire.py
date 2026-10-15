@@ -54,6 +54,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
+from .continuation_utils import ScriptedContinuationModel, StreamSegment
 
 with try_import():
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
@@ -491,6 +492,7 @@ def test_logfire(
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     }
                 )
             ),
@@ -956,6 +958,32 @@ async def test_chat_span_records_response_rejected_by_after_hook(capfire: Captur
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_chat_span_records_a_stream_the_consumer_stopped(capfire: CaptureLogfire) -> None:
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3)
+        ]
+    )
+    agent = Agent(model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    async with agent.iter('hello') as run:
+        with pytest.raises(RuntimeError, match='stop'):
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
+                            if 'A' in text:
+                                raise RuntimeError('stop')
+
+    [chat_span] = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert chat_span['attributes']['gen_ai.output.messages'] == snapshot(
+        [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'A'}]}]
+    )
+    assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 7
+    assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 3
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_nested_instrumentation_capabilities_capture_request_and_response(capfire: CaptureLogfire) -> None:
     settings = InstrumentationSettings()
@@ -1289,6 +1317,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                             }
                         ],
                         'thinking': None,
+                        'cache': None,
                     }
                 )
             ),
@@ -1566,6 +1595,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',

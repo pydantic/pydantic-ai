@@ -57,8 +57,12 @@ Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`,
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
-Preserve size, package, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
 Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
+
+Apply exactly one package label: `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph` or `pkg:clai`.
+Use the catalog descriptions to choose. Tests and docs count toward the package they cover.
+Use `pkg:core` for repository infrastructure. For changes spanning packages, choose the package whose users the change serves.
 
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are
@@ -132,6 +136,11 @@ before handing the PR back or requesting merge:
   `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
   is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
   guard covers; the red check is the guard working.
+- When a maintainer explicitly requests review of those protected paths, apply
+  `douwebot:review-agent-config`. It authorizes one review only when its first `labeled` event came
+  from a `User` with current write or admin permission and the PR still has the event head. Do not
+  treat label presence as approval for an ordinary `douwebot` trigger or a later head. If the run
+  fails or is canceled, remove and reapply the label; rerunning the old event is denied.
 - **Afterwards, re-enter the loop.** The review posts inline comments and a formal verdict that
   need the same triage as any other review.
 
@@ -139,10 +148,24 @@ before handing the PR back or requesting merge:
 
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
-1. Dispatch a fresh subagent that has not worked on the PR.
+1. Dispatch a fresh subagent that has not worked on the PR. Run the subagent on the latest light model your harness
+   supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
+   against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
-3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
-4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
-5. Apply every correction. Committed changes restart the post-push loop; GitHub metadata-only changes do not.
-6. After a replacement, repeat the check with another fresh subagent.
-7. Hand the PR back only after the check reports `current`.
+3. Ask it to check only the title, body, and labels against this skill, the root `AGENTS.md`, and the PR template.
+4. Require either `current` or exact corrections: title or body text changes and label additions/removals.
+   - Require each correction to cite the rule it enforces.
+   - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
+     missing element, require the correction to name that element instead.
+5. Verify each correction. Keep a correction only when a rule in this skill, the root `AGENTS.md`, or the PR template
+   says what the correction claims and the current title, body, or labels break that rule. When that rule is not the
+   one the correction cites, cite it on the kept correction. When you find a violation that no correction names,
+   verify it the same way and add it as a kept correction.
+6. Edit the title, body, and labels once. Use the kept corrections, and write your own changes where they fall short.
+   The edit is done when all three hold:
+   - The edited title, body, and labels follow every rule a kept correction cites.
+   - The edited title, body, and labels break no rule that the current ones follow.
+   - The edit applies no subagent text that no kept correction covers.
+
+   Committed changes restart the post-push loop; GitHub metadata-only changes do not.
+7. Hand the PR back after the edit.

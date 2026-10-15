@@ -1750,7 +1750,7 @@ def _summary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 def _keeping(
     summarize: bool, *, keep_fraction: float | None
 ) -> SlidingWindowCompaction[None] | SummarizingCompaction[None]:
-    """A strategy keeping 50,000 tokens, capped at `keep_fraction` of the window."""
+    """A strategy keeping at least 50,000 tokens, or `keep_fraction` of the window if that is less."""
     if summarize:
         return SummarizingCompaction(
             max_messages=1, keep_tokens=50_000, keep_fraction=keep_fraction, preserve_first_user_message=False
@@ -1761,7 +1761,7 @@ def _keeping(
 
 
 class TestKeepFraction:
-    """`keep_fraction` caps the kept tail by the window, so a large `keep_tokens` still reclaims on a small model."""
+    """`keep_fraction` lowers the kept-tail floor on a small window, so a large `keep_tokens` still reclaims."""
 
     @pytest.mark.parametrize('summarize', [False, True], ids=['sliding', 'summarizing'])
     async def test_the_smaller_of_keep_tokens_and_keep_fraction_applies(self, summarize: bool):
@@ -1771,8 +1771,9 @@ class TestKeepFraction:
         uncapped = await compact_now(_keeping(summarize, keep_fraction=None), history, model=model)
         capped = await compact_now(_keeping(summarize, keep_fraction=0.4), history, model=model)
 
-        assert estimate_token_count(uncapped) > 45_000, 'a 50,000-token tail keeps more than the 32,000 window'
-        assert estimate_token_count(capped) <= 12_800 + 10, 'the tail fits 40% of the window, plus the summary'
+        assert estimate_token_count(uncapped) >= 50_000, 'a 50,000-token tail keeps more than the 32,000 window'
+        # The floor is 40% of the window; whole messages overshoot it by at most one (about 400 tokens) plus the summary.
+        assert 12_800 <= estimate_token_count(capped) <= 12_800 + 450
 
     def test_the_window_resolves_as_for_max_fraction(self):
         # `TestModel`'s window does not resolve, so the fraction is of `fallback_context_window`.
