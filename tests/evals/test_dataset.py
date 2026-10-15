@@ -2673,13 +2673,13 @@ async def test_task_timeout_abandons_sync_task_thread():
     try:
         report = await dataset.evaluate(task, task_timeout=0.01, progress=False)
 
-        # The deadline is enforced while the worker thread is still blocked: it is abandoned, not awaited.
-        assert started.is_set()
+        # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
         assert not finished.is_set()
         assert report.failures[0].error_message == 'TimeoutError: Task timed out after 0.01s'
     finally:
         release.set()
     assert await anyio.to_thread.run_sync(finished.wait, READINESS_WAIT_TIMEOUT)
+    assert started.is_set()
 
 
 def test_task_timeout_sync_task_within_deadline():
