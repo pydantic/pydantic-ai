@@ -19,7 +19,8 @@ from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.compaction._shared import estimate_token_count
 
 
-class TruncationStrategy(str, Enum):
+# Preserve string formatting of existing public enum members.
+class TruncationStrategy(str, Enum):  # noqa: UP042
     """Which end(s) of an oversized text to keep when truncating."""
 
     head = 'head'

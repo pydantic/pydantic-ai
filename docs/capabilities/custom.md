@@ -171,7 +171,7 @@ class MathTools(AbstractCapability[Any]):
         return math_toolset
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[MathTools()])
+agent = Agent('{{ openai:medium }}', capabilities=[MathTools()])
 result = agent.run_sync('What is 2 + 3?')
 print(result.output)
 #> The answer is 5.0
@@ -214,7 +214,7 @@ class LogToolCalls(AbstractCapability[Any]):
         return LoggingToolset(wrapped=toolset)
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[LogToolCalls()])
+agent = Agent('{{ openai:medium }}', capabilities=[LogToolCalls()])
 
 
 @agent.tool_plain
@@ -254,7 +254,7 @@ class KnowsCurrentTime(AbstractCapability[Any]):
         return _get_time
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[KnowsCurrentTime()])
+agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentTime()])
 result = agent.run_sync('What time is it?')
 print(result.output)
 #> The current time is 3:45 PM.
@@ -290,7 +290,7 @@ class ThinkingOnRetry(AbstractCapability):
         return resolve
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ThinkingOnRetry()])
+agent = Agent('{{ openai:medium }}', capabilities=[ThinkingOnRetry()])
 result = agent.run_sync('hello')
 print(result.output)
 #> Hello! How can I help you today?
@@ -326,7 +326,7 @@ class AdaptiveModel(AbstractCapability[Deps]):
         return self.select_model
 
     def select_model(self, ctx: ModelSelectionContext[Deps]) -> str:
-        return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
+        return '{{ openai:medium }}' if ctx.deps.task_complexity == 'complex' else '{{ openai:small }}'
 
 
 agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
@@ -388,7 +388,7 @@ class UserModelResolver(AbstractCapability[Deps]):
         return infer_model(model_id.removeprefix('user:'), provider_factory)
 
 
-agent = Agent('user:openai:gpt-5.6-sol', deps_type=Deps, capabilities=[UserModelResolver()])
+agent = Agent('user:{{ openai:medium }}', deps_type=Deps, capabilities=[UserModelResolver()])
 ```
 
 The constructor ID remains a string through [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent], so a bound capability can install a resolver without default inference first constructing a provider with different configuration or credentials.
@@ -422,9 +422,7 @@ Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] 
 
 ```python {title="agent_bound_capability.py"}
 from dataclasses import dataclass, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
@@ -445,8 +443,8 @@ class AgentIdentity(AbstractCapability[Any]):
 
 
 identity = AgentIdentity()
-support = Agent('openai:gpt-5.2', name='support', capabilities=[identity])
-sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
+support = Agent('{{ openai:medium }}', name='support', capabilities=[identity])
+sales = Agent('{{ openai:medium }}', name='sales', capabilities=[identity])
 ```
 
 `for_agent()` is synchronous because it binds configuration during agent construction, before run dependencies or a lifecycle context exist. Keep it free of I/O; asynchronous run-specific setup belongs in [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run].
@@ -515,7 +513,7 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 !!! note "Observing cancellation"
     A cancellation reaches a capability as an `asyncio.CancelledError`: through a `wrap_*` hook's `handler()` await (catch it around `await handler(...)`), or at the run's terminal funnel [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error], whose `error` is a `BaseException`. It does **not** reach the recovery-oriented `Exception`-typed hooks — [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error], [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error], [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] — because a cancellation is a terminal control signal, not a failure of that step you could recover from.
 
-    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work — on Python 3.11+ the run re-asserts the cancellation at the next step boundary (best-effort on Python 3.10).
+    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work. The run re-asserts the cancellation at the next step boundary.
 
 ### Node hooks
 
@@ -562,7 +560,7 @@ class NodeLogger(AbstractCapability[Any]):
 
 
 logger = NodeLogger()
-agent = Agent('openai:gpt-5.2', capabilities=[logger])
+agent = Agent('{{ openai:medium }}', capabilities=[logger])
 agent.run_sync('hello')
 print(logger.nodes)
 #> ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
@@ -721,7 +719,7 @@ class HideDangerousTools(AbstractCapability[Any]):
         return [td for td in tool_defs if not any(td.name.startswith(p) for p in self.hidden_prefixes)]
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[HideDangerousTools()])
+agent = Agent('{{ openai:medium }}', capabilities=[HideDangerousTools()])
 
 
 @agent.tool_plain
@@ -987,7 +985,7 @@ class RequestCounter(AbstractCapability[Any]):
 
 
 counter = RequestCounter()
-agent = Agent('openai:gpt-5.2', capabilities=[counter])
+agent = Agent('{{ openai:medium }}', capabilities=[counter])
 
 # The shared counter stays at 0 because for_run returns a fresh instance
 agent.run_sync('first run')
@@ -1191,7 +1189,7 @@ class PIIRedactionGuardrail(AbstractCapability[Any]):
         return response
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[PIIRedactionGuardrail()])
+agent = Agent('{{ openai:medium }}', capabilities=[PIIRedactionGuardrail()])
 result = agent.run_sync("What's Jane's contact info?")
 print(result.output)
 #> You can reach Jane at [EMAIL REDACTED] or [PHONE REDACTED].
@@ -1247,7 +1245,7 @@ class VerboseLogging(AbstractCapability[Any]):
         return result
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[VerboseLogging()])
+agent = Agent('{{ openai:medium }}', capabilities=[VerboseLogging()])
 result = agent.run_sync('hello')
 print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?

@@ -12,18 +12,19 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import Any, Literal, Never, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, Protocol, TypedDict, assert_never
+from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -52,6 +53,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -102,10 +104,11 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    OpenAISystemPromptRole,
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -122,7 +125,8 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
+from ._prompt_cache import split_cache_setting
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -358,6 +362,12 @@ class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
     """Provider details for OpenAI Responses API continuation."""
 
     last_sequence_number: int
+
+
+class _ChatCompletionMessageFunctionToolCallParam(ChatCompletionMessageFunctionToolCallParam, total=False):
+    """A Chat Completions tool call carrying the `extra_content` vendor extension, see `_map_tool_call_provider_details`."""
+
+    extra_content: JsonValue
 
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
@@ -659,6 +669,36 @@ def _add_openai_prompt_cache_breakpoint(
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
 
 
+def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -> int:
+    """Number of leading static instruction parts, which the instruction breakpoint goes after.
+
+    Agent runs sort static parts first, but a direct `Model.request` caller may not, and a dynamic
+    part must never end up inside the cached prefix.
+    """
+    return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
+
+
+def _leading_system_message_count(
+    messages: Sequence[Mapping[str, Any]], system_prompt_role: OpenAISystemPromptRole
+) -> int:
+    """Number of leading messages holding system prompts, which is where instructions belong."""
+    return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
+
+
+def _has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any system prompt is dynamic, i.e. its content can change between requests.
+
+    A dynamic system prompt renders ahead of the instructions in the cached prefix, so its changing
+    content would silently invalidate the cache; the breakpoint is skipped when one is present.
+    """
+    return any(
+        isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
 def _leading_cache_breakpoint(item: dict[str, Any]) -> _OpenAIPromptCacheBreakpoint | None:
     """The breakpoint a leading `CachePoint` left on an empty placeholder opening this user message, if any."""
     content = item.get('content')
@@ -776,6 +816,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     for more details.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Constrains the verbosity of the model's text response.
+
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses.
+
+    Supported by both the Chat Completions API (as `verbosity`) and the Responses API
+    (as `text.verbosity`). Parameter support can differ depending on the model.
+    """
+
     openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
     """The service tier to use for the model request.
 
@@ -792,7 +842,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_prompt_cache_key: str
     """Used by OpenAI to cache responses for similar requests to optimize your cache hit rates.
 
-    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    See the [OpenAI Prompt Caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for more information.
     """
 
     openai_prompt_cache_retention: Literal['in_memory', '24h']
@@ -802,7 +852,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     `openai_prompt_cache_options`; earlier models keep using this field. The two are independent and do not
     interact: this field expresses a maximum retention policy, while `ttl` expresses a minimum cache lifetime.
 
-    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    See the [OpenAI Prompt Caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for more information.
     """
 
     openai_prompt_cache_options: OpenAIPromptCacheOptions
@@ -812,6 +862,32 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     The `ttl` here is independent of the `openai_prompt_cache_retention` setting, which OpenAI deprecates
     for GPT-5.6 and later models.
+
+    See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
+    for more information.
+    """
+
+    openai_cache_instructions: bool
+    """Whether to add a prompt cache breakpoint after the last static instruction.
+
+    With no static instructions, the breakpoint goes on the last system prompt instead.
+
+    Supported by GPT-5.6 and later models; other models ignore it. OpenAI applies the request-wide
+    `ttl` from `openai_prompt_cache_options`. OpenAI writes at most four breakpoints per request and
+    drops the earliest first, so if `CachePoint` markers push a request over that limit, the
+    instruction breakpoint is the first one dropped.
+
+    On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the
+    instructions are sent as leading input messages instead. That only happens on requests that
+    don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
+    is set, or the history has been compacted, this setting leaves the instructions where they would
+    otherwise go (normally the top-level field) and adds no breakpoint. That includes
+    `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
+    its input, so relocated instructions would be replayed alongside every later request's own.
+
+    No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
+    per-request content would sit inside the cached prefix and miss the cache on every run, nor when
+    the system prompt role is `'user'` or the model merges leading system messages.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -912,14 +988,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     - `auto`: If the context of this response and previous ones exceeds the model's context window size,
         the model will truncate the response to fit the context window by dropping input items in the
         middle of the conversation.
-    """
-
-    openai_text_verbosity: Literal['low', 'medium', 'high']
-    """Constrains the verbosity of the model's text response.
-
-    Lower values will result in more concise responses, while higher values will
-    result in more verbose responses. Currently supported values are `low`,
-    `medium`, and `high`.
     """
 
     openai_previous_response_id: Literal['auto'] | str
@@ -1041,13 +1109,110 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_cache_retention(
-    default_settings: ModelSettings | None, model_settings: ModelSettings | None
+_CACHE_SETTINGS_KEYS = ('openai_prompt_cache_options', 'openai_cache_instructions')
+"""The OpenAI settings that take precedence over the unified `cache` setting.
+
+`openai_prompt_cache_retention` isn't one of them: it's a maximum-retention policy that OpenAI keeps
+independent of the GPT-5.6 cache options, so it combines with the unified setting instead.
+"""
+
+
+def _openai_effective_cache_settings(settings: OpenAIChatModelSettings) -> tuple[CacheSetting | None, ...]:
+    """The cache settings that take effect when any of `_CACHE_SETTINGS_KEYS` is present.
+
+    The implicit breakpoint (`mode='implicit'`, the default) caches at the 30-minute TTL, as does an
+    instruction breakpoint; with `mode='explicit'` and no instruction breakpoint, only `CachePoint`s cache.
+    """
+    options = settings.get('openai_prompt_cache_options') or {}
+    return (
+        '30m' if options.get('mode', 'implicit') == 'implicit' else None,
+        '30m' if settings.get('openai_cache_instructions') else None,
+    )
+
+
+def _translate_openai_cache(
+    profile: OpenAIModelProfile, model_settings: ModelSettings | None, params: ModelRequestParameters
+) -> ModelSettings | None:
+    """Map the unified `cache` setting onto GPT-5.6's prompt cache options and an instruction breakpoint.
+
+    Only applies to models with explicit prompt cache breakpoints, and only when no explicit OpenAI
+    cache setting (`_CACHE_SETTINGS_KEYS`) is present, since those take precedence. `openai_cache_instructions`
+    keeps its own gates, so requests that continue server-side state still get no instruction breakpoint.
+
+    Caching only the stable prefix (`messages=False`) uses `mode='explicit'`, so OpenAI creates no implicit
+    breakpoint and writes only the instruction breakpoint. `_keep_implicit_cache_without_breakpoints` restores
+    the implicit breakpoint on requests that end up with no breakpoint.
+    """
+    if (
+        not params.cache
+        or not profile.get('openai_supports_prompt_cache_breakpoints', False)
+        or any(key in (model_settings or {}) for key in _CACHE_SETTINGS_KEYS)
+    ):
+        return model_settings
+    translated = cast(OpenAIChatModelSettings, {**(model_settings or {})})
+    # `'30m'` is the only TTL OpenAI accepts, so every retention snaps to it.
+    _, messages = split_cache_setting(params.cache)
+    translated['openai_prompt_cache_options'] = (
+        {'mode': 'implicit', 'ttl': '30m'} if messages else _PREFIX_ONLY_CACHE_OPTIONS
+    )
+    translated['openai_cache_instructions'] = True
+    return translated
+
+
+_PREFIX_ONLY_CACHE_OPTIONS: OpenAIPromptCacheOptions = {'mode': 'explicit', 'ttl': '30m'}
+"""The prompt cache options the unified `cache` setting maps `messages=False` to.
+
+Never mutated: `_keep_implicit_cache_without_breakpoints` checks for this exact object, so that options a
+caller set with the same values, which take precedence over the unified setting, are left alone.
+"""
+
+
+def _has_prompt_cache_breakpoint(
+    items: Sequence[chat.ChatCompletionMessageParam] | Sequence[responses.ResponseInputItemParam],
+) -> bool:
+    """Whether any message or tool result in the request carries a prompt cache breakpoint."""
+    for item in items:
+        item_dict = cast('dict[str, Any]', item)
+        body = item_dict.get('output' if item_dict.get('type') == 'function_call_output' else 'content')
+        if isinstance(body, list) and any(
+            'prompt_cache_breakpoint' in cast('dict[str, Any]', part) for part in cast('list[Any]', body)
+        ):
+            return True
+    return False
+
+
+def _keep_implicit_cache_without_breakpoints(
+    settings: OpenAIChatModelSettings,
+    items: Sequence[chat.ChatCompletionMessageParam] | Sequence[responses.ResponseInputItemParam],
+) -> None:
+    """Keep OpenAI's implicit breakpoint when caching only the stable prefix leaves the request without a breakpoint.
+
+    The unified `cache` setting with `messages=False` turns the implicit breakpoint off and relies on the
+    instruction breakpoint, which `openai_cache_instructions` doesn't place on some requests (server-side
+    state, merged or `'user'` system prompts, dynamic system prompts, no static instructions). With
+    `mode='explicit'` and no breakpoint, the request would cache nothing, so it caches like `cache=True`
+    instead. Checking the mapped request rather than repeating those gates keeps the two from drifting.
+    Mutates `settings`.
+    """
+    if settings.get('openai_prompt_cache_options') is _PREFIX_ONLY_CACHE_OPTIONS and not _has_prompt_cache_breakpoint(
+        items
+    ):
+        settings['openai_prompt_cache_options'] = {'mode': 'implicit', 'ttl': '30m'}
+
+
+def _resolve_legacy_cache_retention(
+    profile: OpenAIModelProfile, default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
+    """The 24-hour extended retention `openai_prompt_cache_retention` requests on models before GPT-5.6.
+
+    On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
+    30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached.
+    https://developers.openai.com/api/docs/guides/prompt-caching
+    """
+    if profile.get('openai_supports_prompt_cache_breakpoints', False):
+        return None
     settings = merge_model_settings(default_settings, model_settings) or {}
-    if settings.get('openai_prompt_cache_retention') == '24h':
-        return timedelta(hours=24)
-    return None
+    return timedelta(hours=24) if settings.get('openai_prompt_cache_retention') == '24h' else None
 
 
 @dataclass(init=False)
@@ -1112,8 +1277,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.settings, model_settings)
+        """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
+        return _resolve_legacy_cache_retention(
+            self.profile, self.settings, model_settings
+        ) or super().resolve_cache_retention(model_settings)
+
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenAI's models cache prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        # Subclasses serving other model families (OpenRouter's Anthropic routes) still report it.
+        if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            return False
+        return super()._caching_not_enabled(model_settings)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
+            return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
+        return super()._effective_cache_settings(merged_settings)
 
     @property
     def system(self) -> str:
@@ -1156,7 +1338,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
                 f'Please use `OpenAIResponsesModel` instead.'
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+        model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     async def request(
         self,
@@ -1243,6 +1426,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         profile = self.profile
 
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        self._finalize_cache_breakpoints(tools, openai_messages)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1254,9 +1438,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        # Both helpers mutate the settings they receive.
+        # These helpers mutate the settings they receive.
         model_settings = OpenAIChatModelSettings(**model_settings)
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
+        _keep_implicit_cache_without_breakpoints(model_settings, openai_messages)
 
         _drop_unsupported_params(profile, model_settings)
 
@@ -1297,6 +1482,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
+                    verbosity=model_settings.get('openai_text_verbosity', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
@@ -1411,7 +1597,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                    part_provider_details = _map_tool_call_provider_details(c)
+                    part = ToolCallPart(
+                        c.function.name,
+                        c.function.arguments,
+                        tool_call_id=c.id,
+                        provider_name=self.system if part_provider_details else None,
+                        provider_details=part_provider_details,
+                    )
                 elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
                     # NOTE: Custom tool calls are not supported.
                     # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
@@ -1591,6 +1784,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             options['continuous_usage_stats'] = True
         return cast(chat.ChatCompletionStreamOptionsParam, options)
 
+    def _finalize_cache_breakpoints(
+        self, tools: list[chat.ChatCompletionToolParam], openai_messages: list[chat.ChatCompletionMessageParam]
+    ) -> None:
+        """Hook for subclasses to adjust cache breakpoints once the tools and messages are both mapped."""
+
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
@@ -1724,7 +1922,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling tool call parts.
             """
-            self.tool_calls.append(self._model._map_tool_call(item))
+            tool_call = self._model._map_tool_call(item)
+            if (
+                item.provider_name == self._model.system
+                and item.provider_details
+                and (extra_content := item.provider_details.get('extra_content'))
+            ):
+                tool_call = _ChatCompletionMessageFunctionToolCallParam(**tool_call, extra_content=extra_content)
+            self.tool_calls.append(tool_call)
 
         def _map_response_builtin_part(self, item: NativeToolCallPart | NativeToolReturnPart) -> None:
             """Maps a built-in tool call or return part to the response context.
@@ -1804,10 +2009,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             else:
                 assert_never(message)
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
+        system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        if instruction_parts:
             if system_prompt_role == 'developer':
                 instruction_messages: list[chat.ChatCompletionMessageParam] = [
                     chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
@@ -1823,6 +2027,32 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        if (
+            model_settings
+            and model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn, and merging
+            # the leading messages collapses the boundary into one block, so neither can carry it.
+            and system_prompt_role != 'user'
+            and profile.get('openai_chat_supports_multiple_system_messages', True)
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not _has_dynamic_system_prompt(messages)
+        ):
+            static_count = _cacheable_instruction_count(instruction_parts)
+            breakpoint_index = system_prompt_count + static_count - 1
+            if breakpoint_index >= 0:
+                target = cast(
+                    'chat.ChatCompletionSystemMessageParam | chat.ChatCompletionDeveloperMessageParam',
+                    openai_messages[breakpoint_index],
+                )
+                content = target['content']
+                content_parts = (
+                    [ChatCompletionContentPartTextParam(type='text', text=content)]
+                    if isinstance(content, str)
+                    else list(content)
+                )
+                _add_openai_prompt_cache_breakpoint(content_parts)
+                target['content'] = content_parts
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         # After instructions are inserted and system messages merged: the breakpoint may land on a system
@@ -2170,8 +2400,33 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.settings, model_settings)
+        """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
+        return _resolve_legacy_cache_retention(
+            self.profile, self.settings, model_settings
+        ) or super().resolve_cache_retention(model_settings)
+
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenAI's models cache prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        # Subclasses serving other model families (OpenRouter's Anthropic routes) still report it.
+        if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            return False
+        return super()._caching_not_enabled(model_settings)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
+            return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
+        return super()._effective_cache_settings(merged_settings)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     @property
     def system(self) -> str:
@@ -2258,6 +2513,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(response, ModelResponse):  # pragma: no cover
             return response
 
+        response = check_json_response(self.model_name, response)
         if not response.output:  # pragma: no cover
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
 
@@ -2433,7 +2689,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
 
         return usage.RequestUsage(
-            input_tokens=response.input_tokens,
+            input_tokens=check_json_response(self.model_name, response).input_tokens,
         )
 
     @asynccontextmanager
@@ -2505,6 +2761,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        response = check_json_response(self.model_name, response)
         if error := response.error:
             raise _response_error(self.model_name, error.code, error.message)
         items: list[ModelResponsePart] = []
@@ -2799,6 +3056,29 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
+        system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        if (
+            model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn.
+            and system_prompt_role != 'user'
+            # A stored response keeps its input, so instructions relocated there would be replayed
+            # to any request that continues it, next to that request's own instructions. Only
+            # requests that don't use server-side state relocate them, whatever the setting resolves to.
+            and model_settings.get('openai_previous_response_id') is None
+            and model_settings.get('openai_conversation_id') is None
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not _has_dynamic_system_prompt(messages)
+            # A compaction item retains the window's leading system items, so they aren't resent.
+            and not any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
+        ):
+            instructions = self._relocate_cached_instructions(
+                instructions,
+                openai_messages,
+                self._get_instruction_parts(messages, wire_request_parameters) or [],
+                system_prompt_role,
+            )
+
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -2812,15 +3092,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
-            assert isinstance(instructions, str)
-            system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
-            openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
-            )
-            instructions = OMIT
+            # `openai_cache_instructions` may already have moved them into the input messages.
+            if isinstance(instructions, str):
+                system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+                openai_messages.insert(
+                    system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
+                )
+                instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text_with_verbosity: responses.ResponseTextConfigParam = text if isinstance(text, dict) else {}
@@ -2864,6 +3142,47 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if 'openai_context_management' in unsupported_settings
             else model_settings.get('openai_context_management', OMIT),
         )
+
+    @staticmethod
+    def _relocate_cached_instructions(
+        instructions: str | Omit,
+        openai_messages: list[responses.ResponseInputItemParam],
+        instruction_parts: list[InstructionPart],
+        system_prompt_role: OpenAISystemPromptRole,
+    ) -> str | Omit:
+        """Move the instructions into leading input messages and mark a cache breakpoint after the last static one.
+
+        The top-level `instructions` field cannot carry a breakpoint. Mutates `openai_messages` and
+        returns what's left of the top-level `instructions`.
+        """
+        # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
+        # apart from `_leading_system_message_count`: checking `type` there would also move where
+        # prompted-output instructions go for users who don't set `openai_cache_instructions`.
+        system_prompt_count = next(
+            (
+                i
+                for i, message in enumerate(openai_messages)
+                if message.get('role') != system_prompt_role or message.get('type', 'message') != 'message'
+            ),
+            len(openai_messages),
+        )
+        breakpoint_index = system_prompt_count + _cacheable_instruction_count(instruction_parts) - 1
+        # With nothing static to cache, the instructions stay in the top-level field.
+        if breakpoint_index >= 0:
+            if instruction_parts:
+                openai_messages[system_prompt_count:system_prompt_count] = [
+                    responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
+                    for part in instruction_parts
+                ]
+                instructions = OMIT
+            target = cast(responses.EasyInputMessageParam, openai_messages[breakpoint_index])
+            # A system prompt's content is already a list when a leading `CachePoint` attached its breakpoint there.
+            content: str | responses.ResponseInputMessageContentListParam = target['content']
+            if isinstance(content, str):
+                content = [responses.ResponseInputTextParam(type='input_text', text=content)]
+            _add_openai_prompt_cache_breakpoint(content)
+            target['content'] = content
+        return instructions
 
     @staticmethod
     def _build_request_options(
@@ -2917,9 +3236,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
-        # Both helpers mutate the settings they receive.
+        # These helpers mutate the settings they receive.
         model_settings = self._prepare_responses_settings(messages, OpenAIResponsesModelSettings(**model_settings))
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
+        _keep_implicit_cache_without_breakpoints(model_settings, request_params.input)
         _drop_unsupported_params(profile, model_settings)
         store = self._resolve_store(model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
@@ -3178,7 +3498,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tool_choice = ToolChoiceAllowedParam(
                     type='allowed_tools',
                     mode=effective_mode,
-                    tools=[{'type': 'function', 'name': n} for n in tool_names],
+                    # Ignore names that are not currently available, keeping declaration order.
+                    # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
+                    # `additional_tools` item instead of `tools`, and the API accepts it in `allowed_tools`.
+                    tools=[
+                        {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
+                    ],
                 )
         else:
             assert_never(resolved_tool_choice)
@@ -4321,11 +4646,14 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         for dtc in choice.delta.tool_calls or []:
+            provider_details = _map_tool_call_provider_details(dtc)
             maybe_event = self._parts_manager.handle_tool_call_delta(
                 vendor_part_id=dtc.index,
                 tool_name=dtc.function.name if dtc.function is not None else None,
                 args=dtc.function.arguments if dtc.function is not None else None,
                 tool_call_id=dtc.id,
+                provider_name=self.provider_name if provider_details else None,
+                provider_details=provider_details,
             )
             if maybe_event is not None:
                 if isinstance(maybe_event, PartStartEvent):
@@ -4508,6 +4836,68 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
             pending_tool_search_call_ids: deque[str] = deque()
+            function_call_args: dict[str, str] = {}
+            finalized_function_calls: set[str] = set()
+
+            def handle_function_call_part(
+                item: responses.ResponseFunctionToolCall,
+            ) -> ModelResponseStreamEvent:
+                item_id = item.id
+                if item_id is not None:  # pragma: no branch
+                    function_call_args[item_id] = item.arguments
+                # Preserve any namespace attached to a discovered deferred tool for replay.
+                provider_details: dict[str, Any] | None = None
+                if item.namespace:
+                    provider_details = {'namespace': item.namespace}
+                return self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=item_id,
+                    tool_name=item.name,
+                    args=item.arguments,
+                    tool_call_id=_response_tool_call_id(
+                        item.call_id,
+                        self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                    ),
+                    id=item_id,
+                    provider_name=self.provider_name,
+                    provider_details=provider_details,
+                )
+
+            def finalize_function_call(item_id: str, final_args: str) -> ModelResponseStreamEvent | None:
+                if item_id in finalized_function_calls or not final_args:
+                    return None
+                existing_part = self._parts_manager.get_part_by_vendor_id(item_id)
+                if not isinstance(existing_part, ToolCallPart):
+                    # A stream resumed after `output_item.added` has no complete part yet;
+                    # `output_item.done` creates it from the full item.
+                    return None
+
+                received_args = function_call_args.get(item_id, '')
+                if received_args == final_args:
+                    finalized_function_calls.add(item_id)
+                    return None
+
+                if final_args.startswith(received_args):
+                    # The Codex backend can send arguments only in the done events.
+                    event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=item_id,
+                        args=final_args[len(received_args) :],
+                    )
+                else:
+                    # Replacing the part would emit a second `PartStartEvent` for the same call,
+                    # which UI event streams render as a duplicate tool call, so keep what streamed.
+                    finalized_function_calls.add(item_id)
+                    warnings.warn(
+                        'The provider sent a `function_call_arguments.done`/`output_item.done` snapshot whose '
+                        f'arguments differ from the streamed argument deltas for function call item {item_id!r} '
+                        f'(tool {existing_part.tool_name!r}); the streamed arguments were kept. '
+                        'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                        UserWarning,
+                    )
+                    return None
+
+                function_call_args[item_id] = final_args
+                finalized_function_calls.add(item_id)
+                return event
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -4598,15 +4988,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get('failed')
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=chunk.item_id,
-                        args=chunk.delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    # Without `output_item.added` (a resumed stream) the part has no tool name yet, so
+                    # skip its deltas and let `output_item.done` create it; never mutate finalized args.
+                    if chunk.item_id in function_call_args and chunk.item_id not in finalized_function_calls:
+                        function_call_args[chunk.item_id] += chunk.delta
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=chunk.item_id,
+                            args=chunk.delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    pass  # there's nothing we need to do here
+                    if event := finalize_function_call(chunk.item_id, chunk.arguments):
+                        yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
                     self._usage += self._map_usage(chunk.response)
@@ -4624,23 +5019,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                     if isinstance(chunk.item, responses.ResponseFunctionToolCall):
-                        # Preserve any `namespace` the Responses API attaches to a
-                        # discovered deferred tool so it can be round-tripped on replay.
-                        fn_provider_details: dict[str, Any] | None = None
-                        if chunk.item.namespace:
-                            fn_provider_details = {'namespace': chunk.item.namespace}
-                        yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id=chunk.item.id,
-                            tool_name=chunk.item.name,
-                            args=chunk.item.arguments,
-                            tool_call_id=_response_tool_call_id(
-                                chunk.item.call_id,
-                                self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
-                            ),
-                            id=chunk.item.id,
-                            provider_name=self.provider_name,
-                            provider_details=fn_provider_details,
-                        )
+                        yield handle_function_call_part(chunk.item)
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
@@ -4737,7 +5116,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                    if isinstance(chunk.item, responses.ResponseReasoningItem):
+                    if isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
+                        # The Codex backend can send a call's arguments only in the done events, without deltas.
+                        if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
+                            yield handle_function_call_part(chunk.item)
+                            finalized_function_calls.add(item_id)
+                        elif event := finalize_function_call(item_id, chunk.item.arguments):
+                            yield event
+                    elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         if signature := chunk.item.encrypted_content:  # pragma: no branch
                             # Add the signature to the part corresponding to the first summary/raw CoT
                             for event in self._parts_manager.handle_thinking_delta(
@@ -5484,6 +5870,17 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
+
+
+def _map_tool_call_provider_details(
+    tool_call: ChatCompletionMessageFunctionToolCall | chat_completion_chunk.ChoiceDeltaToolCall,
+) -> dict[str, Any] | None:
+    # Gemini 3 puts each tool call's thought signature in this vendor extension, and rejects the next request unless
+    # it's sent back unchanged:
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking/thought-signatures
+    if extra_content := (tool_call.model_extra or {}).get('extra_content'):
+        return {'extra_content': extra_content}
+    return None
 
 
 def _group_settled_portable_function_calls(

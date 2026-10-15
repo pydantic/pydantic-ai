@@ -24,7 +24,10 @@ class ProjectSettings:
     overrides: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     """Validated setting values by `/set` key, ready to layer over the user store."""
     plugins: tuple[PluginSettings, ...] = ()
-    """Declarations from the file, every one disabled: the user approves each with `/plugins enable`."""
+    """Declarations from the file, every one disabled: the user approves each with `/plugins enable`.
+
+    A relative `path` is already made absolute against the project root, the folder holding `.clai`.
+    """
     unknown: tuple[str, ...] = ()
     """Keys the `Settings` model does not know; reported once at startup and ignored."""
 
@@ -56,6 +59,19 @@ def find_project_file(workspace: Path, name: Path = PROJECT_FILE) -> Path | None
     return None
 
 
+def _unapproved(plugin: PluginSettings, *, root: Path) -> PluginSettings:
+    """`plugin` switched off, with its file anchored to the project `root`.
+
+    Approval saves the declaration to the user store, which every repository shares. A path left
+    relative there would resolve against whichever directory CLAI starts in next, so another
+    repository could put its own file at that path and have it run under this approval.
+    """
+    update: dict[str, object] = {'enabled': False}
+    if plugin.path is not None:
+        update['path'] = str(root / plugin.path)
+    return plugin.model_copy(update=update)
+
+
 def load_project_settings(workspace: Path) -> ProjectSettings:
     """Read and validate the project file for `workspace`.
 
@@ -74,6 +90,6 @@ def load_project_settings(workspace: Path) -> ProjectSettings:
     return ProjectSettings(
         path=path,
         overrides=overrides,
-        plugins=tuple(plugin.model_copy(update={'enabled': False}) for plugin in plugins),
+        plugins=tuple(_unapproved(plugin, root=path.parent.parent) for plugin in plugins),
         unknown=tuple(sorted(raw.keys() - _SET_KEYS.keys())),
     )

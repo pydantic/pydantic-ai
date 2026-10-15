@@ -12,6 +12,7 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
@@ -20,6 +21,8 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -126,6 +129,30 @@ async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer(
                 await agent.run('go', conversation_id='parent')
     assert handled
     assert handled == [event for event in observed if not isinstance(event, (DelegationStartEvent, DelegationEndEvent))]
+
+
+async def test_child_stream_events_carry_the_child_model_and_window() -> None:
+    updates: list[DelegationTaskEvent] = []
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        updates.append(update)
+
+    owner = DelegationTasks(observer=observe)
+    child_model = TestModel(custom_output_text='child result', model_name='child', profile={'context_window': 4096})
+    child = Agent(child_model, deps_type=object, name='worker')
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent: Agent[object, str] = Agent(
+                    parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)]
+                )
+                await agent.run('go', conversation_id='parent')
+    lifecycle = [
+        u for u in updates if u.event is None or isinstance(u.event, (DelegationStartEvent, DelegationEndEvent))
+    ]
+    streamed = [u for u in updates if u not in lifecycle]
+    assert streamed and {(u.model_name, u.context_window) for u in streamed} == {('child', 4096)}
+    assert lifecycle and {(u.model_name, u.context_window) for u in lifecycle} == {(None, None)}
 
 
 @pytest.mark.parametrize(('background', 'resume'), [(True, None), (False, 'earlier')])
@@ -498,6 +525,53 @@ async def test_restore_interrupted_step_history(tmp_path: Path, snapshot: bool) 
         assert bool(saved.messages) == snapshot
         if snapshot:
             assert 'step evidence' in str(saved.messages)
+
+
+async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path: Path) -> None:
+    owner = DelegationTasks(directory=tmp_path)
+    async with owner.opened():
+        await delegate(owner, conversation_id='parent')
+        (record,) = owner.records.values()
+        record.messages = [
+            ModelRequest(parts=[UserPromptPart('start')]),
+            ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')]),
+        ]
+    path = tmp_path / f'{record.id}.json'
+    data = json.loads(path.read_text())
+    data['status'] = 'running'
+    path.write_text(json.dumps(data))
+
+    seen: list[ModelMessage] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.extend(messages)
+        yield 'resumed result'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    restored = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with restored.opened():
+            with restored.bind():
+                parent = Agent(
+                    parent_model(resume=record.id),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                await parent.run('continue', conversation_id='parent')
+    resumed = restored.records[record.id]
+    assert (resumed.outcome, resumed.output) == ('ok', 'resumed result')
+    returns = [
+        part
+        for message in seen
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.tool_call_id, part.outcome, part.content) for part in returns] == [
+        ('slow', 'interrupted', INTERRUPTED_TOOL_RETURN_CONTENT)
+    ]
+    last = seen[-1]
+    assert isinstance(last, ModelRequest)
+    assert [part.content for part in last.parts if isinstance(part, UserPromptPart)] == ['inspect']
 
 
 async def test_failed_parent_drains_descendants() -> None:

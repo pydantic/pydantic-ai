@@ -11,6 +11,7 @@ from termflow.tui.menu import Menu
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 from pydantic_clai2.ui.rendering.spinners import MIN_INTERVAL, Spinner, Spinners, clamp_interval
@@ -77,16 +78,17 @@ class SpinnerPicker:
             MenuBuilder('Select spinner')
             .style(markdown_style())
             .items([MenuItem(f'{name}{" (current)" if name == self.current else ""}', value=name) for name in names])
-            .searchable()
             .initial_index(names.index(self.current))
             .list_width(30)
             .preview(self.preview)
-            .footer_hint('type to filter - -/+ speed - Enter apply - Esc close')
-            .key_source(lambda: menu_key() or _TICK)
         )
-        for key, delta in (('-', MIN_INTERVAL), ('left', MIN_INTERVAL), ('+', -MIN_INTERVAL), ('=', -MIN_INTERVAL)):
-            builder = builder.on_key(key, self.nudge(delta))
-        return builder.on_key('right', self.nudge(-MIN_INTERVAL)).build()
+        slower, faster = self.nudge(MIN_INTERVAL), self.nudge(-MIN_INTERVAL)
+        return slash_search(
+            builder,
+            footer='-/+ speed · enter apply · esc close',
+            key_source=lambda: menu_key() or _TICK,
+            hotkeys={'-': slower, 'left': slower, '+': faster, '=': faster, 'right': faster},
+        )
 
 
 def _seconds(text: str) -> float:

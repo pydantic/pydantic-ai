@@ -12,6 +12,7 @@ Harness capabilities that act in a [workspace](../workspace.md), such as [`Coder
 activity or step reattaches to the environment it names, whichever worker runs it. A later run that
 continues the conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](../workspace.md#continuing-in-the-same-workspace).
+[`Researcher`](researcher.md) works under all three engines too: pass `Researcher()` next to the durability capability, as the `Coder` examples below do, and keep the workspace attached for its tool-result spills.
 
 Attach the workspace, the harness capabilities, and the durability capability when you construct the
 agent. The examples below run the same `Coder` agent on each engine. Swap `LocalWorkspace` for a
@@ -33,7 +34,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='coder',  # names the agent's Temporal activities
     capabilities=[LocalWorkspace('.'), Coder(), TemporalDurability()],
 )
@@ -76,7 +77,7 @@ dbos_config: DBOSConfig = {'name': 'coder', 'system_database_url': 'sqlite:///co
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='coder',
     capabilities=[LocalWorkspace('.'), Coder(), DBOSDurability()],
 )
@@ -108,7 +109,7 @@ from pydantic_ai.durable_exec.prefect import PrefectDurability
 from pydantic_ai_harness.coder import Coder
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='coder',
     capabilities=[LocalWorkspace('.'), Coder(), PrefectDurability()],
 )

@@ -4,7 +4,7 @@ import asyncio
 import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired, Self
 
 import pytest
 from dirty_equals import IsJson, IsList
@@ -12,7 +12,7 @@ from dirty_equals import IsJson, IsList
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from typing_extensions import NotRequired, Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -491,6 +491,7 @@ def test_logfire(
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     }
                 )
             ),
@@ -1289,6 +1290,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                             }
                         ],
                         'thinking': None,
+                        'cache': None,
                     }
                 )
             ),
@@ -1566,6 +1568,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',

@@ -1,23 +1,26 @@
 from __future__ import annotations
 
+import json
 import pickle
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema, field_validator
+from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai import Agent, BinaryContent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -142,6 +145,74 @@ async def test_decision_model_extension_point(allow_model_requests: None):
     assert result.response.usage == RequestUsage(input_tokens=4, output_tokens=2)
     assert result.response.provider_name == 'test-decisions'
     assert result.response.provider_url == 'https://example.test/decisions'
+
+
+class ImageEnabledDecisionModel(InMemoryDecisionModel):
+    supports_image_input: ClassVar[bool] = True
+
+
+async def test_decision_model_preserves_image_evidence_in_state(allow_model_requests: None):
+    prior_image = BinaryContent(b'prior', media_type='image/png')
+    assistant_image = BinaryContent(b'assistant', media_type='image/png')
+    tool_image = BinaryContent(b'tool', media_type='image/png')
+    native_image = BinaryContent(b'native', media_type='image/png')
+    failed_image = BinaryContent(b'failed', media_type='image/png')
+    current_image = BinaryContent(b'current', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['Earlier prompt.', prior_image])]),
+        ModelResponse(parts=[TextPart('Assistant text.'), FilePart(assistant_image)]),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', ['before', tool_image, 'after'], tool_call_id='tool-1')]),
+        ModelResponse(
+            parts=[NativeToolReturnPart('native_lookup', ['before', native_image, 'after'], provider_name='test')]
+        ),
+        ModelResponse(parts=[ToolCallPart('failed_lookup', {}, tool_call_id='tool-2')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'failed_lookup',
+                    ['before', failed_image, 'after'],
+                    tool_call_id='tool-2',
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+    model = ImageEnabledDecisionModel()
+
+    result = await Agent(model, output_type=bool, instructions='Does the evidence contain an image?').run(
+        ['Current prompt.', current_image], message_history=history
+    )
+
+    assert result.output is True
+    [request] = model.requests
+    assert request.images == (
+        prior_image,
+        assistant_image,
+        tool_image,
+        native_image,
+        failed_image,
+        current_image,
+    )
+    expected_state: JsonValue = {
+        'history': [
+            {'user': 'Earlier prompt.\n\n<image 1>'},
+            {'assistant': 'Assistant text.'},
+            {'assistant': '<image 2>'},
+            {'tool_call': {'name': 'lookup', 'args': {}}},
+            {'tool_return': {'name': 'lookup', 'content': '["before","<image 3>","after"]'}},
+            {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 4>","after"]'}},
+            {'tool_call': {'name': 'failed_lookup', 'args': {}}},
+            {
+                'tool_return': {
+                    'name': 'failed_lookup',
+                    'content': json.dumps({'error': '["before","<image 5>","after"]'}, separators=(',', ':')),
+                }
+            },
+        ],
+        'text': 'Current prompt.\n\n<image 6>',
+    }
+    assert request.state == expected_state
 
 
 class Release(BaseModel):
@@ -488,7 +559,9 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
     """A pick below `decision_route_threshold` is recorded on the `decide` span that picked it, even without content.
 
     The `FallbackModel` hands the step to the model behind the decision model, so the `chat` span ends without an
-    error: the `decide` span is the one place the hand-off shows, with the picked route's label on its exception.
+    error. The hand-off shows on the `decide` span, with the picked route's label on its exception, and on the
+    `model request attempt` span beside it. That span is only opened once the attempt has failed, so the `decide` span
+    the attempt opened can't be its child.
     """
     fallback = FallbackModel(UnsureDecisionModel(), TestModel(call_tools=[]))
     agent = Agent(
@@ -520,7 +593,18 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
                                         'pydantic_ai.decision.route': 'escalate_to_team',
                                     }
                                 ],
-                            }
+                            },
+                            {
+                                'name': 'model request attempt in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.escaped': 'True',
+                                    }
+                                ],
+                            },
                         ],
                     }
                 ],
@@ -905,6 +989,37 @@ async def test_profile_score_limit_overrides_the_class(allow_model_requests: Non
     assert isinstance(model.requests[0].questions['score'], ScoreQuestion)
 
 
+class InstructedDecisionModel(InMemoryDecisionModel):
+    requires_instructions = True
+
+
+@pytest.mark.parametrize(
+    ('model', 'instructions'),
+    [
+        pytest.param(InMemoryDecisionModel(), None, id='class-default'),
+        pytest.param(InstructedDecisionModel(), 'Which of these applies?', id='class'),
+        pytest.param(
+            InMemoryDecisionModel(profile=DecisionModelProfile(decision_requires_instructions=True)),
+            'Which of these applies?',
+            id='profile',
+        ),
+        pytest.param(
+            InstructedDecisionModel(profile=DecisionModelProfile(decision_requires_instructions=False)),
+            None,
+            id='profile-overrides-class',
+        ),
+    ],
+)
+async def test_requires_instructions(
+    model: InMemoryDecisionModel, instructions: str | None, allow_model_requests: None
+):
+    """A model that requires instructions, by its class or its profile, gets a generic question when nothing is asked."""
+    await Agent(model, output_type=Literal['billing', 'bug']).run('Charged twice.')
+    question = model.requests[0].questions['response']
+    assert isinstance(question, ChoiceQuestion)
+    assert question.instructions == instructions
+
+
 async def test_levels_over_score_limit_can_be_optional(allow_model_requests: None):
     model = TenLevelDecisionModel()
     result = await Agent(model, output_type=OptionalElevenLevelReview).run('Score this.')
@@ -1025,7 +1140,7 @@ async def escalate(ctx: RunContext[None]) -> str:
     return 'escalated'
 
 
-class Priority(str, Enum):
+class Priority(str, Enum):  # noqa: UP042
     """How soon the ticket needs a reply."""
 
     now = 'now'
@@ -1332,6 +1447,27 @@ async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None
     assert len(decision_model.requests) == 1
 
 
+@pytest.mark.parametrize('limit_kind', ['images', 'questions'])
+async def test_default_fallback_handles_backend_request_limits(allow_model_requests: None, limit_kind: str):
+    """Image and question preflight errors are `ModelAPIError`s, so the default fallback can take over."""
+
+    class LimitedDecisionModel(ImageEnabledDecisionModel):
+        max_images: ClassVar[int | None] = 0
+        max_questions: ClassVar[int | None] = 1
+
+    decision_model = LimitedDecisionModel()
+    model = FallbackModel(decision_model, TestModel(call_tools=[]))
+    if limit_kind == 'images':
+        agent = Agent(model, output_type=bool, instructions='Does the evidence contain a receipt?')
+        result = await agent.run(['Review this image.', BinaryContent(b'image', media_type='image/png')])
+    else:
+        agent = Agent(model, output_type=Triage)
+        result = await agent.run('Triage this ticket.')
+
+    assert result.response.model_name == 'test'
+    assert decision_model.requests == []
+
+
 def approve() -> str:
     """Approve the request as it stands."""
     return 'approved'  # pragma: no cover
@@ -1396,7 +1532,7 @@ def test_unsure_route_pickles():
     )
 
 
-class Reprioritise(str, Enum):
+class Reprioritise(str, Enum):  # noqa: UP042
     """Change how soon the ticket needs a reply."""
 
     now = 'now'
@@ -1472,7 +1608,7 @@ async def test_the_route_question_carries_the_agent_instructions(allow_model_req
     )
 
 
-class Bank(str, Enum):
+class Bank(str, Enum):  # noqa: UP042
     """The banks the customer's accounts can be with."""
 
     ing = 'ing'
@@ -2073,7 +2209,7 @@ async def test_a_route_with_nothing_to_ask_could_be_the_one_taken(allow_model_re
     assert list(model.requests[0].questions) == snapshot(['route'])
 
 
-class Area(str, Enum):
+class Area(str, Enum):  # noqa: UP042
     billing = 'billing'
     bug = 'bug'
 

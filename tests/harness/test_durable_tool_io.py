@@ -29,6 +29,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
 from pydantic_ai_harness.keenable import KeenableSearch
 from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness.memory import InMemoryStore, Memory
+from pydantic_ai_harness.planning import Planning, SqlitePlanStore
 from tests.conftest import detach_dbos_logging
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -216,6 +218,7 @@ def _counting_aws_cli() -> str:
 
 
 _CREATION_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_creation_'))
+_PLAN_DATABASE = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_plan_')) / 'plan.db'
 _AUTHORED = """
 from pydantic_ai.capabilities import AbstractCapability
 
@@ -278,6 +281,21 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('list_authored_capabilities', {}),
         ('disable_authored_capability', {'name': 'marker'}),
     ),
+    'memory': _agent(
+        'memory_agent',
+        Memory[None](store=InMemoryStore()),
+        ('write_memory', {'content': 'The user prefers tabs.', 'file': 'style.md'}),
+        # A missing file asks the model to retry, which the operation records as data.
+        ('read_memory', {'file': 'missing.md'}),
+        ('search_memory', {'query': 'tabs'}),
+        ('delete_memory', {'file': 'missing.md'}),
+    ),
+    'planning': _agent(
+        'planning_agent',
+        Planning[None](store=SqlitePlanStore(database=str(_PLAN_DATABASE))),
+        ('write_plan', {'items': [{'id': 'first', 'content': 'Write the migration'}]}),
+        ('add_task', {'content': 'Run the tests'}),
+    ),
 }
 
 
@@ -308,6 +326,27 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 
         monkeypatch.setattr(CapabilityStore, method, counted)
 
+    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
+    original_memory_write = InMemoryStore.write
+
+    async def counted_memory_write(self: InMemoryStore, *args: Any, **kwargs: Any) -> Any:
+        _requests['memory.write'] += 1
+        return await original_memory_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, 'write', counted_memory_write)
+
+    # The plan tools read the store many times; a write is what recovery must not repeat.
+    for method in ('set_items', 'add_item'):
+        original = getattr(SqlitePlanStore, method)
+
+        async def counted_plan(
+            self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
+        ) -> Any:
+            _requests[f'plan.{_method}'] += 1
+            return await _original(self, *args)
+
+        monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
+
     def snapshot() -> Counter[str]:
         counts = Counter(_requests)
         if aws_count.exists():
@@ -329,6 +368,8 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
         'capability_creation.list_all',
         'capability_creation.disable',
     ],
+    'memory': ['memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'],
+    'planning': ['planning.set_items', 'planning.add_item'],
 }
 
 
@@ -347,7 +388,8 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     # Re-execute the workflow function from after its last step, the way recovery does. Calling it
     # again under the same ID is no replay: DBOS returns the stored result without running it.
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    assert await handle.get_result() == 'done'
+    # The default 1s result poll would add up to a second on top of the internal queue's own poll.
+    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
     assert count_requests() == first_run, 'recovery made a request again'
 
     step_names = {step['function_name'] for step in steps}

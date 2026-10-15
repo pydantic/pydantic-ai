@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-CLAI_PROVIDERS = frozenset({'github-copilot', 'openai-codex', 'openrouter', 'vllm'})
+CLAI_PROVIDERS = frozenset({'chain', 'github-copilot', 'openai-codex', 'openrouter', 'vllm'})
 """Prefixes CLAI's own model resolver handles before Pydantic AI sees the name."""
 
 LOGINS = ('openai-codex', 'github-copilot')

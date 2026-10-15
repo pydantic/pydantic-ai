@@ -43,6 +43,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
 | [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrap Sandbox](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
 
@@ -108,6 +109,7 @@ How the agent spends its context window: the difference between an agent that de
 |---|---|---|
 | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
+| [Caching](caching.md) | Core | Provider-adaptive prompt caching of tools, instructions and the conversation, at a configurable retention |
 | [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
@@ -155,6 +157,8 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations |
 | [AWS Lambda durability](https://pydantic.dev/docs/ai/harness/aws-lambda/) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Absurd durability](https://pydantic.dev/docs/ai/harness/absurd/) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
+| [pgtask durability](https://pydantic.dev/docs/ai/harness/pgtask/) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |
+| [Render Workflows](../harness/render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](https://pydantic.dev/docs/ai/harness/step-persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
@@ -186,7 +190,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking, WebSearch
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     instructions='You are a research assistant. Be thorough and cite sources.',
     capabilities=[
         Thinking(effort='high'),
@@ -218,7 +222,7 @@ def refund_status(order_id: str) -> str:
     return f'Order {order_id}: refund issued on 2026-05-01.'
 
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[refunds])
+agent = Agent('{{ openai:medium }}', capabilities=[refunds])
 ```
 
 Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — like [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
@@ -427,16 +431,16 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch, XSearch
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     capabilities=[
         # Native when supported; DuckDuckGo fallback on unsupported models
         WebSearch(local='duckduckgo'),
         # Native when supported; markdownify-based fallback on unsupported models
         WebFetch(local=True),
         # Native when supported; direct image-model fallback otherwise
-        ImageGeneration(fallback_image_model='openai:gpt-image-1.5'),
+        ImageGeneration(fallback_image_model='{{ openai:image }}'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_subagent_model='xai:grok-4.3'),
+        XSearch(fallback_subagent_model='{{ xai:medium }}'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],

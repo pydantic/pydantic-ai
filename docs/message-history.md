@@ -34,7 +34,7 @@ Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult
 ```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 print(result.output)
@@ -62,10 +62,8 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -81,7 +79,7 @@ Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.Strea
 ```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 
 async def main():
@@ -135,7 +133,7 @@ async def main():
                     )
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=12),
-                model_name='gpt-5.2',
+                model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -165,7 +163,7 @@ If `message_history` is set and not empty, a new system prompt is not generated 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -196,10 +194,8 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -222,8 +218,8 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000462'), input_tokens=56, output_tokens=26),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.000372'), input_tokens=56, output_tokens=26),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -309,7 +305,7 @@ A fresh `conversation_id` is generated on the first run, stamped onto every mess
 ```python {title="conversation_id is shared across runs in the same conversation"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 result1 = agent.run_sync('Tell me a joke.')
 result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
@@ -339,7 +335,7 @@ To override or fork `conversation_id`:
 ```python {title="forking a conversation"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 result1 = agent.run_sync('Tell me a joke.')
 forked = agent.run_sync(
@@ -376,7 +372,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,  # (1)!
 )
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
@@ -416,9 +412,11 @@ _(This example is complete, it can be run "as is")_
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
     mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
-    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
-    read a media type out of never becomes a file that then fails to dump. A
+    reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
+    always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
+    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
+    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
+    anywhere else. A
     [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
     [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
     requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
@@ -455,7 +453,7 @@ class StoredRun(BaseModel):
     result: AgentRunResult[str]
 
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 result = agent.run_sync('Tell me a joke.')
 
 stored_json = StoredRun(result=result).model_dump_json()
@@ -493,7 +491,7 @@ Client-supplied [`CompactionPart`][pydantic_ai.messages.CompactionPart]s are kep
 from pydantic_ai import Agent, ModelMessagesTypeAdapter
 from pydantic_ai.messages import sanitize_messages
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 # `request_json` is the body submitted by an untrusted client.
 loaded_history = ModelMessagesTypeAdapter.validate_python(request_json['message_history'])
@@ -525,7 +523,7 @@ whole thing can be stored under one key and handed back intact:
 ```python {title="carry a conversation between runs"}
 from pydantic_ai import Agent, Conversation
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 conversation: Conversation = agent.run_sync('Tell me a joke.').conversation
 print(len(conversation.messages))
@@ -544,7 +542,7 @@ three carry together:
 ```python {title="continue a conversation"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 first = agent.run_sync('Tell me a joke.')
 second = agent.run_sync('Explain?', conversation=first.conversation)
@@ -601,12 +599,12 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google:gemini-3-pro-preview` model.
+In the example below, we reuse the message from the first agent run, which uses the `{{ openai:medium }}` model, in a second agent run using the `{{ google:large }}` model.
 
 ```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -614,7 +612,7 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    model='google:gemini-3-pro-preview',
+    model='{{ google:large }}',
     message_history=result1.new_messages(),
 )
 print(result2.output)
@@ -641,10 +639,8 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00026425'), input_tokens=55, output_tokens=12
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.00023'), input_tokens=55, output_tokens=12),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -667,8 +663,8 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000424'), input_tokens=56, output_tokens=26),
-        model_name='gemini-3-pro-preview',
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        model_name='{{ google:large.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -691,12 +687,12 @@ so far as context.
 from pydantic_ai import Agent
 
 biography_agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Answer biographical questions concisely.',
 )
 
 science_agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Answer science questions for a general audience.',
 )
 
@@ -789,7 +785,7 @@ Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import SystemPromptPart
 
-agent = Agent('anthropic:claude-opus-4-7')
+agent = Agent('{{ anthropic:large }}')
 
 
 @agent.tool
@@ -823,7 +819,7 @@ from outside (e.g. forwarding events from a webhook, chat platform, or job queue
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('anthropic:claude-opus-4-7')
+agent = Agent('{{ anthropic:large }}')
 
 
 async def main():
@@ -924,7 +920,7 @@ def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
     return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
 # Create agent with history processor
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(filter_responses)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(filter_responses)])
 
 # Example: Create some conversation history
 message_history = [
@@ -949,7 +945,7 @@ async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessag
     """Keep only the last 5 messages to manage token usage."""
     return messages[-5:] if len(messages) > 5 else messages
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent_messages)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(keep_recent_messages)])
 
 # Example: Even with a long conversation history, only the last 5 messages are sent to the model
 long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
@@ -981,7 +977,7 @@ def context_aware_processor(
         return messages[-3:]  # Keep only recent messages when token usage is high
     return messages
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(context_aware_processor)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(context_aware_processor)])
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
@@ -998,7 +994,7 @@ from pydantic_ai.capabilities import ProcessHistory
 
 # Use a cheaper model to summarize old messages.
 summarize_agent = Agent(
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     instructions="""
 Summarize this conversation, omitting small talk and unrelated topics.
 Focus on the technical discussion and next steps.
@@ -1017,7 +1013,7 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
     return messages
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messages)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(summarize_old_messages)])
 ```
 
 !!! warning "Be careful when summarizing the message history"
@@ -1061,7 +1057,7 @@ def compact_when_window_fills(
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='You are a helpful assistant.',
     capabilities=[ProcessHistory(compact_when_window_fills)],
 )
@@ -1075,20 +1071,22 @@ Pydantic AI fills the window size from [genai-prices](https://github.com/pydanti
 
 #### Scheduling maintenance into cache-cold windows
 
+See [Caching](capabilities/caching.md#prefix-stability-guarantees) for the full prefix-stability contract and monitoring guidance.
+
 History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
 
 Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
 
 ```python {title="cache_cold_maintenance.py"}
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.profiles import prompt_cache_outlook
 
-profile = AnthropicModel('claude-sonnet-4-6').profile
+profile = AnthropicModel('{{ anthropic:medium.name }}').profile
 
-now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 history = [
     ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
     ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
@@ -1102,7 +1100,7 @@ print(outlook)
 
 A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess.
 
-Retention you request through model settings, such as `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'`, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
+Retention you request through model settings, such as the unified [`cache='1h'`][pydantic_ai.settings.ModelSettings.cache], `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'` on OpenAI models before GPT-5.6, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
 
 ```python {title="cache_cold_hook.py"}
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -1130,7 +1128,7 @@ async def compact_when_cold(ctx: RunContext, request_context: ModelRequestContex
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     model_settings=AnthropicModelSettings(anthropic_cache='1h'),  # (1)!
     capabilities=[hooks],
 )
@@ -1138,7 +1136,7 @@ agent = Agent(
 
 1. With the 1-hour cache requested, the outlook only turns `'cold'` after an hour of idleness rather than Anthropic's default 5 minutes.
 
-`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports them. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
+`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports that retention (one of the profile's [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions]): OpenAI ignores `CachePoint.ttl`, so a `'1h'` marker doesn't extend GPT-5.6's 30 minutes. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
 
 ### Testing History Processors
 
@@ -1212,7 +1210,7 @@ def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[ProcessHistory(filter_responses), ProcessHistory(summarize_old_messages)],
 )
 ```
