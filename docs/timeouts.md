@@ -44,7 +44,7 @@ Pass `timeout=` (in seconds) to [`run()`][pydantic_ai.agent.AbstractAgent.run], 
 ```python {title="run_timeout.py"}
 from pydantic_ai import Agent, RunTimedOut
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -69,8 +69,8 @@ async def main():
 ```python {title="run_timeout_delegation.py"}
 from pydantic_ai import Agent, RunContext
 
-research_agent = Agent('openai:gpt-5.2')
-agent = Agent('openai:gpt-5.2')
+research_agent = Agent('{{ openai:medium }}')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.tool
