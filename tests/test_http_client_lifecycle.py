@@ -185,29 +185,54 @@ class _CountingOpenAIServer(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', 0), Handler)
 
 
+class _TransportTrackingEventLoop(asyncio.SelectorEventLoop):
+    """An event loop that keeps a weak reference to the transport of each connection it opens."""
+
+    def __init__(self, transports: list[weakref.ref[asyncio.Transport]]) -> None:
+        super().__init__()
+        self.transports = transports
+
+    async def create_connection(self, *args: Any, **kwargs: Any) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
+        transport, protocol = await super().create_connection(*args, **kwargs)
+        self.transports.append(weakref.ref(transport))
+        return transport, protocol
+
+
 def test_unentered_agent_runs_on_new_event_loop_over_real_connections(
     monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
-    """A second `asyncio.run()` used to reuse a pooled connection of the closed event loop: `Event loop is closed`."""
+    """A second run on a new event loop used to reuse a pooled connection of the closed one: `Event loop is closed`."""
     # Imported under another name, so the autouse `track_httpx_clients` fixture doesn't swap in its client cache.
     monkeypatch.setattr(openai_compatible, 'create_async_httpx2_client', create_uncached_client)
     server = _CountingOpenAIServer()
     server_thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01})
     provider = OpenAIProvider(base_url=f'http://127.0.0.1:{server.server_port}/v1', api_key='test-key')
     agent = Agent(OpenAIChatModel('gpt-5.2', provider=provider))
+    transports: list[weakref.ref[asyncio.Transport]] = []
     server_thread.start()
     try:
-        assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
+        for _ in range(2):
+            # Like `asyncio.run()`: each run gets an event loop of its own, closed when the run ends.
+            loop = _TransportTrackingEventLoop(transports)
+            try:
+                result = loop.run_until_complete(agent.run('What is the capital of France?'))
+                assert result.output == 'Paris'
+            finally:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
         assert server.connections == 2
     finally:
         server.shutdown()
         server.server_close()
         server_thread.join()
-        # Neither client can be closed now that its event loop is, so collect their sockets here.
+        # No client can be closed once its event loop is, so their connections are finalized here, while the
+        # `unclosed transport` and `unclosed socket` warnings that raises are ignored, rather than in a later test.
+        del agent, provider
         with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-            del agent, provider
+            warnings.simplefilter('ignore', ResourceWarning)
             gc.collect()
+    assert len(transports) == 2
+    assert [transport() for transport in transports] == [None, None]
 
 
 def test_unentered_agent_keeps_client_while_its_event_loop_runs(new_provider_clients: list[httpx2.AsyncClient]):
