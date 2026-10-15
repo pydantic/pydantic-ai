@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, interrupt } from '../api'
 import type { CompletionInfo } from '../protocol'
 import { ArrowUpIcon, ChevronIcon, CheckIcon, StopIcon } from './icons'
 
@@ -28,6 +28,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const request = useRef(0)
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
+
+  // The composer moves from the new-session hero to the bottom bar when the first message lands; keep typing there.
+  useEffect(() => area.current?.focus(), [])
 
   useEffect(() => {
     const element = area.current
@@ -61,10 +64,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       event.preventDefault()
       setModels(null)
     }
-    window.addEventListener('keydown', close)
+    // Capture phase, so Esc closes the menu before the page's own Esc handler can interrupt a turn.
+    window.addEventListener('keydown', close, true)
     window.addEventListener('mousedown', close)
     return () => {
-      window.removeEventListener('keydown', close)
+      window.removeEventListener('keydown', close, true)
       window.removeEventListener('mousedown', close)
     }
   }, [models])
@@ -207,7 +211,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           </div>
           <span className="hint">{running ? 'Esc to interrupt' : '/ for commands'}</span>
           {running && !text.trim() ? (
-            <button className="send stop" onClick={() => void api.interrupt()} title="Interrupt (Esc)">
+            <button className="send stop" onClick={() => void interrupt(onError)} title="Interrupt (Esc)">
               <StopIcon size={14} />
             </button>
           ) : (
