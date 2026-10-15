@@ -2441,11 +2441,17 @@ textarea.setting-input {
   gap: 12px;
   width: min(520px, calc(100vw - 48px));
   max-height: min(640px, calc(100vh - 48px));
+  overflow-y: auto;
   padding: 22px 24px 18px;
   border-radius: 14px;
   background: var(--surface-raised);
   box-shadow: var(--shadow);
   animation: appear 0.12s ease both;
+}
+
+/* A long description scrolls the whole dialog rather than squeezing its choices to nothing. */
+.dialog-box > * {
+  flex-shrink: 0;
 }
 
 .dialog-title {
