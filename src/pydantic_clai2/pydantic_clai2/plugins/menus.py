@@ -101,11 +101,13 @@ class Dialogs(Protocol):
         initial: str = '',
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
+        description: str = '',
     ) -> str | None:
         """The typed text, stripped, or `None` when the user backed out.
 
         `secret` masks it. `check` says why non-empty text is not acceptable, or returns `None`;
-        the dialog stays open until it accepts the text or the text is empty.
+        the dialog stays open until it accepts the text or the text is empty. `description` says
+        more above the input, such as where to find the value, with a link to open.
         """
         ...
 

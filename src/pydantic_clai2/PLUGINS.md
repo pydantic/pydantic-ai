@@ -2567,7 +2567,7 @@ answer. Backing out returns `None` or `False`, never raises:
 | Method | Asks for |
 |---|---|
 | `choose(title=..., options=[Option(value=..., label=..., description=...)], current=...)` | one of the options; returns its `value` |
-| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable |
+| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=..., description=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable, and `description` says more above the input, such as where to find the value |
 | `confirm(title=..., yes=..., no=..., description=...)` | `yes` or `no`, with `no` selected first |
 | `wait(title=..., description=..., task=...)` | nothing: it runs `task(show)` behind a screen the user can cancel, showing the latest text passed to `show` (a sign-in link, a code), and returns whether it finished |
 
