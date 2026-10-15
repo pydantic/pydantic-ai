@@ -118,9 +118,18 @@ class ScriptedDialogs:
         initial: str = '',
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
+        description: str = '',
     ) -> str | None:
         answer = self._next(
-            Asked(kind='text', title=title, label=label, placeholder=placeholder, initial=initial, secret=secret)
+            Asked(
+                kind='text',
+                title=title,
+                description=description,
+                label=label,
+                placeholder=placeholder,
+                initial=initial,
+                secret=secret,
+            )
         )
         if not isinstance(answer, Type):
             return None
