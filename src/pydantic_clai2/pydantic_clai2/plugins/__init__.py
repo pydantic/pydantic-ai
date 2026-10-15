@@ -121,6 +121,72 @@ class SessionCatalog(Protocol):
         ...
 
 
+PluginOrigin = Literal['built-in', 'project', 'drop-in', 'installed']
+"""Where a plugin's declaration came from, as `/plugins` labels it."""
+PluginStatus = Literal['on', 'off', 'idle', 'failed', 'included']
+"""Loaded; turned off; on but not loaded; on but failed to load; kept off because another loaded plugin includes it."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class PluginInfo:
+    """One `/plugins` row, for a plugin that shows or manages plugins, such as a remote UI."""
+
+    name: str
+    description: str
+    """The first paragraph of the plugin's docstring, read without running its code."""
+    origin: PluginOrigin
+    source: str
+    """The drop-in file, or the import string."""
+    status: PluginStatus
+    included_in: str | None = None
+    """The loaded plugin that includes this one, when `status` is `included`."""
+    error: str | None = None
+    """Why it failed to load, when `status` is `failed`."""
+    notice: str | None = None
+    """Saved settings this build ignored at the last load."""
+    provides: str = ''
+    """What it contributes while loaded, such as `2 commands, 1 capability`."""
+    has_menu: bool = False
+    """Whether it overrides `Plugin.configure`, whose menu runs in the terminal."""
+    settings_model: type[BaseModel] | None = None
+    """Its settings model while loaded, unless it takes none; validate new settings with it for `save_settings`."""
+    settings: BaseModel | None = None
+    """Its saved settings while loaded, as the plugin reads them with `host.settings`."""
+
+
+class PluginCatalog(Protocol):
+    """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `PluginLoader` is one.
+
+    Each action applies at once and is saved, as the same `/plugins` action is; a running turn keeps
+    the plugins it started with. Adding and removing declarations goes through the prompt, with
+    `PluginHost.send_input`, as does a plugin's own settings menu (`/plugins configure NAME`).
+    """
+
+    def listing(self) -> list[PluginInfo]:
+        """Every plugin, sorted by name; reads the plugin folder and parses descriptions, so call it when shown."""
+        ...
+
+    async def enable(self, name: str) -> None:
+        """Turn a plugin on and load it, without opening its settings menu; raises `PluginError` if loading fails."""
+        ...
+
+    async def disable(self, name: str) -> None:
+        """Unload a plugin and turn it off."""
+        ...
+
+    async def reload(self, name: str) -> None:
+        """Unload a plugin, import its module again, and load it; raises `ValueError` when it is off."""
+        ...
+
+    async def save_settings(self, name: str, settings: BaseModel) -> None:
+        """Save a loaded plugin's settings, as its settings menu does, then load it again if they changed.
+
+        `settings` is an instance of `PluginInfo.settings_model`. Raises `ValueError` when the plugin is
+        not loaded or takes no settings, and `TypeError` for another model.
+        """
+        ...
+
+
 class Transcript:
     """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""
 
@@ -420,6 +486,7 @@ class PluginHost(Generic[DepsT]):
         commands: Commands | None = None,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
+        plugins: PluginCatalog | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -427,7 +494,8 @@ class PluginHost(Generic[DepsT]):
         last until the plugin unloads. `submit_prompt` runs a prompt as the next turn, and
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
         same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
-        conversations; `setting` reads its settings, as the method of the same name does.
+        conversations; `setting` reads its settings, as the method of the same name does; `plugins`
+        is what `/plugins` manages.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -454,6 +522,8 @@ class PluginHost(Generic[DepsT]):
         self.sessions = sessions
         """The saved conversations `/resume` lists; `None` on a host without session persistence."""
         self._setting = setting
+        self.plugins = plugins
+        """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
 
     def submit_prompt(self, text: str, /) -> None:
         """Run `text` as the next turn, as if typed at the prompt but without echoing it.

@@ -117,3 +117,6 @@ export const PaletteIcon = icon(
   </>,
 )
 export const CloseIcon = icon(<path d="M6 6l12 12M18 6 6 18" />)
+export const PuzzleIcon = icon(
+  <path d="M9 4.5a2 2 0 1 1 4 0V6h3a1 1 0 0 1 1 1v3h1.5a2 2 0 1 1 0 4H17v3a1 1 0 0 1-1 1h-3v-1.5a2 2 0 1 0-4 0V18H6a1 1 0 0 1-1-1v-3h1.5a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h3Z" />,
+)

@@ -16,12 +16,14 @@ interface Props {
   model: string
   disabled: boolean
   placeholder: string
+  /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
+  local?: Readonly<Record<string, () => void>>
   onError: (message: string) => void
 }
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, meter, controls, model, disabled, placeholder, onError },
+  { running, meter, controls, model, disabled, placeholder, local, onError },
   ref,
 ) {
   const [text, setText] = useState('')
@@ -89,6 +91,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (!value || disabled) return
     setText('')
     setSuggestions([])
+    const handle = local?.[value]
+    if (handle) {
+      handle()
+      return
+    }
     try {
       await api.send(value)
     } catch (error) {

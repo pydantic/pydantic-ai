@@ -18,7 +18,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 
 RECORDER = """
@@ -455,6 +455,57 @@ async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path
     assert loaded is not None
     loaded.host.save_settings(Chosen(level=2))
     assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
+
+
+TUNED = """
+\"\"\"Takes a level.\"\"\"
+
+from pydantic import BaseModel
+
+from pydantic_clai2.plugins import Plugin
+
+
+class TunedSettings(BaseModel):
+    level: int = 1
+
+
+class Tuned(Plugin[TunedSettings]):
+    pass
+"""
+
+
+async def test_plugins_catalog_saves_only_a_loaded_plugins_own_settings(tmp_path: Path) -> None:
+    """`host.plugins` is the loader; `save_settings` takes the loaded plugin's own model, as its menu would save."""
+
+    class Other(BaseModel):
+        level: int = 2
+
+    harness = Harness(tmp_path)
+    harness.write('plain')
+    (harness.store.plugins_dir / 'tuned.py').write_text(TUNED)
+    await harness.loader.load('plain')
+    await harness.loader.load('tuned')
+    loaded = harness.loader.entries()[0].loaded
+    assert loaded is not None and loaded.host.plugins is harness.loader
+    [plain, tuned] = harness.loader.listing()
+    assert (plain.name, plain.settings_model, plain.settings, plain.provides) == (
+        'plain',
+        None,
+        None,
+        '1 command, 4 hooks',
+    )
+    assert tuned.settings_model is not None and tuned.settings is not None
+    assert (tuned.description, tuned.origin, tuned.status) == ('Takes a level.', 'drop-in', 'on')
+
+    with pytest.raises(TypeError, match='tuned takes TunedSettings, not Other'):
+        await harness.loader.save_settings('tuned', Other())
+    with pytest.raises(ValueError, match='plain takes no settings'):
+        await harness.loader.save_settings('plain', NoSettings())
+    await harness.loader.save_settings('tuned', tuned.settings_model.model_validate({'level': 4}))
+    assert [saved.settings for saved in harness.store.plugins() if saved.id == 'tuned'] == [{'level': 4}]
+    await harness.loader.disable('tuned')
+    with pytest.raises(ValueError, match='tuned is not loaded'):
+        await harness.loader.save_settings('tuned', tuned.settings)
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:

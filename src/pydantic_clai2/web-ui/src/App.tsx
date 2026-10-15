@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { api, connect, interrupt, type Connection } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
@@ -7,6 +7,7 @@ import { Switches } from './components/Switches'
 import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
+import { PluginsPanel } from './components/PluginsPanel'
 import { ReplPanel } from './components/ReplPanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
@@ -38,6 +39,10 @@ export function App() {
   const [opening, setOpening] = useState<Opening | null>(null)
   const picked = useRef(0)
   const [toast, setToast] = useState<string | null>(null)
+  const [plugins, setPlugins] = useState(false)
+  const openPlugins = useCallback(() => setPlugins(true), [])
+  const closePlugins = useCallback(() => setPlugins(false), [])
+  const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
 
@@ -162,6 +167,9 @@ export function App() {
       } else if (mod && event.key === 'j') {
         event.preventDefault()
         setRepl((open) => !open)
+      } else if (mod && event.key === ',') {
+        event.preventDefault()
+        setPlugins(true)
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -194,6 +202,7 @@ export function App() {
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      local={local}
       onError={showError}
     />
   )
@@ -215,6 +224,7 @@ export function App() {
           }
           onView={(session) => void view(session)}
           onCollapse={() => setSidebar(false)}
+          onPlugins={openPlugins}
           onError={showError}
         />
       )}
@@ -311,6 +321,9 @@ export function App() {
           </button>
         )}
       </main>
+      {plugins && (
+        <PluginsPanel version={state.pluginsVersion} running={state.running} onClose={closePlugins} onError={showError} />
+      )}
       {repl && (
         <ReplPanel
           entries={entries}

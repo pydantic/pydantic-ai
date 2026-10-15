@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import (
     AgentStreamEvent,
@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
+from pydantic_clai2.plugins import PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.repl_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
@@ -369,6 +370,13 @@ class SessionsChanged:
     type: Literal['sessions'] = 'sessions'
 
 
+@dataclass(kw_only=True)
+class PluginsChanged:
+    """A command ran, which may have changed the plugins or their settings; an open plugins panel lists them again."""
+
+    type: Literal['plugins'] = 'plugins'
+
+
 ItemMessage = (
     ItemAdded
     | TextDelta
@@ -394,6 +402,7 @@ ServerMessage = (
     | TitleChanged
     | ThemeChanged
     | SessionsChanged
+    | PluginsChanged
 )
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
@@ -441,6 +450,37 @@ class Transcript:
     items: list[Item]
     openable: bool
     """Whether `/resume` can switch to it here; it refuses a session saved in another directory."""
+
+
+@dataclass(kw_only=True)
+class PluginForm:
+    """A plugin's settings as a form: its settings model's JSON Schema, by alias, and the saved values."""
+
+    json_schema: dict[str, JsonValue]
+    values: dict[str, JsonValue]
+
+
+@dataclass(kw_only=True)
+class PluginRow:
+    """A plugin as the plugins panel shows it, like a `/plugins` row."""
+
+    name: str
+    description: str
+    origin: PluginOrigin
+    source: str
+    status: PluginStatus
+    included_in: str | None
+    error: str | None
+    notice: str | None
+    provides: str
+    has_menu: bool
+    """Whether it has a settings menu of its own, which opens in the terminal."""
+    terminal: bool
+    """Whether this CLAI has a terminal for that menu to open in; `clai2 --web` has none."""
+    form: PluginForm | None
+    """Its settings while it is on, unless it takes none or its model has no JSON Schema."""
+    serving: bool
+    """Whether it is the plugin serving this page, which the page must not turn off or reload."""
 
 
 @dataclass(kw_only=True)

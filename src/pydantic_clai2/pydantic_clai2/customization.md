@@ -29,7 +29,8 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and
   host.sessions lists, renames, forks, and deletes the saved sessions /resume shows.
-  host.setting(KEY) reads a setting such as run.code_mode.
+  host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
+  shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
 - Offer a settings menu: override async configure().
@@ -743,7 +744,7 @@ than monkeypatching a private global registry.
 
 `clai2 --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
 from a local browser UI instead; the built-in `web` plugin is a worked example of
-`host.send_input`, `host.complete`, `host.sessions`, and `on_command_end`.
+`host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
 `clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
 answer. Prompt text is required as an argument; stdin is not read. Use

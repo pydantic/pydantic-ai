@@ -112,6 +112,11 @@ switch to it, or use its menu to rename, fork, or delete it; a session saved in 
 directory opens read-only. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
 Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
+The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
+composer) turns plugins on and off and edits their settings in a form, saved and applied at once,
+as `/plugins` does in the terminal. Sign-ins and keys stay in each plugin's own menu, which opens
+in the terminal.
+
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with

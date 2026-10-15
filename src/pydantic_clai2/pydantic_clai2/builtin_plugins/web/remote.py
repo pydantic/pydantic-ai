@@ -2,11 +2,13 @@
 
 import math
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
+from pydantic import JsonValue
+from pydantic.errors import PydanticInvalidForJsonSchema
 from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
@@ -29,6 +31,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ItemLog,
     Notice,
     Palette,
+    PluginForm,
+    PluginRow,
+    PluginsChanged,
     Project,
     SessionEntry,
     SessionInfo,
@@ -49,7 +54,16 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     user_text,
 )
 from pydantic_clai2.config.theme_names import names as theme_names
-from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnOutcome
+from pydantic_clai2.plugins import (
+    CommandEnd,
+    ConversationChanged,
+    PluginCatalog,
+    PluginHost,
+    PluginInfo,
+    SessionCatalog,
+    TurnOutcome,
+)
+from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 from pydantic_clai2.runtime.repl_cells import is_repl_cell
 
@@ -58,6 +72,8 @@ CODE_MODE = 'run.code_mode'
 SPECULATION = 'run.speculative_code_mode'
 Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
+PluginAction = Literal['enable', 'disable', 'reload']
+SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
@@ -218,6 +234,8 @@ class Remote:
         elif event.output:
             self.hub.publish(Notice(text=event.output, command=event.text))
         self.publish_status()
+        # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
+        self.hub.publish(PluginsChanged())
 
     # What the browser does.
 
@@ -251,6 +269,82 @@ class Remote:
         response = AskUserResponse(cancelled=True) if answers is None else AskUserResponse(answers=tuple(answers))
         check_response(request, response)
         self.answerer.answer(request_id, response)
+
+    # The plugins panel.
+
+    @property
+    def plugin_catalog(self) -> PluginCatalog:
+        if self.host.plugins is None:
+            raise LookupError('This CLAI has no plugins to manage.')
+        return self.host.plugins
+
+    def plugins(self) -> list[PluginRow]:
+        """Every plugin, as `/plugins` lists it, with a form for the settings of each one that is on."""
+        return [self._plugin_row(info) for info in self.plugin_catalog.listing()]
+
+    def _plugin(self, name: str) -> PluginInfo:
+        found = next((info for info in self.plugin_catalog.listing() if info.name == name), None)
+        if found is None:
+            raise LookupError(f'Unknown plugin: {name}')
+        return found
+
+    def _plugin_row(self, info: PluginInfo) -> PluginRow:
+        return PluginRow(
+            name=info.name,
+            description=info.description,
+            origin=info.origin,
+            source=info.source,
+            status=info.status,
+            included_in=info.included_in,
+            error=info.error,
+            notice=info.notice,
+            provides=info.provides,
+            has_menu=info.has_menu,
+            terminal=self.host.console.is_terminal,
+            form=_form(info),
+            serving=info.name == self.host.name,
+        )
+
+    async def plugin_action(self, name: str, action: PluginAction) -> None:
+        """Turn a plugin on or off, or reload it, as `/plugins` does; a plugin's own menu stays closed."""
+        if name == self.host.name and action != 'enable':
+            raise ValueError(SERVING)
+        catalog = self.plugin_catalog
+        run = {'enable': catalog.enable, 'disable': catalog.disable, 'reload': catalog.reload}[action]
+        try:
+            await run(name)
+        except PluginError as error:
+            raise ValueError(str(error)) from error
+        finally:
+            self.hub.publish(PluginsChanged())
+
+    async def configure_plugin(self, name: str, changes: Mapping[str, JsonValue], reset: Sequence[str] = ()) -> None:
+        """Change some settings of a plugin that is on and reset others to their defaults, then load it again.
+
+        The rest keep their saved values. Raises `ValidationError` naming each setting its model rejects.
+        """
+        if name == self.host.name:
+            # Loading it again stops this server and starts one with a new token, which this page lacks.
+            raise ValueError(SERVING)
+        info = self._plugin(name)
+        if info.settings_model is None or info.settings is None:
+            if info.status != 'on':
+                raise ValueError(f'Turn {name} on to change its settings.')
+            raise ValueError(f'{name} takes no settings.')
+        values = info.settings.model_dump(by_alias=True)
+        for key in reset:
+            values.pop(key, None)
+        settings = info.settings_model.model_validate({**values, **changes})
+        try:
+            await self.plugin_catalog.save_settings(name, settings)
+        except PluginError as error:
+            raise ValueError(str(error)) from error
+        finally:
+            self.hub.publish(PluginsChanged())
+
+    def open_plugin_menu(self, name: str) -> None:
+        """Open a plugin's own settings menu in the terminal, as `/plugins configure NAME` typed there does."""
+        self.host.send_input(f'/plugins configure {self._plugin(name).name}')
 
     # The sidebar's sessions.
 
@@ -340,6 +434,17 @@ class Remote:
 
 def _usage(usage: RunUsage) -> Usage:
     return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
+
+
+def _form(info: PluginInfo) -> PluginForm | None:
+    """A settings form for a plugin that is on and takes settings, unless its model has no JSON Schema."""
+    if info.settings_model is None or info.settings is None:
+        return None
+    try:
+        schema = info.settings_model.model_json_schema(by_alias=True)
+    except PydanticInvalidForJsonSchema:  # A type JSON Schema cannot express; its own menu or `/plugins add` still can.
+        return None
+    return PluginForm(json_schema=schema, values=info.settings.model_dump(mode='json', by_alias=True))
 
 
 def _busy(summary: ConversationSummary) -> bool:

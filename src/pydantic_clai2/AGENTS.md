@@ -304,9 +304,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()` |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
-| `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
+| `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses, and the `SessionCatalog` and `PluginCatalog` protocols behind `host.sessions` and `host.plugins` |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
-| `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
+| `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands; `PluginEntry` status and origin; the `PluginCatalog` hosts get as `host.plugins` (`listing`, `save_settings`) |
 | `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
@@ -369,7 +369,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/coder_folders.py` | the Coder agent-folder list (add, edit, remove, validation, duplicate detection) and its local directory browser, reading and saving through `CoderSource` |
 | `builtin_plugins/web/__init__.py` | the opt-in built-in `web` plugin: `WebSettings`, `/web start\|stop\|status`, the per-launch token, its command and conversation moments handed to `Remote`, and `AskUser` over `BrowserAnswerer` while `ask_user` is on (the compatibility matrix keeps the `ask_user` plugin off meanwhile) |
 | `builtin_plugins/web/protocol.py` | what the browser sees, as kw-only dataclasses mirrored by `web-ui/src/protocol.ts`: transcript `Item`s, server messages, `EventTranslator` (stream and harness events to item messages), `history_items`, and `ItemLog` for a browser that connects mid-turn |
-| `builtin_plugins/web/remote.py` | `Remote`: the session as browsers share it; every action goes through `host.send_input`, the sidebar reads `host.sessions` grouped by `project_identity`, and `Observer` turns only the held conversation's runs (`wrap_run`, not the turn moments a `/fork` also fires) and their events into browser messages |
+| `builtin_plugins/web/remote.py` | `Remote`: the session as browsers share it; every action goes through `host.send_input`, the sidebar reads `host.sessions` grouped by `project_identity`, the plugins panel `host.plugins` with a form from each settings model's JSON Schema, and `Observer` turns only the held conversation's runs (`wrap_run`, not the turn moments a `/fork` also fires) and their events into browser messages |
 | `builtin_plugins/web/live.py` | `Hub`, the connected browsers' queues on the shell's loop, and `BrowserAnswerer`, which races the browser against the terminal picker |
 | `builtin_plugins/web/app.py` | the FastAPI app and `Guard` (Host, token, and WebSocket Origin checks); every handler is `async`, so it runs on the shell's loop |
 | `builtin_plugins/web/server.py` | `WebServer`: uvicorn on CLAI's own loop, without its signal handlers or logs |

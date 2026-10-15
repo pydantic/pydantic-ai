@@ -51,7 +51,7 @@ def _unspecified(host: str) -> bool:
 class WebSettings(BaseModel):
     """Where the web UI listens, and whether `/web` opens the browser."""
 
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
     host: str = '127.0.0.1'
     """The address to listen on. Keep it local: anyone who reaches it with the token can run commands as you."""
