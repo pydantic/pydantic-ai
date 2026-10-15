@@ -722,6 +722,9 @@ def _move_leading_cache_breakpoints(
     output. A string body becomes a single text part so it can carry the marker; the text is
     unchanged. Responses assistant output (`output_text`, `refusal`) can't carry a breakpoint, so
     those items are skipped. Raises `UserError` when there's no earlier content at all, as Anthropic does.
+
+    `OpenRouterModel._move_leading_cache_controls` does the same for OpenRouter's `cache_control`, with
+    different rules; check it when changing this.
     """
     index = 0
     while index < len(items):
