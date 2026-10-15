@@ -881,7 +881,7 @@ def create_shell(
         interrupts=Interrupts(),
         screen=screen,
         sessions=sessions,
-        speculation=Speculation(context=context, console=console),
+        speculation=Speculation(context=context, console=console, repl_states=session.repl_states),
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
@@ -1047,6 +1047,8 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
+        if child.repl_states is not None:
+            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
