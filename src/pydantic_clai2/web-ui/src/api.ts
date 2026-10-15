@@ -54,6 +54,15 @@ export const api = {
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
 }
 
+/** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */
+export async function interrupt(onError: (message: string) => void): Promise<void> {
+  try {
+    await api.interrupt()
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error))
+  }
+}
+
 export type Connection = 'connecting' | 'open' | 'closed' | 'expired'
 
 /** Keep one WebSocket open, reconnecting with backoff; each connection starts with a snapshot.
