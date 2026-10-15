@@ -11,7 +11,8 @@ alongside them:
   ends at its terminal (`ResponseDone`), or at the usage report that closes a response's tool calls. Its id is
   made up (`ResponseStarted.provider_id=False`).
 - A response answers every input that asked for one and hadn't been answered when it started (a typed turn, a
-  tool result): the model replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
+  tool result): the protocol names none, and the model replies to what it has received, so inputs sent before it
+  starts replying share that reply (`ResponseStarted.basis='inferred'`).
 - A spoken turn has no id and no speech frames either: it starts with its first input transcript, joins the
   conversation as the reply to it starts, and has its whole transcript once that reply ends, if the transcript
   isn't marked finished before. Without input transcription, audio streamed since the last reply is a turn of
