@@ -60,6 +60,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -812,6 +813,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     so Tool Search discoveries don't bust the tool-definitions cache prefix.
     """
 
+    repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
+    """Keep the `run_code` REPL across agent runs in this store; unset, each run starts a fresh REPL.
+
+    Not used under durable execution.
+    """
+
     capability: AbstractCapability[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
     """The run's `CodeMode` instance, when this toolset was built by one.
 
@@ -829,6 +836,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # Shared by `for_run_step` copies so they use the same REPL session and the original entered
     # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
     _run_state: MontyRunState | None = field(default=None, init=False, repr=False, compare=False)
+
+    # Shared with `_run_state`: created on entry when `repl_store` is set, saved on exit.
+    _repl: PersistentRepl[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     # Catalog string stashed during `get_tools` (when `dynamic_catalog`) and read back by
     # `get_instructions` in the same step. Empty when there's nothing to surface.
@@ -854,6 +864,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return self
         new_self = replace(self, wrapped=new_wrapped)
         new_self._run_state = self._run_state
+        new_self._repl = self._repl
         new_self._warned_deferred = self._warned_deferred
         new_self._last_catalog = self._last_catalog
         return new_self
@@ -870,19 +881,29 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
         await self.wrapped.__aenter__()
         self._run_state = run_state
+        self._repl = (
+            None
+            if self.repl_store is None
+            else PersistentRepl(self.repl_store, limits=_resolve_resource_limits(self.resource_limits))
+        )
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         """Exit the wrapped toolset, then tear down the worker pool."""
         run_state = self._run_state
         assert run_state is not None
+        repl, self._repl = self._repl, None
         self._run_state = None
         try:
             if self.speculation is not None:
                 await self.speculation.close()
             return await self.wrapped.__aexit__(*args)
         finally:
-            await run_state.close()
+            try:
+                if repl is not None:
+                    await repl.save(run_state)
+            finally:
+                await run_state.close()
 
     @classmethod
     def from_run_context(cls, ctx: RunContext[AgentDepsT]) -> Self | None:
@@ -1033,6 +1054,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
         if restart:
+            repl = self._persistent_repl(ctx)
+            if repl is not None:
+                repl.restart(ctx)
             await run_state.reset()
 
         execution = RunCodeExecution(parent_tool_call_id=ctx.tool_call_id or 'pyd_ai_code_mode')
@@ -1060,6 +1084,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def _as_run_code_tool(tool: ToolsetTool[AgentDepsT]) -> _RunCodeTool[AgentDepsT] | None:
         return tool if isinstance(tool, _RunCodeTool) else None
 
+    def _persistent_repl(self, ctx: RunContext[AgentDepsT]) -> PersistentRepl[AgentDepsT] | None:
+        """The run's link to `repl_store`, or `None` without one or under durable execution.
+
+        A durable workflow replays its code, so store I/O there would need to be deterministic.
+        """
+        return None if in_durable_execution(ctx) else self._repl
+
     def _capability_id(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """The id `capability` is registered under this run, so `run_code` is attributed to it."""
         if self.capability is None:
@@ -1077,6 +1108,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
+        repl = self._persistent_repl(ctx)
+        if repl is not None:
+            await repl.begin(ctx)
         fresh_repl = not run_state.has_executed_feed
 
         callable_defs = tool.callable_defs
@@ -1164,9 +1198,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # original run and replay take different branches, which Temporal cannot record.
         limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
         try:
+            if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
+                # The type checker would reject the names the restored state defines.
+                fresh_repl = type_check = False
             session = await run_state.get_session(
                 type_check=type_check,
-                type_check_stubs=type_check_stubs,
+                type_check_stubs=type_check_stubs if type_check else None,
                 limits=limits,
                 in_temporal_workflow=in_workflow,
             )
