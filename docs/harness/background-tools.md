@@ -22,7 +22,7 @@ import asyncio
 from pydantic_ai import Agent
 from pydantic_ai_harness import BackgroundTools
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[BackgroundTools()])
+agent = Agent('{{ openai:medium }}', capabilities=[BackgroundTools()])
 
 @agent.tool_plain(metadata={'background': True})
 async def slow_research(query: str) -> str:
@@ -67,7 +67,7 @@ parameters.
 from pydantic_ai import Agent
 from pydantic_ai_harness import BackgroundTools
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[BackgroundTools()])
+agent = Agent('{{ openai:medium }}', capabilities=[BackgroundTools()])
 
 @agent.tool_plain(metadata={'background': 'optional'})
 async def slow_research(query: str) -> str:
@@ -90,7 +90,7 @@ async def crawl_site(url: str) -> str:
 
 research_tools = FunctionToolset([deep_research, crawl_site]).with_metadata(background=True)
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[research_tools],
     capabilities=[BackgroundTools()],
 )
@@ -160,7 +160,7 @@ pip/uv-add "pydantic-ai-slim[spec]" pydantic-ai-harness
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - BackgroundTools: {}
 ```
