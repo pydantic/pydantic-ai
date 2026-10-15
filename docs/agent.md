@@ -128,6 +128,8 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
 
+Some models can keep a persistent connection open across runs with [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect]; see [OpenAI Responses WebSocket mode](models/openai.md#websocket-mode).
+
 ### Streaming Events and Final Output
 
 As shown in the example above, [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] makes it easy to stream the agent's final output as it comes in.
