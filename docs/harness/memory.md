@@ -210,12 +210,12 @@ agent = Agent(
 
 Metadata describes the write that produced the file's current version:
 
-- It is stored in the same atomic step as the content, and replaces the previous write's metadata. A write without `metadata` leaves the file with none, so after an agent edit the file no longer shows the UI as its writer. Set `write_metadata` whenever another writer records metadata.
+- It is written with the content, in the same transaction for the database stores, and replaces the previous write's metadata. A write without `metadata` leaves the file with none, so after an agent edit the file no longer shows the UI as its writer. Set `write_metadata` whenever another writer records metadata.
 - Compare-and-swap is unchanged: a write based on a stale version fails with a conflict and changes neither the content nor the metadata.
 - A replayed operation returns its receipt without touching the file, which keeps the metadata of the write being replayed unless a later write replaced it. Metadata is not part of the operation fingerprint, so a replay that resolves different metadata is not a conflict.
 - Deleting a file deletes its metadata.
 
-Keys and values are strings. `PostgresMemoryStore` keeps them in a `metadata JSONB` column and `SqliteMemoryStore` in a `metadata TEXT` column, both added to existing tables on first use. `FileStore` keeps them in `.memory-metadata.json` beside the Markdown files, with the content-hash version each entry describes. A file edited outside the store reads back without metadata, unless the edit restores the exact content the metadata was written with.
+Keys and values are strings. `PostgresMemoryStore` keeps them in a `metadata JSONB` column and `SqliteMemoryStore` in a `metadata TEXT` column, both added to existing tables on first use. `FileStore` keeps them in `.memory-metadata.json` beside the Markdown files, with the content-hash version each entry describes. A file edited outside the store reads back without metadata, unless the edit restores the exact content the metadata was written with. The entry is written just before the content, so an interrupted write can leave the previous content without metadata, but content that a write did store has that write's metadata. In the run's workspace, the model's file tools can edit `.memory-metadata.json` as well as the notes, so when the attribution must be trusted, keep the files out of the model's reach with `workspace=`, or use a database store.
 
 `MemoryStore.write` takes `metadata`. `Memory` passes it only when `write_metadata` resolves a value, so a custom store written before the parameter existed keeps working until you set `write_metadata`.
 

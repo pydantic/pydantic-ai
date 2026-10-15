@@ -239,8 +239,8 @@ class MemoryStore(Protocol):
         """Create or replace `path` if its version equals `expected_version`.
 
         `metadata` describes this write, such as who made it, and replaces the file's previous
-        metadata in the same atomic step as the content: a write without it leaves the file with
-        none. A replayed `operation` returns its receipt without changing the file or its metadata.
+        metadata together with the content: a write without it leaves the file with none. A
+        replayed `operation` returns its receipt without changing the file or its metadata.
         """
         ...  # pragma: no cover
 
@@ -517,7 +517,8 @@ class FileStore:
     mutations are kept beside the files in `.memory-operations.json`, so a replayed tool call is
     not applied twice. Write metadata is kept in `.memory-metadata.json` with the version it
     describes, so a file changed outside the store reads back without metadata until it again
-    holds the content the metadata was written with.
+    holds the content the metadata was written with. The model's file tools can edit that file
+    too when the store is in the run's workspace.
 
     One writer per directory: one `FileStore` serializes its own operations, but two stores, or
     two processes, writing the same directory can lose updates. Use `SqliteMemoryStore` or
@@ -767,13 +768,15 @@ class FileStore:
                 await self._save(workspace, operations, receipts)
             elif settled:
                 await self._save(workspace, operations, receipts)
+            # Before the content, so a write whose content landed has its metadata too: a receipt
+            # settled from that content is never applied again. The entry names the new version,
+            # so if the content write then fails, the old content reads back without metadata.
+            await self._record_metadata(workspace, root, path, version, metadata)
             if content is not None:
                 # The real path: `mv` onto a symlink would replace the link rather than write through it.
                 await _replace_text(workspace, real_target, content)
             elif current is not None:
                 await workspace.remove(target)
-            # After the content: if this is interrupted, the old entry no longer matches the version.
-            await self._record_metadata(workspace, root, path, version, metadata)
             if receipt is not None:
                 receipt.done = True
                 await self._save(workspace, operations, receipts)

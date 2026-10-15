@@ -413,6 +413,27 @@ async def test_file_store_interrupted_write_is_applied_once(tmp_path: Path) -> N
     assert file is not None and (file.content, file.operation_id) == ('new', operation.id)
 
 
+async def test_file_store_retried_write_records_metadata_whose_write_failed(tmp_path: Path) -> None:
+    backend = _FlakyBackend(tmp_path)
+    store = FileStore('.', workspace=backend)
+    created = await store.write('main.md', 'old', expected_version=None, metadata={'updated_by': 'ui'})
+    operation = MemoryOperation(id='run-1:call-1', fingerprint='write:main.md:new')
+
+    backend.fail('.memory-metadata.json')
+    with pytest.raises(OSError, match='simulated crash'):
+        await store.write(
+            'main.md', 'new', expected_version=created.version, operation=operation, metadata={'updated_by': 'agent'}
+        )
+    retried = await store.write(
+        'main.md', 'new', expected_version=created.version, operation=operation, metadata={'updated_by': 'agent'}
+    )
+
+    assert not retried.replayed
+    file = await store.read('main.md', max_chars=100)
+    assert file is not None
+    assert (file.content, file.metadata) == ('new', {'updated_by': 'agent'})
+
+
 async def test_file_store_settles_an_interrupted_mutation_before_the_next_one_on_its_path(tmp_path: Path) -> None:
     backend = _FlakyBackend(tmp_path)
     store = FileStore('.', workspace=backend)
