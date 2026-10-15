@@ -17,7 +17,7 @@ from dataclasses import replace as dc_replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, Never, TypeVar
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -25,8 +25,8 @@ import anyio
 import pytest
 from pydantic import BaseModel
 from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
-from typing_extensions import Never, TypedDict
+from pydantic_monty import NOT_HANDLED, AsyncFutureSnapshot, AsyncMonty, MountDir, OSAccess, OsFunction
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -622,18 +622,30 @@ class TestCodeMode:
             await wrapper.call_tool('run_code', {'code': 'print(x)', 'restart': True}, ctx, run_code)
 
     async def test_advertised_modules_match_the_docs_and_import(self) -> None:
-        """The model is told exactly the modules the docs list, and each of them imports."""
+        """The model is told exactly the modules the docs, README, and skill list, and each of them imports."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
-        documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
-        assert advertised is not None and documented is not None
+        repo = Path(__file__).parents[3]
+        harness = repo / 'src' / 'pydantic_ai_harness' / 'pydantic_ai_harness'
+        doc_lists = [
+            (repo / 'docs' / 'harness' / 'code-mode.md', r'Allowed stdlib modules: (.*?) \('),
+            (harness / 'code_mode' / 'README.md', r'allowed stdlib: (.*?)\)'),
+            (
+                harness / '.agents' / 'skills' / 'pydantic-ai-harness' / 'references' / 'CODE-MODE.md',
+                r'must be imported before use: (.*?)\n',
+            ),
+        ]
+        assert advertised is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
-        assert modules == re.findall(r'`(\w+)`', documented.group(1))
+        assert 'collections' in modules
+        for path, pattern in doc_lists:
+            documented = re.search(pattern, path.read_text(), re.DOTALL)
+            assert documented is not None, path
+            assert re.findall(r'`(\w+)`', documented.group(1)) == modules, path
         code = '\n'.join(f'import {module}' for module in modules) + '\n"ok"'
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'ok'
@@ -2141,6 +2153,112 @@ class TestCodeMode:
 
         # The agent's final output reflects the value flowing through the sandbox.
         assert result.output == 'sum is 10'
+
+    # Deferred gather resolution order: regression tests for issue #9962. In global
+    # `sequential` mode deferred calls resume in dispatch order even when the snapshot
+    # lists the pending ids in another order; the parallel modes stay unordered.
+
+    @staticmethod
+    def _gather_three_calls_agent(monkeypatch: pytest.MonkeyPatch, executed: list[str]) -> Agent[object, str]:
+        """Build an agent whose model gathers three deferred `record` calls.
+
+        Reverses the ids reported by the public `AsyncFutureSnapshot.pending_call_ids`
+        property. This is test-local forcing, not library behavior: it simulates a
+        snapshot whose pending ids do not follow dispatch order, which is exactly the
+        input `_resolve_futures` must not trust.
+        """
+        original = AsyncFutureSnapshot.__dict__['pending_call_ids']
+        monkeypatch.setattr(
+            AsyncFutureSnapshot,
+            'pending_call_ids',
+            property(lambda snapshot: list(reversed(original.__get__(snapshot, AsyncFutureSnapshot)))),
+        )
+
+        def record(label: str) -> str:
+            """Record a call so the test can observe execution order."""
+            executed.append(label)
+            return label
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            code = (
+                'import asyncio\nawait asyncio.gather(*[record(label=label) for label in ["first", "second", "third"]])'
+            )
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        return Agent(FunctionModel(model_fn), tools=[record], capabilities=[CodeMode[object]()])
+
+    def test_deferred_gather_sequential_reversed_pending_ids_runs_in_dispatch_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Global `sequential` mode resumes gathered deferred calls in dispatch order.
+
+        The `pending_call_ids` reversal is test-local forcing, not library behavior.
+        """
+        executed: list[str] = []
+        agent = self._gather_three_calls_agent(monkeypatch, executed)
+        with agent.parallel_tool_call_execution_mode('sequential'):
+            result = agent.run_sync('Gather three record calls.')
+
+        assert executed == ['first', 'second', 'third']
+        assert result.output == 'done'
+
+    @pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+    def test_deferred_gather_parallel_reversed_pending_ids_completes_all_calls(
+        self, monkeypatch: pytest.MonkeyPatch, mode: ParallelExecutionMode
+    ) -> None:
+        """The parallel modes stay unordered, but every gathered call completes.
+
+        Completion order is intentionally not pinned here. The `pending_call_ids`
+        reversal is test-local forcing, not library behavior.
+        """
+        executed: list[str] = []
+        agent = self._gather_three_calls_agent(monkeypatch, executed)
+        with agent.parallel_tool_call_execution_mode(mode):
+            result = agent.run_sync('Gather three record calls.')
+
+        assert sorted(executed) == ['first', 'second', 'third']
+        assert result.output == 'done'
+
+    @pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+    async def test_gathered_calls_overlap_in_parallel_modes(self, mode: ParallelExecutionMode) -> None:
+        """Gathered sandbox calls run concurrently unless the run's mode is `sequential` (issue #9248).
+
+        `parallel_ordered_events` orders top-level result events, which nested calls do not emit,
+        and `DBOSDurability` defaults to it. Each call waits until all three are in flight, so the
+        run only completes if the calls overlap.
+        """
+        in_flight = 0
+        all_started = asyncio.Event()
+
+        async def fetch(label: str) -> str:
+            """Return `label` once every gathered call has started."""
+            nonlocal in_flight
+            in_flight += 1
+            if in_flight == 3:
+                all_started.set()
+            await all_started.wait()
+            return label
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[TextPart('done')])
+            code = "import asyncio\nawait asyncio.gather(fetch(label='a'), fetch(label='b'), fetch(label='c'))"
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}, tool_call_id='gather')])
+
+        agent = Agent(FunctionModel(model_fn), tools=[fetch], capabilities=[CodeMode[object]()])
+        with anyio.fail_after(10), agent.parallel_tool_call_execution_mode(mode):
+            result = await agent.run('Gather three fetches.')
+
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == ['a', 'b', 'c']
+        assert result.output == 'done'
 
     async def test_deferred_capability_loader_stays_native_with_tools_all(self) -> None:
         """Regression for the deferred-capability bootstrap (issue #276).
@@ -4233,8 +4351,12 @@ class TestGlobalModeIsSequential:
         def sequential() -> ParallelExecutionMode:
             return 'sequential'
 
+        def parallel_ordered_events() -> ParallelExecutionMode:
+            return 'parallel_ordered_events'
+
         assert global_mode_is_sequential(parallel) is False
         assert global_mode_is_sequential(sequential) is True
+        assert global_mode_is_sequential(parallel_ordered_events) is False
 
 
 class TestCodeModeOSAccessInTemporal:

@@ -15,6 +15,7 @@ from pydantic_ai.providers.vllm import VLLMProvider
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
 
@@ -69,27 +70,29 @@ async def discover(connection: Connection, *, transport: httpx.AsyncBaseTranspor
     return names
 
 
-def save_connection(connection: Connection) -> None:
-    """Keep credentials out of command history and SQLite."""
+def save_connection(connection: Connection, *, account: str = 'vllm') -> None:
+    """Keep credentials out of command history and SQLite; `account` is `vllm@PROFILE` for a profile."""
     value = connection.model_dump(mode='json')
     if isinstance(connection.token, SecretStr):
         value['token'] = connection.token.get_secret_value()
-    save_key_connection(value=json.dumps(value), account='vllm', token=connection.token)
+    save_key_connection(value=json.dumps(value), account=account, token=connection.token)
 
 
 def model(name: str) -> OpenAIChatModel:
     """Resolve a saved vLLM selection through core, without global API-key fallbacks."""
-    raw = load_codex_credentials(account='vllm')
+    ref = parse_model(name)
+    setup = '/model add > vllm' if ref.profile is None else f'/login {ref.account}'
+    raw = load_codex_credentials(account=ref.account)
     if raw is None:
-        raise UserError('Connect first through /model add > vllm.')
+        raise UserError(f'Connect first through {setup}.')
     try:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
-        raise UserError('Stored connection is invalid. Reconfigure through /model add > vllm.') from None
+        raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
     provider = VLLMProvider(
         base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
     )
-    return OpenAIChatModel(name.removeprefix('vllm:'), provider=provider)
+    return OpenAIChatModel(ref.name, provider=provider)
 
 
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.

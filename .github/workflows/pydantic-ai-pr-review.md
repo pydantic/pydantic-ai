@@ -15,9 +15,8 @@ on:
     workflows: ["CI"]
     types: [completed]
   workflow_dispatch:
-  # Restricts this reviewer to collaborators: `roles:` compiles to a
-  # `check_membership` step on `github.actor`, which under `workflow_run` is
-  # whoever's push started the triggering CI run.
+  # The installed `pydantic-docs` GitHub App has no repository permission.
+  # `bots:` admits that exact app; `roles:` continues to gate human actors.
   #
   # It gates the actor, not the code — a collaborator can still open a PR from a
   # fork, which `eligibility` rejects separately. gh-aw's own `workflow_run` guard
@@ -25,6 +24,7 @@ on:
   # true of a fork PR, whose CI run the base repo owns. Forks are reviewed on
   # demand via the `douwebot` label path in bots.yml.
   roles: [admin, maintainer, write]
+  bots: [pydantic-docs]
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -77,6 +77,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
@@ -361,6 +367,31 @@ jobs:
             details_url: $url,
             output: { title: $reason, summary: "This commit was not reviewed: \($reason)." }
           }' | gh api "repos/${REPO}/check-runs" --input -
+
+  flag_failed_review:
+    # Labels the PR when this run posted no review; a later run that does clears it.
+    needs: [agent, safe_outputs, eligibility]
+    if: (!cancelled()) && needs.agent.result != 'skipped'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+          LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
+          SHA: ${{ needs.eligibility.outputs.head_sha }}
+          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
+        run: |
+          # Runs for different heads overlap, so only the run for the current head owns the label.
+          head=$(gh api "$PR" -q .head.sha)
+          [ "$head" = "$SHA" ] || exit 0
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ci-review-failed" --silent || true
+          fi
 
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest

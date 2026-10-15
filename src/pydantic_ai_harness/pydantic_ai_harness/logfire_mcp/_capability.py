@@ -73,7 +73,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
-        """Build the LogfireMCP connection and optional read-only selection."""
+        """Build the LogfireMCP connection, optional read-only selection, and tool name prefix."""
         id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
@@ -108,7 +108,14 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         """Return query guidance and the current UTC hour."""
         if not self.include_instructions:
             return None
-        return [_INSTRUCTIONS, self._current_utc]
+        if self.tool_prefix is None:
+            return [_INSTRUCTIONS, self._current_utc]
+        # Logfire's server instructions and tool descriptions name its tools without the prefix.
+        prefix_note = (
+            f"Logfire tool names here start with `{self.tool_prefix}_`, which the server's own text leaves out: "
+            f'`query_run` is `{self.tool_prefix}_query_run`.'
+        )
+        return [f'{_INSTRUCTIONS} {prefix_note}', self._current_utc]
 
     def _current_utc(self, ctx: RunContext[AgentDepsT]) -> str | None:
         # The run stamps the request it is about to send, which is the last one, so this needs no clock read

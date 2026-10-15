@@ -11,6 +11,9 @@ Ask a second model whether a tool call may run, and stop it before the tool func
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+!!! tip "Approval Reviewer or Tool Call Judge?"
+    Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use Tool Call Judge when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use [Approval Reviewer](approval-reviewer.md) when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
+
 ## The problem
 
 Some tool calls are fine and some are not, and which is which depends on the arguments rather than the tool. `run_shell` is not dangerous; `run_shell(command='rm -rf /')` is. Allowlists and argument validation catch the shapes you anticipated. [Human approval](../deferred-tools.md) catches everything, but needs a person on the other end, which a scheduled or long-running agent does not have.
@@ -36,11 +39,11 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Would running this destroy data, spend money, or leak secrets?',
 )
-agent = Agent('anthropic:claude-fable-5', capabilities=[judge])
+agent = Agent('{{ anthropic:xlarge }}', capabilities=[judge])
 
 
 @agent.tool_plain
@@ -90,13 +93,13 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Would this destroy data?',
     on_uncertain='ask',
 )
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     capabilities=[judge],
     output_type=[str, DeferredToolRequests],
 )
@@ -116,7 +119,7 @@ That ordering follows from where each gate sits in the agent loop rather than fr
 
 What the judge cannot do is ask again. A person's approval answers the `'ask'` question for that call, so on an approved call an `on_uncertain='ask'` policy allows it rather than raising a second approval request. Without that, a judge that stays uncertain -- one that is down, or one whose question the call genuinely cannot settle -- would hand the same person the same question after every approval and the call would never run. This applies to the judge's own escalation and to a `requires_approval=True` tool alike; `yes` still blocks either.
 
-Use the combination when a person approves the intent and the judge checks the arguments -- a reviewer approving "yes, clean up the old exports" does not want to re-read every path. Use `on_uncertain='ask'` instead of `requires_approval=True` when you want the judge to decide which calls are worth a person's attention.
+Use the combination when a person approves the intent and the judge checks the arguments -- a reviewer approving "yes, clean up the old exports" does not want to re-read every path. Use `on_uncertain='ask'` instead of `requires_approval=True` when you want the judge to decide which calls are worth a person's attention. To have a model approve calls before a person sees them instead, use [`ApprovalReviewer`](approval-reviewer.md).
 
 ## What the judge sees
 
@@ -133,7 +136,7 @@ The cost of that default is real: a question like "is this deletion something th
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Does this deletion go beyond what the user asked for?',
     include_conversation=True,
@@ -158,17 +161,17 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ToolCallJudge(
-            'anthropic:claude-haiku-4-5',
+            '{{ anthropic:small }}',
             tools={'risk': 'high'},
             question='Is there any chance this is destructive or irreversible?',
             on_uncertain='ask',
         ),
         ToolCallJudge(
-            'anthropic:claude-haiku-4-5',
+            '{{ anthropic:small }}',
             tools='all',
             question='Is this call clearly outside what the user asked for?',
             on_uncertain='allow',
@@ -201,7 +204,7 @@ A durable operation is addressed by the capability's `id`, and `ToolCallJudge` h
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     id='refund-judge',
     tools=['issue_refund'],
     question='Would this refund more than the original charge?',
@@ -235,7 +238,7 @@ from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
 
 verdicts: list[ToolCallVerdict] = []
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Would this destroy data?',
     on_verdict=verdicts.append,

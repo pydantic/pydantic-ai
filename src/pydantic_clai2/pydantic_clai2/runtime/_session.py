@@ -8,6 +8,7 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
+from functools import partial
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 from uuid import uuid4
@@ -15,10 +16,12 @@ from uuid import uuid4
 from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
+    Capability,
     CapabilityOrdering,
     CombinedCapability,
     DynamicCapability,
@@ -35,12 +38,15 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
+    ConversationConflict,
     ConversationSummary,
     SqliteConversationStore,
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -67,7 +73,8 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
 
-def _supports_local_workspace() -> bool:
+def supports_local_workspace() -> bool:
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
     return sys.platform != 'win32'
 
 
@@ -142,7 +149,7 @@ def _requested_model(ctx: RunContext[DepsT]) -> str:
 
 
 @dataclass
-class _ModelDefaults(AbstractCapability[DepsT]):
+class ModelDefaults(AbstractCapability[DepsT]):
     """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
 
     Merged first among capabilities, wrapping every other one, even another `outermost` one, so
@@ -162,7 +169,7 @@ class _ModelDefaults(AbstractCapability[DepsT]):
 
 
 @dataclass
-class _SessionModels(ResolveModelId[DepsT]):
+class SessionModels(ResolveModelId[DepsT]):
     """Resolve model names through CLAI first, as when CLAI resolved the selected model before each run.
 
     Outermost, so it is tried before a resolver on the agent or a plugin, unless that one is outermost
@@ -173,15 +180,34 @@ class _SessionModels(ResolveModelId[DepsT]):
         return CapabilityOrdering(position='outermost')
 
 
-def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
-    """The capabilities the agent was built with, so a sandbox configured on it counts too.
+ModelNameResolver = Callable[[str], Model | str | Awaitable[Model | str]]
+"""Builds the model a name selects, or returns a name for core to infer."""
 
-    A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win.
+
+async def resolve_model_name(resolve: ModelNameResolver, model_id: str) -> Model | None:
+    """What `resolve` makes of `model_id`, as a `SessionModels` resolver returns it.
+
+    A name it maps to another name is inferred by core. `None` when it returns `model_id` unchanged,
+    leaving the name to the run's other resolvers.
+    """
+    model = resolve(model_id)
+    if isinstance(model, Awaitable):
+        model = await model
+    if isinstance(model, Model):
+        return model
+    return infer_model(model) if model != model_id else None
+
+
+def agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]] | None:
+    """The capabilities the agent was built with, so a sandbox or guardrail configured on it counts too.
+
+    A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win. `None` when
+    a custom `AbstractAgent` does not expose its capabilities.
     """
     try:
         return [agent.root_capability]
-    except NotImplementedError:  # A custom `AbstractAgent` need not expose its capabilities.
-        return []
+    except NotImplementedError:
+        return None
 
 
 def _command_env() -> dict[str, str]:
@@ -195,6 +221,45 @@ def _command_env() -> dict[str, str]:
         for name, value in os.environ.items()
         if not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
     }
+
+
+def local_workspace(
+    configured: Sequence[AgentCapability[DepsT]], directory: str | Path
+) -> AgentCapability[DepsT] | None:
+    """The `LocalWorkspace` at `directory` that CLAI adds beside `configured`; `None` when it adds none.
+
+    None is added on platforms without a local workspace, or when a capability loaded up front supplies
+    the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
+    """
+    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+        return None
+    if _supplies_workspace(configured):
+        # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
+        fallback = _LocalFallback[DepsT](directory, env=_command_env(), id=None)
+        return DynamicCapability[DepsT](lambda ctx: fallback)
+    return LocalWorkspace[DepsT](directory, env=_command_env())
+
+
+def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """`messages` with the last one marked interrupted, so core closes unanswered calls without replaying them."""
+    marked = list(messages)
+    if marked:
+        last = marked[-1]
+        if not isinstance(last, ModelResponse) or last.state != 'suspended':
+            marked[-1] = replace(last, state='interrupted')
+    return marked
+
+
+def _fork_summary(busy: ConversationSummary) -> ConversationSummary:
+    """A new saved session continuing `busy`, which another process is still running."""
+    return ConversationSummary(
+        workspace=busy.workspace,
+        title=f'{busy.title} (fork)',
+        subtitle=busy.subtitle,
+        tags=busy.tags,
+        title_source=busy.title_source,
+        model=busy.model,
+    )
 
 
 def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> bool:
@@ -218,6 +283,7 @@ class StockAgent(Agent[DepsT, OutputT]):
         deps_type: type[DepsT],
         output_type: OutputSpec[OutputT],
         capabilities: Sequence[AgentCapability[DepsT]],
+        name: str | None = None,
         defer_model_check: bool = False,
     ) -> None:
         super().__init__(
@@ -225,6 +291,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=deps_type,
             output_type=output_type,
             capabilities=capabilities,
+            name=name,
             defer_model_check=defer_model_check,
         )
         self._stock_deps_type = deps_type
@@ -241,6 +308,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=self._stock_deps_type,
             output_type=self.output_type,
             capabilities=[self.root_capability, *plugins],
+            name=self.name,
             defer_model_check=model is not None,
         )
 
@@ -263,14 +331,24 @@ class Session(Generic[DepsT, OutputT]):
         conversations: SqliteConversationStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
+        summary: ConversationSummary | None = None,
     ) -> None:
         self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
+        """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
+        self.repl_states: ReplStates | None = (
+            ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
+            if conversations
+            else None
+        )
+        """Where code mode keeps each saved conversation's `run_code` REPL between prompts."""
         self.model: str | None = None
         self.model_chosen = True
         """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
@@ -282,7 +360,12 @@ class Session(Generic[DepsT, OutputT]):
         self.model_defaults: FamilyDefaults | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
-        self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
+        self.instructions = ''
+        """The user's own instructions, sent after the agent's and its plugins' on each request; empty sends none.
+
+        A stock agent rebuilt for its plugins binds them too, so delegated tasks get them; otherwise each run
+        gets them. Either way they are read on each request, so changing them does not rebuild the agent."""
+        self.resolve_model: ModelNameResolver = lambda name: name
         self.agent = agent
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
@@ -293,6 +376,7 @@ class Session(Generic[DepsT, OutputT]):
         self.on_stream_event = on_stream_event
         self._messages: list[ModelMessage] = list(message_history)
         self._running = False
+        self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
@@ -312,12 +396,90 @@ class Session(Generic[DepsT, OutputT]):
         """Return a snapshot of the conversation's message list."""
         return list(self._messages)
 
-    def clear(self) -> None:
-        """Start a new conversation without replacing the agent or plugins."""
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` restores this conversation by."""
+        return self.summary.id
+
+    @property
+    def title(self) -> str | None:
+        """The saved title; `None` until the first prompt is saved."""
+        return self.summary.title if self.summary.revision else None
+
+    async def _publish(self) -> None:
+        """Tell `on_change` about a new conversation ID or title, once per change."""
+        identity = (self.conversation_id, self.title)
+        if identity == self._published:
+            return
+        self._published = identity
+        if self.on_change is not None:
+            await self.on_change(ConversationChanged(conversation_id=identity[0], title=identity[1]))
+
+    async def clear(self, conversation_id: str | None = None) -> None:
+        """Start a new conversation without replacing the agent or plugins.
+
+        It is saved under `conversation_id` once its first prompt is, or under a random ID by default.
+        Raises `ValueError` when a saved conversation already uses `conversation_id`.
+        """
+        if conversation_id is not None:
+            await self._ensure_unused(conversation_id)
+            if self.repl_states is not None:
+                # A REPL left by a session deleted outside CLAI must not reach the new conversation.
+                self.repl_states.delete(conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = ConversationSummary(id=conversation_id or str(uuid4()), workspace=self.workspace)
+        await self._publish()
+
+    async def _fork(self, conversation_id: str | None = None) -> str:
+        """Save a copy of this conversation under `conversation_id`, or a random ID, and continue in the copy.
+
+        The original is left as it was saved. Raises `ValueError` when a saved conversation already
+        uses `conversation_id`. This is `--fork-session`, named after Claude Code's flag: unlike
+        `/fork`, which runs a copy in the background, this session switches into the copy.
+        """
+        if self._running:
+            raise RuntimeError('Cannot fork a running conversation')
+        if self.conversations is None:
+            raise ValueError('Session persistence is not configured')
+        if conversation_id is not None:
+            await self._ensure_unused(conversation_id)
+        source = self.summary
+        copy = ConversationSummary(
+            id=conversation_id or str(uuid4()),
+            workspace=self.workspace,
+            title=source.title,
+            subtitle=source.subtitle,
+            tags=source.tags,
+            title_source=source.title_source,
+            model=self.model,
+        )
+        self.summary = await self.conversations.save(summary=copy, messages=self._messages)
+        self._copy_repl(source.id, self.summary.id)
+        telemetry.record('conversation forked', messages=len(self._messages))
+        await self._publish()
+        return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
+
+    def _copy_repl(self, source: str, target: str) -> None:
+        """Give the fork `target` its own copy of the `run_code` REPL `source` saved."""
+        if self.repl_states is not None:
+            self.repl_states.copy(source=source, target=target)
+
+    async def _ensure_unused(self, conversation_id: str) -> None:
+        if self.conversations is None:
+            return
+        try:
+            await self.conversations.get(conversation_id=conversation_id)
+        except LookupError:
+            return
+        raise ValueError(f'A saved session already uses the ID {conversation_id}.')
+
+    async def renamed(self, *, conversation_id: str, title: str) -> None:
+        """Adopt a title already saved for `conversation_id`, if that is this conversation."""
+        if conversation_id == self.summary.id:
+            self.summary = replace(self.summary, title=title)
+            await self._publish()
 
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Swap the retained history, as `/compact` does after summarising it."""
@@ -339,8 +501,25 @@ class Session(Generic[DepsT, OutputT]):
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
-        """Restore a saved head without invoking the model or replaying tools."""
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
+        """Restore a saved head without invoking the model or replaying tools.
+
+        A session another live process is running is not taken over: its newest saved state is
+        copied into a new saved session, which this one continues while the original keeps running.
+
+        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
+        startup restore that runs before the observability plugin subscribes.
+        """
+        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        await self._publish()
+        return notice
+
+    def record_resumed(self) -> None:
+        """Record the `conversation resumed` UI event for the last restore."""
+        if self._record_resumed is not None:
+            self._record_resumed()
+
+    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -348,38 +527,57 @@ class Session(Generic[DepsT, OutputT]):
             if self.conversations is None:
                 raise ValueError('Session persistence is not configured')
             saved = await self.conversations.get(conversation_id=conversation_id)
-            if saved.summary.workspace != self.workspace and not allow_other_workspace:
-                raise ValueError(f'Session belongs to {saved.summary.workspace}. Select it in /resume to confirm.')
-            ensure_inactive(saved.summary)
+            if not allow_other_workspace:
+                self.check_workspace(saved.summary.workspace)
+            busy: ConversationConflict | None = None
+            try:
+                ensure_inactive(saved.summary)
+            except ConversationConflict as conflict:
+                busy = conflict
             messages = saved.messages
+            interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')
             warning = ''
-            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
+            if interrupted:
                 warning = ' Interrupted session: inspect external effects before continuing. No tools were replayed.'
             if saved.summary.outcome == 'running' and saved.summary.run_id and self.step_store:
                 snapshot = await self.step_store.latest_snapshot(run_id=saved.summary.run_id, include_interrupted=True)
                 if snapshot is not None:
                     messages = snapshot.messages
+            if interrupted:
+                messages = _interrupted(messages)
+            summary = saved.summary
+            notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if busy is not None:
+                summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                self._copy_repl(saved.summary.id, summary.id)
+                notice = (
+                    f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
+                    'The original keeps running there and may still change files. No tools were replayed.'
+                )
             self._messages = list(messages)
-            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
-                self._mark_interrupted()
-            self.summary = saved.summary
-            telemetry.record(
+            self.summary = summary
+            self._record_resumed = partial(
+                telemetry.record,
                 'conversation resumed',
                 outcome=saved.summary.outcome,
                 messages=len(messages),
                 other_workspace=saved.summary.workspace != self.workspace,
+                forked=busy is not None,
             )
+            if record:
+                self.record_resumed()
             # Keep the caller's current model and approval configuration. Saved models are informational.
-            return f'Resumed {saved.summary.title} ({saved.summary.id}).{warning}'
+            return notice
         finally:
             self._running = False
 
+    def check_workspace(self, workspace: str) -> None:
+        """Refuse a conversation from another directory unless the `/resume` browser confirmed it."""
+        if workspace != self.workspace:
+            raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
+
     def _mark_interrupted(self) -> None:
-        # Let core close unanswered calls without replaying them on the next prompt.
-        if self._messages:
-            last = self._messages[-1]
-            if not isinstance(last, ModelResponse) or last.state != 'suspended':
-                self._messages[-1] = replace(last, state='interrupted')
+        self._messages = _interrupted(self._messages)
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:
@@ -427,24 +625,23 @@ class Session(Generic[DepsT, OutputT]):
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
-                self.agent = self._base_agent.with_plugins(self.plugins, model=agent_model)
+                instructions = Capability[DepsT](instructions=self._user_instructions)
+                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
         if self.model is not None:
-            capabilities.append(_SessionModels[DepsT](self._resolve_model_id))
+            capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
-            capabilities.append(_ModelDefaults[DepsT](self.model_defaults))
+            capabilities.append(ModelDefaults[DepsT](self.model_defaults))
         return run_model, capabilities
 
+    def _user_instructions(self) -> str | None:
+        return self.instructions or None
+
     async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model | None:
-        model = self.resolve_model(model_id)
-        if isinstance(model, Awaitable):
-            model = await model
-        if isinstance(model, Model):
-            return model
-        return infer_model(model) if model != model_id else None
+        return await resolve_model_name(self.resolve_model, model_id)
 
     def steer(self, text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
         """Deliver input to the active run, or decline when no run is accepting input."""
@@ -487,6 +684,9 @@ class Session(Generic[DepsT, OutputT]):
                     self.delegations.bind() if self.delegations is not None else nullcontext(),
                 ):
                     try:
+                        # The first save titles a new conversation. Inside the handlers below, so a
+                        # failed or cancelled observer still finalizes the `running` head saved above.
+                        await self._publish()
                         run_model, capabilities = self._bind()
                         if self.delegations is not None:
                             capabilities.append(
@@ -497,14 +697,9 @@ class Session(Generic[DepsT, OutputT]):
                                 )
                             )
                         workspace: Literal['new'] | None = None
-                        configured = [*_agent_capabilities(self.agent), *self.plugins]
-                        if _supports_local_workspace() and not _supplies_workspace(configured, include_dynamic=False):
-                            if _supplies_workspace(configured):
-                                # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-                                fallback = _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
-                                capabilities.append(DynamicCapability[DepsT](lambda ctx: fallback))
-                            else:
-                                capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
+                        configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
+                        if (local := local_workspace(configured, self.workspace)) is not None:
+                            capabilities.append(local)
                             if _stale_local_workspace(previous, self.workspace):
                                 # A conversation resumed from another directory: work in this session's.
                                 workspace = 'new'
@@ -513,6 +708,9 @@ class Session(Generic[DepsT, OutputT]):
                             deps=self.deps,
                             model=run_model,
                             model_settings=self._run_settings(),
+                            # Run-level, not a capability: composing one more would split a plugin group that
+                            # supplies the workspace into its members. A rebuilt stock agent has them bound already.
+                            instructions=self._user_instructions if self.agent is self._base_agent else None,
                             retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                             message_history=previous,
                             conversation_id=self.summary.id,
@@ -536,8 +734,7 @@ class Session(Generic[DepsT, OutputT]):
                             with move_on_after(5, shield=True):
                                 await self._save_turn(outcome='cancelled')
                         except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
-                            if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
-                                cancelled.add_note(f'Could not save cancelled turn: {exc}')
+                            cancelled.add_note(f'Could not save cancelled turn: {exc}')
                             logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                         raise
                     except Exception as exc:
@@ -576,7 +773,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(message.usage.total_tokens)
+                            self.on_context_usage(context_tokens(message))
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)

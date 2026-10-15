@@ -23,7 +23,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -32,6 +32,7 @@ from pydantic_ai.tools import (
     ToolSelector,
     matches_tool_selector,
 )
+from pydantic_ai_harness._background_completion import make_background_completion
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -87,8 +88,10 @@ def _format_background_error(error: ApprovalRequired | CallDeferred | ToolRetryE
     return content if isinstance(content, str) and content else type(error).__name__
 
 
-def _format_background_result(tool_name: str, task_id: str, result: Any) -> tuple[UserContent, ...]:
-    """Format a tool result as model-visible user content without application metadata."""
+def _format_background_result(
+    tool_name: str, task_id: str, result: Any
+) -> tuple[TextContent, *tuple[UserContent, ...]]:
+    """Format a tool result as model-visible user content with completion metadata."""
     if isinstance(result, ToolReturn):
         return_value: object = result.return_value
         extra_content = result.content
@@ -105,11 +108,12 @@ def _format_background_result(tool_name: str, task_id: str, result: Any) -> tupl
         content.extend(extra_content)
 
     prefix = f"Background tool '{tool_name}' (task {task_id}) completed.\nResult:"
-    content[0] = f'{prefix} {content[0]}'
+    completion_text = f'{prefix} {return_text}'
+    content[0] = completion_text
 
     if all(isinstance(item, str) for item in content):
-        return ('\n'.join(item for item in content if isinstance(item, str)),)
-    return tuple(content)
+        return (make_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
+    return (make_background_completion(completion_text, task_id), *content[1:])
 
 
 @dataclass
@@ -267,7 +271,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 try:
                     result = await handler(args)
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
-                    outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",)
+                    outcome = (
+                        make_background_completion(
+                            f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",
+                            task_id,
+                        ),
+                    )
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.

@@ -1,8 +1,6 @@
 """The command, startup flag, naming resolver and terminal worker share one service."""
 
-import os
-import subprocess
-import sys
+from builtins import BaseExceptionGroup
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from io import StringIO
@@ -30,9 +28,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
+from tests.clai2.cli_runner import CliRunner
 
 
 async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,13 +67,12 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
     await session.prompt('name this session')
     saved_id = session.summary.id
-    session.clear()
+    await session.clear()
 
     def select(browser: SessionBrowser) -> str:
         browser.reload()
@@ -126,7 +121,6 @@ async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkey
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
@@ -161,7 +155,6 @@ async def test_browser_resumes_other_directory_without_confirmation(
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
@@ -201,7 +194,8 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
     assert len(entries) == 2
     assert (await store.get(conversation_id=prior.summary.id)).summary.message_count > prior.summary.message_count
     assert 'Resumed' in output.getvalue()
-    assert 'Previous session remains saved' in output.getvalue()
+    # `/new` is `/clear`, so the banner follows the resumed conversation.
+    assert '/resume restores one' in output.getvalue().rsplit('Resumed', 1)[1]
 
 
 async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,16 +220,8 @@ async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeyp
 
 
 @pytest.mark.parametrize('args', [['--resume', 'missing'], ['--resume=missing', 'config']])
-def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, args: list[str]) -> None:
-    result = subprocess.run(
-        [sys.executable, '-m', 'pydantic_clai2', '--database', str(tmp_path / 'settings.db'), *args],
-        input='/exit\n',
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-        env=dict(os.environ, CLAI_NO_SPLASH='1'),
-    )
+def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, run_cli: CliRunner, args: list[str]) -> None:
+    result = run_cli('--database', str(tmp_path / 'settings.db'), *args, cwd=tmp_path)
     assert result.returncode == 2
     assert 'error:' in result.stderr
     assert 'Traceback' not in result.stderr
@@ -248,7 +234,6 @@ async def test_empty_usage_missing_model_and_recovery_preview(tmp_path: Path, mo
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)

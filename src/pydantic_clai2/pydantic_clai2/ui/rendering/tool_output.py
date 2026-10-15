@@ -1,19 +1,33 @@
 """Render typed capability events without parsing model-facing tool results."""
 
+import io
 import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import partial
+from typing import Literal
 
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
-from rich.console import Console
+from rich.console import Console, Group
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_clai2.config import ToolCallDisplay
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.command_syntax import highlight_command
+
+ColorSystemName = Literal['standard', '256', 'truecolor', 'windows']
+
+
+def color_system(console: Console) -> ColorSystemName | None:
+    """The colour system `console` renders with; `None` when it renders no colour."""
+    name = console.color_system
+    return name if name in ('standard', '256', 'truecolor', 'windows') else None
 
 
 def terminal_text(text: str, *, keep: str = '\n\t') -> str:
@@ -21,20 +35,27 @@ def terminal_text(text: str, *, keep: str = '\n\t') -> str:
     return ''.join(char if char.isprintable() or char in keep else f'\\x{ord(char):02x}' for char in text)
 
 
-def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
-    """Highlight the tool name, leaving its marker and a plain-string argument muted.
+def tool_header(*, name: str, argument: str | Text = '') -> Group:
+    """Highlight the tool name, leaving its marker and a plain-string argument muted, on one row.
 
-    A `Text` argument is appended as-is, so it must already be styled and terminal-safe.
+    A `Text` argument is appended as-is, so it must already be styled and terminal-safe. Line
+    breaks in a string are escaped, so model-supplied text cannot add a forged transcript row. The
+    `Group` keeps the row unwrapped: `Console.print` copies a bare `Text` without its `no_wrap`.
     """
-    text = Text('● ', style=theme.color(theme.MUTED))
-    text.append(terminal_text(name), style=theme.color(theme.ACCENT))
+    text = Text('● ', style=theme.color(theme.MUTED), overflow='ellipsis', no_wrap=True)
+    text.append(terminal_text(name, keep=''), style=theme.color(theme.ACCENT))
     if isinstance(argument, Text):
         if argument:
             text.append(' ')
             text.append_text(argument)
     elif argument:
-        text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
-    console.print(text, overflow='ellipsis', no_wrap=True)
+        text.append(f' {terminal_text(argument, keep="")}', style=theme.color(theme.MUTED))
+    return Group(text)
+
+
+def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
+    """Print `tool_header` and the blank line that separates it from what follows."""
+    console.print(tool_header(name=name, argument=argument))
     console.print()
 
 
@@ -45,22 +66,52 @@ SHELL_COMMAND_ROWS = 10
 def print_shell_header(console: Console, command: str) -> None:
     """Wrap the whole command under a hanging indent, so long one-liners and scripts stay readable.
 
-    Rows beyond `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged.
+    The command is highlighted as Bash, with embedded code in its own language. Rows beyond
+    `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged. In the
+    live prompt the header is its own transcript item, so a new width or theme renders it again.
     """
     if not command.strip():
         print_tool_header(console, name='shell')
         return
+    surface = console.file
+    if console.is_terminal and isinstance(surface, PromptSurface):
+        render = partial(_shell_header_ansi, colors=color_system(console))
+        block = surface.markdown(render=render, width=console.width)
+        block.extend(command)
+        block.write(render(source=command, width=console.width))
+        return
+    _print_shell_header(console, command)
+
+
+def _shell_header_ansi(*, source: str, width: int, colors: ColorSystemName | None) -> str:
+    """Style on a console of our own, for a width or theme the header was not printed at.
+
+    `colors` must be the stream console's colour system; see `render_markdown`.
+    """
+    output = io.StringIO()
+    _print_shell_header(Console(file=output, force_terminal=True, color_system=colors, width=width), source)
+    return output.getvalue()
+
+
+def _print_shell_header(console: Console, command: str) -> None:
     muted = theme.color(theme.MUTED)
-    head = Text('● ', style=muted)
-    head.append('shell ', style=theme.color(theme.ACCENT))
+    # Spans, not a base style, so the command's unstyled names keep the terminal foreground.
+    head = Text.assemble(('● ', muted), ('shell ', theme.color(theme.ACCENT)))
     indent = Text(' ' * head.cell_len)
-    body = Text(terminal_text(command.strip('\n')), style=muted)
-    rows = body.wrap(console, max(console.width - head.cell_len, 1), overflow='fold')
+    width = max(console.width - head.cell_len, 1)
+    # Escape control characters before highlighting, so no style can carry them to the terminal.
+    command = terminal_text(command.strip('\n'))
+    # Each line takes a row or more, and each row `width` cells or fewer, so lex no further than the
+    # shown rows reach. One row of slack keeps the last shown word whole.
+    shown = len('\n'.join(command.split('\n')[:SHELL_COMMAND_ROWS]))
+    end = min(shown, (SHELL_COMMAND_ROWS + 1) * width)
+    rows = highlight_command(command, end=end).wrap(console, width, overflow='fold')
+    total = len(Text(command).wrap(console, width, overflow='fold'))
     for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
         row.rstrip()
         console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
-    if len(rows) > SHELL_COMMAND_ROWS:
-        console.print(indent + Text(f'… +{len(rows) - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
+    if total > SHELL_COMMAND_ROWS:
+        console.print(indent + Text(f'… +{total - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
     console.print()
 
 
@@ -122,11 +173,22 @@ class ShellPreview:
 class ToolOutput:
     """Present bounded shell chunks and Termflow-highlighted file diffs."""
 
-    def __init__(self, console: Console, *, shell_lines: int = 20, show_output: bool = False) -> None:
-        """Use the conversation's output stream, not global stdout."""
+    def __init__(
+        self,
+        console: Console,
+        *,
+        shell_lines: int = 20,
+        show_output: bool = False,
+        tool_calls: ToolCallDisplay = 'detailed',
+    ) -> None:
+        """Use the conversation's output stream, not global stdout.
+
+        A `grouped` tool-call style counts shell calls, so it shows no shell header or output.
+        """
         self.console = console
         self.shell_lines = shell_lines
-        self.show_output = show_output
+        self.show_output = show_output and tool_calls == 'detailed'
+        self.tool_calls = tool_calls
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
@@ -140,6 +202,12 @@ class ToolOutput:
         if len(lines) > 1:
             summary += f' (+{len(lines) - 1} command lines)'
         print_tool_header(self.console, name=name, argument=summary)
+
+    def prints_diff(self, event: AgentStreamEvent) -> bool:
+        """Whether `event` is a file's diff, or a call to a tool that prints one, in every tool-call style."""
+        if isinstance(event, FunctionToolCallEvent):
+            return event.part.tool_name in ('write_file', 'edit_file')
+        return isinstance(event, FileWrittenEvent)
 
     def render_call(self, event: FunctionToolCallEvent) -> bool:
         """Show arguments once, before execution, including for failed calls."""
@@ -254,7 +322,7 @@ class ToolOutput:
         if isinstance(event, CommandStartedEvent):
             self._shells[event.tool_call_id] = ShellPreview()
             key = (event.tool_call_id, 'shell')
-            if key not in self._headers:
+            if key not in self._headers and self.tool_calls == 'detailed':
                 self._header('shell', event.command)
             self._headers.discard(key)
         elif isinstance(event, CommandOutputEvent):

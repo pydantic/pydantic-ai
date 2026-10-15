@@ -30,11 +30,13 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
 | [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [Meta](meta.md) | Model developer | `meta:` |
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
 | [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
+| [OpenAI Decisions API](openai.md#decisions-api) | [Decision model](decision.md) | `openai-decisions:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
@@ -48,7 +50,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Z.AI](zai.md) | Model developer | `zai:` |
 
 !!! tip "One key for every model"
-    The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/anthropic:claude-fable-5-1')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
+    The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/{{ anthropic:xlarge }}')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
 
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
@@ -69,8 +71,8 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   vendor-SDK-agnostic API, ensuring a single Pydantic AI agent is portable to different LLM vendors without
   any other code changes just by swapping out the Model it uses. Model classes are named
   roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIChatModel`, `AnthropicModel`, `GoogleModel`,
-  etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-5`,
-  `claude-sonnet-4-5`, `gemini-3-flash-preview`) as a parameter.
+  etc. When using a Model class, you specify the actual LLM model name (e.g., `{{ openai:medium.name }}`,
+  `{{ anthropic:medium.name }}`, `{{ google:medium.name }}`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
@@ -81,9 +83,9 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   constructed to get the best results, independent of the model and provider classes used.
   For example, different models have different restrictions on the JSON schemas that can be used for tools,
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
-  with model name `gemini-3-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-3-pro-preview`.
+  or `OpenAIChatModel` with `OpenRouterProvider`.
 
-When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5.2` or `openrouter:google/gemini-3-pro-preview`,
+When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `{{ openai:medium }}` or `openrouter:google/gemini-3-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
@@ -120,7 +122,7 @@ When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 async def main():
     async with agent:
@@ -131,13 +133,13 @@ async def main():
 
 You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
 
-An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='openai:gpt-5.2')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
+An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='{{ openai:medium }}')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
 
 Pydantic AI only ever closes an HTTP client it created itself. A client you pass in is yours to close, whether it's an `http_client` or a provider SDK client, such as `openai_client`, `anthropic_client` (including `AsyncAnthropicVertex`), Google's `client`, or `xai_client`.
 
 ### Configuring the HTTP client
 
-The HTTP clients Pydantic AI creates have a 600-second timeout with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
+The HTTP clients Pydantic AI creates have a 600-second timeout (20 minutes for [Google](google.md#long-decode)) with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
 
 ```python {title="configure_http_client.py"}
 import httpx2
@@ -153,7 +155,7 @@ async def main():
         timeout=httpx2.Timeout(120, connect=5, pool=10),
         limits=httpx2.Limits(max_connections=200, max_keepalive_connections=50),
     ) as http_client:
-        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=http_client))
+        model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=http_client))
         agent = Agent(model)
         result = await agent.run('What is the capital of France?')
         print(result.output)
@@ -188,7 +190,7 @@ import asyncio
 from pydantic_ai import Agent, ConcurrencyLimitedModel
 
 # Wrap a model with concurrency limiting
-model = ConcurrencyLimitedModel('openai:gpt-4o', limiter=5)
+model = ConcurrencyLimitedModel('{{ openai:medium }}', limiter=5)
 
 # Multiple agents can share this rate-limited model
 agent = Agent(model)
@@ -224,8 +226,8 @@ from pydantic_ai import Agent, ConcurrencyLimitedModel, ConcurrencyLimiter
 shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
 
 # Both models share the same concurrency limit
-model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
-model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_limiter)
+model1 = ConcurrencyLimitedModel('{{ openai:medium }}', limiter=shared_limiter)
+model2 = ConcurrencyLimitedModel('{{ openai:small }}', limiter=shared_limiter)
 
 agent1 = Agent(model1)
 agent2 = Agent(model2)
@@ -276,6 +278,10 @@ suggestion is also available as
 best-effort guidance after the provider rejects a request, not local validation: unknown model
 identifiers remain valid so custom deployments and newly released models continue to work.
 
+When a provider error has a known fix outside the request, such as the [data retention](bedrock.md#data-retention)
+mode Amazon Bedrock requires for some models, Pydantic AI appends guidance to the error message. It is also
+available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
+
 The motivating use case is propagating the `Retry-After` header from a 429 response to a
 caller's own HTTP client.  A convenience property
 [`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
@@ -286,7 +292,7 @@ delta-seconds and HTTP-date formats:
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 try:
     result = agent.run_sync('What is the capital of France?')
@@ -311,8 +317,9 @@ in sequence until one succeeds. Pydantic AI can switch to the next model when th
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
 failure (like a truncated response or a failed native tool call).
 
-By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
-so you don't need to configure anything for the most common use case.
+By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors, and
+connection failures or timeouts before the response starts), so you don't need to configure anything for the most
+common use case.
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
@@ -332,8 +339,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
-openai_model = OpenAIChatModel('gpt-5.2')
-anthropic_model = AnthropicModel('claude-sonnet-4-5')
+openai_model = OpenAIChatModel('{{ openai:medium.name }}')
+anthropic_model = AnthropicModel('{{ anthropic:medium.name }}')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
@@ -357,11 +364,21 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=RequestUsage(cost=Decimal('0.000273'), input_tokens=56, output_tokens=7),
-        model_name='claude-sonnet-4-5',
+        usage=RequestUsage(cost=Decimal('0.000182'), input_tokens=56, output_tokens=7),
+        model_name='{{ anthropic:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
+        failed_attempts=[
+            ModelRequestAttempt(
+                model_name='{{ openai:medium.name }}',
+                provider_name='openai',
+                outcome='error',
+                error="ModelHTTPError: status_code: 401, model_name: {{ openai:medium.name }}, body: {'error': 'Invalid API Key'}",
+                timestamp=datetime.datetime(...),
+                duration=datetime.timedelta(...),
+            )
+        ],
     ),
 ]
 """
@@ -384,12 +401,12 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
-    'gpt-5.2',
-    settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
+    '{{ openai:medium.name }}',
+    settings=ModelSettings(thinking='high', max_tokens=2000)  # More reasoning for OpenAI
 )
 anthropic_model = AnthropicModel(
-    'claude-sonnet-4-5',
-    settings=ModelSettings(temperature=0.2, max_tokens=1000)  # Lower temperature for consistency
+    '{{ anthropic:medium.name }}',
+    settings=ModelSettings(thinking='low', max_tokens=1000)  # A quicker fallback
 )
 
 fallback_model = FallbackModel(openai_model, anthropic_model)
@@ -410,54 +427,23 @@ The next example demonstrates the exception-handling capabilities of `FallbackMo
 If all models fail, a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] is raised, which
 contains all the exceptions encountered during the `run` execution.
 
-=== "Python >=3.11"
+```python {title="fallback_model_failure.py" py="3.11"}
+from pydantic_ai import Agent, ModelAPIError
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIChatModel
 
-    ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent, ModelAPIError
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+openai_model = OpenAIChatModel('{{ openai:medium.name }}')
+anthropic_model = AnthropicModel('{{ anthropic:medium.name }}')
+fallback_model = FallbackModel(openai_model, anthropic_model)
 
-    openai_model = OpenAIChatModel('gpt-5.2')
-    anthropic_model = AnthropicModel('claude-sonnet-4-5')
-    fallback_model = FallbackModel(openai_model, anthropic_model)
-
-    agent = Agent(fallback_model)
-    try:
-        response = agent.run_sync('What is the capital of France?')
-    except* ModelAPIError as exc_group:
-        for exc in exc_group.exceptions:
-            print(exc)
-    ```
-
-=== "Python <3.11"
-
-    Since [`except*`](https://docs.python.org/3/reference/compound_stmts.html#except-star) is only supported
-    in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
-    package for earlier Python versions:
-
-    ```python {title="fallback_model_failure.py" test="skip"}
-    from exceptiongroup import BaseExceptionGroup, catch
-
-    from pydantic_ai import Agent, ModelAPIError
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIChatModel
-
-
-    def model_status_error_handler(exc_group: BaseExceptionGroup) -> None:
-        for exc in exc_group.exceptions:
-            print(exc)
-
-
-    openai_model = OpenAIChatModel('gpt-5.2')
-    anthropic_model = AnthropicModel('claude-sonnet-4-5')
-    fallback_model = FallbackModel(openai_model, anthropic_model)
-
-    agent = Agent(fallback_model)
-    with catch({ModelAPIError: model_status_error_handler}):
-        response = agent.run_sync('What is the capital of France?')
-    ```
+agent = Agent(fallback_model)
+try:
+    response = agent.run_sync('What is the capital of France?')
+except* ModelAPIError as exc_group:
+    for exc in exc_group.exceptions:
+        print(exc)
+```
 
 By default, the `FallbackModel` only moves on to the next model if the current model raises a
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
@@ -466,6 +452,63 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+
+### Failed attempts and usage
+
+The response that answers lists every attempt the `FallbackModel` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], in order. Each [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] records the model and provider it tried, whether it raised an error (with the error as `'ExceptionType: message'`) or returned a response a [response handler](#response-based-fallback) rejected, when it started and how long it took, and the usage the provider reported for it. An attempt that raised has no usage, as the provider reported none. When every model fails, the same attempts are on the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]'s `attempts`.
+
+A rejected response was still generated and billed, so its tokens and cost are added to the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and count towards the token and cost limits in [`UsageLimits`][pydantic_ai.usage.UsageLimits]. They stay on the attempt rather than being folded into the answering response's `usage`, and the rejected response itself is not added to the message history. A fallback attempt isn't a response the agent acted on, so it doesn't count towards [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit].
+
+The rejected responses' usage counts when every model fails, too. If it exceeds a limit, [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] is raised with the `FallbackExceptionGroup` as its `__cause__`.
+
+!!! note
+    The rejected responses' usage is not recorded when a later model raises an error that `fallback_on` doesn't cover, or, under [Temporal](../durable_execution/temporal.md), when every model fails: the exception group reaches the workflow without its attempts.
+
+```python {title="fallback_model_attempts.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
+
+
+def truncated(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart('The capital of France is')],
+        usage=RequestUsage(input_tokens=60, output_tokens=100),
+        finish_reason='length',
+    )
+
+
+def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart('The capital of France is Paris.')],
+        usage=RequestUsage(input_tokens=60, output_tokens=8),
+    )
+
+
+def was_truncated(response: ModelResponse) -> bool:
+    return response.finish_reason == 'length'
+
+
+fallback_model = FallbackModel(
+    FunctionModel(truncated, model_name='primary'),
+    FunctionModel(complete, model_name='backup'),
+    fallback_on=was_truncated,
+)
+agent = Agent(fallback_model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+print(result.usage)
+#> RunUsage(input_tokens=120, output_tokens=108, requests=1)
+print(result.response.usage)
+#> RequestUsage(input_tokens=60, output_tokens=8)
+for attempt in result.response.failed_attempts or []:
+    print(attempt.model_name, attempt.outcome, attempt.usage)
+    #> primary rejected RequestUsage(input_tokens=60, output_tokens=100)
+```
+
+When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered and ends OK. Each attempt the `FallbackModel` moved on from gets its own child span, `model request attempt <model name>`, which ends with an ERROR status, the way a failed tool call gets its own span inside a successful agent run. An error is recorded on that span as an exception, and a response rejected by a [response handler](#response-based-fallback) carries its usage, cost and finish reason instead, as a `chat` span would. Each attempt span names the model it tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and gives its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), the exception keeps only its type. The attempt span is created once the attempt has failed, so spans the tried model opens itself, such as a [decision model](decision.md)'s `decide` span, sit beside it under the `chat` span rather than inside it.
 
 ### Response-Based Fallback
 
@@ -504,8 +547,8 @@ def bad_finish_reason(response: ModelResponse) -> bool:
 
 
 fallback_model = FallbackModel(
-    'openai:gpt-5.2',
-    'anthropic:claude-sonnet-4-5',
+    '{{ openai:medium }}',
+    '{{ anthropic:medium }}',
     fallback_on=bad_finish_reason,
 )
 
@@ -572,8 +615,8 @@ def web_fetch_failed(response: ModelResponse) -> bool:
     return False
 
 
-google_model = GoogleModel('gemini-2.5-flash')
-anthropic_model = AnthropicModel('claude-sonnet-4-5')
+google_model = GoogleModel('{{ google:medium.name }}')
+anthropic_model = AnthropicModel('{{ anthropic:medium.name }}')
 
 # Auto-detected as response handler via type hint
 fallback_model = FallbackModel(
@@ -655,59 +698,28 @@ exception groups as well as bare exceptions. Note that `except*` always delivers
 `ExceptionGroup` (even if the original was a bare exception), so re-raising will propagate an `ExceptionGroup`
 rather than the original exception type:
 
-=== "Python >=3.11"
+```python {title="middleware_with_fallback.py" py="3.11"}
+from collections.abc import Callable
+from functools import wraps
+from typing import TypeVar
 
-    ```python {title="middleware_with_fallback.py" py="3.11"}
-    from collections.abc import Callable
-    from functools import wraps
-    from typing import TypeVar
+from pydantic_ai import ModelAPIError
 
-    from pydantic_ai import ModelAPIError
-
-    T = TypeVar('T')
+T = TypeVar('T')
 
 
-    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
-            try:
-                return func(*args, **kwargs)
-            except* ModelAPIError as exc_group:
-                for exc in exc_group.exceptions:
-                    print(f'API error: {exc}')
-                raise
+def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+    @wraps(func)
+    def wrapper(*args, **kwargs) -> T:
+        try:
+            return func(*args, **kwargs)
+        except* ModelAPIError as exc_group:
+            for exc in exc_group.exceptions:
+                print(f'API error: {exc}')
+            raise
 
-        return wrapper
-    ```
-
-=== "Python <3.11"
-
-    ```python {title="middleware_with_fallback.py" noqa="F821" test="skip"}
-    from collections.abc import Callable
-    from functools import wraps
-    from typing import TypeVar
-
-    from pydantic_ai import FallbackExceptionGroup, ModelAPIError
-
-    T = TypeVar('T')
-
-
-    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
-            try:
-                return func(*args, **kwargs)
-            except FallbackExceptionGroup as exc_group:
-                for exc in exc_group.exceptions:
-                    if isinstance(exc, ModelAPIError):
-                        print(f'API error from fallback: {exc}')
-                raise
-            except ModelAPIError as e:
-                print(f'API error: {e}')
-                raise
-
-        return wrapper
-    ```
+    return wrapper
+```
 
 You can also catch `FallbackExceptionGroup` directly if you want to handle it specifically:
 
@@ -715,7 +727,7 @@ You can also catch `FallbackExceptionGroup` directly if you want to handle it sp
 from pydantic_ai import Agent, FallbackExceptionGroup
 from pydantic_ai.models.fallback import FallbackModel
 
-agent = Agent(FallbackModel('openai:gpt-5-mini', 'anthropic:claude-sonnet-4-6'))
+agent = Agent(FallbackModel('{{ openai:small }}', '{{ anthropic:medium }}'))
 
 try:
     response = agent.run_sync('What is the capital of France?')

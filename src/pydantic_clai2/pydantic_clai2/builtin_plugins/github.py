@@ -27,6 +27,7 @@ from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from pydantic_clai2.gh_cli import GhLogin, GhToken, gh_host, gh_token, start_login
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
@@ -39,7 +40,7 @@ ENTERPRISE = 'enterprise'
 """The host choice that asks for a GitHub Enterprise Cloud URL."""
 RUNNERS: Runners = TERMINAL
 """How the settings menu's widgets are shown; tests swap in scripted ones."""
-OPEN_BROWSER: Callable[[str], bool] = webbrowser.open
+OPEN_BROWSER: Callable[[str], bool] = open_browser
 """Opens GitHub's device page during `gh` sign-in; tests swap it out."""
 FINISHED = 'gh-finished'
 """The key the sign-in screen receives once `gh auth login` exits."""

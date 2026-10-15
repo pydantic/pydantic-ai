@@ -32,10 +32,10 @@ def test_reads_keep_known_overrides_and_ignore_future_fields(tmp_path: Path) -> 
     context, _ = make_context(tmp_path)
     saved: dict[str, JsonValue] = {'temperature': 0.5, 'future_setting': {'nested': [1, None, False]}}
     context.store.save_model_settings('test', saved)
-    assert context.model_settings('test') == {'temperature': 0.5}
+    assert context.model_settings('test') == {'cache': True, 'temperature': 0.5}
     assert context.store.model_settings('test') == saved
     context.store.save_model_settings('test', {'future_setting': True})
-    assert context.model_settings('test') is None
+    assert context.model_settings('test') == {'cache': True}
 
 
 def test_known_values_and_new_edits_still_validate() -> None:

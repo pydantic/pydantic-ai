@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import logging
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ from pydantic_clai2.config.plugin_requirements import (
     withheld,
 )
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
+from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
@@ -46,12 +48,15 @@ from pydantic_clai2.plugins import (
     collect,
 )
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
-from pydantic_clai2.plugins.compatibility import INCLUDED, included_by
+from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
+from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
+
+_LOGGER = logging.getLogger(__name__)
 
 # Local settings databases from before the package move, or from before plugins were declared as
 # `Plugin` classes, can still name the old factories.
@@ -93,6 +98,8 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
 
+FAILED_SESSION_END_TIMEOUT = 5.0
+"""Seconds a plugin that failed to load may spend in `on_session_end` before loading continues without it."""
 TURN_NOTICE = 'The running turn keeps the plugins it started with; the agent sees the change on the next prompt.'
 
 
@@ -106,8 +113,12 @@ class PluginError(Exception):
         self.error = error
 
 
-class PluginSettingsError(PluginError):
-    """A plugin rejected its settings while activating, so `/plugins add` does not save them."""
+class PluginSettingsError(PluginError, ValueError):
+    """A plugin rejected its settings while activating, so `/plugins add` does not save them.
+
+    A usage error, like other `ValueError`s from a command, so its message, which can quote a pasted secret, is
+    not recorded as a handled error.
+    """
 
 
 @dataclass(kw_only=True)
@@ -173,13 +184,14 @@ class PluginLoader(Generic[DepsT]):
         status: Status | None = None,
         full_screen: FullScreen = bare_screen,
         enabled: bool = True,
+        submit_prompt: Callable[[str], None] | None = None,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, and `submit_prompt` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -189,6 +201,7 @@ class PluginLoader(Generic[DepsT]):
         self._conversation = conversation
         self._session_id = session_id
         self._status = status
+        self._submit_prompt = submit_prompt
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
@@ -377,9 +390,9 @@ class PluginLoader(Generic[DepsT]):
         return [name for provider in self.model_providers().values() for name in provider.names]
 
     def settings_model(self, model: str) -> str:
-        """The model whose `/model settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
-        prefix, separator, name = model.partition(':')
-        provider = self.model_providers().get(prefix) if separator else None
+        """The model whose `/model settings` controls `model` takes: `PREFIX[@PROFILE]:NAME` as `settings_from:NAME`."""
+        _, separator, name = model.partition(':')
+        provider = self.model_providers().get(provider_of(model)) if separator else None
         if provider is None or provider.settings_from is None:
             return model
         return f'{provider.settings_from}:{name}'
@@ -403,10 +416,11 @@ class PluginLoader(Generic[DepsT]):
                     if not _module_absent(entry, exc.error):
                         failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
                         self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-                # `load` refreshed the entries, so read the notice from the current one.
+                # Settings another build saved are expected in a shared database, not a problem to
+                # announce on every start: `/plugins` shows the notice. `load` refreshed the entries.
                 ignored = self._entries[entry.name].ignored
                 if ignored is not None:
-                    self._console.print(ignored, style=theme.color(theme.WARNING), markup=False)
+                    _LOGGER.debug('%s', ignored)
         # Observers can load after a failing plugin, so report only once startup loading finishes.
         for failure in failures:
             await self.fire(failure)
@@ -436,6 +450,7 @@ class PluginLoader(Generic[DepsT]):
             status=self._status,
             save_settings=save,
             requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),
+            submit_prompt=self._submit_prompt,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
@@ -446,9 +461,15 @@ class PluginLoader(Generic[DepsT]):
             built = settings_capability(plugin)
             if built is not None:
                 self._from_settings[name] = built
-            loaded = collect(plugin)
             activating = False
-            self._commands.register_many(loaded.commands)
+            await plugin.prepare()
+            loaded = collect(plugin)
+            for hidden in self._commands.register_many(loaded.commands):
+                self._console.print(
+                    f'/{hidden.name} ({hidden.description}) is hidden by another /{hidden.name} command.',
+                    style=theme.color(theme.WARNING),
+                    markup=False,
+                )
             entry.loaded = loaded
             self._loaded[name] = loaded
             await loaded.dispatch(self._session_start())
@@ -527,9 +548,7 @@ class PluginLoader(Generic[DepsT]):
                     await asyncio.wait({cleanup})
                     raise
                 if (error := cleanup.result()) is not None:
-                    self._console.print(
-                        str(PluginError(entry.name, error)), style=theme.color(theme.ERROR), markup=False
-                    )
+                    self._report(entry.name, error, SessionEnd)
         finally:
             self._drop(entry)
         await checkpoint()
@@ -557,7 +576,7 @@ class PluginLoader(Generic[DepsT]):
         try:
             await loaded.dispatch(SessionEnd(reason=reason))
         except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
-            self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+            self._report(name, exc, SessionEnd)
 
     @property
     def in_turn(self) -> bool:
@@ -583,7 +602,7 @@ class PluginLoader(Generic[DepsT]):
 
     def _drop(self, entry: PluginEntry[DepsT]) -> None:
         if entry.loaded is not None:
-            self._commands.unregister(command.name for command in entry.loaded.commands)
+            self._commands.unregister(entry.loaded.commands)
         entry.loaded = None
         self._loaded.pop(entry.name, None)
         self._suspended.pop(entry.name, None)
@@ -603,7 +622,12 @@ class PluginLoader(Generic[DepsT]):
             except Exception as exc:
                 if isinstance(event, TurnStart):
                     raise PluginError(name, exc) from exc
-                self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+                self._report(name, exc, type(event))
+
+    def _report(self, name: str, error: BaseException, event: type[HostEvent]) -> None:
+        """Show a plugin handler's failure, which CLAI carries on from, and record it as a handled error."""
+        self._console.print(str(PluginError(name, error)), style=theme.color(theme.ERROR), markup=False)
+        telemetry.handled_error('Plugin {plugin!r} failed handling {event}', error, plugin=name, event=event.__name__)
 
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""
@@ -612,9 +636,13 @@ class PluginLoader(Generic[DepsT]):
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._store.save_plugin(declaration, requires=self._requirements(entry))
-        await self.load(name)
+        await self._load_enabled(entry)
+
+    async def _load_enabled(self, entry: PluginEntry[DepsT]) -> None:
+        """Load an enabled declaration and remember requirements learned from its plugin."""
+        await self.load(entry.name)
         # `load` refreshed the entries; only a loaded plugin can say what its settings need.
-        loaded = self._entries[name].loaded
+        loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
             self._store.save_plugin(self._saved(entry), requires=host.requirements)
@@ -634,11 +662,20 @@ class PluginLoader(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        checkout_notice = ''
         # A relative path never names a drop-in, only an approval saved before paths were anchored: forget it.
         if entry.path is not None and entry.path.is_absolute() and not entry.shipped:
-            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
-            await self._load_released(entry)
-            return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
+            # Unrelated file plugins remain removable even when the drop-in directory cannot be resolved.
+            if entry.path.parent.parent.name == CHECKOUTS_DIR and entry.path.parent == checkout_dir(
+                self.plugins_dir, name
+            ):
+                checkout_notice = (
+                    f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'
+                )
+            else:
+                self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+                await self._load_released(entry)
+                return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
         shipped = self._project.get(name) or self._builtin.get(name)
         if shipped is not None and shipped.enabled and self._entry(name).included_in is None:
@@ -646,9 +683,11 @@ class PluginLoader(Generic[DepsT]):
         else:
             await self._load_released(entry)
         if shipped is None:
-            return f'Removed {name}.'
+            return f'Removed {name}.{checkout_notice}'
         origin = 'declared by the project' if name in self._project else 'built in'
-        return f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.'
+        return (
+            f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.{checkout_notice}'
+        )
 
     async def _load_released(self, owner: PluginEntry[DepsT]) -> None:
         """Load the enabled plugins `owner` could include that it no longer keeps off."""
@@ -762,13 +801,25 @@ class PluginLoader(Generic[DepsT]):
                 '\n'.join(f'{entry.name}: {entry.source} ({entry.state})' for entry in self.entries()) or 'No plugins.'
             )
         action, *rest = args
+        if action == 'add' and not rest:
+            raise ValueError(ADD_USAGE)
+        if action == 'add' and len(rest) == 1:
+            async with install_git_plugin(
+                rest[0], plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
+            ) as declaration:
+                if any(entry.name == declaration.id for entry in self.entries()):
+                    raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
+                self._store.save_plugin(declaration, overwrite=False)
+            _requested('add', declaration.id)
+            await self._load_enabled(self._entry(declaration.id))
+            return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
         if rest:
             rest[0] = canonical_plugin_id(rest[0])
         if action == 'add':
             return await self._add(rest)
         if len(rest) != 1:
             raise ValueError(
-                'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
+                'Usage: /plugins [list|add GIT_URL|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
                 '|configure ID]'
             )
         name = rest[0]
@@ -810,7 +861,7 @@ class PluginLoader(Generic[DepsT]):
         return importlib.reload(module) if fresh else module
 
 
-def _binds(capability: AbstractCapability[DepsT], kind: type[object]) -> bool:
+def _binds(capability: AbstractCapability[DepsT], kind: Binds) -> bool:
     """Whether any part of `capability` is a `kind`."""
     if isinstance(capability, kind):
         return True
@@ -830,7 +881,7 @@ def _includes(factory: str, loaded: LoadedPlugin[DepsT]) -> frozenset[str]:
     return frozenset(
         included
         for included, kind in INCLUDED.get(factory, {}).items()
-        if kind is None or any(_binds(capability, kind) for capability in bound)
+        if any(_binds(capability, kind) for capability in bound)
     )
 
 
@@ -861,9 +912,9 @@ def _same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) ->
 
 
 async def _end_failed_session(plugin: Plugin[BaseModel, DepsT]) -> BaseException | None:
-    """Return the handler's failure rather than raising it: 3.10 tasks drop a `CancelledError`'s message."""
+    """Return the handler's failure rather than raising it."""
     try:
-        with fail_after(5):
+        with fail_after(FAILED_SESSION_END_TIMEOUT):
             await plugin.on_session_end(SessionEnd(reason='error'))
     except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 -- reported by the caller.
         return exc

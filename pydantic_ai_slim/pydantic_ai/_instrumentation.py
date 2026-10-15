@@ -23,8 +23,9 @@ from pydantic_graph._utils import get_traceparent
 from ._genai_prices import best_effort_price
 
 if TYPE_CHECKING:
+    from typing import Self
+
     from genai_prices.types import PriceCalculation
-    from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
@@ -96,8 +97,9 @@ class ContentPolicy:
     reader can only honour a policy set for the span in front of it, and anything else fails closed.
 
     It also carries the tracer the span was opened with, so that a span opened inside the request
-    (a decision model's `decide`) goes to the same tracer provider as the request's own span, even
-    when that is not the global one. Such a span reads the policy through `open_request_policy`.
+    (a decision model's `decide`, or a `FallbackModel` attempt that failed) goes to the same tracer
+    provider as the request's own span, even when that is not the global one. Such a span reads the
+    policy through `open_request_policy`.
     """
 
     span: Span
@@ -276,6 +278,7 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
 
 def _redact_binary_content(value: Any, active: set[int]) -> object:
     from pydantic_ai._deferred import DeferredToolRequests
+    from pydantic_ai._mcp_apps import redact_mcp_app_binary
     from pydantic_ai.messages import BinaryContent, ToolReturn
 
     identity = id(value)
@@ -301,7 +304,7 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
             return {
                 'return_value': _redact_binary_content(value.return_value, active),
                 'content': _redact_binary_content(value.content, active),
-                'metadata': _redact_binary_content(value.metadata, active),
+                'metadata': _redact_binary_content(redact_mcp_app_binary(value.metadata), active),
                 # Tool names, so never binary.
                 'tools': value.tools,
                 'kind': value.kind,
@@ -608,6 +611,7 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_api_url=response.provider_url,
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
+        price_context=response.provider_details,
     )
 
 

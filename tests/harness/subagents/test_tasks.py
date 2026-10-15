@@ -131,6 +131,30 @@ async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer(
     assert handled == [event for event in observed if not isinstance(event, (DelegationStartEvent, DelegationEndEvent))]
 
 
+async def test_child_stream_events_carry_the_child_model_and_window() -> None:
+    updates: list[DelegationTaskEvent] = []
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        updates.append(update)
+
+    owner = DelegationTasks(observer=observe)
+    child_model = TestModel(custom_output_text='child result', model_name='child', profile={'context_window': 4096})
+    child = Agent(child_model, deps_type=object, name='worker')
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent: Agent[object, str] = Agent(
+                    parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)]
+                )
+                await agent.run('go', conversation_id='parent')
+    lifecycle = [
+        u for u in updates if u.event is None or isinstance(u.event, (DelegationStartEvent, DelegationEndEvent))
+    ]
+    streamed = [u for u in updates if u not in lifecycle]
+    assert streamed and {(u.model_name, u.context_window) for u in streamed} == {('child', 4096)}
+    assert lifecycle and {(u.model_name, u.context_window) for u in lifecycle} == {(None, None)}
+
+
 @pytest.mark.parametrize(('background', 'resume'), [(True, None), (False, 'earlier')])
 async def test_background_and_resume_need_an_owner(background: bool, resume: str | None) -> None:
     child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')

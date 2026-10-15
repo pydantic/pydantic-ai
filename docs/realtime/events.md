@@ -38,6 +38,12 @@ never discarded.
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
 
+A part's `index` identifies it for the whole session. A provider can finish an output item after a later
+item has started, so text of the item's transcript can arrive after its part ended: the session then
+streams that part again under the same `index`, and the new
+[`PartStartEvent`][pydantic_ai.messages.PartStartEvent] replaces the part as it ended. Keep parts by
+`index` rather than adding one for every [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
+
 ## Shared and realtime-only events
 
 The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from

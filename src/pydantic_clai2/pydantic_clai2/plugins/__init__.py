@@ -4,11 +4,13 @@ import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
+from datetime import datetime
+from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
-from typing_extensions import Never, Self, TypeVar as DefaultTypeVar, get_original_bases
+from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
@@ -37,6 +39,16 @@ class Conversation(Protocol):
 
     step_store: StepStore | None
 
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` and `--resume` restore this conversation by."""
+        ...
+
+    @property
+    def title(self) -> str | None:
+        """The conversation's title; `None` until its first prompt is saved."""
+        ...
+
     async def commit_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Persist and publish a between-turn history replacement."""
         ...
@@ -57,15 +69,39 @@ class Conversation(Protocol):
         """
         ...
 
+    async def resume(self, conversation_id: str) -> str:
+        """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
+
+        Only restores the saved history: nothing runs and no tool is replayed. Call it between
+        turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
+        `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
+        directory or when persistence is not configured. A conversation still running in another
+        process is not taken over: a fork of it is resumed, and the notice says so.
+        `on_conversation_changed` follows when the conversation or its title changed.
+        """
+        ...
+
 
 class Transcript:
     """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""
 
-    def __init__(self, *, messages: Sequence[ModelMessage] = (), model: Model | str | None = None) -> None:
-        """Start with `messages` retained and `model` as what `resolved_model` reports."""
+    def __init__(
+        self,
+        *,
+        messages: Sequence[ModelMessage] = (),
+        model: Model | str | None = None,
+        conversation_id: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        """Start with `messages` retained and `model` as what `resolved_model` reports.
+
+        Without a `conversation_id`, a new random one identifies the transcript.
+        """
         self._messages = list(messages)
         self.step_store: StepStore | None = None
         self.model = model
+        self.conversation_id = conversation_id or str(uuid4())
+        self.title = title
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -84,6 +120,10 @@ class Transcript:
         """The `model` given at construction."""
         return self.model
 
+    async def resume(self, conversation_id: str) -> str:
+        """An in-memory transcript has no saved conversations to switch to."""
+        raise LookupError(f'No saved session: {conversation_id}')
+
 
 @dataclass(kw_only=True)
 class SessionStart:
@@ -91,6 +131,26 @@ class SessionStart:
 
     agent: AbstractAgent[Never, object]
     settings: Settings
+    conversation_chosen: bool = False
+    """Whether launch options (`--resume`, `--session-id`, `--fork-session`) picked `host.conversation`.
+
+    A plugin that restores a conversation of its own choosing on start should then leave it alone.
+    """
+
+
+@dataclass(kw_only=True)
+class ConversationChanged:
+    """The shell switched to another conversation, or the current one got a new title.
+
+    Fires after `/new`, `/clear`, and `/resume`, when the first prompt titles a new conversation,
+    and when background naming or a rename in `/resume` retitles the current one. A startup
+    `--resume SESSION-ID`, `--session-id`, or `--fork-session` is already in place when
+    `on_session_start` runs, so it fires nothing.
+    """
+
+    conversation_id: str
+    title: str | None
+    """`None` until the conversation's first prompt is saved."""
 
 
 @dataclass(kw_only=True)
@@ -157,6 +217,12 @@ class ModelProvider:
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
     """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    resolve_profile: Callable[[str, str], Model] | None = None
+    """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
+
+    Called in a worker thread like `resolve`. `None` means the prefix has one account, and a model
+    naming a profile fails with a message saying so.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -172,6 +238,26 @@ class ModelProvider:
     def names(self) -> tuple[str, ...]:
         """`models` as CLAI shows and saves them, with the prefix."""
         return tuple(f'{self.prefix}:{name}' for name in self.models)
+
+
+@dataclass(frozen=True, kw_only=True)
+class UsageWindow:
+    """One limit on an account, such as a five-hour or weekly window, as `/accounts` shows it."""
+
+    label: str
+    """A short name for the window: `5h`, `7d`, or `premium`."""
+    used_percent: float
+    """How much of the limit is used, from 0 to 100."""
+    resets_at: datetime | None = None
+    """When the window resets, timezone-aware; `None` when the service does not say."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class AccountUsage:
+    """An account's current usage: its limits, most pressing first, and its plan when known."""
+
+    windows: tuple[UsageWindow, ...]
+    plan: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -192,6 +278,18 @@ class PluginLogin:
     """Sign in and return the message to show."""
     models: tuple[str, ...] = ()
     """Models, as `PREFIX:NAME`, added to the saved model list once the sign-in succeeds."""
+    profile_handler: Callable[[str], Awaitable[str]] | None = None
+    """Sign in to another account: called as `profile_handler(PROFILE)` for `/login NAME@PROFILE`.
+
+    On success `models` are saved with the profile, as `PREFIX@PROFILE:NAME`. `None` means the
+    sign-in has one account, and `/login NAME@PROFILE` says so.
+    """
+    usage: Callable[[str | None], Awaitable[AccountUsage]] | None = None
+    """The account's current usage, for `/accounts`: called as `usage(PROFILE)`, `None` for the default.
+
+    `/accounts` calls it in the background for each listed account while the menu is open, with a
+    short timeout. Raise `UserError` with a short reason when usage is unavailable.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""
@@ -229,7 +327,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | PluginLoadFailed
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -260,11 +358,13 @@ class PluginHost(Generic[DepsT]):
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
+        submit_prompt: Callable[[str], None] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
         `save_settings` writes changed settings back to the plugin's declaration; without it they
-        last until the plugin unloads.
+        last until the plugin unloads. `submit_prompt` runs a prompt as the next turn; see the method
+        of the same name.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -284,6 +384,21 @@ class PluginHost(Generic[DepsT]):
         self._settings = settings
         self._persist = save_settings
         self._requirements: Requirements = dict(requirements or {})
+        self._submit_prompt = submit_prompt
+
+    def submit_prompt(self, text: str, /) -> None:
+        """Run `text` as the next turn, as if typed at the prompt but without echoing it.
+
+        Call it from a `/command` handler that starts a turn, such as a skill command sending the
+        skill's instructions. The prompt runs once the command returns, before input queued in the
+        editor, and goes through `on_turn_start` like any prompt. A `during_turn` command opened over a
+        running turn must not call it. Text starting with `/` or `!` is a prompt here, not
+        a command. Raises `RuntimeError` outside a command handler run between turns, and on a host
+        with no shell to run it, such as in a test, unless the host was built with `submit_prompt=`.
+        """
+        if self._submit_prompt is None:
+            raise RuntimeError(f'Plugin {self.name!r} has no shell to run a prompt in.')
+        self._submit_prompt(text)
 
     @property
     def session_id(self) -> str | None:
@@ -409,6 +524,14 @@ class Plugin(Generic[SettingsT, DepsT]):
         """The settings the plugin loaded with. A settings menu reads fresh ones with `host.settings`."""
         return self._settings
 
+    async def prepare(self) -> None:
+        """Read what the `get_*` methods need, such as files on disk, before CLAI calls them.
+
+        Called once per load, after `__init__` and before the `get_*` methods, so commands and
+        capabilities can depend on what it finds. A failure fails the load. `load_plugin` raises
+        `TypeError` for a plugin that overrides it; a test calls `from_host`, awaits `prepare`, then `collect`.
+        """
+
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         """Tools, instructions, hooks, or a capability chosen per run, bound on every run."""
         return ()
@@ -420,9 +543,10 @@ class Plugin(Generic[SettingsT, DepsT]):
     def get_status_segments(self) -> Sequence[StatusSegment]:
         """Short fragments for the status row, such as the working directory.
 
-        The shell repaints the row about ten times a second, so keep each fragment cheap and
-        synchronous: it is called for every frame, not once per turn. Fragments are appended in
-        load order, painted `MUTED`, and truncated from the right on a narrow terminal.
+        The shell repaints the row about ten times a second while it works and once a second while
+        the editor sits idle, so keep each fragment cheap and synchronous: it is called for every
+        frame, not once per turn. Fragments are appended in load order, painted `MUTED`, and
+        truncated from the right on a narrow terminal.
         """
         return ()
 
@@ -470,6 +594,9 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_turn_end(self, event: TurnEnd) -> None:
         """The turn finished."""
 
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        """The shell switched conversations, or the current one got a new title."""
+
     @property
     def has_configure(self) -> bool:
         """Whether this plugin overrides `configure`, offering a settings menu."""
@@ -491,6 +618,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     SessionEnd: 'on_session_end',
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
+    ConversationChanged: 'on_conversation_changed',
     PluginLoadFailed: 'on_plugin_load_failed',
 }
 
@@ -547,6 +675,14 @@ def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
 def load_plugin(plugin_type: type[Plugin[BaseModel, DepsT]], host: PluginHost[DepsT]) -> LoadedPlugin[DepsT]:
     """Build `plugin_type` from `host`'s settings and collect what it contributes, as the loader does.
 
-    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`.
+    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`. It is
+    synchronous, so a plugin that overrides `prepare` raises `TypeError`: load it with `from_host`,
+    `await plugin.prepare()`, then `collect`.
     """
+    if plugin_type.prepare is not Plugin.prepare:
+        name = plugin_type.__name__
+        raise TypeError(
+            f'{name} overrides `prepare`, which `load_plugin` cannot await. Use '
+            f'`plugin = {name}.from_host(host)`, `await plugin.prepare()`, then `collect(plugin)`.'
+        )
     return collect(plugin_type.from_host(host))
