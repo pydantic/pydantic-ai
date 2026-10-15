@@ -14,6 +14,9 @@ What the cassettes show:
   copies the annotation verbatim — attribute included — onto reasoning it just produced itself
 * the *channel* is what settles it: the identical attributed block moved into a `user` turn stops the
   copying on the model that copies every assistant-turn variant, which is the design this ships
+* it isn't a legacy quirk: re-measured on 2026-10-15 with the same history, bare tags in the assistant
+  turn leaked `4/4` on `claude-sonnet-5-5`, `claude-haiku-4-5` and `claude-opus-4-5`, and `0/4` on
+  `claude-opus-5-5` and `claude-fable-5-1`; the shipped user-turn wrapper leaked `0/4` on all five
 
 Because the behavior is stochastic, each cassette pins one recorded instance of a rate measured over
 repeated live runs. The rates come from a 134-call sweep at 6 prior turns with no system prompt: bare
@@ -28,7 +31,7 @@ from __future__ import annotations as _annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
@@ -36,7 +39,7 @@ from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPa
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
-from ..conftest import AnthropicModelFactory, RequestCapture
+from ..conftest import AnthropicModelFactory, RequestCapture, json_objects
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -141,7 +144,7 @@ _BARE = '<thinking>\n{reasoning}\n</thinking>'
 _NOTED = '<thinking note="carried over from earlier in this conversation">\n{reasoning}\n</thinking>'
 _ATTRIBUTED = '<thinking by="openai">\n{reasoning}\n</thinking>'
 # The shape Pydantic AI ships for this family: the same reasoning, attributed, in a user turn.
-_CARRIED = '<assistant_thinking by="openai">\n{reasoning}\n</assistant_thinking>'
+_CARRIED = '<assistant_thinking model="gpt-5.6" provider="openai">\n{reasoning}\n</assistant_thinking>'
 
 
 CASES = [
@@ -208,8 +211,33 @@ CASES = [
         _CARRIED,
         'user',
         snapshot([]),
-        snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking by="openai">')}),
-        snapshot(4175),
+        snapshot(
+            {('user', '</assistant_thinking>'), ('user', '<assistant_thinking model="gpt-5.6" provider="openai">')}
+        ),
+        snapshot(4319),
+    ),
+    Case(
+        # A current model, not just the older ones above: bare tags in the assistant turn, 4/4 on
+        # 2026-10-15 (and 4/4 on `claude-haiku-4-5`).
+        'sonnet-5-5-bare-leaks',
+        'claude-sonnet-5-5',
+        _BARE,
+        'assistant',
+        snapshot(['<thinking>', '</thinking>']),
+        snapshot({('assistant', '</thinking>'), ('assistant', '<thinking>')}),
+        snapshot(3971),
+    ),
+    Case(
+        # And the shipped placement on that same current model: 0/4.
+        'sonnet-5-5-carried-in-user-turn-clean',
+        'claude-sonnet-5-5',
+        _CARRIED,
+        'user',
+        snapshot([]),
+        snapshot(
+            {('user', '</assistant_thinking>'), ('user', '<assistant_thinking model="gpt-5.6" provider="openai">')}
+        ),
+        snapshot(4319),
     ),
     Case(
         # Control: with no tag anywhere in history opus never emits one, so the copying above is precedent,
@@ -235,7 +263,9 @@ async def test_thinking_tag_mimicry(
     """A thinking tag replayed in an *assistant* turn is copied into the answer the user reads; in a
     *user* turn it is not."""
     model: AnthropicModel = anthropic_model(case.model_name, capture=True)
-    agent = Agent(model)
+    # The output budget every case was recorded with, so the request stays the one the recording answered
+    # rather than following the adapter's default.
+    agent = Agent(model, model_settings={'max_tokens': 4096})
     result = await agent.run(_FOLLOWUP, message_history=_history(case))
 
     assert _THINKING_TAG.findall(result.output) == case.expected_tags
@@ -243,11 +273,11 @@ async def test_thinking_tag_mimicry(
     # These cassettes match on method and URI only, so an edited history replays the old answer and stays
     # green while the recording stops being evidence for it. Reading the request off the wire pins what
     # each recorded answer is evidence *for*: the wrapper, the turn it rides in, and the history's size.
-    sent: list[dict[str, Any]] = request_capture.body('/v1/messages')['messages']
+    sent = json_objects(request_capture.body('/v1/messages')['messages'])
     assert {
         (message['role'], tag)
         for message in sent
-        for block in message['content']
-        for tag in _THINKING_TAG.findall(block['text'])
+        for block in json_objects(message['content'])
+        for tag in _THINKING_TAG.findall(str(block['text']))
     } == case.sent_tags
     assert len(json.dumps(sent)) == case.sent_length

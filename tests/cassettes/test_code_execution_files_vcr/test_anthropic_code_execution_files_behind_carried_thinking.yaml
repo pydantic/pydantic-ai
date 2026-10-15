@@ -1,7 +1,8 @@
+version: 1
 interactions:
 - request:
-    body: "--72a545b0327f486027412819538c69ec\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
-      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--72a545b0327f486027412819538c69ec--\r\n"
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_01VHfBjw43jZTKVpw5eTSs6J?beta=true
     headers:
       accept:
       - application/json
@@ -9,44 +10,38 @@ interactions:
       - gzip, deflate, br, zstd
       connection:
       - keep-alive
-      content-length:
-      - '198'
       content-type:
-      - multipart/form-data; boundary=72a545b0327f486027412819538c69ec
+      - application/json
       host:
       - api.anthropic.com
-    method: POST
-    uri: https://api.anthropic.com/v1/files?beta=true
+    body:
+      type: none
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '190'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=275
+      - x-originResponse;dur=184
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      created_at: '2026-08-26T01:51:39.020143Z'
-      downloadable: false
-      filename: data.csv
-      id: file_01KvSMXNb3nB1UMXB1kqLmHC
-      mime_type: text/csv
-      size_bytes: 30
-      type: file
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        id: file_01VHfBjw43jZTKVpw5eTSs6J
+        type: file_deleted
+  recorded_at: 2026-10-15T23:49:36.094280+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/files?beta=true
     headers:
       accept:
       - application/json
@@ -55,174 +50,373 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '655'
+      - "198"
       content-type:
-      - application/json
+      - multipart/form-data; boundary=d52a86d76f8feb929fed681168dfdaa6
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: |-
-            <assistant_thinking>
-            They uploaded a CSV, so the sum has to come from the file, not from memory.
-            </assistant_thinking>
-          type: text
-        - file_id: file_01KvSMXNb3nB1UMXB1kqLmHC
-          type: container_upload
-        role: user
-      - content:
-        - text: Ready when you are.
-          type: text
-        role: assistant
-      - content:
-        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: text
+      content: "--d52a86d76f8feb929fed681168dfdaa6\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type: text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--d52a86d76f8feb929fed681168dfdaa6--\r\n"
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '2488'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=227
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: file
+        id: file_01VHfBjw43jZTKVpw5eTSs6J
+        size_bytes: 30
+        created_at: 2026-10-15T23:49:29.523441Z
+        filename: data.csv
+        mime_type: text/csv
+        downloadable: false
+  recorded_at: 2026-10-15T23:49:29.677295+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "690"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: |-
+              <assistant_thinking>
+              They uploaded a CSV, so the sum has to come from the file, not from memory.
+              </assistant_thinking>
+            type: text
+          - type: container_upload
+            file_id: file_01VHfBjw43jZTKVpw5eTSs6J
+        - role: assistant
+          content:
+          - text: Ready when you are.
+            type: text
+        - role: user
+          content:
+          - text: >-
+              Use the code execution tool to read the uploaded CSV file and report the sum of
+              the `value` column.
+            type: text
+          - type: container_upload
+            file_id: file_01VHfBjw43jZTKVpw5eTSs6J
+        model: claude-sonnet-4-6
+        stream: true
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-baf7471e760df8977b3a6fd8f69924c9-4b73a7d08879b150-01
+      - 00-37553c5925a348af6faf36f41b0181af-8f437e4233809651-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-08-26T02:51:50.144838Z'
-        id: container_01GFgP7TbrLeMTqWykedgXRy
-      content:
-      - id: srvtoolu_01D9QrH3BM8btUigW5JLwWK8
-        input:
-          command: |
-            python3 -c "
-            import csv, os
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011Cg4vDQo6ExCbZRyEs2XvK","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2320,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":27,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
-            file_path = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01NC3miE6EFGeTzapdQqz3yw","name":"bash_code_execution","input":{}}               }
 
-            total = 0.0
-            with open(file_path, newline='') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    total += float(row['value'])
+        event: ping
+        data: {"type": "ping"}
 
-            print(f'Sum of value column: {total}')
-            "
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 1
-          stderr: |
-            Traceback (most recent call last):
-              File "<string>", line 7, in <module>
-            FileNotFoundError: [Errno 2] No such file or directory: '/files/input/d2442eaa9f8949f5/data.csv'
-          stdout: ''
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01D9QrH3BM8btUigW5JLwWK8
-        type: bash_code_execution_tool_result
-      - text: 'Let me locate the file first:'
-        type: text
-      - id: srvtoolu_01AGLkatoCwTj3Mify43PXmP
-        input:
-          command: find / -name "data.csv" 2>/dev/null
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 1
-          stderr: ''
-          stdout: |
-            /usr/local/lib/python3.11/site-packages/statsmodels/datasets/danish_data/data.csv
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01AGLkatoCwTj3Mify43PXmP
-        type: bash_code_execution_tool_result
-      - text: |-
-          It seems the uploaded file isn't accessible in the environment right now. The `data.csv` file could not be found at the expected input path. Here's what you can try:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
 
-          1. **Re-upload the file** -- Sometimes uploads don't persist into the execution environment. Please try uploading `data.csv` again.
-          2. **Paste the data directly** -- If the file is small, you can paste its contents here and I'll process it right away.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}          }
 
-          Once the file is accessible, I'll compute the sum of the `value` column immediately!
-        type: text
-      id: msg_011CeQXH2Ad8UvstnYqbiTyr
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 7572
-        output_tokens: 360
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    body: ''
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: DELETE
-    uri: https://api.anthropic.com/v1/files/file_01KvSMXNb3nB1UMXB1kqLmHC?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '63'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=198
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      id: file_01KvSMXNb3nB1UMXB1kqLmHC
-      type: file_deleted
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nd\": \"p"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ython3 "}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"-c \\\"\\n"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"import "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"csv, os"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\n\\nfil"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"e_path "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"= os.pa"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"th.join"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"(os.env"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"iron['I"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"NPUT_DI"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"R'], 'd"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ata.csv"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"')\\n\\nt"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"otal = "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"0.0\\nwi"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"th open"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"(file_p"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ath, ne"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"wline='"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"') as f"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\\n    "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"reader "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"= csv.D"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ictRead"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er(f)\\n"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"    for"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" row in"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" reader"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\\n    "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"    tot"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"al += f"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"loat(ro"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"w['valu"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"e'])\\n\\"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nprint("}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"f'Sum o"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"f value"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" column"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": {tota"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"l}')\\n\\"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"\\n\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01NC3miE6EFGeTzapdQqz3yw","content":{"type":"bash_code_execution_result","stdout":"Sum of value column: 100.0\n","stderr":"","return_code":0,"content":[]}}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"The sum of the `value`"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" column in **"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"data.csv** is **100"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":".0**"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":". "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n\nHere"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"'s a"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" quick"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" breakdown of"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" what"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" was"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" done"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":":\n1"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":". **"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Opened** the uploaded"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" CSV file using Python"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"'s `csv."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"DictReader`."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n2. **It"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"erated** over"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" each row, extract"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ing the `value` field"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n3. **"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Summed** all the values and"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" printed"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the result.\n\nLet"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" me know if you'd"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" like any"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" further"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" analysis on"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the file"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"!"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01XUKjNx2ctAH1N4kGmPii9i","expires_at":"2026-10-16T00:49:33.394103Z"}},"usage":{"input_tokens":4825,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":267,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}        }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-15T23:49:35.809327+00:00

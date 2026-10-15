@@ -37,7 +37,7 @@ from ...conftest import try_import
 from ..conftest import AnthropicModelFactory, RequestCapture, message_shape
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropicBedrock
@@ -203,7 +203,7 @@ async def test_carried_thinking_accepted_with_thinking_enabled(
         ]
     )
     assert result.output == snapshot(
-        "A longer duration means **more** interest rate risk, as the bond's price will be more sensitive to changes in interest rates."
+        "A longer duration means more interest-rate risk, as the bond's price will be more sensitive to changes in interest rates."
     )
 
 
@@ -212,15 +212,18 @@ def anthropic_bedrock_client() -> AsyncAnthropicBedrock:
     """An `AsyncAnthropicBedrock` client that needs no AWS credentials to replay.
 
     The SDK signs with SigV4 whenever botocore can resolve credentials, and refuses a bearer token
-    alongside them — so recording goes through `run-bedrock-tests.sh`, which exports static keys, and
-    replay falls back to a placeholder bearer token. Without that fallback botocore reaches for the
-    instance metadata endpoint on a runner that has no credentials at all, and the request never gets
-    as far as the cassette. `botocore` itself only ships under the `bedrock` extra.
+    alongside them — so recording with static keys leaves `api_key` unset, recording with a Bedrock API
+    key passes `AWS_BEARER_TOKEN_BEDROCK`, and replay falls back to a placeholder bearer token. Without
+    that fallback botocore reaches for the instance metadata endpoint on a runner that has no
+    credentials at all, and the request never gets as far as the cassette. `botocore` itself only ships
+    under the `bedrock` extra.
     """
     pytest.importorskip('botocore')
 
     return AsyncAnthropicBedrock(
-        api_key=None if os.environ.get('AWS_ACCESS_KEY_ID') else 'test-bedrock-token',
+        api_key=None
+        if os.environ.get('AWS_ACCESS_KEY_ID')
+        else os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
         aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
     )
 
@@ -283,5 +286,5 @@ Duration measures price sensitivity to rates, and the lookup came back with 8.1 
         ]
     )
     assert result.output == snapshot(
-        "Longer duration means more interest-rate risk, as the bond's price will move more for a given change in yields."
+        "Longer duration means more interest-rate risk, as the bond's price becomes more sensitive to changes in interest rates."
     )

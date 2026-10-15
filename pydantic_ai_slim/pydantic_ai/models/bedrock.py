@@ -1500,9 +1500,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            thinking_text, carry_in_user_turn = render_replayed_thinking(
-                                item.content, profile, message.provider_name
-                            )
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile, message)
                             if not carry_in_user_turn:
                                 content.append({'text': thinking_text})
                             elif item.content:

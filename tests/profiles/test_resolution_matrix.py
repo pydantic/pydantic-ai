@@ -1375,6 +1375,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,

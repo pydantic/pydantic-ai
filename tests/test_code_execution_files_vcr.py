@@ -98,23 +98,18 @@ async def test_anthropic_code_execution_files(
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_code_execution_files_behind_carried_thinking(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
-    """Anthropic accepts the upload block in the synthesized `user` turn that carried reasoning creates.
+    """Anthropic accepts upload blocks on the synthesized `user` turn that carried reasoning creates.
 
-    The blocks are pinned to the *first* user message so that message stays byte-identical as history
-    grows. Reasoning that can't ride the native reasoning channel is carried into a `user` turn ahead of
-    the assistant turn it came from, so on a history opening with a `ModelResponse` that synthesized turn
-    *is* the first user message and takes the uploads. Still a stable anchor — the leading response can't
-    change either — and the recorded 200 is the half only the API can answer.
-
-    What the recording also shows is the container not finding the file. That is not this placement: the
-    same run with an ordinary prior user turn and no carried reasoning anywhere fails identically, while
-    the single-turn recording above was re-verified live on the same day and reads the file. An upload
-    block outside the final user turn not reaching a fresh container is a pre-existing defect in the
-    anchor, tracked in https://github.com/pydantic/pydantic-ai/issues/7775.
+    Reasoning that can't ride the native reasoning channel is carried into a `user` turn of its own ahead
+    of the assistant turn it came from, and every user message that isn't only tool results gets the
+    `container_upload` blocks, so on a history opening with a `ModelResponse` the carried turn takes them
+    too. That keeps every user message byte-identical as history grows; what only the API can answer is
+    whether it takes an upload block next to the carried text, and whether the file still reaches the
+    fresh container this turn allocates.
     """
-    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
     uploaded = await client.beta.files.upload(
         file=('data.csv', _CSV_BYTES, 'text/csv'),
         betas=['files-api-2025-04-14'],
@@ -144,15 +139,23 @@ async def test_anthropic_code_execution_files_behind_carried_thinking(
         await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
         await client.close()
 
-    messages = json.loads([r for r in vcr.requests if '/v1/messages' in r.uri][0].body)['messages']
-    assert [(message['role'], [block['type'] for block in message['content']]) for message in messages] == snapshot(
-        [('user', ['text', 'container_upload']), ('assistant', ['text']), ('user', ['text'])]
+    body = request_capture.body('/v1/messages')
+    assert message_shape(body) == snapshot(
+        [('user', ['text', 'container_upload']), ('assistant', ['text']), ('user', ['text', 'container_upload'])]
     )
-    assert messages[0]['content'][0]['text'].startswith('<assistant_thinking>')
-    # The tool ran, so the whole request — carried turn, upload block and all — was served, not rejected.
-    assert [part.part_kind for part in result.all_messages()[-1].parts] == snapshot(
-        ['builtin-tool-call', 'builtin-tool-return', 'text', 'builtin-tool-call', 'builtin-tool-return', 'text']
+    # The first text block on the wire is the carried reasoning, in the turn the uploads also ride.
+    assert content_blocks(body, 'text')[0] == snapshot(
+        {
+            'text': """\
+<assistant_thinking>
+They uploaded a CSV, so the sum has to come from the file, not from memory.
+</assistant_thinking>\
+""",
+            'type': 'text',
+        }
     )
+    # The file reached the fresh container: the sum can only come from reading it.
+    assert '100' in result.output
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
