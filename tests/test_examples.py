@@ -252,7 +252,7 @@ class MockRealtimeConnection(InferredConnection):
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()
-        await self._closed.wait()
+        await self._closed.wait()  # pragma: lax no cover  # (an example can end the session before reading on)
 
 
 @asynccontextmanager

@@ -124,3 +124,9 @@ def test_a_failed_commit_of_a_transcribed_turn_leaves_it_to_join_later() -> None
     tracker.input_failed(tracker.input_sent(CommitAudio()))
     assert lifecycle(tracker.take_pending()) == snapshot([])
     assert lifecycle(tracker.message([OutputTranscript('Hi.')])) == snapshot(['UserTurnEnded', 'ResponseStarted'])
+
+
+def test_speech_starting_in_a_turn_its_words_already_started_says_nothing() -> None:
+    tracker = InferredLifecycle(transcribes=True)
+    assert lifecycle(tracker.message([InputTranscript('Hi')])) == snapshot(['UserTurnStarted'])
+    assert lifecycle(tracker.message([RealtimeInputSpeechStartEvent()])) == snapshot([])
