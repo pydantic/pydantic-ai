@@ -107,11 +107,6 @@ def _generate_id() -> str:
     return _GeneratedID(uuid7())
 
 
-def timestamp_ms() -> int:
-    """The current time in milliseconds, the unit of AG-UI event timestamps."""
-    return int(now_utc().timestamp() * 1_000)
-
-
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
@@ -192,18 +187,22 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     def encode_event(self, event: BaseEvent) -> str:
         return self._event_encoder.encode(event)
 
+    @staticmethod
+    def _get_timestamp() -> int:
+        return int(now_utc().timestamp() * 1_000)
+
     async def handle_event(self, event: NativeEvent) -> AsyncIterator[BaseEvent]:
         """Override to set timestamps on all AG-UI events."""
         async for agui_event in super().handle_event(event):
             if agui_event.timestamp is None:
-                agui_event.timestamp = timestamp_ms()
+                agui_event.timestamp = self._get_timestamp()
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         yield RunStartedEvent(
             thread_id=self.thread_id,
             run_id=self.run_id,
-            timestamp=timestamp_ms(),
+            timestamp=self._get_timestamp(),
         )
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
@@ -223,7 +222,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield RunFinishedEvent(
                 thread_id=self.thread_id,
                 run_id=self.run_id,
-                timestamp=timestamp_ms(),
+                timestamp=self._get_timestamp(),
             )
             return
 
@@ -236,13 +235,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 thread_id=self.thread_id,
                 run_id=self.run_id,
                 outcome=self._build_outcome(),
-                timestamp=timestamp_ms(),
+                timestamp=self._get_timestamp(),
             )
         else:
             yield RunFinishedEvent(
                 thread_id=self.thread_id,
                 run_id=self.run_id,
-                timestamp=timestamp_ms(),
+                timestamp=self._get_timestamp(),
             )
 
     def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
@@ -265,7 +264,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
-        yield RunErrorEvent(message=str(error), timestamp=timestamp_ms())
+        yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
 
     async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseEvent]:
         self._cancelled_run = True

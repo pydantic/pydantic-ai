@@ -88,7 +88,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import AGUIEventStream, timestamp_ms
+    from ._event_stream import AGUIEventStream
     from ._forward_compat import skip_unknown_tagged_items
     from ._interrupt import (
         HAS_INTERRUPTS,
@@ -379,6 +379,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     async def _answer_mcp_app_request(self, request: Any) -> AsyncIterator[BaseEvent]:
         """Answer a page's MCP request the way the AG-UI MCP Apps middleware does."""
         thread_id, run_id = self.run_input.thread_id, self.run_input.run_id
+        timestamp_ms = AGUIEventStream._get_timestamp  # pyright: ignore[reportPrivateUsage]
         yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=timestamp_ms())
         try:
             result = await self._mcp_app_request_result(request)

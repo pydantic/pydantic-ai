@@ -702,9 +702,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         return stream_events()
 
     def _answer_without_run(self) -> AsyncIterator[EventT] | None:
-        """Return the events answering a request that doesn't run the agent, or `None` to run it.
+        """Return events that answer this request instead of running the agent, or `None` to run it.
 
-        `on_complete` and `on_cancel` don't fire for an answered request, as there is no run.
+        `run_stream` checks this first, so a protocol whose clients send requests that aren't agent runs can answer
+        them without overriding `run_stream` and copying its parameters. The AG-UI adapter uses it for MCP Apps page
+        requests. `on_complete` and `on_cancel` don't fire, as there is no run.
         """
         return None
 
