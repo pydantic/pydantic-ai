@@ -11,33 +11,20 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 
-import anyio
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 CODE = 'a = await ping(n=1)\nb = await ping(n=2)\n[a, b]'
 _ARGS = json.dumps({'code': CODE})
 _CUT = _ARGS.index('[a, b]')
 FIRST_CHUNK, LAST_CHUNK = _ARGS[:_CUT], _ARGS[_CUT:]
 """The first chunk closes the first statement for eager execution and completes both calls for speculation."""
-
-BLOCKED_TIERS = [
-    pytest.param(lambda: CodeMode[None](eager=True), 1.0, id='eager'),
-    pytest.param(lambda: CodeMode[None](speculate=['ping']), 0.1, id='speculate'),
-    pytest.param(lambda: CodeMode[None](eager=True, speculate=['ping']), 0.1, id='eager-speculate'),
-]
-"""Each tier with how long a blocked run gives it to reach `ping` before the guard decides.
-
-A call that is not held runs within this and ends the wait early; a held call has nothing to
-signal, so the wait elapses. Eager statements reach `ping` through Monty, which runs off the event
-loop and takes longest on its first start in a process. Speculation starts `ping` from the event
-loop as soon as the call text has streamed.
-"""
 
 STREAMED_TIERS = [
     pytest.param(lambda: CodeMode[None](eager=True), id='eager'),
@@ -50,24 +37,34 @@ class GuardedRun:
     """A streamed `run_code` call whose last chunk waits for `ping(n=1)` to run.
 
     The stream sends its first chunk once `first_chunk_released` is set, which it is by default.
-    It then gives streamed execution `reach_grace` seconds to reach `ping`, records which calls ran
-    by then, and lets a parallel guard decide. Holding the last chunk until `ping(n=1)` ran makes
-    any call that runs at all run before the stream finished.
+    It then waits for a nested call to start, records which calls ran by then, and lets a parallel
+    guard decide. Holding the last chunk until `ping(n=1)` ran makes any call that runs at all run
+    before the stream finished.
     """
 
-    def __init__(self, reach_grace: float) -> None:
-        self.reach_grace = reach_grace
+    def __init__(self) -> None:
         self.calls: list[int] = []
         self.calls_at_verdict: list[int] | None = None
+        self.call_started = asyncio.Event()
         self.verdict_due = asyncio.Event()
         self.first_call_ran = asyncio.Event()
         self.requested = asyncio.Event()
         self.first_chunk_released = asyncio.Event()
         self.first_chunk_released.set()
 
+    def watch_verdict_wait(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Count a nested call as started once it waits for the input guardrails' verdict, before `ping` runs."""
+
+        async def allow(ctx: RunContext[object]) -> bool:
+            self.call_started.set()
+            return await input_guardrails_allow(ctx)
+
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.input_guardrails_allow', allow)
+
     async def ping(self, n: int) -> int:
         self.calls.append(n)
         if n == 1:
+            self.call_started.set()
             self.first_call_ran.set()
         return n
 
@@ -79,8 +76,7 @@ class GuardedRun:
         self.requested.set()
         await self.first_chunk_released.wait()
         yield {0: DeltaToolCall(name='run_code', json_args=FIRST_CHUNK, tool_call_id='run_code_1')}
-        with anyio.move_on_after(self.reach_grace):
-            await self.first_call_ran.wait()
+        await asyncio.wait_for(self.call_started.wait(), timeout=5)
         self.calls_at_verdict = list(self.calls)
         self.verdict_due.set()
         # A blocking verdict abandons the stream here, before the last chunk.
@@ -94,11 +90,12 @@ class GuardedRun:
 
 
 class TestCodeModeInputGuardrail:
-    @pytest.mark.parametrize(('code_mode', 'reach_grace'), BLOCKED_TIERS)
+    @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
     async def test_parallel_guard_that_blocks_runs_no_nested_call(
-        self, code_mode: Callable[[], CodeMode[None]], reach_grace: float
+        self, code_mode: Callable[[], CodeMode[None]], monkeypatch: pytest.MonkeyPatch
     ):
-        run = GuardedRun(reach_grace=reach_grace)
+        run = GuardedRun()
+        run.watch_verdict_wait(monkeypatch)
 
         async def guard(prompt: str) -> GuardrailResult:
             await run.verdict_due.wait()
@@ -110,8 +107,11 @@ class TestCodeModeInputGuardrail:
         assert run.calls == []
 
     @pytest.mark.parametrize('wrapper', ['capability-func', 'prefix-tools'])
-    async def test_parallel_guard_behind_a_wrapper_blocks_nested_calls(self, wrapper: str):
-        run = GuardedRun(reach_grace=0.1)
+    async def test_parallel_guard_behind_a_wrapper_blocks_nested_calls(
+        self, wrapper: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        run = GuardedRun()
+        run.watch_verdict_wait(monkeypatch)
 
         async def guard(prompt: str) -> GuardrailResult:
             await run.verdict_due.wait()
@@ -127,8 +127,11 @@ class TestCodeModeInputGuardrail:
         assert result.output == 'blocked'
         assert run.calls == []
 
-    async def test_concurrent_run_allowed_first_does_not_release_another_runs_calls(self):
-        run = GuardedRun(reach_grace=0.1)
+    async def test_concurrent_run_allowed_first_does_not_release_another_runs_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        run = GuardedRun()
+        run.watch_verdict_wait(monkeypatch)
         run.first_chunk_released.clear()
 
         async def guard(prompt: str) -> GuardrailResult:
@@ -155,9 +158,10 @@ class TestCodeModeInputGuardrail:
 
     @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
     async def test_parallel_guard_that_allows_releases_nested_calls_during_stream(
-        self, code_mode: Callable[[], CodeMode[None]]
+        self, code_mode: Callable[[], CodeMode[None]], monkeypatch: pytest.MonkeyPatch
     ):
-        run = GuardedRun(reach_grace=0)
+        run = GuardedRun()
+        run.watch_verdict_wait(monkeypatch)
 
         async def guard(prompt: str) -> GuardrailResult:
             await run.verdict_due.wait()
@@ -174,7 +178,7 @@ class TestCodeModeInputGuardrail:
     async def test_without_parallel_guard_runs_nested_calls_without_waiting(
         self, code_mode: Callable[[], CodeMode[None]], with_sequential_guard: bool
     ):
-        run = GuardedRun(reach_grace=5)
+        run = GuardedRun()
         capabilities: list[AgentCapability[None]] = [code_mode()]
         if with_sequential_guard:
             capabilities.append(InputGuardrail[None](guard=lambda prompt: True))
@@ -187,7 +191,7 @@ class TestCodeModeInputGuardrail:
 
     @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
     async def test_sequential_guard_that_blocks_runs_no_code(self, code_mode: Callable[[], CodeMode[None]]):
-        run = GuardedRun(reach_grace=0)
+        run = GuardedRun()
 
         result = await run.agent(
             code_mode(), InputGuardrail(guard=lambda prompt: GuardrailResult.block('blocked'))
