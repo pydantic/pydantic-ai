@@ -7046,8 +7046,11 @@ async def test_response_cut_off_by_a_reconnect_keeps_its_id() -> None:
     ]
 
 
-async def test_response_cut_off_names_the_response_its_latest_content_came_from() -> None:
-    """A reply whose content moved on to a new response before it was cut off is named after that one."""
+async def test_content_naming_another_response_starts_one_of_its_own() -> None:
+    """Content that names a different response than the one under way ends that one: the cut-off one is the new one.
+
+    (Each is named after the id its content carries, as in `test_response_cut_off_by_a_reconnect_keeps_its_id`.)
+    """
     conn = FakeRealtimeConnection(
         [
             OutputTranscript(text='One, ', response_id='resp_a'),
@@ -7059,7 +7062,7 @@ async def test_response_cut_off_names_the_response_its_latest_content_came_from(
     session = RealtimeSession(conn)
     await collect_events(session)
     responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
-    assert [(r.state, r.provider_response_id) for r in responses] == [('interrupted', 'resp_b')]
+    assert [(r.state, r.provider_response_id) for r in responses] == [('complete', 'resp_a'), ('interrupted', 'resp_b')]
 
 
 async def test_response_cut_off_by_close_keeps_its_id() -> None:

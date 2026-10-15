@@ -173,6 +173,14 @@ class TranscriptOverdue:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ResponseRefused:
+    """The session refused the response that is starting (the request it is would exceed a usage limit).
+
+    It stops reading the connection, so the response is cut off: it isn't recorded, or counted as a request.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
 class ResponseOverdue:
     """A response under way held back the user's turns too long: they are recorded ahead of it, where history stands.
 
@@ -203,6 +211,7 @@ Command: TypeAlias = (
     | ExchangeAbandoned
     | TranscriptOverdue
     | ResponseOverdue
+    | ResponseRefused
     | ReceiveEnded
     | Closed
 )
@@ -237,6 +246,8 @@ class _Response:
     usage_details: dict[str, Any] | None = None
     usage_finish_reason: FinishReason | None = None
     interrupted_at_ms: int | None = None
+    refused: bool = False
+    """The session refused it as it started (a usage limit): whatever of it comes is no request it records."""
     status: ResponseStatus | None = None
     """How it ended; `None` while it is open."""
     message: ModelResponse | None = None
@@ -354,6 +365,8 @@ class SessionCore:
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
         self._carried_usage: list[SessionUsage] = []
+        self._next_refused = False
+        """The session refused the next response before it started (see `ResponseRefused`)."""
         """Usage reported between responses, naming none: the next response's."""
         self._audio_budget = RetainedAudioBudget(
             retain_audio_max_seconds, input_sample_rate=input_sample_rate, output_sample_rate=output_sample_rate
@@ -478,6 +491,12 @@ class SessionCore:
             self._end_transcriptions([command.turn_id])
         elif isinstance(command, ResponseOverdue):
             self._release_held_turns(command.response_id)
+        elif isinstance(command, ResponseRefused):
+            if (response := self._speaking_response()) is not None:
+                response.refused = True
+            else:
+                # Refused at the first sign of it, its usage reported ahead of it.
+                self._next_refused = True
         elif isinstance(command, ReceiveEnded):
             self._receiving = False
             # Nothing more will be read: not the rest of a response under way, nor of a turn that joined.
@@ -526,6 +545,7 @@ class SessionCore:
             for input_id in [input_id for input_id in self._unplaced if input_id <= last]:
                 self._place_input(input_id)
         response = _Response(event.response_id, event.answers, self._model_name(), provider_id=event.provider_id)
+        response.refused, self._next_refused = self._next_refused, False
         carried, self._carried_usage = self._carried_usage, []
         for usage in carried:
             self._add_usage(response, usage)
@@ -712,6 +732,9 @@ class SessionCore:
             if self._speech_segmented and not self._user_speaking:
                 self._input_audio.clear()
         interrupted = event.status in ('cancelled', 'lost')
+        if response.refused:
+            # (Its usage counted toward the session as it came.)
+            return
         if (
             event.status == 'lost'
             and not response.parts
@@ -981,7 +1004,7 @@ class SessionCore:
             return
         self._closed = True
         self._lose_open_responses()
-        if self._carried_usage:
+        if self._carried_usage and not self._next_refused:
             # Usage reported between responses that no later response claimed: billed all the same, so it's
             # recorded on a response of its own rather than dropped.
             response_id = f'pydantic_ai_carried_usage_{len(self._responses)}'

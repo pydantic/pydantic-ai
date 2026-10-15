@@ -94,6 +94,7 @@ from ._core import (
     Interrupted,
     ReceiveEnded,
     ResponseOverdue,
+    ResponseRefused,
     SessionCore,
     ToolCallRefused,
     ToolReturned,
@@ -3968,7 +3969,14 @@ class RealtimeSession:
         if self._pending_response_requests:
             self._pending_response_requests -= 1
         elif self._usage_limits is not None and self._responses_are_requests:
-            self._usage_limits.check_before_request(self._usage_as_recorded())
+            usage = self._usage_as_recorded()
+            try:
+                self._usage_limits.check_before_request(usage)
+            except UsageLimitExceeded:
+                if (request_limit := self._usage_limits.request_limit) is not None and usage.requests >= request_limit:
+                    # The request it is would exceed `request_limit`: not one this session records, or counts.
+                    self._apply_core(ResponseRefused())
+                raise
         self._response_limit_checked = True
         # A response that is starting is not the one whose terminal is still to come. Gemini finalizes a
         # tool-call response through its usage with no terminal following, and a stale flag would read
