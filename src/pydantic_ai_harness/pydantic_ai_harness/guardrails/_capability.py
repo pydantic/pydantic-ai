@@ -366,14 +366,9 @@ async def input_guardrails_allow(ctx: RunContext[object]) -> bool:
         if not verdict.done():
             # `asyncio.wait` rather than `await`: cancelling this waiter must not cancel the guard.
             await asyncio.wait({verdict})
-            if verdict.cancelled():
-                # The model request ended before the guard decided, so the response this call came from is unused.
-                return False
-        elif verdict.cancelled():
-            # Normal tool dispatch doesn't wait for a guard that was cancelled undecided, as when the
-            # first model request is retried, so a call dispatched afterwards doesn't either.
-            continue
-        if verdict.exception() is not None:
+        # A guard cancelled undecided, as when the first model request is retried, never blocks the
+        # prompt, so the call runs as it would without the guard.
+        if not verdict.cancelled() and verdict.exception() is not None:
             return False
     return True
 

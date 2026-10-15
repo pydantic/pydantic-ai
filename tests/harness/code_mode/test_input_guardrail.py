@@ -48,8 +48,7 @@ STREAMED_TIERS = [
 
 async def undecided(prompt: str) -> GuardrailResult:
     """A guard that only a cancellation ends."""
-    await asyncio.Event().wait()
-    return GuardrailResult.allow()  # pragma: no cover - only a cancellation ends the wait
+    return await asyncio.Future[GuardrailResult]()
 
 
 def retrying_first_response() -> Hooks[None]:
@@ -265,31 +264,36 @@ class TestCodeModeInputGuardrail:
         assert result.output == 'done'
         assert run.calls == [1]
 
-    @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
-    async def test_nested_call_waiting_when_the_first_request_is_retried_does_not_run(
-        self, code_mode: Callable[[], CodeMode[None]], monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_retry_adopts_launches_a_guard_cancelled_undecided_released(self, monkeypatch: pytest.MonkeyPatch):
         run = GuardedRun()
         run.watch_verdict_wait(monkeypatch)
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-            if len(messages) > 1:
+            # Request 1 launches both calls and is retried while they wait; request 2 repeats the snippet.
+            if len(messages) not in (1, 3):
                 yield 'done'
                 return
-            yield {0: DeltaToolCall(name='run_code', json_args=FIRST_CHUNK, tool_call_id='run_code_1')}
-            await asyncio.wait_for(run.call_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+            yield {0: DeltaToolCall(name='run_code', json_args=FIRST_CHUNK, tool_call_id=f'run_code_{len(messages)}')}
+            if len(messages) == 1:
+                await asyncio.wait_for(run.call_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+                return
+            yield {0: DeltaToolCall(json_args=LAST_CHUNK)}
 
         agent = Agent(
             FunctionModel(stream_function=stream),
             deps_type=type(None),
-            capabilities=[code_mode(), InputGuardrail[None](guard=undecided, parallel=True), retrying_first_response()],
+            capabilities=[
+                CodeMode[None](speculate=['ping']),
+                InputGuardrail[None](guard=undecided, parallel=True),
+                retrying_first_response(),
+            ],
         )
         agent.tool_plain(run.ping)
 
         result = await agent.run('go')
 
         assert result.output == 'done'
-        assert run.calls == []
+        assert sorted(run.calls) == [1, 2]
 
     @pytest.mark.parametrize('blocks', [False, True], ids=['allow', 'block'])
     async def test_parallel_guard_under_durable_execution(self, blocks: bool):
