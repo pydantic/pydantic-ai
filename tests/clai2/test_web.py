@@ -633,6 +633,31 @@ async def test_stopping_the_only_interface_is_refused(tmp_path: Path) -> None:
     await shell.loader.close('exit')
 
 
+async def test_the_default_port_admits_bare_host_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On port 80, browsers send `Host: 127.0.0.1` without the port, so that form is admitted too."""
+    served: list[frozenset[str]] = []
+
+    class Served:
+        port = 80
+
+        @classmethod
+        def serve(cls, app: Callable[[int], ASGIApp], *, host: str, port: int) -> 'Served':
+            guard = app(cls.port)
+            assert isinstance(guard, Guard)
+            served.append(guard.hosts)
+            return cls()
+
+        async def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(web, 'WebServer', Served)
+    shell = web_shell(tmp_path, {'port': 80, 'open_browser': False})
+    await shell.loader.load_all()
+    assert (await shell.commands.execute_async('/web')).startswith('Web UI running at http://127.0.0.1:80/?token=')
+    assert {'127.0.0.1', 'localhost', '[::1]', '127.0.0.1:80'} <= served[0]
+    await shell.loader.close('exit')
+
+
 async def test_a_server_beyond_loopback_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     served: list[tuple[str, frozenset[str]]] = []
 
@@ -659,10 +684,14 @@ async def test_a_server_beyond_loopback_warns(tmp_path: Path, monkeypatch: pytes
     await shell.loader.close('exit')
 
 
-@pytest.mark.parametrize('host', ['0.0.0.0', '::', '[::]', ' '])
+@pytest.mark.parametrize('host', ['0.0.0.0', '::', '[::]', '::0', '0:0:0:0:0:0:0:0', ' '])
 def test_every_interface_is_refused(host: str) -> None:
     with pytest.raises(ValidationError, match='listen on one address'):
         WebSettings(host=host)
+
+
+def test_a_host_name_is_kept() -> None:
+    assert WebSettings(host=' localhost ').host == 'localhost'
 
 
 def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
