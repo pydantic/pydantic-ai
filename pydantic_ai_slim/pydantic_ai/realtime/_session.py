@@ -1042,6 +1042,8 @@ class RealtimeSession:
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._undecided_native_approvals: set[str] = set()
+        """The provider's own calls it asked to approve, whose answer hasn't gone out: the exchange waits on it."""
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
         # Serializes everything we send. Tool results go out from background tasks while the caller may
@@ -3772,7 +3774,15 @@ class RealtimeSession:
         The call goes through the same `HandleDeferredToolCalls` path as a function tool that requires
         approval, announced with a `DeferredToolRequestsEvent` and, once a handler decides, a
         `DeferredToolResultsEvent`. Without a decision the call is denied: an approval nobody gave isn't one.
+        Closing the session cancels this task, so a handler still deciding then answers no provider that's gone.
         """
+        try:
+            await self._decide_native_tool_approval(request)
+        finally:
+            self._undecided_native_approvals.discard(request.tool_call_id)
+            self._exchange_progress.set()
+
+    async def _decide_native_tool_approval(self, request: NativeToolApprovalRequest) -> None:
         call = ToolCallPart(tool_name=request.tool_name, args=request.args, tool_call_id=request.tool_call_id)
         requests = DeferredToolRequests(
             approvals=[call], metadata={call.tool_call_id: request.metadata} if request.metadata else {}
@@ -3789,7 +3799,6 @@ class RealtimeSession:
             # (Results are only ever for the calls asked about: this one.)
             decision = results.to_tool_call_results().get(call.tool_call_id)
             self._queue_put(DeferredToolResultsEvent(results))
-        # (Closing cancels this task, so a handler still deciding then never answers a provider that's gone.)
         await self._send_frame(_native_tool_approval(call, decision), reply_asked=False)
 
     async def _execute_tool(
@@ -4343,6 +4352,7 @@ class RealtimeSession:
         if isinstance(event, NativeToolApprovalRequest):
             # Decided in the background: an approval handler may wait on a person, and the provider goes on
             # talking (and may ask about more calls) meanwhile.
+            self._undecided_native_approvals.add(event.tool_call_id)
             task = asyncio.create_task(self._answer_native_tool_approval(event))
             self._background_tasks.add(task)
             task.add_done_callback(self._tool_task_done)

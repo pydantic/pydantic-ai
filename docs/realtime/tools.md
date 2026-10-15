@@ -224,8 +224,10 @@ result, as a standard run does
 from policy or by asking a person from inside the handler, or move that workflow to a standard agent
 run.
 
-The same handler decides on calls the provider runs itself, when it asks first: a tool on an MCP server
-configured on the provider's side to require approval, say. The call reaches the handler in
+The same handler decides on calls the provider runs itself, when its connection asks first with a
+[`NativeToolApprovalRequest`][pydantic_ai.realtime.codec.NativeToolApprovalRequest]: a tool on an MCP
+server configured on the provider's side to require approval, say. None of the built-in providers asks
+yet. The call reaches the handler in
 `requests.approvals` like a function tool's, with what the provider says about it in `requests.metadata`.
 Approving it lets the provider run it, and denying it, or approving it with
 [`override_args`][pydantic_ai.tools.ToolApproved.override_args] (which the provider can't use), tells the
