@@ -95,7 +95,7 @@ def create_retrying_client():
 
 # Use the retrying client with a model
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -314,7 +314,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -349,7 +349,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(http_client=client))
+model = AnthropicModel('{{ anthropic:medium.name }}', provider=AnthropicProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -389,7 +389,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -427,7 +427,7 @@ See the provider-specific settings for [OpenAI](models/openai.md#custom-openai-c
 ```python {title="sdk_max_retries.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', model_settings={'max_retries': 0})
+agent = Agent('{{ openai:medium }}', model_settings={'max_retries': 0})
 ```
 
 Set it to `0` when another layer owns retrying, so the attempt budget is the one you configured there rather than that budget multiplied by the SDK's:
@@ -445,8 +445,8 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
 fallback = FallbackModel(
-    OpenAIChatModel('gpt-5.2', settings={'max_retries': 0}),
-    AnthropicModel('claude-sonnet-4-5'),
+    OpenAIChatModel('{{ openai:medium.name }}', settings={'max_retries': 0}),
+    AnthropicModel('{{ anthropic:medium.name }}'),
 )
 agent = Agent(fallback)
 ```
@@ -455,7 +455,7 @@ Not every SDK can take the setting per request:
 
 | Model | Supported | Notes |
 |---|---|---|
-| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client |
+| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client. Requests over a [Responses WebSocket connection](models/openai.md#websocket-mode) aren't retried by the SDK, so the setting doesn't apply to them |
 | Anthropic | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
 | Groq | ✅ | Full feature support |
 | Cohere | ✅ | Full feature support |
@@ -560,9 +560,9 @@ Both budgets are configured through one argument:
 ```python {title="retry_budgets.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', retries=3)  # (1)!
+agent = Agent('{{ openai:medium }}', retries=3)  # (1)!
 
-strict_output = Agent('openai:gpt-5.2', retries={'tools': 5, 'output': 1})  # (2)!
+strict_output = Agent('{{ openai:medium }}', retries={'tools': 5, 'output': 1})  # (2)!
 ```
 
 1. A bare `int` sets both the tool and output budgets.
