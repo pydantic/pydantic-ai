@@ -1231,8 +1231,8 @@ class TestProcessEventStream:
         """A cancel landing on a pull parked in the source, after the observer returned, lets the source's cleanup finish.
 
         Once the observer has returned, each pull is awaited directly rather than raced against the handler. The outer
-        scope keeps re-cancelling the consumer while the source's shielded `finally` waits, so a pull awaited without
-        `asyncio.shield` would forward each of those cancels into the source natively and interrupt that cleanup.
+        scope keeps re-cancelling the consumer while the source's shielded `finally` waits, so a pull awaited with a
+        plain `await` would forward each of those cancels into the source natively and interrupt that cleanup.
         """
         source_waiting = anyio.Event()
         cleanup_permitted = anyio.Event()

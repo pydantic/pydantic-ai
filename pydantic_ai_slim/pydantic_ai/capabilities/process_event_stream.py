@@ -173,10 +173,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                                     finally:
                                         await handler_task
 
+                        # A plain await would forward a cancel of this task into the pull natively, and
+                        # `asyncio.shield` reports the pull's later exception to the loop on Python 3.14+.
+                        # Teardown cancels the pull through `next_scope`, which its shielded cleanup survives.
+                        await asyncio.wait((next_task,))
                         try:
-                            # A plain await would forward a cancel of this task into the pull natively.
-                            # Teardown cancels it through `next_scope`, which the source's shielded cleanup survives.
-                            event = await asyncio.shield(next_task)
+                            event = next_task.result()
                         except StopAsyncIteration:
                             break
 
@@ -199,7 +201,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
             # A plain `await handler_task` would forward a cancel of this task into the handler as a
             # native cancel, which interrupts even its shielded cleanup. `handler_scope` below owns that.
-            await asyncio.shield(handler_task)
+            await asyncio.wait((handler_task,))
+            handler_task.result()
         except BaseException:
             # The consumer stopped early or the inner stream failed: tear the handler down rather
             # than leaving it parked on `receive`, and let the original exception propagate.
