@@ -64,6 +64,10 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       In a realtime session, this is likewise only a consumer-facing view. Transforming or dropping
       events does not affect session history or tool execution.
 
+    Async generator processors are closed and observer handlers are awaited during stream teardown.
+    Release resources in a `finally` block, using a shielded AnyIO cancel scope for asynchronous
+    cleanup that must finish under cancellation.
+
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
     handler fires without requiring an explicit `event_stream_handler` argument. The handler
@@ -98,8 +102,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # both plain functions and callable instances, unlike `inspect.isasyncgenfunction`.
         probe = self.handler(ctx, stream)
         if isinstance(probe, AsyncIterator):
-            async for event in probe:
-                yield event
+            try:
+                async for event in probe:
+                    yield event
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await _utils.aclose_if_supported(probe)
             return
 
         # Observer: the probe is a coroutine we haven't awaited. Close it (nothing has
@@ -110,10 +118,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         send_stream: MemoryObjectSendStream[AgentStreamEvent]
         receive_stream: MemoryObjectReceiveStream[AgentStreamEvent]
         send_stream, receive_stream = anyio.create_memory_object_stream()
+        handler_scope = anyio.CancelScope()
 
         async def run_handler() -> None:
-            async with receive_stream:
-                await observer(ctx, receive_stream)
+            with handler_scope:
+                async with receive_stream:
+                    await observer(ctx, receive_stream)
 
         # The handler runs in a plain `asyncio` task rather than an `anyio` task group held open
         # across the `yield`s below. A task group is bound to the task that entered it, which would
@@ -126,60 +136,73 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # The flip side is that each pull below runs in a fresh task, so the stream being wrapped is
         # resumed from a different task on every event. Nothing upstream may hold an `anyio` cancel
         # scope or task group open across one of its `yield`s: entering and exiting it from
-        # different tasks raises that same error. Today's upstream frames all open and close their
-        # scopes within a single `__anext__`, so this holds -- it is a constraint on what may be
-        # wrapped, not a latent bug.
+        # different tasks raises that same error.
         handler_task = asyncio.create_task(run_handler())
         next_task: asyncio.Task[AgentStreamEvent] | None = None
+        next_scope: anyio.CancelScope | None = None
         stream_iterator = aiter(stream)
         try:
             async with send_stream:
                 handler_alive = True
 
-                async def pull_next() -> AgentStreamEvent:
-                    return await anext(stream_iterator)
+                async def pull_next(scope: anyio.CancelScope) -> AgentStreamEvent:
+                    with scope:
+                        return await anext(stream_iterator)
+                    raise StopAsyncIteration
 
-                while True:
-                    next_task = asyncio.create_task(pull_next())
-                    if handler_alive:
-                        await asyncio.wait(
-                            (next_task, handler_task),
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if handler_task.done():
-                            if not handler_task.cancelled() and handler_task.exception() is None:
-                                handler_alive = False
-                            else:
-                                await _utils.cancel_and_drain(next_task)
-                                try:
-                                    await _utils.aclose_if_supported(stream_iterator)
-                                finally:
-                                    await handler_task
+                try:
+                    while True:
+                        next_scope = anyio.CancelScope()
+                        next_task = asyncio.create_task(pull_next(next_scope))
+                        if handler_alive:
+                            await asyncio.wait(
+                                (next_task, handler_task),
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if handler_task.done():
+                                if not handler_task.cancelled() and handler_task.exception() is None:
+                                    handler_alive = False
+                                else:
+                                    next_scope.cancel()
+                                    with anyio.CancelScope(shield=True):
+                                        await asyncio.gather(next_task, return_exceptions=True)
+                                    try:
+                                        await _utils.aclose_if_supported(stream_iterator)
+                                    finally:
+                                        await handler_task
 
-                    try:
-                        event = await next_task
-                    except StopAsyncIteration:
-                        break
-
-                    if handler_alive:
                         try:
-                            await send_stream.send(event)
-                        except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                            # Handler bailed early; keep forwarding events downstream.
-                            handler_alive = False
-                    yield event
+                            event = await asyncio.shield(next_task)
+                        except StopAsyncIteration:
+                            break
+
+                        if handler_alive:
+                            try:
+                                await send_stream.send(event)
+                            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                                # Handler bailed early; keep forwarding events downstream.
+                                handler_alive = False
+                        yield event
+                except BaseException:
+                    # Cancel while the handler is still waiting on receive, before sender closure wakes it.
+                    handler_scope.cancel()
+                    raise
+
+            # Cancelling a pull must not forward Task.cancel() into the handler's
+            # shielded finalizer. Its own scope below owns cancellation and teardown.
+            await asyncio.shield(handler_task)
         except BaseException:
             # The consumer stopped early or the inner stream failed: tear the handler down rather
             # than leaving it parked on `receive`, and let the original exception propagate.
-            # The in-flight pull goes with it. Being cancelled while awaiting a task doesn't cancel
-            # that task, so it would otherwise advance the source one step past our exit and could
-            # still be inside `anext()` when someone else closes that same iterator.
-            await _utils.cancel_and_drain(handler_task, *filter(None, (next_task,)))
-            await _utils.aclose_if_supported(stream_iterator)
+            # Cancel both tasks through their scopes so their own shielded finalizers
+            # can finish before the upstream iterator is closed.
+            with anyio.CancelScope(shield=True):
+                handler_scope.cancel()
+                if next_scope is not None:
+                    next_scope.cancel()
+                await asyncio.gather(handler_task, *filter(None, (next_task,)), return_exceptions=True)
+                await _utils.aclose_if_supported(stream_iterator)
             raise
-
-        # Closing `send_stream` ends the handler's iteration; awaiting it surfaces anything it raised.
-        await handler_task
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
