@@ -488,11 +488,13 @@ class Remote:
         """Whether `/resume` continues a session saved in `workspace`: here, or there while CLAI follows sessions."""
         if workspace == self.host.status.workspace:
             return True
+        if not self.catalog.follows_workspace:
+            return False
         try:
             workspace_directory(workspace)
         except ValueError:
             return False
-        return self.catalog.follows_workspace
+        return True
 
     def open(self, conversation_id: str) -> None:
         self.host.send_input(f'/resume {conversation_id}')

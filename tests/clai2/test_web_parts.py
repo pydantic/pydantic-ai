@@ -463,7 +463,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
 
 
 async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` moves into the directory a session runs in: `/workspace` starts one elsewhere."""
+    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere."""
     opened = anyio.Event()
 
     def open_browser(url: str) -> None:
@@ -474,28 +474,47 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
     launch.mkdir()
     other.mkdir()
     monkeypatch.chdir(launch)
+    store = SettingsStore(tmp_path / 'config.db')
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+        summary=ConversationSummary(workspace=str(other.resolve()), title='Elsewhere'), messages=[]
+    )
     output = io.StringIO()
     with anyio.fail_after(30):
         async with anyio.create_task_group() as group:
             group.start_soon(
                 lambda: run_web(
                     settings_for=lambda project: Settings(model='test'),
-                    store=SettingsStore(tmp_path / 'config.db'),
+                    store=store,
                     project=ProjectSettings(),
                     console=Console(file=output, force_terminal=False, width=500),
+                    resume=saved.id,
                 )
             )
             await opened.wait()
+            assert Path.cwd() == other.resolve()
             found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
             assert found is not None
             async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
-                sent = await client.post('/api/input', json={'text': f'/workspace {other}'})
+                sent = await client.post('/api/input', json={'text': f'/workspace {launch}'})
                 assert sent.status_code == 204
                 while 'New session in' not in output.getvalue():
                     await anyio.sleep(0.01)
             group.cancel_scope.cancel()
-    assert f'New session in {other.resolve()}.' in output.getvalue()
-    assert Path.cwd() == other.resolve()
+    assert 'Resumed Elsewhere' in output.getvalue()
+    assert f'New session in {launch.resolve()}.' in output.getvalue()
+    assert Path.cwd() == launch.resolve()
+
+
+async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
+    with pytest.raises(BaseExceptionGroup) as raised:
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=SettingsStore(tmp_path / 'c.db'),
+            project=ProjectSettings(),
+            console=Console(file=io.StringIO()),
+            resume='00000000-0000-0000-0000-000000000000',
+        )
+    assert raised.group_contains(LookupError, match='No saved session')
 
 
 async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
