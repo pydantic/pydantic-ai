@@ -43,9 +43,13 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
 
   useImperativeHandle(ref, () => ({ focusSearch: () => search.current?.focus() }), [])
 
+  const loading = useRef(0)
   const load = useCallback(async () => {
+    // A search and the periodic refresh can overlap; only the latest request's answer is shown.
+    const id = ++loading.current
     try {
-      setProjects(await api.sessions(query))
+      const found = await api.sessions(query)
+      if (id === loading.current) setProjects(found)
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
@@ -72,10 +76,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       event.preventDefault()
       setMenu(null)
     }
-    window.addEventListener('keydown', close)
+    // Capture phase, so Esc closes the menu before the page's own Esc handler can interrupt a turn.
+    window.addEventListener('keydown', close, true)
     window.addEventListener('mousedown', close)
     return () => {
-      window.removeEventListener('keydown', close)
+      window.removeEventListener('keydown', close, true)
       window.removeEventListener('mousedown', close)
     }
   }, [menu])

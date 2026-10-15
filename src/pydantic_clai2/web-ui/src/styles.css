@@ -1415,7 +1415,8 @@ pre {
   }
 
   .column,
-  .bottom {
+  .bottom,
+  .hero {
     padding-left: 16px;
     padding-right: 16px;
   }
