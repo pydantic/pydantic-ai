@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    NativeToolReturnPart,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -79,6 +80,16 @@ class AuditReturnPart(ToolReturnPart, namespace='test', tool_kind='audit'):
 
 @dataclass(repr=False)
 class _Intermediate(ToolCallPart):
+    """Declares no kind, so it registers nothing."""
+
+
+@dataclass(repr=False)
+class _NativeIntermediateCall(NativeToolCallPart):
+    """Declares no kind, so it registers nothing."""
+
+
+@dataclass(repr=False)
+class _NativeIntermediateReturn(NativeToolReturnPart):
     """Declares no kind, so it registers nothing."""
 
 
@@ -553,6 +564,14 @@ def test_an_intermediate_subclass_registers_nothing() -> None:
     part = ToolCallPart('t', {}, tool_kind='test.unknown')
     assert ToolCallPart.narrow_type(part) is part
     assert not isinstance(part, _Intermediate)
+
+    native_call = NativeToolCallPart('t', {}, tool_kind='test.unknown')
+    assert NativeToolCallPart.narrow_type(native_call) is native_call
+    assert not isinstance(native_call, _NativeIntermediateCall)
+
+    native_return = NativeToolReturnPart('t', {}, tool_kind='test.unknown')
+    assert NativeToolReturnPart.narrow_type(native_return) is native_return
+    assert not isinstance(native_return, _NativeIntermediateReturn)
 
 
 def test_a_slotted_typed_part_registers_the_recreated_class() -> None:
