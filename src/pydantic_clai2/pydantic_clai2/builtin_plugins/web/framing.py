@@ -13,9 +13,9 @@ import httpx
 from anyio import fail_after
 
 FetchHeaders = Callable[[str], Awaitable[httpx.Headers]]
-"""Reads the response headers of a page; raises `httpx.HTTPError` when it cannot."""
+"""Reads the response headers of a page that answers itself; raises `httpx.HTTPError` when it cannot."""
 FETCH_TIMEOUT = 5.0
-"""Seconds to read a page's headers, redirects included, before showing it in a window of its own instead."""
+"""Seconds to read a page's headers before showing it in a window of its own instead."""
 FRAME_SOURCES = "'self' https: http://127.0.0.1:* http://localhost:*"
 """The pages the web UI's own `Content-Security-Policy` lets it frame: on the web over https, or on this machine."""
 
@@ -26,9 +26,17 @@ _HOST_SOURCE = re.compile(
 
 
 async def fetch_headers(url: str, *, transport: httpx.AsyncBaseTransport | None = None) -> httpx.Headers:
-    """The headers `url` answers a `GET` with, after redirects, without reading its body."""
-    async with httpx.AsyncClient(transport=transport, timeout=5, follow_redirects=True) as client:
+    """The headers `url` answers a `GET` with, without reading its body.
+
+    A redirect or an error raises `httpx.HTTPStatusError`: redirects are not followed, so a page cannot send
+    this request on to another address, such as one on this machine, and its own headers cannot be known.
+    """
+    async with httpx.AsyncClient(transport=transport, timeout=5) as client:
         async with client.stream('GET', url) as response:
+            if not response.is_success:
+                raise httpx.HTTPStatusError(
+                    f'{url} answered {response.status_code}', request=response.request, response=response
+                )
             return response.headers
 
 

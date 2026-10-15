@@ -129,14 +129,22 @@ async def test_headers_are_fetched_once_per_page_that_answers(monkeypatch: pytes
     ]
 
 
-async def test_fetch_headers_reads_the_final_response_without_its_body() -> None:
+async def test_fetch_headers_reads_a_page_that_answers_itself() -> None:
+    requested: list[str] = []
+
     def answer(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
         if request.url.path == '/old':
-            return httpx.Response(302, headers={'location': '/new'})
+            return httpx.Response(302, headers={'location': 'http://127.0.0.1:8080/action'})
         return httpx.Response(200, headers={'x-frame-options': 'DENY'}, text='<html>')
 
-    headers = await fetch_headers('https://a.example/old', transport=httpx.MockTransport(answer))
+    transport = httpx.MockTransport(answer)
+    headers = await fetch_headers('https://a.example/new', transport=transport)
     assert headers['x-frame-options'] == 'DENY'
+    # A redirect is not followed, so a page cannot send the server's request on to this machine.
+    with pytest.raises(httpx.HTTPStatusError, match='answered 302'):
+        await fetch_headers('https://a.example/old', transport=transport)
+    assert requested == ['/new', '/old']
 
 
 PANELS = '''

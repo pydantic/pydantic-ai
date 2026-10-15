@@ -2855,8 +2855,9 @@ Only `https` pages, or `http` pages on `127.0.0.1` or `localhost`, can be framed
 own `Content-Security-Policy` allows no others. For those, the server reads the response headers,
 at the page's address without the query, until it has them once, and frames the page only when
 its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Options`, lets the
-web UI's address show it; a browser would draw an error box instead. A page that does not answer
-within five seconds is not framed this time. Otherwise the panel offers to open the page in a
+web UI's address show it; a browser would draw an error box instead. The server follows no
+redirect, so a page that redirects or answers an error is not framed, nor one that does not
+answer within five seconds; those are read again next time. Otherwise the panel offers to open the page in a
 window beside CLAI's, and points that window at the view's new `url` as it changes.
 
 ### Offer a spinner: `get_spinners()`
