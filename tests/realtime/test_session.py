@@ -2415,6 +2415,7 @@ async def test_tool_call_round_builds_classic_history() -> None:
                 parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='tc_1')],
                 model_name='m',
                 timestamp=IsDatetime(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
