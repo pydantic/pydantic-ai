@@ -6,7 +6,8 @@ protocol, Gemini Live identifies almost nothing, so nearly everything here is wo
 what the connection sends and reads:
 
 - A response has no id and no start frame: it starts with its first output (audio, a transcript, a native
-  tool part, a tool call) or the first report of its usage, and ends at `turn_complete`, or at the empty usage
+  tool part, a tool call), or, when the model says nothing, with a `turn_complete` that answers an owed reply
+  or reports something (an interruption, a finish reason). It ends at `turn_complete`, or at the empty usage
   report that closes a tool-call frame. Its id is made up (`ResponseStarted.provider_id=False`).
 - A response answers every input that asked for one and hadn't been answered when it started (a typed turn,
   a tool result): Gemini replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
@@ -224,7 +225,7 @@ class GeminiLifecycle:
     # --- responses ----------------------------------------------------------------------------------
 
     def _ensure_response(self, events: list[LifecycleEvent]) -> None:
-        """Start a response, if none is under way: its first output (or usage) is all that announces it."""
+        """Start a response, if none is under way: its first output (or an owed reply's `turn_complete`) is all that announces it."""
         if self._open is not None:
             return
         answers = tuple(self._unanswered)

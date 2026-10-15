@@ -69,6 +69,7 @@ from pydantic_ai.realtime.codec import (
     InputRejected,
     InputTranscript,
     OutputTranscript,
+    RealtimeCodecEvent,
     ResponseDone,
     SessionUsage,
     ToolCall,
@@ -92,6 +93,12 @@ def feed(session_core: SessionCore, *items: CoreInput) -> SessionCore:
     for item in items:
         session_core.apply(item)
     return session_core
+
+
+def gemini_message(tracker: GeminiLifecycle, session_core: SessionCore, *codec: RealtimeCodecEvent) -> None:
+    """Apply what the tracker makes of one Gemini server message to the core."""
+    for event, _ in tracker.message(list(codec)):
+        session_core.apply(event)
 
 
 def summary(messages: list[ModelMessage]) -> list[str]:
@@ -1136,20 +1143,16 @@ def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carri
     tracker = GeminiLifecycle(transcribes=True)
     session_core = core()
 
-    def message(*codec: Any) -> None:
-        for event, _ in tracker.message(list(codec)):
-            session_core.apply(event)
-
     session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
     tracker.input_sent(0, 'Weather?')
-    message(OutputTranscript('Let me check.'))
-    message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    gemini_message(tracker, session_core, OutputTranscript('Let me check.'))
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
     wait = session_core.wait_tokens()
-    message(InputTranscript('Hm'))
+    gemini_message(tracker, session_core, InputTranscript('Hm'))
     assert session_core.still_owed(wait) != frozenset()
-    message(OutputTranscript('Still checking.'))
+    gemini_message(tracker, session_core, OutputTranscript('Still checking.'))
     assert session_core.still_owed(wait) != frozenset()
-    message(SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
     assert session_core.still_owed(wait) == frozenset()
     assert summary(session_core.all_messages()) == snapshot(
         [
@@ -1166,17 +1169,13 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
     tracker = GeminiLifecycle(transcribes=True)
     session_core = core()
 
-    def message(*codec: Any) -> None:
-        for event, _ in tracker.message(list(codec)):
-            session_core.apply(event)
-
-    message(InputTranscript('First question'))
-    message(OutputTranscript('Let me check.'))
-    message(SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
-    message(InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
-    message(SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
-    message(OutputTranscript('Sure.'))
-    message(SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
+    gemini_message(tracker, session_core, InputTranscript('First question'))
+    gemini_message(tracker, session_core, OutputTranscript('Let me check.'))
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    gemini_message(tracker, session_core, InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
+    gemini_message(tracker, session_core, OutputTranscript('Sure.'))
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
     assert summary(session_core.all_messages()) == snapshot(
         [
             '{user:First question}',
@@ -1186,11 +1185,11 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
         ]
     )
     # Likewise over a reply the model started on its own, before any transcript of what it answers came.
-    message(OutputTranscript('By the way...'))
-    message(InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
-    message(SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
-    message(OutputTranscript('Okay.'))
-    message(SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
+    gemini_message(tracker, session_core, OutputTranscript('By the way...'))
+    gemini_message(tracker, session_core, InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
+    gemini_message(tracker, session_core, OutputTranscript('Okay.'))
+    gemini_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
     assert summary(session_core.all_messages()[4:]) == snapshot(
         ['None [assistant:By the way...] interrupted None', '{user:Stop}', 'None [assistant:Okay.] complete stop']
     )
