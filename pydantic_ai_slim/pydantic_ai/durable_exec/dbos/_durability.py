@@ -240,7 +240,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
-    async def _run_start_time(self) -> datetime | None:
+    async def _run_start_time(self, run_id: str) -> datetime | None:
         if not self.in_durable_context:
             return None
 

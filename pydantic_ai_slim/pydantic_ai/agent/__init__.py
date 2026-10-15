@@ -1724,7 +1724,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_clock = bootstrap_capability._run_clock() or _utils.now_utc  # pyright: ignore[reportPrivateUsage]
         deadline = inherited_run_deadline()
         if timeout is not None:
-            start = await bootstrap_capability._run_start_time() or run_clock()  # pyright: ignore[reportPrivateUsage]
+            start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
             own_deadline = start + timedelta(seconds=timeout)
             deadline = own_deadline if deadline is None else min(own_deadline, deadline)
         historical_response = next(

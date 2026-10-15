@@ -514,9 +514,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 return clock
         return None
 
-    async def _run_start_time(self) -> datetime | None:
+    async def _run_start_time(self, run_id: str) -> datetime | None:
         for capability in reversed(self.capabilities):
-            if (start := await capability._run_start_time()) is not None:
+            if (start := await capability._run_start_time(run_id)) is not None:
                 return start
         return None
 

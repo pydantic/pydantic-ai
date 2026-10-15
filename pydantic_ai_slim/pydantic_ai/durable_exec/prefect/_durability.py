@@ -126,13 +126,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
-    async def _run_start_time(self) -> datetime | None:
+    async def _run_start_time(self, run_id: str) -> datetime | None:
         context = FlowRunContext.get()
         if context is None:
             return None
-        # A cached task keyed by the run's position in the flow, so a flow retry counts the run's
-        # `timeout=` from when it first started. Prefect rebuilds the counter in the same order on retry.
-        key = 'pydantic_ai:run_start_time'
+        # A cached task keyed by the run's ID, so a flow retry counts the run's `timeout=` from when it
+        # first started, even when concurrent runs reach this point in a different order. The counter
+        # tells apart runs in one flow that reuse an ID; Prefect rebuilds it in the same order on retry.
+        key = f'pydantic_ai:run_start_time:{run_id}'
         sequence = context.task_run_dynamic_keys.get(key, 0)
         assert isinstance(sequence, int)
         context.task_run_dynamic_keys[key] = sequence + 1

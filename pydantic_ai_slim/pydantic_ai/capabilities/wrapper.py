@@ -277,8 +277,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _run_clock(self) -> Callable[[], datetime] | None:
         return self.wrapped._run_clock()
 
-    async def _run_start_time(self) -> datetime | None:
-        return await self.wrapped._run_start_time()
+    async def _run_start_time(self, run_id: str) -> datetime | None:
+        return await self.wrapped._run_start_time(run_id)
 
     async def prepare_tools(
         self,

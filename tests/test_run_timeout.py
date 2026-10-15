@@ -401,7 +401,7 @@ class _ReplaySafeClock(AbstractCapability[object]):
     def _run_clock(self) -> Callable[[], datetime] | None:
         return lambda: _FIXED_NOW
 
-    async def _run_start_time(self) -> datetime | None:
+    async def _run_start_time(self, run_id: str) -> datetime | None:
         return _FIXED_NOW - timedelta(seconds=10)
 
 

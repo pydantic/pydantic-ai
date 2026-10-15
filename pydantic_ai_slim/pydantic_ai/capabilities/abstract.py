@@ -571,8 +571,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """A replay-safe clock to measure a run's deadline against, or `None` for the system clock."""
         return None
 
-    async def _run_start_time(self) -> datetime | None:
-        """A replay-stable start time to count a run's `timeout=` from, or `None` to read the run's clock."""
+    async def _run_start_time(self, run_id: str) -> datetime | None:
+        """A replay-stable start time to count the `timeout=` of the run `run_id` from, or `None` to read the run's clock."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:

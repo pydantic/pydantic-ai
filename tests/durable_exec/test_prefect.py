@@ -2724,6 +2724,41 @@ async def test_flow_retry_keeps_run_deadline() -> None:
     assert retried == first
 
 
+async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:
+    """Concurrent runs that reach their start time in a different order on a retry each keep their own deadline."""
+    agent = Agent(TestModel(), name='concurrent_deadline_agent', capabilities=[PrefectDurability[object]()])
+    attempts: list[dict[str, datetime | None]] = []
+
+    async def run_branch(run_id: str, deadlines: dict[str, datetime | None], after: asyncio.Event | None) -> None:
+        if after is not None:
+            await after.wait()
+        async with agent.iter('go', timeout=3600, run_id=run_id) as agent_run:
+            async for _node in agent_run:
+                pass
+        deadlines[run_id] = agent_run.ctx.deps.deadline
+
+    @flow(retries=1)
+    async def branches() -> None:
+        deadlines: dict[str, datetime | None] = {}
+        attempts.append(deadlines)
+        # The retry starts the runs in the opposite order.
+        first, second = ('left', 'right') if len(attempts) == 1 else ('right', 'left')
+        first_done = asyncio.Event()
+
+        async def run_first() -> None:
+            await run_branch(first, deadlines, None)
+            first_done.set()
+
+        await asyncio.gather(run_first(), run_branch(second, deadlines, first_done))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+
+    await branches()
+    original, retried = attempts
+    assert original['left'] != original['right']
+    assert retried == original
+
+
 async def test_timeout_in_flow() -> None:
     def call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('slow_tool')])
