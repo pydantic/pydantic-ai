@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from inspect import FrameInfo
@@ -74,6 +75,7 @@ from pydantic_ai.realtime.codec import (
 )
 
 from .conftest import TestEnv, try_import
+from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -169,13 +171,27 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
-def _patch_sentence_transformers(mocker: MockerFixture, example: CodeExample) -> None:
-    """Stub the model download, only for examples that use it: patching imports `sentence_transformers` and `torch`."""
-    if re.search(r'sentence[-_]transformers', example.source, re.IGNORECASE):
-        try:
+_HEAVY_IMPORTS = re.compile(r'sentence[-_]transformers|voyage', re.IGNORECASE)
+
+
+@pytest.fixture(scope='module')
+def heavy_example_imports() -> None:
+    """Import `sentence_transformers` and `voyageai` (which imports it and `torch`) once per worker.
+
+    It takes seconds, so it is shared setup rather than a cost of whichever example happens to need it first (see
+    "Test cost" in `tests/AGENTS.md`).
+    """
+    for module in ('sentence_transformers', 'voyageai'):
+        with suppress(ImportError):
+            importlib.import_module(module)
+
+
+def _prepare_heavy_imports(request: pytest.FixtureRequest, mocker: MockerFixture, example: CodeExample) -> None:
+    """Only for the examples that use them: import the heavy embedding packages, and stub the model download."""
+    if _HEAVY_IMPORTS.search(example.source):
+        request.getfixturevalue('heavy_example_imports')
+        with suppress(ModuleNotFoundError):
             mocker.patch('sentence_transformers.SentenceTransformer')
-        except ModuleNotFoundError:
-            pass
 
 
 def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
@@ -316,10 +332,10 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
         example_dir = work_dir / f'py{python_version}' / str(index)
         example_dir.mkdir(parents=True)
         for req in filter(None, prefix_settings.get('requires', '').split(',')):
-            (example_dir / req).write_text(code_examples[req].source, encoding='utf-8')
+            (example_dir / req).write_text(resolve_model_aliases(code_examples[req].source), encoding='utf-8')
         title = prefix_settings.get('title', '')
         file = example_dir / (title if title.endswith('.py') else 'example.py')
-        file.write_text(example.source, encoding='utf-8')
+        file.write_text(resolve_model_aliases(example.source), encoding='utf-8')
         files[file.resolve()] = example
         environments.setdefault(python_version, []).append(
             {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
@@ -462,6 +478,7 @@ def test_docs_examples(
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
     examples_type_errors: dict[str, list[str]] | None,
+    request: pytest.FixtureRequest,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
@@ -497,7 +514,7 @@ def test_docs_examples(
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker)
-    _patch_sentence_transformers(mocker, example)
+    _prepare_heavy_imports(request, mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -530,6 +547,7 @@ def test_docs_examples(
     env.set('GITHUB_COPILOT_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
+    env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
@@ -583,7 +601,7 @@ def test_docs_examples(
         for req in requires.split(','):
             known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
-                (tmp_path_cwd / req).write_text(ex.source, encoding='utf-8')
+                (tmp_path_cwd / req).write_text(resolve_model_aliases(ex.source), encoding='utf-8')
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
@@ -630,10 +648,16 @@ def test_docs_examples(
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
-        if eval_example.update_examples:  # pragma: lax no cover
-            eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
-        else:
-            eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        # Lint the example as written, but run it against the models its aliases stand for.
+        source = example.source
+        example.source = resolved = resolve_model_aliases(source)
+        try:
+            if eval_example.update_examples:  # pragma: lax no cover
+                eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
+            else:
+                eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        finally:
+            example.source = restore_model_aliases(source, resolved, example.source)
 
 
 def print_callback(s: str) -> str:

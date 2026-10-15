@@ -20,7 +20,7 @@ Set `GOOGLE_ACCESS_TOKEN` to a Google OAuth access token, or pass `auth=` a toke
 from pydantic_ai import Agent
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[GoogleWorkspace(services=['gmail', 'calendar'])])
+agent = Agent('{{ openai:medium }}', capabilities=[GoogleWorkspace(services=['gmail', 'calendar'])])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -56,7 +56,7 @@ def google_token(ctx: RunContext[Deps]) -> str | None:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     deps_type=Deps,
     capabilities=[GoogleWorkspace(services=['gmail', 'calendar'], auth=google_token)],
 )
@@ -87,7 +87,7 @@ from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
 capability = GoogleWorkspace(services=['gmail', 'calendar'])
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )

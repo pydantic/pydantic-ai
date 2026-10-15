@@ -6,11 +6,12 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import patch
 
 import pytest
@@ -279,6 +280,57 @@ async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client
 
     assert 'does not implement `run_until_complete()`' in str(exc_info.value.cause)
     assert '`await agent.run()` rather than `agent.run_sync()`' in str(exc_info.value.cause)
+
+
+class _ConnectableDurabilityModel(FunctionModel):
+    """Connecting yields a distinct model, as a real connection does."""
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        yield type(self)(_durability_model_fn, model_name='connected')
+
+
+_connect_durable_agent = Agent(
+    _ConnectableDurabilityModel(_durability_model_fn, model_name='source'),
+    name='durability_connect',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ConnectDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with _connect_durable_agent.connect():
+            return (await _connect_durable_agent.run(prompt)).output  # pragma: no cover
+
+
+async def test_durability_connect_in_workflow_fails_the_workflow(client: Client):
+    """`agent.connect()` inside a workflow fails the workflow before any connection is opened.
+
+    A real connection opens a socket in workflow code, which Temporal's workflow event loop doesn't
+    implement, so the workflow task failed with a bare `NotImplementedError` and was retried forever.
+    Outside a workflow the capability is transparent, so the connection is used.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ConnectDurableAgentWorkflow],
+        plugins=[AgentPlugin(_connect_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ConnectDurableAgentWorkflow.run,
+                args=['Hello'],
+                id=ConnectDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert '`agent.connect()` is not supported inside a Temporal workflow' in str(exc_info.value.cause)
+
+    async with _connect_durable_agent.connect():
+        result = await _connect_durable_agent.run('Hello')
+    assert result.response.model_name == 'connected'
 
 
 _sync_graph_builder = GraphBuilder(name='run_sync_graph', input_type=str, output_type=str)
