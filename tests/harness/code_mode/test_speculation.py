@@ -906,6 +906,8 @@ class TestSpeculationEdgeCases:
 
         assert result.output == 'done'
         assert capability.speculation_stats.launched == 2
+        # The refused launch is left unclaimed and evicted with the part, like any unused launch.
+        assert capability.speculation_stats.evicted == 1
         assert log.calls == [('search', 'b')]
         assert result.usage.tool_calls == 2
 
