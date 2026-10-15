@@ -2846,13 +2846,15 @@ class Dashboard(Plugin):
 ```
 
 The page asks for every view when it connects, when the conversation changes, when a turn starts
-or ends, after each command, and every few seconds while a turn runs, so the page can follow the
-conversation. Keep `view` quick: cache what needs the network. A view that raises shows its error
-in the panel instead, and a `url` that is not `http` or `https` is refused.
+or ends, after each command, and, while a turn runs with a panel or its window open, every few
+seconds, so the page can follow the conversation. Keep `view` quick: cache what needs the network.
+A view that raises, or takes more than ten seconds, shows that in the panel instead, and a `url`
+that is not `http` or `https` is refused.
 
-The server reads each page's response headers once, at its address without the query, and frames
-it only when its `Content-Security-Policy` `frame-ancestors`, or without one its
-`X-Frame-Options`, lets the web UI's address show it; a browser would draw an error box instead.
+The server reads each page's response headers, at its address without the query, until it has
+them once, and frames the page only when its `Content-Security-Policy` `frame-ancestors`, or
+without one its `X-Frame-Options`, lets the web UI's address show it; a browser would draw an
+error box instead.
 Otherwise the panel offers to open the page in a window beside CLAI's, and points that window at
 the view's new `url` as it changes.
 

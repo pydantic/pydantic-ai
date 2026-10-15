@@ -38,9 +38,13 @@ def info(project: str) -> httpx.Response:
     return httpx.Response(200, json={'project_name': 'clai', 'project_url': project})
 
 
-def logfire_with(**settings: JsonValue) -> LoadedPlugin[None]:
+def logfire_with(
+    settings: dict[str, JsonValue] | None = None, *, conversation: list[str] | None = None
+) -> LoadedPlugin[None]:
+    """The plugin in a shell holding `conversation[0]`, which a test may switch, else `session-1`."""
+    held = conversation or ['session-1']
     host = PluginHost[None](
-        name='observability', console=Console(file=io.StringIO()), settings=settings, session_id=lambda: 'session-1'
+        name='observability', console=Console(file=io.StringIO()), settings=settings or {}, session_id=lambda: held[0]
     )
     return load_logfire(host)
 
@@ -77,7 +81,8 @@ async def test_the_live_view_follows_the_conversation(
     monkeypatch.setenv('LOGFIRE_TOKEN', token)
     setup, received = answering(info(f'{site}/team/clai'))
     monkeypatch.setattr(logfire_plugin, 'SETUP', setup)
-    plugin = logfire_with(**settings)
+    conversation = ['session-1']
+    plugin = logfire_with(settings, conversation=conversation)
     project = f'{site}/team/clai'
     # Before the session starts there is no trace yet: the project's live view.
     assert await view(plugin) == PanelView(url=project)
@@ -98,6 +103,13 @@ async def test_the_live_view_follows_the_conversation(
         # Another conversation's run, such as a background fork, leaves the view on this one's latest.
         await agent.run('elsewhere', capabilities=plugin.capabilities, conversation_id='other')
         assert focus((await view(plugin)).url)['spanId'] == [runs[-1]]
+        # A new conversation has no trace until something is recorded in it; reading the view opens none.
+        conversation[0] = 'session-2'
+        assert await view(plugin) == PanelView(url=project)
+        assert await view(plugin) == PanelView(url=project)
+        await agent.run('fresh', capabilities=plugin.capabilities, conversation_id='session-2')
+        fresh = focus((await view(plugin)).url)
+        assert fresh['q'] != [query] and fresh['traceId'] != [trace]
     finally:
         await close(plugin)
     spans = {
@@ -125,7 +137,7 @@ async def test_without_a_project_the_panel_says_how_to_set_one_up(
         monkeypatch.setenv(name, value)
     setup, received = answering(info('https://logfire-us.pydantic.dev/team/clai'))
     monkeypatch.setattr(logfire_plugin, 'SETUP', setup)
-    plugin = logfire_with(**settings)
+    plugin = logfire_with(settings)
     assert await view(plugin) == PanelView(note=NOT_SENDING)
     assert received == []
 

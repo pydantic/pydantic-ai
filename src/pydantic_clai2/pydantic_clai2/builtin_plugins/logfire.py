@@ -296,6 +296,7 @@ NOT_SENDING = (
     "this plugin's settings, and its live view shows here."
 )
 """The live view panel without a project to show."""
+
 CREDENTIALS_FILE = 'logfire_credentials.json'
 """The file the SDK writes on `logfire auth`/`projects use` and reads from `data_dir`."""
 PROJECT = 'project'

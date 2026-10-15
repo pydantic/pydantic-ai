@@ -32,20 +32,21 @@ class FrameCheck:
 
     def __init__(self, fetch: FetchHeaders = fetch_headers) -> None:
         self._fetch = fetch
-        self._headers: dict[str, httpx.Headers | None] = {}
-        """By the page's address without its query; `None` when it could not be read."""
+        self._headers: dict[str, httpx.Headers] = {}
+        """By the page's address without its query."""
 
     async def __call__(self, url: str, *, ancestor: str) -> bool:
-        """Whether a page on the origin `ancestor`, such as `http://127.0.0.1:8000`, can show `url` in a frame."""
+        """Whether a page on the origin `ancestor`, such as `http://127.0.0.1:8000`, can show `url` in a frame.
+
+        A page that cannot be read now is not framed, which would show an error box, and is read again next time.
+        """
         key = urlsplit(url)._replace(query='', fragment='').geturl()
         if key not in self._headers:
             try:
                 self._headers[key] = await self._fetch(url)
             except httpx.HTTPError:
-                # Unreachable now is no reason to show an error box; it opens in its own window instead.
-                self._headers[key] = None
-        headers = self._headers[key]
-        return headers is not None and frameable(headers, page=url, ancestor=ancestor)
+                return False
+        return frameable(self._headers[key], page=url, ancestor=ancestor)
 
 
 def frameable(headers: httpx.Headers, *, page: str, ancestor: str) -> bool:

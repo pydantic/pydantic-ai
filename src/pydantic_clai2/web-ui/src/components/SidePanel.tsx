@@ -64,6 +64,9 @@ function openBeside(panel: PanelInfo, url: string): boolean {
   return true
 }
 
+/** Whether a window opened for a panel is still open, so the page keeps asking where it should point. */
+export const following = () => [...opened.values()].some((entry) => !entry.window.closed)
+
 /** Point every window opened for a panel at the panel's current page, such as the trace of a turn that started. */
 export function followWindows(panels: PanelInfo[]) {
   for (const panel of panels) {

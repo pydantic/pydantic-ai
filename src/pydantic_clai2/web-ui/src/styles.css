@@ -164,6 +164,25 @@ pre {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw);
 }
 
+/* A plugin's side panel takes the last column; on a narrow screen it covers the page instead. */
+@media (min-width: 761px) {
+  .app.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.with-repl.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-repl.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -1488,6 +1507,14 @@ pre {
     inset: 0 auto 0 0;
     width: 280px;
     z-index: 40;
+    box-shadow: var(--shadow);
+  }
+
+  .app .side-panel {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(var(--side-panel-width), 100vw);
+    z-index: 30;
     box-shadow: var(--shadow);
   }
 

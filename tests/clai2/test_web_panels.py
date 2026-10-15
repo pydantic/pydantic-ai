@@ -8,6 +8,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_clai2.builtin_plugins.web import remote as remote_module
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck, fetch_headers, frameable
 from pydantic_clai2.builtin_plugins.web.protocol import TurnEnded
 from pydantic_clai2.config import PluginSettings
@@ -93,7 +94,7 @@ def test_an_ancestor_without_a_host_matches_no_host_source() -> None:
     assert not frameable(headers, page='https://a.example/', ancestor='http:')
 
 
-async def test_headers_are_fetched_once_per_page() -> None:
+async def test_headers_are_fetched_once_per_page_that_answers() -> None:
     fetched: list[str] = []
 
     async def fetch(url: str) -> httpx.Headers:
@@ -108,7 +109,8 @@ async def test_headers_are_fetched_once_per_page() -> None:
     assert not await check('https://up.example/live', ancestor='http://localhost:8123')
     assert not await check('https://down.example/', ancestor=UI)
     assert not await check('https://down.example/?again', ancestor=UI)
-    assert fetched == ['https://up.example/live?turn=1', 'https://down.example/']
+    # A page that could not be read is not framed, and is read again next time.
+    assert fetched == ['https://up.example/live?turn=1', 'https://down.example/', 'https://down.example/?again']
 
 
 async def test_fetch_headers_reads_the_final_response_without_its_body() -> None:
@@ -122,6 +124,8 @@ async def test_fetch_headers_reads_the_final_response_without_its_body() -> None
 
 
 PANELS = '''
+import asyncio
+
 from pydantic_clai2.plugins import PanelView, Plugin, SidePanel
 
 
@@ -138,6 +142,7 @@ class Traces(Plugin):
             SidePanel(id='setup', title='Setup', view=self.setup),
             SidePanel(id='broken', title='Broken', view=self.broken),
             SidePanel(id='silent', title='Silent', view=self.silent),
+            SidePanel(id='slow', title='Slow', view=self.slow),
             SidePanel(id='local', title='Local', view=self.local),
         )
 
@@ -155,6 +160,9 @@ class Traces(Plugin):
 
     async def silent(self):
         raise LookupError()
+
+    async def slow(self):
+        await asyncio.sleep(60)
 
     async def local(self):
         return PanelView(url='javascript:alert(1)')
@@ -183,8 +191,9 @@ def panels(web_: Web) -> list[dict[str, JsonValue]]:
     return TypeAdapter(list[dict[str, JsonValue]]).validate_python(response.json())
 
 
-def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path) -> None:
+def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each loaded plugin's panels, as their views say now, framed only where the page allows it."""
+    monkeypatch.setattr(remote_module, 'VIEW_TIMEOUT', 0.05)
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok')), extra=panel_plugins(tmp_path))
     fetched: list[str] = []
 
@@ -215,6 +224,7 @@ def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path) -> None
             'url': None,
             'note': 'Silent failed: LookupError',
         },
+        {**traces, 'id': 'slow', 'title': 'Slow', 'icon': 'panel', 'url': None, 'note': 'Slow did not answer in time.'},
         {
             **traces,
             'id': 'local',

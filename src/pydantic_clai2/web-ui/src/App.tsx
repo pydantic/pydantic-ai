@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
 import { api, connect, interrupt, type Connection } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
@@ -10,7 +10,7 @@ import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
 import { DialogLayer } from './components/DialogLayer'
 import { ReplPanel } from './components/ReplPanel'
-import { PanelGlyph, SidePanel, followWindows, panelKey } from './components/SidePanel'
+import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
@@ -90,26 +90,38 @@ export function App() {
   }, [sidePanel])
 
   // Panels follow the conversation: ask again on connecting, switching sessions, each turn's start and end, and
-  // every command, which may have changed a plugin; while a turn runs, every few seconds too.
-  const loadPanels = useCallback(async () => {
+  // every command, which may have changed a plugin; while a turn runs and one is shown, every few seconds too.
+  const panelRequest = useRef(0)
+  const panelsLoading = useRef(false)
+  const loadPanels = useCallback(async (poll = false) => {
+    if (poll && panelsLoading.current) return
+    // Only the latest answer is shown, however the requests resolve.
+    const request = ++panelRequest.current
+    panelsLoading.current = true
     try {
       const found = await api.panels()
-      setPanels((current) => (JSON.stringify(current) === JSON.stringify(found) ? current : found))
+      if (request === panelRequest.current)
+        setPanels((current) => (JSON.stringify(current) === JSON.stringify(found) ? current : found))
     } catch {
       // Keep what is shown; the next turn or command asks again.
+    } finally {
+      if (request === panelRequest.current) panelsLoading.current = false
     }
   }, [])
+  const shownPanel = panels.find((panel) => panelKey(panel) === sidePanel) ?? null
+  const firstPanel = panels[0]
   useEffect(() => {
     if (connection === 'open') void loadPanels()
   }, [connection, state.session?.id, state.running, state.pluginsVersion, loadPanels])
+  const panelShown = shownPanel !== null
   useEffect(() => {
     if (!state.running || panels.length === 0) return
-    const timer = window.setInterval(() => void loadPanels(), 3000)
+    const timer = window.setInterval(() => {
+      if (panelShown || following()) void loadPanels(true)
+    }, 3000)
     return () => window.clearInterval(timer)
-  }, [state.running, panels.length, loadPanels])
+  }, [state.running, panels.length, panelShown, loadPanels])
   useEffect(() => followWindows(panels), [panels])
-  const shownPanel = panels.find((panel) => panelKey(panel) === sidePanel) ?? null
-  const firstPanel = panels[0]
   // With no key, the shortcut: close the open panel, or open the first.
   const shownKey = shownPanel ? panelKey(shownPanel) : null
   const togglePanel = useCallback(
@@ -261,16 +273,8 @@ export function App() {
 
   return (
     <div
-      className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''}`}
-      style={
-        shownPanel
-          ? {
-              gridTemplateColumns: [sidebar && '268px', 'minmax(0, 1fr)', repl && 'minmax(320px, 34vw)', `${panelWidth}px`]
-                .filter(Boolean)
-                .join(' '),
-            }
-          : undefined
-      }
+      className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''} ${shownPanel ? 'with-side-panel' : ''}`}
+      style={{ '--side-panel-width': `min(${panelWidth}px, 70vw)` } as CSSProperties}
     >
       {sidebar && (
         <Sidebar

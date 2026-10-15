@@ -93,12 +93,16 @@ class SessionTracing(AbstractCapability[None]):
         return self._roots[session_id]
 
     def turn(self) -> tuple[SpanContext, SpanContext | None] | None:
-        """The current conversation's root and, once one ran under it, its latest run; `None` while not started."""
-        root = self.root()
+        """The current conversation's root and, once one ran under it, its latest run; `None` before a root opens.
+
+        Only reads: a root ended by `ROOT_LIFETIME` is still the trace of a run under way.
+        """
+        session_id = self.session_id() or self._fallback_id
+        root = self._roots.get(session_id) if self._loop is not None else None
         if root is None:
             return None
         trace = root.get_span_context()
-        run = self._turns.get(self.session_id() or self._fallback_id)
+        run = self._turns.get(session_id)
         return trace, run if run is not None and run.trace_id == trace.trace_id else None
 
     def _schedule_rotation(self) -> None:
@@ -155,6 +159,7 @@ class SessionTracing(AbstractCapability[None]):
                 span.set_attribute('reason', reason)
                 span.end()
         self._roots.clear()
+        self._turns.clear()
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost', wraps=(Instrumentation,))

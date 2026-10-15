@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 from urllib.parse import urlsplit
 
-from anyio import get_cancelled_exc_class, to_thread
+from anyio import fail_after, get_cancelled_exc_class, to_thread
 from pydantic import JsonValue
 from pydantic.errors import PydanticInvalidForJsonSchema
 from termflow.themes import PALETTES
@@ -86,6 +86,8 @@ Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 PluginAction = Literal['enable', 'disable', 'reload']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
+VIEW_TIMEOUT = 10.0
+"""Seconds a side panel's view may take before the panel says it did not answer, so one cannot hold up the rest."""
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
@@ -528,7 +530,10 @@ class Remote:
 async def _view(panel: SidePanel) -> PanelView:
     """What `panel` shows now; a failing view, or a page that is not on the web, shows why instead."""
     try:
-        view = await panel.view()
+        with fail_after(VIEW_TIMEOUT):
+            view = await panel.view()
+    except TimeoutError:
+        return PanelView(note=f'{panel.title} did not answer in time.')
     # Any plugin's bug: one broken panel must not take the others, or the page, down.
     except Exception as error:  # noqa: BLE001
         return PanelView(note=f'{panel.title} failed: {str(error) or type(error).__name__}')
