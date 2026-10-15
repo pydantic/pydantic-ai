@@ -149,7 +149,7 @@ from starlette.routing import Mount
 
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 web_app = agent.to_web()
 
 app = Starlette(routes=[Mount('/demo', app=web_app)])
@@ -164,7 +164,7 @@ If the browser-visible paths do not match `root_path`, set them independently:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = agent.to_web(
     base_path='/chat/',
