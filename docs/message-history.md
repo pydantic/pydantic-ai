@@ -255,7 +255,7 @@ Some instructions are only true for one model request: a nudge against instructi
 ```python {title="turn_scoped_system_prompt.py"}
 from pydantic_ai import Agent, RunContext, SystemPromptPart
 
-agent = Agent('anthropic:claude-opus-5-5')
+agent = Agent('{{ anthropic:large }}')
 
 
 @agent.tool
@@ -289,7 +289,7 @@ class StayTerse(AbstractCapability[Any]):
         return request_context
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[StayTerse()])
+agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
 ```
 
 Don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation.

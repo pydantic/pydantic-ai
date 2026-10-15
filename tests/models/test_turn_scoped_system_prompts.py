@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from .conftest import AnthropicModelFactory
 
 with try_import() as anthropic_available:
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, omit as OMIT
     from anthropic.types.beta import BetaMessageParam, BetaTextBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -832,7 +832,7 @@ async def test_anthropic_unified_cache_skips_the_turn_scoped_entry(allow_model_r
     assert first['system'] == snapshot(
         [{'type': 'text', 'text': 'Be terse.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
     )
-    assert 'cache_control' not in second
+    assert second['cache_control'] is OMIT
     # The instructions' breakpoint is raised to `1h`: a `1h` one can't come after a `5m` one.
     assert second['system'] == snapshot(
         [{'type': 'text', 'text': 'Be terse.', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
