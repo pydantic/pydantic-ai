@@ -124,7 +124,12 @@ async def test_keys_reach_the_command(user: int) -> None:
     assert context == _captured(command, 'Exit code 0', 'name? bob\nhi bob\n', '')
 
 
-async def test_ctrl_c_interrupts_the_command(user: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ctrl_c_interrupts_the_command(
+    terminal: tuple[int, int], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import termios
+
+    user, clai = terminal
     monkeypatch.chdir(tmp_path)
     interrupts = Interrupts()
     console = io.StringIO()
@@ -132,7 +137,7 @@ async def test_ctrl_c_interrupts_the_command(user: int, tmp_path: Path, monkeypa
         run_shell_command(': > ready; exec sleep 30', console=Console(file=console), interrupts=interrupts)
     )
     with anyio.fail_after(5):
-        while not (tmp_path / 'ready').exists():
+        while not (tmp_path / 'ready').exists() or termios.tcgetattr(clai)[3] & termios.ICANON:
             await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
     os.write(user, b'\x03')
     with anyio.fail_after(5):

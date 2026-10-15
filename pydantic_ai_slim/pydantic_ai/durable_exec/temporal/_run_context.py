@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, overload
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
-from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
+from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT, ToolNamePath
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
@@ -41,6 +41,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('active_capability_ids', list, _str_set_ta),
     ('_deferred_capability_ids', list, _str_set_ta),
     ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
+    ('_tool_name_path', list, TypeAdapter(ToolNamePath)),
     # Not a `RunContext` field: the ref rides alongside so the activity can rebuild `workspace`.
     ('workspace_ref', dict, TypeAdapter(WorkspaceRef)),
 )
@@ -70,7 +71,12 @@ _NONE_UNLESS_ATTACHED = (
 # which is exactly what `is_tool_available` reads when the serving response has no provenance. A
 # custom `serialize_run_context` written before this field existed therefore keeps answering — with
 # the history-derived window — instead of raising for a field it never knew to carry.
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+# `_tool_name_path` is serialized only when a name-changing wrapper set it, and empty is what a
+# listing outside one carries: a payload without it lists like a run without wrappers did.
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('_tool_name_path', ()),
+)
 
 # Payloads written by a worker running an older version, or by a custom `serialize_run_context` that
 # still spells the old name. An activity can be dispatched by one worker version and replayed by
@@ -246,6 +252,10 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         # `TemporalRunContext.__init__` supplies the inert default when no reference was serialized.
         if (workspace_ref := ctx.workspace.ref) is not None:
             serialized['workspace_ref'] = workspace_ref
+        # Set while a dynamic toolset under a name-changing wrapper is listed, so a `prepare` that
+        # runs in the activity reads its tool's own retry count.
+        if tool_name_path := ctx._tool_name_path:
+            serialized['_tool_name_path'] = tool_name_path
         return serialized
 
     @classmethod
