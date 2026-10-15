@@ -55,7 +55,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Skills
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.'), Skills('.agents/skills')],
 )
 ```
@@ -292,7 +292,7 @@ read from `workspace=` (`in_run_workspace` is `False`).
 `Skills` works with Pydantic AI's [YAML and JSON agent specs](../agent-spec.md):
 
 ```yaml
-model: anthropic:claude-opus-5-5
+model: {{ anthropic:large }}
 capabilities:
   - Skills:
       directories: .agents/skills

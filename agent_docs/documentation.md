@@ -23,7 +23,7 @@
 - Give each maintained fact one canonical home and link to it elsewhere. Link changing provider inventories, feature lists, and setup details to their authoritative source instead of copying them.
 - When a section needs a stable explicit anchor, add `{#custom-id}` to its heading and link to that ID. Use generated fragments only when they are clear and stable.
 - Put user-facing features where users naturally look for them, not only in API reference docstrings.
-- Use current frontier models in reader-facing examples. Verify the latest supported identifiers instead of copying static examples from this guidance.
+- Use current frontier models in reader-facing examples. Verify the latest supported identifiers instead of copying static examples from this guidance. Under `docs/`, always use the model aliases from `docs/model_aliases/aliases.json` instead of model IDs; see the "Model names" section of `docs/AGENTS.md`.
 - Use Markdown headings for real document sections. Register new published pages in `docs/navigation.yml`.
 - Link to the Pydantic AI Harness page under `docs/harness/` when one exists. Link to the source under `src/pydantic_ai_harness/` only when no page covers the capability.
 

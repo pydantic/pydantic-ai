@@ -22,7 +22,7 @@ Set `LOGFIRE_API_KEY`, or pass `auth=` an API key. On your own machine, `auth='o
 from pydantic_ai import Agent
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[LogfireMCP()])
+agent = Agent('{{ openai:medium }}', capabilities=[LogfireMCP()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -58,7 +58,7 @@ def logfire_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.logfire_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[LogfireMCP(auth=logfire_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[LogfireMCP(auth=logfire_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
@@ -88,7 +88,7 @@ def logfire(ctx: RunContext[Deps]) -> LogfireMCP[Deps] | None:
     return LogfireMCP(auth=ctx.deps.logfire_token, url=url)
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[DynamicCapability(logfire, id='logfire')])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[DynamicCapability(logfire, id='logfire')])
 ```
 
 With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `logfire-mcp`, so `defer_loading=True` works without one. To add more than one `LogfireMCP` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
@@ -112,7 +112,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 
 capability = LogfireMCP()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     instructions=capability.get_instructions(),
     output_type=[str, DeferredToolRequests],

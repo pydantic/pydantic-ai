@@ -127,7 +127,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 To make real model requests, set `OPENAI_API_KEY` in the terminal where you start the worker. In `app.py`, replace
-`TestModel(custom_output_text='The workflow completed.')` with `'openai:gpt-5.6-sol'` and remove the `TestModel` import.
+`TestModel(custom_output_text='The workflow completed.')` with `'{{ openai:medium }}'` and remove the `TestModel` import.
 Restart the server and repeat step 4; the response now comes from the model and will vary with the prompt.
 
 Replace `get_weather` with your own tool functions and update the agent's `tools` list to use them. Their arguments
