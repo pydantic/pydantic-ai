@@ -134,7 +134,14 @@ class InProcess:
         web = self.child.web
         web.port = int(argv[argv.index('--port') + 1])
         web.token = Path(argv[argv.index('--token-file') + 1]).read_text(encoding='utf-8').strip()
-        asyncio.get_running_loop().create_task(web.start())
+
+        async def serve() -> None:
+            await web.start()
+            assert web.server is not None
+            web.port = web.server.port  # Started again in a test, it comes back on the same port.
+            log.write_text(f'Web UI running at http://127.0.0.1:{web.port}/\n', encoding='utf-8')
+
+        asyncio.get_running_loop().create_task(serve())
         self.running.add(4242)
         return 4242
 
