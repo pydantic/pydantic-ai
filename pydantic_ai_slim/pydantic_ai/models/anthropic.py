@@ -4072,9 +4072,8 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
         for block in content:
             # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
             block_param = block
-            if not is_str_dict(block):  # pragma: no cover
-                kept.append(block_param)
-                continue
+            # Every block `_map_message` emits is a request param TypedDict.
+            assert is_str_dict(block)
 
             unpaired = (
                 block['type'] in ('server_tool_use', 'mcp_tool_use')
