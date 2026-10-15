@@ -4396,7 +4396,9 @@ class RealtimeSession:
                         yield event
                 finally:
                     # Receiving stopped (a limit tripped, or the session closed) before this session got to the rest of
-                    # the frame: a tool call in it never runs, so it is left out of history, as one refused is.
+                    # the frame: a tool call in it never runs. It is refused, so it is left out of history, or given
+                    # an interrupted return if its response is recorded already (Gemini ends a tool-call response in
+                    # the message that makes the calls).
                     for event in codec[handled:]:
                         if isinstance(event, ToolCall):
                             self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))

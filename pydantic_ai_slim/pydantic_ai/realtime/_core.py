@@ -140,8 +140,9 @@ class ToolReturned:
 class ToolCallRefused:
     """The session refused a tool call the model made, before running it.
 
-    A usage limit tripped on it, or receiving stopped before the session got to it. It leaves the call out of history, as it never ran, unless its response is recorded already: then the call gets an
-    interrupted return, as one the session was running when it closed does.
+    A usage limit tripped on it, or receiving stopped before the session got to it. It leaves the call out of
+    history, as it never ran, unless its response is recorded already: then the call gets an interrupted return,
+    as one the session was running when it closed does.
     """
 
     tool_call_id: str

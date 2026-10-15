@@ -1225,3 +1225,14 @@ def test_usage_naming_an_unknown_response_with_none_under_way_counts_toward_the_
     session_core = feed(core(), SessionUsage(RequestUsage(input_tokens=3), provider_response_id='resp_unknown'))
     assert session_core.usage.input_tokens == 3
     assert session_core.all_messages() == []
+
+
+def test_a_tool_result_the_backend_will_never_take_doesnt_join_the_conversation() -> None:
+    """Held behind the reply under way, a result that goes nowhere stays out of the conversation when that reply ends."""
+    tracker = InferredLifecycle(transcribes=True)
+    tracker.message([OutputTranscript('Let me check.')])
+    input_id = tracker.input_sent(ToolResult('call_1', output='sunny'))
+    tracker.input_unanswerable(input_id)
+    assert [type(event).__name__ for event in tracker.message([ResponseDone()])] == snapshot(
+        ['InputLost', 'ResponseDone', 'ResponseEnded']
+    )
