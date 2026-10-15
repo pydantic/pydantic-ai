@@ -287,7 +287,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.absurd import AbsurdDurability
 
 absurd = AsyncAbsurd('postgresql://localhost/absurd', queue_name='agents')
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[AbsurdDurability()])
+agent = Agent('openai:gpt-6.1-sol', name='analyst', capabilities=[AbsurdDurability()])
 
 
 @absurd.register_task(name='analyse')
@@ -330,7 +330,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.pgtask import PGTaskDurability
 
 tasks = TaskRegistry(queue_name='agents')
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[PGTaskDurability()])
+agent = Agent('openai:gpt-6.1-sol', name='analyst', capabilities=[PGTaskDurability()])
 
 
 @tasks.task('analyse')
@@ -463,10 +463,11 @@ or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `Absur
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
-`ToolCallJudge` is spec-loadable when its model is a string and `tools` is `'all'`, a name list, or a
-metadata match. A live model, predicate selector, and `on_verdict` callback are code-only.
+`ToolCallJudge` and `ApprovalReviewer` are spec-loadable when the model is a string and `tools` is
+`'all'`, a name list, or a metadata match. A live model, predicate selector, and the `on_verdict` or
+`on_review` callback are code-only.
 
-A spec whose `model` is a provider string (`'openai:gpt-5'`) needs that provider's API key when the
+A spec whose `model` is a provider string (`'openai:gpt-6.1-sol'`) needs that provider's API key when the
 agent is built. In tests, pass `defer_model_check=True` and run under `agent.override(model='test')`.
 
 ## ACP server (experimental)
@@ -526,7 +527,7 @@ loop. Silence the warning with `warnings.filterwarnings('ignore', category=Harne
 
 The gh-aw `pydantic-ai` engine runs a Pydantic AI agent in GitHub Actions on issues, PRs, or a schedule.
 In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`,
-set `engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
+set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the

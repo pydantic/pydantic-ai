@@ -47,7 +47,7 @@ Construct an `Agent` with `Planning()` in its `capabilities`. The tools are regi
 from pydantic_ai import Agent
 from pydantic_ai_harness import Planning
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[Planning()])
 
 result = agent.run_sync('Refactor the auth module and add tests.')
 print(result.output)
@@ -127,8 +127,8 @@ A shared store is the whole handoff mechanism between two runs. One agent writes
 ```python
 store = SqlitePlanStore('plan.db', session='issue-403')
 
-planner = Agent('anthropic:claude-opus-4-7', capabilities=[Planning(store=store)])
-executor = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning(store=store)])
+planner = Agent('{{ anthropic:large }}', capabilities=[Planning(store=store)])
+executor = Agent('{{ anthropic:medium }}', capabilities=[Planning(store=store)])
 
 await planner.run('Investigate the issue and write a plan. Do not implement anything.')
 await executor.run('Implement the plan.')
@@ -147,7 +147,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import Planning
 from pydantic_ai_harness.planning import PlanCompletedEvent
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[Planning()])
 
 @agent.on_event(PlanCompletedEvent)
 async def announce(ctx, event):
@@ -205,7 +205,7 @@ Planning(
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - Planning: {}
 ```

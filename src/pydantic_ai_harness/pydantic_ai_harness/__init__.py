@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .browser_use import BrowserUse
@@ -60,6 +61,7 @@ if TYPE_CHECKING:
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
+    from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
@@ -76,6 +78,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
     'BrowserUse',
@@ -132,6 +135,8 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
+    'SmolSandbox',
+    'SmolSandboxBackend',
     'SpendLimits',
     'SpritesSandbox',
     'SpritesSandboxBackend',
@@ -155,6 +160,7 @@ __all__ = [
 _CAPABILITY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',
@@ -193,6 +199,7 @@ _CAPABILITY_EXPORTS = {
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
+    'SmolSandbox': 'smol_sandbox',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',
@@ -219,6 +226,7 @@ _CONSTANT_EXPORTS = {
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'SmolSandboxBackend': 'smol_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
