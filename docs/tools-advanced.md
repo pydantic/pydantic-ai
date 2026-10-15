@@ -969,7 +969,7 @@ Available strategy values:
 
 | `strategy` | Algorithm | Behavior |
 |---|---|---|
-| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+ except GPT-5.4 nano, local keyword matching elsewhere. |
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+ (native regex on the [legacy Bedrock client](models/anthropic.md#aws-bedrock)), OpenAI server-executed `tool_search` on GPT-5.4+ except GPT-5.4 nano, local keyword matching elsewhere. |
 | `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
 | `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
 | Callable `(ctx, queries, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
