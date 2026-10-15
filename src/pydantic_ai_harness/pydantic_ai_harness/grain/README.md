@@ -120,8 +120,10 @@ prefix included.
 `Grain` used to give the agent the server's tool names unprefixed. They now
 reach the agent as `grain_<tool>`. Code that refers to them by name, such as a
 `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs
-the new names. Pass `tool_prefix=None` to keep the old ones. If you wrapped
-`Grain` in
+the new names. A rule that no longer matches stops applying, so an approval rule
+or guardrail that named an old tool lets its calls through without approval or
+checks until you update it. Pass `tool_prefix=None` to keep the old names. If you
+wrapped `Grain` in
 [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
 collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
 adds both prefixes.

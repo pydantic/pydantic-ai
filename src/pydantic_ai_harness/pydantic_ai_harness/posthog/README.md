@@ -122,9 +122,10 @@ what the agent can access.
 ## Tool names
 
 The agent sees each of the server's tools under the `posthog_` prefix, as in
-`posthog_query-trends`, so they don't collide with other tools on the agent. Set
-`tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names
-the server gives them.
+`posthog_<tool>`, so they don't collide with other tools on the agent. The
+command-driven `posthog` tool the server offers by default is `posthog_posthog`.
+Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the
+names the server gives them.
 
 `read_only` selects tools by what the server marks as read-only, not by name, so
 the prefix does not change what it keeps. `features` names PostHog feature
@@ -135,11 +136,14 @@ prefix included.
 
 ## Upgrading
 
-`PostHog` used to give the agent the server's tool names unprefixed. A tool such
-as `query-trends` now reaches the agent as `posthog_query-trends`. Code that
-refers to them by name, such as a `filtered()` wrapper, an approval rule, or a
-`ToolGuardrail(tools=[...])`, needs the new names. Pass `tool_prefix=None` to
-keep the old ones. If you wrapped `PostHog` in
+`PostHog` used to give the agent the server's tool names unprefixed. They now
+reach the agent as `posthog_<tool>`, so the command-driven `posthog` tool the
+server offers by default is now `posthog_posthog`. Code that refers to them by
+name, such as a `filtered()` wrapper, an approval rule, or a
+`ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches
+stops applying, so an approval rule or guardrail that named an old tool lets its
+calls through without approval or checks until you update it. Pass
+`tool_prefix=None` to keep the old names. If you wrapped `PostHog` in
 [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
 collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
 adds both prefixes.
