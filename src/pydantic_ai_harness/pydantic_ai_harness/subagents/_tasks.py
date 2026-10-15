@@ -21,7 +21,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
 from pydantic_ai.exceptions import ModelRetry, RunCancelled
-from pydantic_ai.messages import EnqueuedMessagesEvent, ModelMessage, SystemPromptPart
+from pydantic_ai.messages import EnqueuedMessagesEvent, ModelMessage, SystemPromptPart, UserPromptPart
 from pydantic_ai.output import OutputContext
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
 from pydantic_ai_harness.subagents._events import DelegationOutcome
@@ -101,7 +101,7 @@ class DelegationTasks:
         agents: Mapping[str, SubAgent[object]] | None = None,
         aliases: Mapping[str, str] | None = None,
         one_shot: frozenset[str] = frozenset(),
-        max_depth: int = 4,
+        max_depth: int = 2,
         instructions: str = '',
         step_store: StepStore | None = None,
     ) -> None:
@@ -120,6 +120,7 @@ class DelegationTasks:
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
         self._receivers: dict[tuple[str, str | None], Callable[[SystemPromptPart], str | None]] = {}
+        self._inboxes: dict[str, Callable[[UserPromptPart], str | None]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._open = False
@@ -446,6 +447,26 @@ class DelegationTasks:
                 or self.records[identity[0]].conversation_id != conversation_id
             }
 
+    def message(self, task_id: str, message: str) -> bool:
+        """Deliver a message from the delegating agent to a running child before its next model request.
+
+        Returns whether the child's run was accepting messages; it is not while starting up or settling.
+        """
+        inbox = self._inboxes.get(task_id)
+        if inbox is None:
+            return False
+        inbox(UserPromptPart(f'Message from the agent that delegated this task to you:\n{message}'))
+        return True
+
+    @contextmanager
+    def accepting_messages(self, task_id: str, enqueue: Callable[[UserPromptPart], str | None]) -> Generator[None]:
+        """Route `message` to this child's run for the lifetime of that run."""
+        self._inboxes[task_id] = enqueue
+        try:
+            yield
+        finally:
+            self._inboxes.pop(task_id, None)
+
     async def acknowledge(self, enqueue_id: str) -> None:
         """Persist delivery only after core confirms it entered message history."""
         identity = self._queued.pop(enqueue_id, None)
@@ -488,7 +509,10 @@ class DelegationReports(AbstractCapability[object]):
             parent_id=self.task_id,
             enqueue=lambda part: ctx.enqueue(part, priority=self.priority),
         ):
-            return await handler()
+            if self.task_id is None:
+                return await handler()
+            with self.owner.accepting_messages(self.task_id, lambda part: ctx.enqueue(part, priority='asap')):
+                return await handler()
 
     async def after_output_process(
         self,

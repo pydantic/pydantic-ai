@@ -142,8 +142,13 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 - `models={}`: menu of `key -> model | ModelOption(model, description=, settings=)`. When set,
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
 - `include_self=False`: `True` lists the running agent as delegate `self` (fresh run with all bound
-  capabilities). `max_depth=3` caps nesting, counting the top-level run.
+  capabilities). `max_depth=2` caps nesting, counting the top-level run: only the top-level run
+  delegates. Pass `max_depth=3` to let delegates delegate once more (the earlier default).
 - `tool_retries=2`, `contain_errors=False`, `event_stream_handler=None`, `tool_name='delegate_task'`.
+- Managed sessions: inside an opened and bound `DelegationTasks` owner, `delegate_task` gains
+  `background` and `resume`, and the model also gets `list_tasks`, `message_task(task_id, message)`
+  (steers a running task via `enqueue`; resumes a finished one), and `stop_task(task_id)` for the
+  tasks it started (a model stop stays resumable; `owner.cancel(task_id)` is a user stop).
 - Disk agents: `agent_overrides={'name': AgentOverride(model=..., effort='high')}` and
   `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.subagents`.
 
