@@ -647,7 +647,7 @@ class RecordSnippets(AbstractCapability[Any]):
         return await handler(args)
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSnippets()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(), RecordSnippets()])
 ```
 
 `run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
