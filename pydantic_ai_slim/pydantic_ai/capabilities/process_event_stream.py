@@ -175,9 +175,9 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
                         # A plain await would forward a cancel of this task into the pull natively, and
                         # `asyncio.shield` reports the pull's later exception to the loop on CPython 3.14 and
-                        # 3.15 releases without python/cpython#156321. Teardown cancels the pull through
-                        # `next_scope`, which its shielded cleanup survives. `asyncio.wait` always suspends,
-                        # so skip it once the pull is done.
+                        # 3.15 releases without the fix for https://github.com/python/cpython/issues/156321.
+                        # Teardown cancels the pull through `next_scope`, which its shielded cleanup survives.
+                        # `asyncio.wait` always suspends, so skip it once the pull is done.
                         if not next_task.done():
                             await asyncio.wait((next_task,))
                         try:
