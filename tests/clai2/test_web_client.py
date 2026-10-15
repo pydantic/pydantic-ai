@@ -194,11 +194,12 @@ async def test_the_title_and_a_closed_connection(tmp_path: Path) -> None:
         await view.send('hello')
         assert await view.wait(timeout=10) == 'idle'
         assert view.session is not None
+        path, headers = f'/api/sessions/{view.session.id}/rename', {HEADER: served.web.token}
         async with httpx.AsyncClient(base_url=served.client.url, trust_env=False) as page:
-            renamed = await page.post(
-                f'/api/sessions/{view.session.id}/rename', json={'title': 'Named'}, headers={HEADER: served.web.token}
-            )
-        assert renamed.status_code == 204
+            with anyio.fail_after(10):
+                # The turn ends for the page just before the session saves it; a rename meanwhile is refused.
+                while (await page.post(path, json={'title': 'Named'}, headers=headers)).status_code != 204:
+                    await anyio.sleep(0.01)
         with anyio.fail_after(10):
             while view.session.title != 'Named':
                 await anyio.sleep(0.01)
