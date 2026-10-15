@@ -292,14 +292,16 @@ async def _cross_provider(deepseek: DeepSeekModelFactory) -> None:
     await agent.run(message_history=history)
 
 
-async def _earlier_turn(deepseek: DeepSeekModelFactory) -> None:
+async def _earlier_turn(deepseek: DeepSeekModelFactory) -> str:
     """The tool call without thinking sits before a newer user message."""
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(_PARIS_PROMPT)]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_primary')]),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_primary')]),
     ]
-    await Agent(deepseek(True), tools=[get_weather]).run('Thanks! Reply with one word.', message_history=history)
+    agent = Agent(deepseek(True), tools=[get_weather])
+    result = await agent.run('Thanks! Reply with one word.', message_history=history)
+    return result.output
 
 
 @dataclass(frozen=True)
@@ -334,9 +336,10 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
     `DeepSeekProvider` uses `'field'` mode. Each path reaches DeepSeek with thinking on and no `ThinkingPart`
     in the history, carrying a tool call from a step that didn't think, which DeepSeek 400s on without the
     field when it follows the last user message. The controls pin what stays unchanged: a request with
-    thinking turned off, and a model that doesn't think by default. DeepSeek accepting the empty field is
-    recorded once by `test_deepseek_field_mode_thinking_backfill`; these cases only pin which paths send it,
-    so a mock transport stands in for a recording per path, which would add no evidence about acceptance.
+    thinking turned off, and a model that doesn't think by default. DeepSeek accepting the empty field after
+    and before the last user message is recorded by `test_deepseek_field_mode_thinking_backfill`; these cases
+    only pin which paths send it, so a mock transport stands in for a recording per path, which would add no
+    evidence about acceptance.
     """
     request_bodies: list[dict[str, JsonValue]] = []
 
@@ -364,21 +367,36 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
     ] == case.sent_reasoning
 
 
+@dataclass(frozen=True)
+class LiveFieldBackfillCase:
+    id: str
+    run: Callable[[DeepSeekModelFactory], Awaitable[str]]
+    output: str
+
+
+LIVE_FIELD_BACKFILL_CASES = [
+    LiveFieldBackfillCase(id='current_turn', run=_fallback, output=snapshot('The weather in Paris is sunny.')),
+    LiveFieldBackfillCase(id='earlier_turn', run=_earlier_turn, output=snapshot('Sunny.')),
+]
+
+
+@pytest.mark.parametrize('case', LIVE_FIELD_BACKFILL_CASES, ids=lambda case: case.id)
 async def test_deepseek_field_mode_thinking_backfill(
-    allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
+    case: LiveFieldBackfillCase, allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
 ):
     """DeepSeek accepts the empty `reasoning_content` a thinking request sends on a tool call no step thought on.
 
-    A non-thinking `FallbackModel` primary serves the tool call, then fails over to DeepSeek with thinking
-    on, so the history holds no `ThinkingPart`. Without the field DeepSeek rejects the request with a 400
-    ("The reasoning_content in the thinking mode must be passed back to the API"). The run completing is
-    the API accepting the request; the request assertion pins it.
+    The history holds no `ThinkingPart`, and DeepSeek has thinking on. In `current_turn`, a non-thinking
+    `FallbackModel` primary serves the tool call, then fails over to DeepSeek; without the field DeepSeek
+    rejects that request with a 400 ("The reasoning_content in the thinking mode must be passed back to the
+    API"). In `earlier_turn`, a newer user message follows the tool call, which DeepSeek also accepts without
+    the field. The run completing is the API accepting the request; the request assertion pins it.
     """
-    output = await _fallback(
+    output = await case.run(
         _deepseek_model_factory('deepseek-v4-flash', api_key=deepseek_api_key, http_client=request_capture.client)
     )
 
-    assert output == snapshot('The weather in Paris is sunny.')
+    assert output == case.output
     messages = request_capture.body('/chat/completions')['messages']
     assert [
         message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'

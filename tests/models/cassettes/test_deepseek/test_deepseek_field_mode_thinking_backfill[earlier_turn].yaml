@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "686"
+      - "743"
       content-type:
       - application/json
       host:
@@ -38,6 +38,8 @@ interactions:
         - role: tool
           tool_call_id: call_primary
           content: sunny
+        - role: user
+          content: Thanks! Reply with one word.
         tool_choice: auto
         tools:
         - type: function
@@ -72,27 +74,27 @@ interactions:
     body:
       type: json
       content:
-        id: d3b76cb8-93d5-41af-9862-5af698203629
+        id: 317eda32-33d8-43f9-8ea8-ca42a0bf734e
         object: chat.completion
-        created: 1792089893
+        created: 1792096472
         model: deepseek-flash
         choices:
         - index: 0
           message:
             role: assistant
-            content: The weather in Paris is sunny.
+            content: Sunny.
             reasoning_content: ""
           logprobs: null
           finish_reason: stop
         usage:
-          prompt_tokens: 369
-          completion_tokens: 8
-          total_tokens: 377
+          prompt_tokens: 376
+          completion_tokens: 4
+          total_tokens: 380
           prompt_tokens_details:
             cached_tokens: 128
           completion_tokens_details:
             reasoning_tokens: 0
           prompt_cache_hit_tokens: 128
-          prompt_cache_miss_tokens: 241
+          prompt_cache_miss_tokens: 248
         system_fingerprint: aeb56401ca74e127821c4f9126dcb669
-  recorded_at: 2026-10-15T18:44:54.183279+00:00
+  recorded_at: 2026-10-15T20:34:32.877941+00:00

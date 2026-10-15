@@ -2023,7 +2023,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
         # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
         # field empty on every such turn once the history holds a `ThinkingPart` or the request itself thinks,
-        # which it can before any step has; `'auto'` mode is handled after mapping, below.
+        # as it can before any step has thought; `'auto'` mode is handled after mapping, below.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
