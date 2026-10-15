@@ -108,7 +108,7 @@ Structured server error content is serialized as JSON for both `'retry'` and `'f
 
 ## Render MCP Apps in a Frontend
 
-[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_contents(uri)`, which keeps the MIME type and `_meta.ui` (CSP, permissions).
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_for_app(uri)`, which returns the MCP result as is, keeping the MIME type and `_meta.ui` (CSP, permissions).
 
 ## Use Embeddings for RAG
 
