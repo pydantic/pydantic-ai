@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import patch
 
 import httpx2
@@ -1270,6 +1270,13 @@ async def test_dbos_agent_realtime_session_outside_workflow():
         assert [event async for event in session] == []
 
 
+async def test_dbos_agent_rejects_connect():
+    """Runs use the DBOS model, so a connection would open a socket that no run uses."""
+    with pytest.raises(UserError, match='`DBOSAgent` does not support explicit connections'):
+        async with simple_dbos_agent.connect():
+            pytest.fail('DBOSAgent runs cannot use a connection')  # pragma: no cover
+
+
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
     # DBOS allows calling `iter` inside a workflow as a step.
     @DBOS.workflow()
@@ -2502,6 +2509,36 @@ async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS
     # Outside a workflow the capability is transparent, so the token works like a normal run.
     result = await agent.run('Hello', cancellation_token=CancellationToken())
     assert result.output == 'Echo: Hello'
+
+
+class _ConnectableDurabilityModel(FunctionModel):
+    """Connecting yields a distinct model, as a real connection does."""
+
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        yield type(self)(_durability_model_fn, model_name='connected')
+
+
+async def test_dbos_durability_rejects_connect_in_workflow(dbos: DBOS) -> None:
+    """A connection can't be opened in workflow code, so `connect()` is rejected inside a workflow — but the
+    same durable-capable agent still uses one when run outside a workflow."""
+    agent = Agent(
+        _ConnectableDurabilityModel(_durability_model_fn, model_name='source'),
+        name='durability_connect',
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_connected_agent() -> str:
+        async with agent.connect():
+            return (await agent.run('Hello')).output  # pragma: no cover
+
+    with pytest.raises(UserError, match=re.escape('`agent.connect()` is not supported inside a DBOS workflow')):
+        await run_connected_agent()
+
+    async with agent.connect():
+        result = await agent.run('Hello')
+    assert result.response.model_name == 'connected'
 
 
 def _cancel_own_workflow_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
