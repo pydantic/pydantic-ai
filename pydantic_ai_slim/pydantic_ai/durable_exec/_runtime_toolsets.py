@@ -115,8 +115,10 @@ def reject_unsupported_runtime_toolsets(
             else ''
         )
         raise UserError(
-            f'{offenders_text} cannot be passed to `run(toolsets=...)` at runtime with {engine}, because toolsets '
+            f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
             'that execute their own tools or resolve dynamically must be registered for durable execution '
-            'when the agent is constructed. Pass them to the agent constructor instead. Non-executing '
-            f'toolsets like `ExternalToolset` can be passed at runtime.{opt_out}'
+            'when the agent is constructed. Pass them to the agent constructor instead -- not to '
+            '`run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. '
+            'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+            f'{opt_out}'
         )

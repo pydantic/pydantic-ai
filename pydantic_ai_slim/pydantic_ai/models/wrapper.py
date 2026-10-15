@@ -4,10 +4,9 @@ import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from types import TracebackType
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -140,9 +139,24 @@ class WrapperModel(Model):
         return self.wrapped.profile
 
     @property
+    def context_window(self) -> int | None:
+        # Forwarded rather than read off `profile`: a wrapped `FallbackModel` has no profile but does
+        # have a context window (the smallest among its candidates).
+        return self.wrapped.context_window
+
+    @property
     def settings(self) -> ModelSettings | None:
         """Get the settings from the wrapped model."""
         return self.wrapped.settings
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        # `Model.resolve_cache_retention` is defined on the base class, so without this override normal
+        # attribute lookup succeeds and `__getattr__` never forwards.
+        return self.wrapped.resolve_cache_retention(model_settings)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.
+        return self.wrapped._caching_not_enabled(model_settings)
 
     @property
     def base_url(self) -> str | None:
@@ -154,6 +168,8 @@ class WrapperModel(Model):
         return self.wrapped.base_url
 
     def __getattr__(self, item: str):
+        if item == 'wrapped':
+            raise AttributeError(item)
         return getattr(self.wrapped, item)
 
 

@@ -19,11 +19,11 @@ from pathlib import Path
 
 # The workflows install exactly one pinned third-party package for these
 # scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
-# on `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11;
+# on `typing.TypedDict` exists for pydantic validation on Python 3.11;
 # these scripts only run on the newer runner Python.
 from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 from triage_models import AgentItem, IssueEvent, agent_items, item_labels, parse_time, snapshot_candidates
 
 try:
@@ -36,16 +36,16 @@ except ImportError:  # sparse checkouts that omit the telemetry module stay sile
 
 
 _API = 'https://api.github.com'
+_PROVIDER_HEALTH_MARKER = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
+_PROVIDER_HEALTH_MARKER_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 _SLA = dt.timedelta(days=3)
 # Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
-# Assigned priority or community-backed issues are kept in the attention queue
-# by `reconcile`; the owner is pinged once *they* have been inactive past the
-# window. Community chatter neither suppresses nor hastens the reminder.
+# Assigned P1/P2 issues are kept in the attention queue by `reconcile`; the
+# owner is pinged once *they* have been inactive past the window.
 _REMINDER_SLAS = {
     'p:1-highest': dt.timedelta(days=3),
     'p:2-high': dt.timedelta(days=5),
-    COMMUNITY_LABEL: dt.timedelta(days=7),
 }
 _SLA_MARK_LIMIT = 10
 _RESURFACE_AFTER = dt.timedelta(days=7)
@@ -106,7 +106,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
-    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it routes and reminds like a priority issue'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
@@ -224,6 +224,9 @@ class GitHubClient:
 
     def post(self, path: str, payload: Mapping[str, object]) -> Any:
         return self.request('POST', path, payload)
+
+    def patch(self, path: str, payload: Mapping[str, object]) -> Any:
+        return self.request('PATCH', path, payload)
 
     def delete(self, path: str, payload: Mapping[str, object] | None = None) -> Any:
         return self.request('DELETE', path, payload)
@@ -412,6 +415,54 @@ def rotated_search(
     return cast(list[dict[str, Any]], result.get('items') or [])
 
 
+def _is_provider_health_incident(item: Mapping[str, object]) -> bool:
+    """Recognize controller issues by both operational labels and their typed marker."""
+    if not {'agentic-workflows', 'pydanty:meta'}.issubset(item_labels(item)):
+        return False
+    body = item.get('body')
+    if not isinstance(body, str):
+        return False
+    match = _PROVIDER_HEALTH_MARKER.search(body)
+    if match is None:
+        return False
+    try:
+        marker: object = json.loads(match.group(1))
+    except (json.JSONDecodeError, RecursionError):
+        return False
+    if not isinstance(marker, dict):
+        return False
+    try:
+        marker_values: dict[str, object] = _PROVIDER_HEALTH_MARKER_ADAPTER.validate_python(marker, strict=True)
+    except (ValidationError, RecursionError):
+        return False
+    version = marker_values.get('version')
+    scope = marker_values.get('scope')
+    key = marker_values.get('key')
+    kind = marker_values.get('kind')
+    reset_at = marker_values.get('reset_at')
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != 1
+        or scope not in ('provider', 'workflow', 'task')
+        or not isinstance(key, str)
+        or not key
+        or not isinstance(kind, str)
+        or not kind
+    ):
+        return False
+    if reset_at is not None:
+        if not isinstance(reset_at, str):
+            return False
+        try:
+            reset_time = dt.datetime.fromisoformat(reset_at.replace('Z', '+00:00'))
+        except ValueError:
+            return False
+        if reset_time.tzinfo is None:
+            return False
+    return True
+
+
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
     cutoff_date = (now - _SLA).date()
     # An escalated item cools down outside classification. Reconciliation
@@ -439,7 +490,8 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     )
     candidates: dict[int, dict[str, Any]] = {}
     for item in [*recent, *backlog]:
-        candidates.setdefault(int(item['number']), item)
+        if not _is_provider_health_incident(item):
+            candidates.setdefault(int(item['number']), item)
     return list(candidates.values())[:_CANDIDATE_LIMIT]
 
 
@@ -457,6 +509,7 @@ def build_snapshot(client: GitHubClient, repo: str, *, now: dt.datetime) -> dict
             or parse_time(updated_at) > cutoff
             or _ACTION_LABEL in labels
             or _ESCALATED_LABEL in labels
+            or _is_provider_health_incident(current)
         ):
             continue
         recent_activity, pr_context = _candidate_context(client, repo, current)
@@ -490,16 +543,20 @@ def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.dateti
 
 
 def ensure_labels(client: GitHubClient, repo: str) -> None:
-    """Create the fixed workflow labels if they are absent."""
+    """Create the fixed workflow labels if they are absent, and keep their descriptions current."""
     for name, (color, description) in _LABELS.items():
         encoded = urllib.parse.quote(name, safe='')
         try:
-            client.get(f'/repos/{repo}/labels/{encoded}')
-            continue
+            existing = client.get(f'/repos/{repo}/labels/{encoded}')
         except urllib.error.HTTPError as exc:
             exc.close()
             if exc.code != 404:
                 raise
+        else:
+            # Only the description is managed: a maintainer may recolor a label.
+            if isinstance(existing, Mapping) and cast(Mapping[str, object], existing).get('description') != description:
+                client.patch(f'/repos/{repo}/labels/{encoded}', {'description': description})
+            continue
         try:
             client.post(f'/repos/{repo}/labels', {'name': name, 'color': color, 'description': description})
         except urllib.error.HTTPError as exc:
@@ -1087,6 +1144,9 @@ def _reconcile_item(
         return f'#{number}: completed after the item was closed', None
     if _finish_delivery_receipt(client, repo, number, labels, events, transition):
         return f'#{number}: finished delivered channel escalation', None
+    if current_stage == 1 and not labels.intersection(_REMINDER_SLAS):
+        _complete(client, repo, number, labels)
+        return f'#{number}: completed after losing reminder priority', None
     current_stage_label = _STAGE_LABELS[current_stage - 1] if current_stage else None
     for label in labels.intersection(_STAGE_LABELS):
         if label != current_stage_label:
@@ -1131,11 +1191,9 @@ def _queue_stage_notice(
     if current_stage == 1 and now - transition_at < _sla_for(labels):
         return None
     if current_stage == 0:
-        # Only assigned priority or community-backed issues enter the
-        # interrupt pipeline: anything else the triage agent marks stays
-        # tracked, visible in the Monday digest, and silent. Items already
-        # pinged before the cutover finish their lifecycle rather than
-        # stranding at stage 1.
+        # Only assigned P1/P2 issues enter the interrupt pipeline: anything
+        # else the triage agent marks stays tracked, visible in the Monday
+        # digest, and silent.
         if not labels.intersection(_REMINDER_SLAS):
             return None
         # Items reach stage 0 from several lanes (the reminder sweep, agent
@@ -1245,7 +1303,7 @@ def _owner_quiet_since(timeline: Sequence[dict[str, Any]], owners: Sequence[str]
 def _mark_assigned_reminders(
     client: GitHubClient, repo: str, *, slot: int, now: dt.datetime
 ) -> tuple[list[str], list[str]]:
-    """Keep every assigned priority or community-backed issue inside the attention queue.
+    """Keep every assigned P1/P2 issue inside the attention queue.
 
     An issue is marked once its owner has gone quiet past the label's window
     (`_owner_quiet_since` — the same activity rule acknowledgment uses), so
@@ -2112,7 +2170,7 @@ def main() -> int:
         return 1
     client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     failures: list[str] = []
     if args.mode == 'snapshot':
         lines = write_snapshot(client, repo, args.snapshot_path, now=now)

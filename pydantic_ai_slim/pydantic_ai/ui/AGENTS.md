@@ -29,6 +29,24 @@ request turn; its result is emitted in that request turn, and the next
 response's `PartStartEvent` invokes `before_response()` to replace the parent
 ID. This is the lifecycle established by [#3325](https://github.com/pydantic/pydantic-ai/pull/3325).
 
+Every parent ID the stream emits is announced before it is referenced.
+`_handle_tool_call_start` starts a content-free message when the response has no
+text before its first tool call, so a consumer never has to synthesize the
+assistant message that ID names — a synthesized one carries an ID the server
+never emitted, which is what breaks telling new messages apart from replayed
+history ([#7527](https://github.com/pydantic/pydantic-ai/issues/7527)). Close
+that pair on the spot: the AG-UI *client's* event verifier (`verifyEvents` in the
+TypeScript `@ag-ui/client`, not the Python package) rejects `RUN_FINISHED` while a
+text message is still open.
+
+That content-free pair is not the shape [#2754](https://github.com/pydantic/pydantic-ai/pull/2754)
+removed. Those `THINKING_TEXT_MESSAGE_*` envelopes carried no ID anyone needed —
+thinking already has an outer `THINKING_START`/`THINKING_END` envelope, so the
+inner empty message signalled state and nothing else. An assistant message has no
+outer envelope, so `TEXT_MESSAGE_START` is the only event that can name its ID,
+which is the thing a consumer needs. Emit an empty envelope only when it carries
+something; here it carries the identity.
+
 Native tool returns differ because another native call can follow inside the
 same model response. That path uses a one-off result ID without replacing the
 response parent; regular tool results intentionally retain the request-turn ID

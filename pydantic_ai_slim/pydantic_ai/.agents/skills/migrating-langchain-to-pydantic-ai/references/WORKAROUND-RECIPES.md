@@ -195,8 +195,8 @@ Probe token/tool/final ordering, co-emitted output and tools, consumer cancellat
 
 Use `UsageLimits` for Pydantic AI units and reuse one `RunUsage` object when several runs or child agents share a budget:
 
-```python {noqa="F704,F821"}
-# ruff: noqa: F704, F821
+```python {noqa="F704,F821,PLE1142"}
+# ruff: noqa: F704, F821, PLE1142
 from pydantic_ai import RunUsage, UsageLimits
 
 usage = RunUsage()

@@ -11,15 +11,32 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    NoReturn,
+    Protocol,
+    Self,
+    TypeAlias,
+    assert_never,
+    cast,
+    overload,
+)
 
 import anyio
 import pydantic_core
 from pydantic import AnyUrl, Field, TypeAdapter
-from typing_extensions import Self, assert_never
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
+# Which HTTPX the HTTP kwargs below belong to is the installed fastmcp's to decide: fastmcp 3 is
+# built on legacy `httpx`, fastmcp 4 — like the MCP SDK v2 under it — on `httpx2`, and the `[mcp]`
+# extra admits both. We only use their shared interfaces, so these unions type them without
+# importing a family that the other generation's installs don't ship.
+from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -45,10 +62,6 @@ except ImportError as _import_error:
         '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
         'or install the full `fastmcp` package directly.'
     ) from _import_error
-
-# Below the guard on purpose: the fastmcp client requires `httpx`, so without the extra the error
-# above is what users should see, not `ModuleNotFoundError: httpx`.
-import httpx
 
 # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
 # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
@@ -894,10 +907,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
-        auth: httpx.Auth | Literal['oauth'] | str | None = None,
+        auth: HTTPAuth | Literal['oauth'] | str | None = None,
         verify: ssl.SSLContext | bool | str | None = None,
         headers: dict[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
     ):
         """Build a new `MCPToolset`.
 
@@ -949,14 +962,18 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             read_timeout: Maximum time in seconds to wait for new messages on the long-lived
                 connection. Defaults to 5 minutes.
             roots: Filesystem roots advertised to the server.
-            auth: HTTP authentication for HTTP transports — an `httpx.Auth`, the literal string
-                `'oauth'` to enable FastMCP's OAuth flow, or a bearer-token string.
+            auth: HTTP authentication for HTTP transports — an `httpx2.Auth` (a legacy `httpx.Auth`
+                when the installed fastmcp is 3), the literal string `'oauth'` to enable FastMCP's
+                OAuth flow, or a bearer-token string. When `http_client` is provided, authentication
+                is applied to requests made through that client.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
                 path string, or a bool.
             headers: Extra HTTP headers for HTTP transports. Mutually exclusive with `http_client`.
-            http_client: A pre-configured `httpx.AsyncClient` to use for HTTP transports — useful
-                for self-signed certificates or custom connection pooling. Mutually exclusive with
-                `headers`.
+            http_client: A pre-configured `httpx2.AsyncClient` (a legacy `httpx.AsyncClient` when
+                the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
+                certificates or custom connection pooling. Mutually exclusive with `headers`.
+                The toolset never closes a user-supplied client: the caller owns its lifecycle,
+                and the toolset can reconnect with it across runs.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
@@ -1296,6 +1313,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
+            # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
+            match mcp_tool.meta:
+                case {'ui': {'visibility': visibility}} if isinstance(visibility, list) and 'model' not in visibility:
+                    continue
+                case _:
+                    pass
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
@@ -1323,6 +1346,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 ctx=ctx,
             )
         return tools
+
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        # An MCP tool is fully described by its definition, so there is nothing to ask the server for.
+        return self.tool_for_tool_def(tool_def, ctx=ctx)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
         """Build the tool to call for a tool definition that was already prepared elsewhere.
@@ -1648,8 +1677,8 @@ def _build_transport(
     client: MCPToolsetClient,
     *,
     headers: dict[str, str] | None,
-    http_client: httpx.AsyncClient | None,
-    auth: httpx.Auth | Literal['oauth'] | str | None,
+    http_client: AsyncHTTPClient | None,
+    auth: HTTPAuth | Literal['oauth'] | str | None,
     verify: ssl.SSLContext | bool | str | None,
     read_timeout: float | None,
 ) -> MCPToolsetClient:
@@ -1672,43 +1701,77 @@ def _build_transport(
     url = str(client)
     # FastMCP's HTTP transports accept `httpx_client_factory`; adapt `http_client` to that shape.
     factory = _make_httpx_client_factory(http_client) if http_client is not None else None
+    # This is the boundary where the two-family union meets a transport annotated against the one
+    # family its own generation is built on, and it's where the values stop being ours: pyright only
+    # ever sees one generation installed, so it can't check a pass-through the other generation's
+    # user will make. Casting only the two HTTPX-typed arguments keeps `headers` and `verify`,
+    # which mean the same thing to both, checked as before.
+    transport_auth = cast('Any', auth)
+    transport_factory = cast('Any', factory)
     if infer_transport_type_from_url(url) == 'sse':
         return SSETransport(
             url=url,
             headers=headers,
-            auth=auth,
+            auth=transport_auth,
             verify=verify,
             # SSE keeps its own read timeout for the long-lived event stream.
             sse_read_timeout=read_timeout if read_timeout is not None else 5 * 60,
-            httpx_client_factory=factory,
+            httpx_client_factory=transport_factory,
         )
     # `sse_read_timeout` is deprecated on StreamableHttpTransport; the read timeout for the
     # long-lived session is configured via the FastMCP `Client(timeout=...)` instead.
     return StreamableHttpTransport(
         url=url,
         headers=headers,
-        auth=auth,
+        auth=transport_auth,
         verify=verify,
-        httpx_client_factory=factory,
+        httpx_client_factory=transport_factory,
     )
 
 
 def _make_httpx_client_factory(
-    http_client: httpx.AsyncClient,
-) -> Callable[..., httpx.AsyncClient]:
-    """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
+    http_client: AsyncHTTPClient,
+) -> Callable[..., _BorrowedHTTPClient]:
+    """Return an `httpx_client_factory` that borrows the user-supplied `http_client`."""
 
     def factory(
         headers: dict[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
-        auth: httpx.Auth | None = None,
+        timeout: HTTPTimeout | None = None,
+        auth: HTTPAuth | None = None,
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
         # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
         follow_redirects: bool = True,
-    ) -> httpx.AsyncClient:
-        return http_client
+    ) -> _BorrowedHTTPClient:
+        # The user's client configuration remains authoritative for headers, timeouts, and redirects.
+        return _BorrowedHTTPClient(http_client, auth)
 
     return factory
+
+
+class _BorrowedHTTPClient:
+    """A non-closing proxy for a user-owned HTTP client."""
+
+    # HTTP request methods that accept an `auth=` keyword argument.
+    _AUTH_METHODS = frozenset({'stream', 'request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'})
+
+    def __init__(self, client: AsyncHTTPClient, auth: HTTPAuth | None) -> None:
+        self._client = client
+        self._auth = auth
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._client, name)
+        if self._auth is not None and name in self._AUTH_METHODS:
+            return functools.partial(attr, auth=self._auth)
+        return attr
 
 
 def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any, Any]:
@@ -1918,13 +1981,39 @@ def _expand_env_vars(value: Any) -> Any:
         return value
 
 
+class _MCPServerConfig(TypedDict, total=False):
+    """The keys `load_mcp_toolsets` reads from an `mcpServers` entry.
+
+    Unknown keys are ignored rather than rejected, so a configuration file shared with another MCP
+    client still loads. They are only ignored, never honoured: `disabled` does not skip a server,
+    and `type` does not select the transport — that is inferred from the URL.
+
+    Optional transport values accept explicit JSON `null` for compatibility with existing shared
+    MCP configuration files; loading treats those values the same as omission.
+    """
+
+    command: str
+    args: list[str] | None
+    env: dict[str, str] | None
+    cwd: str | None
+    url: str
+    headers: dict[str, str] | None
+
+
+class _MCPConfig(TypedDict):
+    mcpServers: dict[str, _MCPServerConfig]
+
+
+_MCP_CONFIG_ADAPTER = TypeAdapter(_MCPConfig)
+
+
 def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     """Load `MCPToolset`s from a configuration file.
 
-    The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Cursor, and the
-    MCP specification. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset],
-    wrapped in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name
-    as prefix to disambiguate tools across multiple servers.
+    The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
+    and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
+    in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
+    to disambiguate tools across multiple servers.
 
     Environment variables can be referenced in the configuration file using:
 
@@ -1938,31 +2027,30 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         A list of toolsets, one per server in the config file, each prefixed with the server name.
 
     Raises:
-        FileNotFoundError: If the configuration file does not exist.
-        ValidationError: If the configuration file does not match the schema.
-        ValueError: If an environment variable referenced in the configuration is not defined and
-            no default is provided.
+        OSError: If the configuration file does not exist (`FileNotFoundError`), or exists but
+            cannot be read — a directory, or a file without read permission.
+        ValidationError: If the configuration does not match the `mcpServers` shape above. This is
+            a `ValueError` subclass, so catching `ValueError` covers it too.
+        ValueError: If the file is not valid JSON, a server entry has neither `command` nor `url`,
+            or an environment variable referenced in the configuration is not defined and no
+            default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
-    expanded_config_data = _expand_env_vars(config_data)
-    if not isinstance(expanded_config_data, dict):
-        raise ValueError(f'Expected JSON object at root of {config_path}, got {type(expanded_config_data).__name__}')
-    servers = cast(dict[str, Any], expanded_config_data).get('mcpServers')
-    if not isinstance(servers, dict):
-        raise ValueError(f'Expected `mcpServers` object in {config_path}')
+    # Expand before validating, so `${VAR}` references are checked as the values they resolve to.
+    config = _MCP_CONFIG_ADAPTER.validate_python(_expand_env_vars(config_data))
 
     toolsets: list[AbstractToolset[Any]] = []
-    for name, server in cast(dict[str, Any], servers).items():
+    for name, server in config['mcpServers'].items():
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],
                 args=list(server.get('args') or []),
                 env=server.get('env'),
-                cwd=str(server['cwd']) if server.get('cwd') is not None else None,
+                cwd=server.get('cwd'),
             )
             toolset = MCPToolset(transport, id=name)
         elif 'url' in server:

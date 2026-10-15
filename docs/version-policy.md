@@ -1,3 +1,7 @@
+---
+description: "Pydantic AI's version policy: no intentional breaking changes in minor releases, how deprecations work, and when the next major version can ship after V2."
+---
+
 # Version Policy
 
 Pydantic AI V1 was released in September 2025, and the stable V2.0 was released on June 23, 2026; see the [Upgrade Guide](changelog.md) for what's in V2, how to install it, and how to upgrade.

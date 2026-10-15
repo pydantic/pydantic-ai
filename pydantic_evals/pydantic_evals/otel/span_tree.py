@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import cache
 from textwrap import indent
 from typing import TYPE_CHECKING, Any, Literal
@@ -148,8 +148,8 @@ class SpanNode:
             trace_id=span.context.trace_id,
             span_id=span.context.span_id,
             parent_span_id=span.parent.span_id if span.parent else None,
-            start_timestamp=datetime.fromtimestamp(span.start_time / 1e9, tz=timezone.utc),
-            end_timestamp=datetime.fromtimestamp(span.end_time / 1e9, tz=timezone.utc),
+            start_timestamp=datetime.fromtimestamp(span.start_time / 1e9, tz=UTC),
+            end_timestamp=datetime.fromtimestamp(span.end_time / 1e9, tz=UTC),
             attributes=dict(span.attributes or {}),
             status=status,
         )
@@ -351,7 +351,9 @@ class SpanNode:
         def pruned_descendants():
             stop_recursing_when = query.get('stop_recursing_when')
             return (
-                self._filter_descendants(lambda _: True, stop_recursing_when) if stop_recursing_when else descendants()
+                list(self._filter_descendants(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else descendants()
             )
 
         if (min_descendant_count := query.get('min_descendant_count')) and len(descendants()) < min_descendant_count:
@@ -382,7 +384,11 @@ class SpanNode:
         @cache
         def pruned_ancestors():
             stop_recursing_when = query.get('stop_recursing_when')
-            return self._filter_ancestors(lambda _: True, stop_recursing_when) if stop_recursing_when else ancestors()
+            return (
+                list(self._filter_ancestors(lambda _: True, stop_recursing_when))
+                if stop_recursing_when
+                else ancestors()
+            )
 
         if (min_depth := query.get('min_depth')) and len(ancestors()) < min_depth:
             return False

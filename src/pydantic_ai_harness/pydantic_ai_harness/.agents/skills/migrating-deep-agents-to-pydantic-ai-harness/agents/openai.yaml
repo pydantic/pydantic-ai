@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Migrate Deep Agents'
+  short_description: 'Move Deep Agents apps to Pydantic AI Harness'
+  default_prompt: 'Use $migrating-deep-agents-to-pydantic-ai-harness to migrate this Deep Agents application while preserving its behavior.'

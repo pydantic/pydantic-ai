@@ -22,7 +22,7 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_evaluation_reason():
@@ -85,20 +85,20 @@ def test_strict_abc_meta():
     with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class InvalidEvaluator(Evaluator[Any, Any, Any]):
             pass
 
     with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):
             pass
 
     # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
     with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class PartialAbstract(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class PartialAbstract(Evaluator[Any, Any, Any]):
             @abstractmethod
             def other(self) -> None: ...
 

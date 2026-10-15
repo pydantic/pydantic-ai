@@ -784,6 +784,16 @@ class ModelResponsePartsManager:
         if isinstance(event, PartStartEvent):
             self.handle_part(vendor_part_id=event.index, part=event.part)
         elif isinstance(event, PartDeltaEvent):
+            part_index = self._vendor_id_to_part_index.get(event.index)
+            part = self._parts[part_index] if part_index is not None else None
+            delta = event.delta
+            if part_index is not None and type(part) is TextPart and type(delta) is TextPartDelta:
+                # Keep replay snapshots independent while buffering their text.
+                updated_part = self._apply_metadata_or_copy_provider_details(part, delta, apply_metadata=True)
+                self._buffer_string_delta(part_index, part.content, delta.content_delta)
+                self._parts[part_index] = updated_part
+                return
+
             part = self.get_part_by_vendor_id(event.index)
             assert part is not None
             assert not isinstance(part, ToolCallPartDelta)

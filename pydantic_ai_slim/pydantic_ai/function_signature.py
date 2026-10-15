@@ -475,6 +475,13 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 }
 
 
+# Names of the non-object defs currently being resolved inline. A non-object def has no
+# TypedDict to point at, so a self-referential one (`type Json = str | list[Json]`) would
+# recurse forever; `_build_and_register_type` solves the same problem for object defs by
+# registering a placeholder before it walks the fields.
+_resolving_refs: ContextVar[frozenset[str]] = ContextVar('_resolving_refs', default=frozenset())
+
+
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
     """Convert a JSON type string to a SimpleTypeExpr."""
     return SimpleTypeExpr(_JSON_SIMPLE_TYPE_TO_PYTHON.get(json_type, 'Any'))
@@ -608,10 +615,21 @@ def _schema_to_type_expr(
             ref_schema = _normalize_schema_node(defs[ref_name])
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                 _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
-            elif 'enum' in ref_schema and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf')):
-                # Pydantic emits enum classes as non-object defs. Resolve terminal enum defs
-                # inline as `Literal[...]`; a bare class name would never be defined.
-                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
+            elif '$ref' not in ref_schema:
+                # Only object defs become TypedDicts. Pydantic emits enums, constrained
+                # aliases, list aliases and unions as non-object defs, which would render as
+                # a bare class name that is never defined, so resolve them inline instead:
+                # `Literal[...]`, `int`, `list[str]`, `int | None`.
+                resolving = _resolving_refs.get()
+                if ref_name in resolving:
+                    # A self-referential non-object def has no finite inline expression and no
+                    # TypedDict to name, so `Any` keeps the rendered signature self-contained.
+                    return _ANY
+                token = _resolving_refs.set(resolving | {ref_name})
+                try:
+                    return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
+                finally:
+                    _resolving_refs.reset(token)
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]

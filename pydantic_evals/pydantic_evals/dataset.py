@@ -10,7 +10,6 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import sys
 import time
 import traceback
 import warnings
@@ -18,7 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, Union, cast
 
 import anyio
 import logfire_api
@@ -28,7 +27,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_seria
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from rich.progress import Progress
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_ai._utils import await_maybe, is_async_callable
@@ -52,11 +51,6 @@ from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, Report
 
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 __all__ = (
     'Case',
@@ -152,7 +146,10 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
+        # Not `Sequence`: with it, pyright infers narrower type parameters (like a `Literal` for
+        # `inputs`) that then don't match the dataset's, so tuples and lists are spelled out instead.
+        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...]
+        | list[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new test case.
 
@@ -161,12 +158,10 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
             inputs: The inputs to the task being evaluated.
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: Optional expected output of the task, used for comparison in evaluators.
-            evaluators: Tuple of evaluators specific to this case. These are in addition to any
+            evaluators: Evaluators specific to this case. These are in addition to any
                 dataset-level evaluators.
 
         """
-        # Note: `evaluators` must be a tuple instead of Sequence due to misbehavior with pyright's generic parameter
-        # inference if it has type `Sequence`
         self.name = name
         self.inputs = inputs
         self.metadata = metadata
@@ -479,7 +474,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
+        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ) -> None:
         """Adds a case to the dataset.
 
@@ -490,7 +485,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs: The inputs to the task being evaluated.
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: The expected output of the task, used for comparison in evaluators.
-            evaluators: Tuple of evaluators specific to this case, in addition to dataset-level evaluators.
+            evaluators: Evaluators specific to this case, in addition to dataset-level evaluators.
         """
         if name in {case.name for case in self.cases}:
             raise ValueError(f'Duplicate case name: {name!r}')
@@ -500,7 +495,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs=inputs,
             metadata=metadata,
             expected_output=expected_output,
-            evaluators=evaluators,
+            evaluators=list(evaluators),
         )
         self.cases.append(case)
 

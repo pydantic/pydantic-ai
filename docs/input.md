@@ -1,3 +1,7 @@
+---
+description: "Send images, audio, video, PDFs and other documents to a Pydantic AI agent by URL, as binary content, or as files uploaded to a provider's Files API."
+---
+
 # Multimodal Input
 
 Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
@@ -12,7 +16,7 @@ If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.Ima
 ```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -32,7 +36,7 @@ from pydantic_ai import Agent, BinaryContent
 
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -50,28 +54,28 @@ print(result.output)
 !!! info
     Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
 
-You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Video Input
 
 !!! info
     Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
 
-You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+For video, use [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Document Input
 
 !!! info
     Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
 
-You can provide document input using either [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is similar to the examples above.
+For documents, use [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_ai.DocumentUrl]:
 
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-sonnet-4-6')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -91,7 +95,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-sonnet-4-6')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -115,7 +119,7 @@ You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with 
 ```py {title="text_content_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, TextContent
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync([
     'Summarize the key points from this text.',
     TextContent(
@@ -144,7 +148,7 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/openai.md#alibaba-cloud-model-studio-dashscope) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
@@ -221,7 +225,7 @@ Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-w
 !!! note "Beta Feature"
     The Anthropic Files API is currently in beta. `AnthropicModel` automatically adds the required `anthropic-beta: files-api-2025-04-14` header when a request contains an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile], so you don't need to set it yourself.
 
-```py {title="uploaded_file_anthropic.py" test="skip"}
+```py {title="uploaded_file_anthropic.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -231,7 +235,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 async def main():
     provider = AnthropicProvider()
-    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+    model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (Anthropic client)
     with open('document.pdf', 'rb') as f:
@@ -256,7 +260,7 @@ asyncio.run(main())
 
 Follow the [OpenAI Files API docs](https://platform.openai.com/docs/api-reference/files/create) to upload files. You can access the underlying OpenAI client via `provider.client`.
 
-```py {title="uploaded_file_openai.py" test="skip"}
+```py {title="uploaded_file_openai.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -266,7 +270,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 async def main():
     provider = OpenAIProvider()
-    model = OpenAIChatModel('gpt-5', provider=provider)
+    model = OpenAIChatModel('{{ openai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (OpenAI client)
     with open('document.pdf', 'rb') as f:
@@ -297,7 +301,7 @@ asyncio.run(main())
 
 Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) to upload files. You can access the underlying Google GenAI client via `provider.client`.
 
-```py {title="uploaded_file_google.py" test="skip"}
+```py {title="uploaded_file_google.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -307,7 +311,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 async def main():
     provider = GoogleProvider()
-    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    model = GoogleModel('{{ google:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (Google GenAI client)
     with open('document.pdf', 'rb') as f:
@@ -336,7 +340,7 @@ For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https:
 !!! note "`media_type` may be required"
     Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically.
 
-```py {title="uploaded_file_bedrock.py" test="skip"}
+```py {title="uploaded_file_bedrock.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -344,7 +348,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 
 
 async def main():
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0')
+    model = BedrockConverseModel('{{ bedrock:medium.name }}')
 
     agent = Agent(model)
     result = await agent.run([
@@ -369,7 +373,7 @@ asyncio.run(main())
 
 Follow the [xAI Files API docs](https://docs.x.ai/docs/guides/files) to upload files. You can access the underlying xAI client via `provider.client`.
 
-```py {title="uploaded_file_xai.py" test="skip"}
+```py {title="uploaded_file_xai.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
 import asyncio
 
 from pydantic_ai import Agent, UploadedFile
@@ -379,7 +383,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('grok-4.3', provider=provider)
+    model = XaiModel('{{ xai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

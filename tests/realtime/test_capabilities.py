@@ -62,8 +62,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
-pytestmark = pytest.mark.anyio
-
 
 class _Connection(RealtimeConnection):
     """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""
@@ -460,8 +458,8 @@ async def test_run_lifecycle_hooks_fire_for_a_session() -> None:
         'wrap_run:before',
         'before_run',
         'session:body',
-        'wrap_run:finally',
         'after_run:final answer',
+        'wrap_run:finally',
     ]
     assert session.result is not None
     assert session.result.output == 'final answer'
@@ -612,31 +610,28 @@ async def test_wrap_run_short_circuits_before_session_connects() -> None:
     assert model.instructions is None
 
 
-async def test_short_circuit_then_recovered_caller_error_exits_cleanly() -> None:
-    """A caller-body error after a `wrap_run` short-circuit, recovered by `on_run_error`, exits cleanly.
+async def test_caller_error_after_short_circuit_propagates() -> None:
+    """A short-circuit skips the inner lifecycle, including `on_run_error`."""
 
-    The short-circuit path yields a closed session without connecting; if the caller then raises and
-    `on_run_error` recovers, the lifecycle hooks suppress the error. Without the `yielded` guard on the
-    short-circuit yields, `_resolve_realtime_session`/`_open_realtime_session` would resume past their
-    exit stacks and yield a second time, which `asynccontextmanager` reports as
-    `RuntimeError: generator didn't stop after athrow()`.
-    """
+    on_error_called = False
 
     class ShortCircuitThenRecoverCapability(AbstractCapability[None]):
         async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
             return AgentRunResult(output='short-circuited')
 
         async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
-            assert str(error) == 'caller failed'
-            return AgentRunResult(output='recovered after short-circuit')
+            nonlocal on_error_called
+            on_error_called = True  # pragma: no cover
+            return AgentRunResult(output='recovered after short-circuit')  # pragma: no cover
 
     agent = Agent(capabilities=[ShortCircuitThenRecoverCapability()], deps_type=type(None))
 
-    async with agent.realtime(_RecordingModel()).session() as session:
-        assert session.closed
-        raise RuntimeError('caller failed')
+    with pytest.raises(RuntimeError, match='caller failed'):
+        async with agent.realtime(_RecordingModel()).session() as session:
+            assert session.closed
+            raise RuntimeError('caller failed')
 
-    assert session.result is not None
+    assert not on_error_called
 
 
 async def test_wrap_run_context_is_ambient_throughout_session() -> None:
@@ -882,6 +877,27 @@ async def test_before_run_can_cancel_realtime_session() -> None:
     assert model.instructions is None
 
 
+async def test_after_run_uncancel_cannot_complete_realtime_session() -> None:
+    """A first-party cancellation remains terminal after a hook clears the owning task's cancellation count."""
+    task = asyncio.current_task()
+    assert task is not None
+
+    class UncancelAfterRun(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task.uncancel()
+            return result
+
+    agent = Agent(capabilities=[UncancelAfterRun()], deps_type=type(None))
+    with pytest.raises(RunCancelled):
+        async with agent.realtime(_RecordingModel()).session() as session:
+            async for _ in session:
+                pass
+
+
 async def test_cancel_on_finished_realtime_context_is_noop() -> None:
     """A retained context cannot cancel the task that happened to own an already-finished session."""
     contexts: list[RunContext[None]] = []
@@ -923,14 +939,23 @@ async def test_nested_run_cancellation_in_before_run_uses_realtime_history() -> 
     assert isinstance(exc_info.value.__cause__, RunCancelled)
 
 
-async def test_run_error_hook_cannot_recover_realtime_cancellation() -> None:
-    """A unit test because cancellation recovery is in-process lifecycle control flow, not provider behavior."""
-
-    class RecoverCancellation(AbstractCapability[None]):
-        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+class _RecoverCancellationInWrapRun(AbstractCapability[None]):
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+        try:
+            return await handler()
+        except asyncio.CancelledError:
             return AgentRunResult(output='recovered')
 
-    agent = Agent[None, str](capabilities=[RecoverCancellation()], deps_type=type(None))
+
+class _RecoverCancellationInRunError(AbstractCapability[None]):
+    async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+        return AgentRunResult(output='recovered')
+
+
+@pytest.mark.parametrize('capability', [_RecoverCancellationInRunError(), _RecoverCancellationInWrapRun()])
+async def test_run_hooks_cannot_recover_realtime_cancellation(capability: AbstractCapability[None]) -> None:
+    """A unit test because cancellation recovery is in-process lifecycle control flow, not provider behavior."""
+    agent = Agent[None, str](capabilities=[capability], deps_type=type(None))
 
     @agent.tool
     async def cancel(ctx: RunContext[None]) -> None:
