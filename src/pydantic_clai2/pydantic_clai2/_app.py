@@ -60,6 +60,7 @@ from pydantic_clai2.plugins import (
     Renderer,
     SessionEndReason,
     SessionStart,
+    TaskEvent,
     TurnEnd,
     TurnStart,
     bare_screen,
@@ -1010,6 +1011,7 @@ class _Shell(Generic[DepsT, OutputT]):
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
             fire=self.loader.fire,
+            listening=lambda: self.loader.handles(TaskEvent),
             send_input=self.send_input,
         )
         self.status.subagent = self.tasks.focused

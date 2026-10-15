@@ -662,6 +662,10 @@ class PluginLoader(Generic[DepsT]):
         for name in reversed(list(self._loaded)):
             await self.unload(name, reason=reason)
 
+    def handles(self, event: type[HostEvent]) -> bool:
+        """Whether a loaded plugin handles `event`, so a caller can skip building one that nothing reads."""
+        return any(loaded.handles(event) for loaded in self._loaded.values())
+
     async def fire(self, event: HostEvent) -> None:
         """Dispatch to every loaded plugin. `turn_start` fails closed; the rest report and continue."""
         for name, loaded in list(self._loaded.items()):
