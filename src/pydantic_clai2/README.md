@@ -112,6 +112,13 @@ switch to it, or use its menu to rename, fork, or delete it; a session saved in 
 directory opens read-only. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
 Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
+When the agent delegates to sub-agents, a **Workers** tree appears under the current session:
+one row per worker, under the worker that started it, with its agent, model, elapsed time, and
+last action. Click one, or the link on the tool call that started it, to watch its transcript
+live; type in its box to steer it (it reads your message at its next model request). Stop,
+Background, and Resume do what `/tasks stop`, `background`, and `resume` do. A finished worker
+shows what it saved; **← Session**, or the session's row, goes back.
+
 The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
 composer) turns plugins on and off and edits their settings in a form, saved and applied at once,
 as `/plugins` does in the terminal. Sign-ins and keys stay in each plugin's own menu, which opens
