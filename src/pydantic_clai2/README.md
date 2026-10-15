@@ -2512,8 +2512,8 @@ which are saved as plaintext.
 ```
 
 `/plugins configure observability`, or `c` on `observability` in `/plugins`, opens
-its settings menu. Each option below is a row there; each edit saves at once and
-applies from the next run. The last command replaces the built-in configuration
+its settings menu; the web UI's plugins panel shows the same menu. Each option below
+is a row there; each edit saves at once and applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
@@ -2548,16 +2548,19 @@ never recorded, since both can hold secrets such as `/plugins add` settings.
 
 ### Setting up where traces go
 
-Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
-`c` on `observability` in `/plugins`):
+Choose **Logfire project** in the settings menu (`/plugins configure observability`,
+`c` on `observability` in `/plugins`, or **Change…** on the row in the web UI's plugins
+panel, where each step below is a dialog in the page):
 
 1. Pick which Logfire: Logfire US, Logfire EU, or **Another Logfire...** to type a
    self-hosted or staging one as a host (`logfire.example.com`), the URL you open it
    at, or its MCP URL (`https://logfire.example.com/mcp`); see
    [Which Logfire](PLUGINS.md#which-logfire). Enter chooses; Esc cancels and changes
    nothing.
-2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
-3. Pick one of the projects you can write to (`/` to search, Enter to use it).
+2. Sign in, or sign up, in the browser. A waiting screen shows the link too, so it
+   works over SSH; Esc there cancels the sign-in and changes nothing.
+3. Pick one of the projects you can write to (typing filters a list of more than
+   eight; Enter uses it).
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
