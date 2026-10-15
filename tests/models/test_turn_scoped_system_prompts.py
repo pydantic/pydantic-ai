@@ -950,6 +950,12 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic()
     assert len(texts) == 2
     assert [index for index, block in enumerate(blocks) if 'cache_control' in block] == [texts[0]]
 
+    # With nothing ahead of the reminder, there's nothing to cache up to.
+    only_reminder = model.prepare_messages(REMINDER_ONLY, ModelRequestParameters())
+    _, anthropic_messages = await model._map_message(only_reminder, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    model._apply_message_cache_control(anthropic_messages, '5m', _turn_scoped_tail_texts(only_reminder))  # pyright: ignore[reportPrivateUsage]
+    assert 'cache_control' not in str(anthropic_messages)
+
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
 async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock():
