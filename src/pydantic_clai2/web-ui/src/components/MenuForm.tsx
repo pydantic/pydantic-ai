@@ -48,10 +48,12 @@ export function MenuForm({
     ++request.current
     setMenu(result.menu)
     setErrors((current) => Object.fromEntries(Object.entries(current).filter(([name]) => name !== key)))
+    const text = result.messages.filter(Boolean).join('\n')
+    // An action the user backed out of says nothing, and saved nothing.
+    if (!text) return
     setSaved(key)
     window.setTimeout(() => setSaved((current) => (current === key ? null : current)), 1600)
-    const text = result.messages.filter(Boolean).join('\n')
-    if (text) onNotice(text)
+    onNotice(text)
   }
 
   const run = async (key: string, edit: () => Promise<MenuEdited>, inline: boolean) => {
