@@ -84,6 +84,7 @@ try:
         DocumentURLChunk as MistralDocumentURLChunk,
         FileChunk as MistralFileChunk,
         FunctionCall as MistralFunctionCall,
+        FunctionName as MistralFunctionName,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
@@ -92,6 +93,7 @@ try:
         ThinkChunk as MistralThinkChunk,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
+        ToolChoice as MistralToolChoice,
         ToolChoiceEnum as MistralToolChoiceEnum,
         UnknownContentChunk as MistralUnknownContentChunk,
     )
@@ -376,12 +378,12 @@ class MistralModel(Model[Mistral]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: MistralModelSettings,
-    ) -> tuple[list[MistralTool] | None, MistralToolChoiceEnum | None]:
+    ) -> tuple[list[MistralTool] | None, MistralToolChoice | MistralToolChoiceEnum | None]:
         """Get tools and tool choice for the model.
 
         Returns a tuple of (tools, tool_choice):
         - tools: List of MistralTool definitions to send, or None if no tools
-        - tool_choice: "auto", "any", "none", "required", or None
+        - tool_choice: "auto", "any", "none", "required", a `ToolChoice` naming a single forced tool, or None
 
         Tool choice semantics:
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -392,7 +394,7 @@ class MistralModel(Model[Mistral]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
 
-        tool_choice: MistralToolChoiceEnum
+        tool_choice: MistralToolChoice | MistralToolChoiceEnum
         if resolved_tool_choice == 'auto':
             tool_choice = 'auto'
         elif resolved_tool_choice == 'required':
@@ -403,9 +405,14 @@ class MistralModel(Model[Mistral]):
             return None, None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            # Breaks caching, but Mistral doesn't support limiting tools via API arg
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                # Name the single forced tool natively and keep all tools, so the tools prefix stays cacheable.
+                (tool_name,) = tool_names
+                tool_choice = MistralToolChoice(function=MistralFunctionName(name=tool_name))
+            else:
+                # Breaks caching, but Mistral doesn't support limiting tools to a subset via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
         else:
             assert_never(resolved_tool_choice)
 

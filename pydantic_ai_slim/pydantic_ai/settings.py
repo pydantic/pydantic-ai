@@ -338,7 +338,7 @@ class ModelSettings(TypedDict, total=False):
     * Google
     * Groq
     * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
-    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Mistral (a single forced tool is sent as a parameter; a larger named subset is honored by filtering the tool list)
     * Bedrock
     * xAI
     * HuggingFace
