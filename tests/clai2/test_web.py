@@ -264,7 +264,7 @@ def test_switches(make_web: 'MakeWeb') -> None:
         assert web_.post('/api/switch', {'key': 'run.speculative_code_mode', 'on': True}).status_code == 204
         assert receive_until(socket, Notice)[1].command == '/set run.speculative_code_mode true'
         assert receive_until(socket, StatusChanged)[1].status.speculation is True
-        web_.post('/api/switch', {'key': 'run.code_mode', 'on': True})
+        assert web_.post('/api/switch', {'key': 'run.code_mode', 'on': True}).status_code == 204
         assert receive_until(socket, StatusChanged)[1].status.code_mode is True
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
