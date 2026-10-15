@@ -197,6 +197,8 @@ async def test_settings_menu_runs_actions_with_terminal_dialogs_under_one_hold()
         messages = await run_settings_menu(menu, script.runners)
     assert messages == ['Saved Name.', 'Picked a token.']
     assert fields.value == 'grace'
+    [name, _] = fields.rows()
+    assert (fields.problem(name, 'x'), fields.reset(name), fields.value) == (None, 'Reset Name.', 'ada')
     assert [type(dialog) for dialog in asked] == [TerminalDialogs]
     assert script.opened == ['list', 'text', 'list', 'choice', 'list']
     # The outer hold spans the whole menu; each widget's own hold nests inside it.
