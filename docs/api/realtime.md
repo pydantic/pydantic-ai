@@ -19,7 +19,7 @@ graph LR
     App -- "send(): RealtimeSessionInput" --> S[RealtimeSession]
     S -- "send(): RealtimeInput" --> C[RealtimeConnection]
     M[RealtimeModel] -- "connect()" --> C
-    C -- "RealtimeCodecEvent" --> S
+    C -- "RealtimeFrame" --> S
     S -- "RealtimeEvent" --> App
 ```
 
@@ -46,7 +46,7 @@ provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurre
 | [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
 | [`TurnDetection`][pydantic_ai.realtime.TurnDetection] | Cross-provider automatic VAD sensitivity, padding, and silence configuration. |
 | [`KnownRealtimeModelName`][pydantic_ai.realtime.KnownRealtimeModelName] / [`infer_realtime_model`][pydantic_ai.realtime.infer_realtime_model] | Provider-prefixed model IDs and inference. |
-| [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
+| [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] | Provider ABC; `send()` content in, `frames()` of codec and lifecycle events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
@@ -127,6 +127,85 @@ vocabulary yielded by a connection:
 [`PartEndEvent`][pydantic_ai.messages.PartEndEvent],
 [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage],
 and [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent].
+
+**Lifecycle events** — [`LifecycleEvent`][pydantic_ai.realtime.lifecycle.LifecycleEvent], which a connection
+yields with its codec events, each [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.RealtimeFrame] from
+[`RealtimeConnection.frames()`][pydantic_ai.realtime.codec.RealtimeConnection.frames] holding what one provider
+message made. They say what the codec events can't: where each response starts and ends
+([`ResponseStarted`][pydantic_ai.realtime.lifecycle.ResponseStarted] /
+[`ResponseEnded`][pydantic_ai.realtime.lifecycle.ResponseEnded]) and which inputs it answers, where each
+spoken turn starts and joins the conversation
+([`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted] /
+[`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded] /
+[`UserTurnDiscarded`][pydantic_ai.realtime.lifecycle.UserTurnDiscarded]), where each input joins it
+([`InputAdded`][pydantic_ai.realtime.lifecycle.InputAdded]), and which inputs no response will answer
+([`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] /
+[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]). The session builds history,
+usage, and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
+
+**Implementing a connection** — subclass [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
+and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
+[`frames()`][pydantic_ai.realtime.codec.RealtimeConnection.frames]. A protocol that identifies its responses,
+turns, and inputs (as the OpenAI Realtime API does) is best translated into lifecycle events directly. One that
+identifies none of them (as Gemini Live and OpenAI GPT-Live don't) can hand each input it sends and each
+provider message it reads to an [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle], which
+works the lifecycle out from their order. Here, a reply to a text turn is a response that answers it:
+
+```python
+import asyncio
+from collections.abc import AsyncIterator, Sequence
+
+from pydantic_ai.realtime.codec import (
+    OutputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    ResponseDone,
+)
+from pydantic_ai.realtime.lifecycle import InferredLifecycle, LifecycleEvent, RealtimeFrame
+
+
+class EchoConnection(RealtimeConnection):
+    """Says each text turn back: a stand-in for a protocol that identifies nothing."""
+
+    def __init__(self) -> None:
+        self._lifecycle = InferredLifecycle(transcribes=False)
+        self._said: asyncio.Queue[str] = asyncio.Queue()
+
+    async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
+        input_id = self._lifecycle.input_sent(content)
+        try:
+            if isinstance(content, str):
+                self._said.put_nowait(content)  # (where a real connection writes to its transport)
+        except BaseException:
+            self._lifecycle.input_failed(input_id)
+            raise
+        return self._lifecycle.take_pending()
+
+    def frames(self) -> AsyncIterator[RealtimeFrame]:
+        return self._lifecycle.frames(self._codec_events())
+
+    async def _codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        while True:  # (where a real connection reads its transport)
+            text = await self._said.get()
+            yield OutputTranscript(text=text, is_final=True)
+            yield ResponseDone()
+
+
+async def main():
+    connection = EchoConnection()
+    print(await connection.send('Hello!'))
+    #> [InputAdded(input_id=0)]
+    frames = connection.frames()
+    for _ in range(2):
+        print([type(event).__name__ for event in await anext(frames)])
+        #> ['ResponseStarted', 'OutputTranscript']
+        #> ['ResponseDone', 'ResponseEnded']
+```
+
+`frames()` ends once the connection is gone: an `InferredLifecycle` ends what was under way on it then, as
+[`connection_lost()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.connection_lost] does for a connection
+that re-dials.
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from
