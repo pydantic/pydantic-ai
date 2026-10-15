@@ -55,7 +55,7 @@ with try_import() as openai_available:
 SHORT_TIMEOUT = 0.05
 """For a request that never finishes: how soon it times out only affects how long the test takes."""
 
-GENEROUS_TIMEOUT = 0.25
+GENEROUS_TIMEOUT = 0.5
 """For a test in which something must get done before the deadline, e.g. a first chunk reaching the consumer, on a
 loaded runner."""
 
