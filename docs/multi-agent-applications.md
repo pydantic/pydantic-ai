@@ -37,7 +37,7 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] 
 from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='joke_selection_agent',  # (2)!
     instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
@@ -45,7 +45,7 @@ joke_selection_agent = Agent(  # (1)!
     ),
 )
 joke_generation_agent = Agent(  # (3)!
-    'google:gemini-3-flash-preview', name='joke_generation_agent', output_type=list[str]
+    '{{ google:medium }}', name='joke_generation_agent', output_type=list[str]
 )
 
 
@@ -67,7 +67,7 @@ print(result.output)
 print(result.usage)
 """
 RunUsage(
-    cost=Decimal('0.00051200'),
+    cost=Decimal('0.00047625'),
     input_tokens=165,
     output_tokens=24,
     requests=3,
@@ -127,7 +127,7 @@ class ClientAndKey:  # (1)!
 
 
 joke_selection_agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='joke_selection_agent',
     deps_type=ClientAndKey,  # (2)!
     instructions=(
@@ -136,7 +136,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     name='joke_generation_agent',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
@@ -177,7 +177,7 @@ async def main():
         print(result.usage)  # (6)!
         """
         RunUsage(
-            cost=Decimal('0.00056350'),
+            cost=Decimal('0.00054750'),
             input_tokens=220,
             output_tokens=32,
             requests=4,
@@ -243,7 +243,7 @@ class Failed(BaseModel):
 
 
 flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='flight_search_agent',
     output_type=FlightDetails | Failed,
     instructions=(
@@ -292,7 +292,7 @@ class SeatPreference(BaseModel):
 
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='seat_preference_agent',
     output_type=SeatPreference | Failed,
     instructions=(

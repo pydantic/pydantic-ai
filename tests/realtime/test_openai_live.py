@@ -1931,6 +1931,28 @@ def test_delegated_backend_token_usage_is_accumulated() -> None:
     assert reported.usage.cost is not None and reported.usage.cost > 0
 
 
+def test_delegated_backend_usage_is_priced_at_its_reported_service_tier() -> None:
+    """A backend that reports it served the request at `priority` is priced at priority rates."""
+
+    def cost(service_tier: str) -> Decimal | None:
+        usage = {
+            'input_tokens': 1000,
+            'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+            'output_tokens': 100,
+            'output_tokens_details': {'reasoning_tokens': 0},
+            'total_tokens': 1100,
+        }
+        event = _backend_terminal(service_tier=service_tier, usage=usage)
+        completed = {'type': 'response.event', 'event_id': 'e1', 'delegation_id': 'd1', 'event': event}
+        [reported] = _connection()._map_event(_event(completed))  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(reported, SessionUsage)
+        return reported.usage.cost
+
+    standard, priority = cost('default'), cost('priority')
+    assert standard is not None and priority is not None
+    assert priority > standard
+
+
 def test_unpriceable_backend_usage_is_still_accumulated() -> None:
     """A model genai-prices doesn't know leaves the cost unset; the tokens still count.
 

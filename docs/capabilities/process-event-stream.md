@@ -20,7 +20,7 @@ async def log_events(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -
         print(event)  # (1)!
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessEventStream(log_events)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessEventStream(log_events)])
 ```
 
 1. For example, forward events to a websocket, progress bar, or audit log.

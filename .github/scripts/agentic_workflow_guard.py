@@ -1012,13 +1012,15 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
         "github.repository == 'pydantic/pydantic-ai' && "
         "(github.event_name != 'workflow_run' || "
         "github.event.workflow_run.event != 'pull_request' || "
-        'github.event.workflow_run.head_repository.full_name == github.repository)'
+        '(github.event.workflow_run.head_repository.full_name == github.repository && '
+        "github.event.workflow_run.actor.login != 'dependabot[bot]'))"
     ):
         violations.append(
             Violation(
                 str(monitor_path),
-                'provider-health-monitor-fork-gate',
-                'Monitor must exclude fork `pull_request` completions while retaining trusted runs and recovery triggers.',
+                'provider-health-monitor-credential-gate',
+                'Monitor must exclude fork and Dependabot `pull_request` completions while retaining trusted runs '
+                'and recovery triggers.',
             )
         )
     concurrency = _as_mapping(monitor.get('concurrency'))

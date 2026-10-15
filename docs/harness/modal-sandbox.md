@@ -30,7 +30,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
@@ -56,7 +56,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 
 followup = agent.run_sync(
@@ -77,7 +77,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 from pydantic_ai_harness.shell import Shell
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -108,7 +108,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -134,7 +134,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 
 
 async def main() -> None:
@@ -197,7 +197,7 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
     raise error
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder(), hooks])
+agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder(), hooks])
 ```
 
 ## Configuration
@@ -272,7 +272,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='modal_coder',
     capabilities=[ModalSandbox(), Coder(), TemporalDurability()],
 )

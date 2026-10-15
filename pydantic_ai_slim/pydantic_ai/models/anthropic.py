@@ -81,7 +81,7 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
-from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
+from ..providers._bedrock_model_names import bedrock_claude_cache_retentions, bedrock_lacks_claude_structured_output
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
@@ -1207,10 +1207,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
-            # AWS grants the 1-hour cache TTL to only a subset of Claude models, matching `BedrockConverseModel`.
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models, and withholds structured output
+            # from some that have it on the direct API, matching `BedrockConverseModel`.
             _profile = merge_profile(
                 _profile,
-                AnthropicModelProfile(supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name)),
+                AnthropicModelProfile(
+                    supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name),
+                    supports_json_schema_output=_profile.get('supports_json_schema_output', False)
+                    and not bedrock_lacks_claude_structured_output(self._model_name),
+                ),
             )
         return cast(AnthropicModelProfile, _profile)
 
