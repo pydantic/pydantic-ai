@@ -132,6 +132,8 @@ export type ServerMessage =
       questions: Questions[]
       dialogs: Dialog[]
       theme: ThemeInfo
+      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      follows_workspace: boolean
     }
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
@@ -194,6 +196,8 @@ export interface Transcript {
   workspace: string
   items: Item[]
   openable: boolean
+  /** CLAI would move to its directory, but that directory is gone. */
+  missing: boolean
 }
 
 export interface CompletionInfo {

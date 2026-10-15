@@ -2670,3 +2670,13 @@ textarea.setting-input {
     scrollbar-color: var(--border-strong) transparent;
   }
 }
+/* Where a new session runs, under `clai2 --web`. */
+
+.new-session-dialog .dialog-description {
+  margin: 0;
+}
+
+.new-session-dialog .dialog-option-label svg {
+  flex: none;
+  color: var(--muted);
+}

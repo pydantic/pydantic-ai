@@ -34,6 +34,8 @@ export interface State {
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
   theme: ThemeInfo | null
+  /** Whether each session runs in its own directory, so a new one asks where. */
+  followsWorkspace: boolean
 }
 
 export const initial: State = {
@@ -47,6 +49,7 @@ export const initial: State = {
   pluginsVersion: 0,
   turnStartedAt: null,
   theme: null,
+  followsWorkspace: false,
 }
 
 let counter = 0
@@ -78,6 +81,7 @@ export function reduce(state: State, message: ServerMessage): State {
         dialogs: message.dialogs,
         turnStartedAt: message.running ? state.turnStartedAt : null,
         theme: message.theme,
+        followsWorkspace: message.follows_workspace,
       }
     case 'item':
       return { ...state, entries: [...state.entries, message.item] }

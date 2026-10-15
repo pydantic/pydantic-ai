@@ -32,6 +32,8 @@ interface Props {
   themeInfo: ThemeInfo | null
   onPickTheme: (name: string) => void
   onView: (session: SessionEntry) => void
+  /** Start a new session, asking where it runs when sessions run in their own directories. */
+  onNew: () => void
   onCollapse: () => void
   onPlugins: () => void
   onError: (message: string) => void
@@ -53,7 +55,7 @@ function live(worktrees: Worktree[]): boolean {
 
 /** Saved sessions grouped by project, then worktree, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onCollapse, onPlugins, onError },
+  { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onNew, onCollapse, onPlugins, onError },
   ref,
 ) {
   const [query, setQuery] = useState('')
@@ -187,7 +189,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           <SidebarIcon size={16} />
         </button>
       </div>
-      <button className="new-session" onClick={() => void act(api.newSession)} title={`New session (${MOD}Shift+O)`}>
+      <button className="new-session" onClick={onNew} title={`New session (${MOD}Shift+O)`}>
         <ComposeIcon size={16} />
         <span>New session</span>
       </button>
