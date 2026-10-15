@@ -870,7 +870,7 @@ class TestSpeculationEdgeCases:
         assert log.calls.count(('search', 'a')) + log.calls.count(('search', 'b')) == 2
 
     async def test_launches_count_toward_tool_calls_limit(self):
-        """An early call is checked against `tool_calls_limit` when it launches, and claiming one refused there ends the run."""
+        """An early call is checked against `tool_calls_limit` when it launches, and the snippet's call past the limit ends the run."""
         log = ToolLog()
         capability = CodeMode[None](speculate=['search'])
         code = padded(
@@ -883,6 +883,31 @@ class TestSpeculationEdgeCases:
 
         assert capability.speculation_stats.launched == 3
         assert log.calls == [('search', 'a'), ('search', 'b')]
+
+    async def test_launch_refused_by_tool_calls_limit_runs_cold_once_the_budget_frees(self):
+        """A launch the limit refused while another call was pending runs cold when the snippet asks for it.
+
+        The pending call failed in the meantime, so the cold call fits, as it would without speculation.
+        """
+        log = ToolLog()
+        capability = CodeMode[None](speculate=['search', 'fail_after_stream'])
+        code = padded(
+            'try:\n    await fail_after_stream()\nexcept Exception:\n    pass\nprint(await search(query="b"))'
+        )
+        agent = build_agent(log, code, capability)
+
+        @agent.tool_plain
+        async def fail_after_stream() -> str:
+            while not log.streaming_done:
+                await asyncio.sleep(0)
+            raise RuntimeError('failed')
+
+        result = await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=2))
+
+        assert result.output == 'done'
+        assert capability.speculation_stats.launched == 2
+        assert log.calls == [('search', 'b')]
+        assert result.usage.tool_calls == 2
 
     async def test_odd_literal_arguments_key_without_crashing_and_stay_distinct(self):
         """Literal keys the sandbox could never dispatch still stream past the text scanner.

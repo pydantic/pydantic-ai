@@ -2433,6 +2433,27 @@ class TestCodeMode:
         assert sorted(pinged) == [0, 1, 2, 3, 4]
         assert result.usage.tool_calls == 6
 
+    async def test_usage_limit_error_from_a_nested_tool_reaches_the_snippet(self) -> None:
+        """A `UsageLimitExceeded` a nested tool raises itself, e.g. from a delegate agent's own limits,
+        is an ordinary tool error the snippet can catch: only the run's own `tool_calls_limit` refusal ends the run.
+        """
+        agent, _ = self._ping_agent('try:\n    await delegate()\nexcept Exception:\n    outcome = "caught"\noutcome')
+
+        @agent.tool_plain
+        async def delegate() -> str:
+            raise UsageLimitExceeded('The delegate ran out of requests')
+
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == 'caught'
+
     # ---------------------------------------------------------------------------
     # Capability registration
     # ---------------------------------------------------------------------------

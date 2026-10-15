@@ -480,6 +480,9 @@ Keep these limitations in mind:
 - At most `max_tool_calls` calls (and never more than 32) start early per `run_code` call;
   later ones run cold. This speculative allowance is separate from the snippet's dispatch
   budget: unclaimed launches are extra work, not a reservation against `max_tool_calls`.
+- Under a `tool_calls_limit`, a call counts toward the limit from the moment it starts early,
+  including one the snippet never claims. A launch the limit refused runs cold if the snippet
+  asks for it.
 - Speculated tools must cooperate with asyncio cancellation. Cleanup requests cancellation
   and waits up to five seconds per streamed call, then stops waiting. A tool that suppresses
   cancellation can outlive the run; this timeout does not forcibly stop its work.

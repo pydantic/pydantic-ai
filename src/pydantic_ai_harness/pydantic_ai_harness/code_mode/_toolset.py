@@ -638,21 +638,28 @@ class NestedCallOutcome:
     denied_message: str | None = None
     """Set when a handler denied the call, so the history records `outcome='denied'`."""
 
+    usage_limit_exceeded: UsageLimitExceeded | None = None
+    """Set, along with `error`, when `tool_calls_limit` refused the call before it ran; it ends the run."""
+
 
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
     ctx = tool_manager.ctx
     assert ctx is not None, 'the nested `ToolManager` is built with the run context'
     usage_limits = ctx.usage_limits
-    # Under a `tool_calls_limit`, a pending call counts toward the limit until it settles: calls
-    # started together with `asyncio.gather` would otherwise all pass the check before any of them
-    # is counted. Core counts the call again when it succeeds, so the reservation is always released.
-    reserved = int(usage_limits is not None and usage_limits.tool_calls_limit is not None)
-    ctx.usage.tool_calls += reserved
+    reserved = 0
+    if usage_limits is not None and usage_limits.tool_calls_limit is not None:
+        # This call counts once it succeeds, and so does the enclosing `run_code` call.
+        try:
+            usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
+        except UsageLimitExceeded as e:
+            return NestedCallOutcome(error=e, usage_limit_exceeded=e)
+        # A pending call counts toward the limit until it settles: calls started together with
+        # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
+        # counts the call itself once it succeeds, so the reservation is released however it ends.
+        reserved = 1
+        ctx.usage.tool_calls += 1
     try:
-        if usage_limits is not None:
-            # The enclosing `run_code` call is counted too, once it succeeds.
-            usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 1))
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
     except (CallDeferred, ApprovalRequired) as e:
         # No handler resolved the deferral. The sandbox can't round-trip to the caller, so the
@@ -725,8 +732,8 @@ class RunCodeExecution:
                 outcome='denied',
             )
         if outcome.error is not None:
-            if isinstance(outcome.error, UsageLimitExceeded):
-                self.usage_limit_exceeded = outcome.error
+            if outcome.usage_limit_exceeded is not None:
+                self.usage_limit_exceeded = outcome.usage_limit_exceeded
             raise outcome.error
         self.nested_returns[tool_call_id] = ToolReturnPart(
             tool_name=call_part.tool_name,

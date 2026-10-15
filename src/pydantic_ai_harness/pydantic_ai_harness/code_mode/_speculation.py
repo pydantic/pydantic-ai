@@ -764,7 +764,12 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         for watch in watches:
             queue = watch.calls.get(key)
             if queue:
-                return queue.popleft()
+                call = queue.popleft()
+                if call.task.done() and call.task.result().usage_limit_exceeded is not None:
+                    # `tool_calls_limit` refused it at launch, when other calls may still have been
+                    # pending; the cold call is checked against the count as it is now.
+                    return None
+                return call
         return None
 
     async def adopt(
