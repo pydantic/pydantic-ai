@@ -1520,6 +1520,22 @@ async def test_resumed_stream_live_usage_counts_only_what_it_billed(shape: str) 
     assert result.usage.total_tokens == billed - walked_away.total_tokens
 
 
+async def test_resumed_stream_usage_before_its_first_segment_is_zero() -> None:
+    """Before the resumed stream opens a segment, it has billed nothing, whatever the suspended response it resumes."""
+    messages, _ = await _walk_away()
+    agent = Agent(_ScriptedModel(segments=list(_RESUMED_SHAPES['pause-turn'][0])))
+
+    async with agent.iter(message_history=messages) as run:
+        node = await run.next(run.next_node)
+        assert Agent.is_model_request_node(node)
+        async with node.stream(run.ctx) as stream:
+            assert stream.usage.total_tokens == 0
+            async for _ in stream:
+                pass
+
+    assert run.usage.total_tokens == 14
+
+
 def test_usage_beyond_subtracts_every_counter() -> None:
     usage = RequestUsage(input_tokens=10, cache_read_tokens=4, details={'reasoning_tokens': 3}, cost=Decimal('0.5'))
     usage.__dict__['provider_note'] = 'kept'
