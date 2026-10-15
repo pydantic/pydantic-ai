@@ -210,9 +210,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
-    Tool-calling assistant turns that don't carry the field get it empty: every such turn once the history holds a
-    `ThinkingPart`, and those after the last user message whenever thinking is on for the request, through a setting
-    or the model's `thinking_enabled_by_default`.
+    Every tool-calling assistant turn that lacks the field gets it empty once the history holds a `ThinkingPart` or
+    thinking is on for the request, through a setting or the model's `thinking_enabled_by_default`.
     * `False`: No thinking content is sent in the request.
 
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
