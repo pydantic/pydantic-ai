@@ -20,6 +20,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.plugins.menus import SettingsMenu
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -506,6 +507,88 @@ async def test_plugins_catalog_saves_only_a_loaded_plugins_own_settings(tmp_path
     await harness.loader.disable('tuned')
     with pytest.raises(ValueError, match='tuned is not loaded'):
         await harness.loader.save_settings('tuned', tuned.settings)
+
+
+DECLARED = """
+\"\"\"Declares its settings menu.\"\"\"
+
+from pydantic import BaseModel
+
+from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+
+
+class LevelSettings(BaseModel):
+    level: int = 1
+
+
+class Levels:
+    title = 'Levels'
+
+    def __init__(self, host):
+        self.host = host
+
+    def rows(self):
+        return [FieldRow(key='level', label='level', description='How much.', default='1')]
+
+    def current(self, row):
+        return str(self.host.settings(LevelSettings).level)
+
+    def problem(self, row, text):
+        return None
+
+    def apply(self, row, raw):
+        self.host.save_settings(LevelSettings(level=int(raw)))
+        return f'Saved {row.label}.'
+
+    def reset(self, row):
+        return 'Reset.'
+
+
+class Declared(Plugin[LevelSettings]):
+    def settings_menu(self):
+        return SettingsMenu(source=Levels(self.host))
+"""
+
+
+async def test_plugins_catalog_edits_only_a_declared_menu_one_edit_at_a_time(tmp_path: Path) -> None:
+    """`edit_settings` runs one edit on a declared menu and reloads after a change; other edits wait their turn."""
+    harness = Harness(tmp_path)
+    harness.write('plain')
+    (harness.store.plugins_dir / 'tuned.py').write_text(TUNED)
+    (harness.store.plugins_dir / 'declared.py').write_text(DECLARED)
+    for name in ('declared', 'plain', 'tuned'):
+        await harness.loader.load(name)
+    assert [(info.name, info.settings_menu) for info in harness.loader.listing()] == [
+        ('declared', True),
+        ('plain', False),
+        ('tuned', False),
+    ]
+    # Neither of the others declares a menu: nothing to edit through, nor to configure.
+    assert harness.loader.settings_menu('tuned') is None
+    with pytest.raises(ValueError, match='tuned declares no settings menu'):
+        await harness.loader.edit_settings('tuned', lambda menu: anyio.sleep(0))
+    with pytest.raises(ValueError, match='Plugin plain has no settings menu'):
+        await harness.loader.configure('plain')
+
+    before = harness.loader.entries()[0].loaded
+
+    async def edit(menu: SettingsMenu) -> str:
+        # While one edit runs, the menu is open: another, or the terminal's, is refused.
+        with pytest.raises(ValueError, match='settings menu of declared is already open'):
+            await harness.loader.configure('declared')
+        [row] = menu.source.rows()
+        assert menu.source.current(row) == '1'
+        return menu.source.apply(row, '7')
+
+    assert await harness.loader.edit_settings('declared', edit) == 'Saved level.'
+    # It saved new settings, so it loaded again with them.
+    after = harness.loader.entries()[0].loaded
+    assert after is not None and after is not before
+    menu = harness.loader.settings_menu('declared')
+    assert menu is not None and menu.source.current(menu.source.rows()[0]) == '7'
+    await harness.loader.disable('declared')
+    assert harness.loader.settings_menu('declared') is None
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:

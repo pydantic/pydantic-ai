@@ -8,6 +8,7 @@ import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
+import { DialogLayer } from './components/DialogLayer'
 import { ReplPanel } from './components/ReplPanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
@@ -38,7 +39,7 @@ export function App() {
   // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
   const [opening, setOpening] = useState<Opening | null>(null)
   const picked = useRef(0)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ text: string; level: 'info' | 'error' } | null>(null)
   const [plugins, setPlugins] = useState(false)
   const openPlugins = useCallback(() => setPlugins(true), [])
   const closePlugins = useCallback(() => setPlugins(false), [])
@@ -108,10 +109,13 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [opening])
 
-  const showError = useCallback((message: string) => {
-    setToast(message)
-    window.setTimeout(() => setToast((current) => (current === message ? null : current)), 5000)
+  const showToast = useCallback((text: string, level: 'info' | 'error') => {
+    const shown = { text, level }
+    setToast(shown)
+    window.setTimeout(() => setToast((current) => (current === shown ? null : current)), level === 'error' ? 5000 : 3000)
   }, [])
+  const showError = useCallback((message: string) => showToast(message, 'error'), [showToast])
+  const showNotice = useCallback((message: string) => showToast(message, 'info'), [showToast])
 
   const open = useCallback(
     async (session: Opening) => {
@@ -316,13 +320,24 @@ export function App() {
           </div>
         )}
         {toast && (
-          <button className="toast" role="alert" onClick={() => setToast(null)} title="Dismiss">
-            {toast}
+          <button
+            className={`toast ${toast.level}`}
+            role={toast.level === 'error' ? 'alert' : 'status'}
+            onClick={() => setToast(null)}
+            title="Dismiss"
+          >
+            {toast.text}
           </button>
         )}
       </main>
       {plugins && (
-        <PluginsPanel version={state.pluginsVersion} running={state.running} onClose={closePlugins} onError={showError} />
+        <PluginsPanel
+          version={state.pluginsVersion}
+          running={state.running}
+          onClose={closePlugins}
+          onError={showError}
+          onNotice={showNotice}
+        />
       )}
       {repl && (
         <ReplPanel
@@ -333,6 +348,7 @@ export function App() {
           onError={showError}
         />
       )}
+      <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>
   )
 }

@@ -4,7 +4,7 @@ import asyncio
 import html
 import io
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +46,9 @@ from pydantic_clai2.builtin_plugins.web.app import (
     create_app,
 )
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    DialogClosed,
+    DialogOpened,
+    DialogShown,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -521,9 +524,12 @@ PANEL_PLUGINS = """
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+import asyncio
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.plugins.menus import FieldRow, Option, SettingsMenu
 
 
 class SampleSettings(BaseModel):
@@ -558,6 +564,103 @@ class OpaqueSettings(BaseModel):
 
 class Opaque(Plugin[OpaqueSettings]):
     \"\"\"Settings JSON Schema cannot describe.\"\"\"
+
+
+class DeclaredSettings(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    colour: Literal['red', 'blue'] = 'red'
+    size: int = Field(default=2, ge=1)
+    token: str | None = None
+
+
+class DeclaredSource:
+    title = 'Declared settings'
+
+    def __init__(self, host):
+        self.host = host
+
+    def rows(self):
+        return (
+            FieldRow(
+                key='colour',
+                label='Colour',
+                description='Which colour.',
+                default='red',
+                choices=('red', 'blue'),
+                choice_labels={'red': 'Red', 'blue': 'Blue'},
+                allow_custom=False,
+            ),
+            FieldRow(key='size', label='Size', description='How big.', default='2', note='a note'),
+            FieldRow(key='token', label='Token', description='Set by an action.', default='(not set)', secret=True),
+        )
+
+    def current(self, row):
+        settings = self.host.settings(DeclaredSettings)
+        values = {'colour': settings.colour, 'size': str(settings.size), 'token': '(set)' if settings.token else '(not set)'}
+        return values[row.key]
+
+    def _updated(self, row, text):
+        return DeclaredSettings.model_validate({**self.host.settings(DeclaredSettings).model_dump(), row.key: text})
+
+    def problem(self, row, text):
+        try:
+            self._updated(row, text)
+        except ValueError as error:
+            return error.errors()[0]['msg'] if isinstance(error, ValidationError) else str(error)
+        return None
+
+    def apply(self, row, raw):
+        self.host.save_settings(self._updated(row, raw))
+        return f'Saved {row.label}.'
+
+    def reset(self, row):
+        data = self.host.settings(DeclaredSettings).model_dump()
+        data.pop(row.key)
+        self.host.save_settings(DeclaredSettings.model_validate(data))
+        return f'Reset {row.label}.'
+
+
+class Declared(Plugin[DeclaredSettings]):
+    \"\"\"A plugin that declares its settings menu.\"\"\"
+
+    def __init__(self, host, settings):
+        if settings.size == 13:
+            raise RuntimeError('unlucky size')
+        super().__init__(host, settings)
+
+    def settings_menu(self):
+        return SettingsMenu(source=DeclaredSource(self.host), actions={'token': self._token})
+
+    async def _token(self, dialogs):
+        how = await dialogs.choose(
+            title='Token',
+            options=[Option(value='type', label='Type one', description='Paste it.'), Option(value='sign_in', label='Sign in')],
+            current='type',
+            description='How to get one.',
+        )
+        if how is None:
+            return []
+        if how == 'sign_in':
+
+            async def sign_in(show):
+                show('Open https://example.com/device and enter ABCD.')
+                await asyncio.sleep(0.05)
+
+            return ['Signed in.'] if await dialogs.wait(title='Signing in', description='Finish there.', task=sign_in) else []
+        typed = await dialogs.text(
+            title='Token',
+            label='Token',
+            initial='ignored',
+            secret=True,
+            check=lambda text: None if text.startswith('tok') else 'Tokens start with tok.',
+        )
+        if not typed:
+            return []
+        if not await dialogs.confirm(title='Replace the token?', yes='Replace', no='Keep', description='Others use it.'):
+            return ['Kept the token.']
+        self.host.save_settings(self.host.settings(DeclaredSettings).model_copy(update={'token': typed}))
+        return ['Saved the token.']
 """
 
 
@@ -570,7 +673,7 @@ def panel_plugins(tmp_path: Path) -> list[PluginSettings]:
     return [
         *(
             PluginSettings(id=name.lower(), factory=f'panel:{name}', path=str(path))
-            for name in ('Sample', 'Plain', 'Opaque')
+            for name in ('Sample', 'Plain', 'Opaque', 'Declared')
         ),
         PluginSettings(id='broken', factory='broken', path=str(broken), enabled=False),
         PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
@@ -590,7 +693,7 @@ def loaded_plugin(web_: Web, name: str) -> object:
 def test_the_plugins_panel_lists_every_plugin_with_a_form_for_its_settings(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     rows = plugin_rows(web_)
-    assert sorted(rows) == ['ask_user', 'broken', 'opaque', 'plain', 'sample', 'web']
+    assert sorted(rows) == ['ask_user', 'broken', 'declared', 'opaque', 'plain', 'sample', 'web']
     sample = rows['sample']
     assert (sample['description'], sample['status'], sample['origin'], sample['source']) == (
         'A plugin with settings and a menu of its own.',
@@ -614,6 +717,10 @@ def test_the_plugins_panel_lists_every_plugin_with_a_form_for_its_settings(make_
     assert (rows['opaque']['status'], rows['opaque']['form']) == ('on', None)
     assert (rows['broken']['status'], rows['broken']['form']) == ('off', None)
     assert (rows['ask_user']['status'], rows['ask_user']['included_in']) == ('included', 'web')
+    # A declared menu replaces the schema form; an undeclared one does not count as declared.
+    declared = rows['declared']
+    assert (declared['has_menu'], declared['settings_menu'], declared['form']) == (True, True, None)
+    assert (sample['settings_menu'], rows['plain']['settings_menu']) == (False, False)
     web_row = rows['web']
     assert web_row['serving'] is True
     assert isinstance(web_row['form'], dict) and web_row['form']['values'] == {
@@ -945,3 +1052,146 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
             socket.receive_text()
         assert closed.value.code == 1013
     assert hub.clients == 0
+
+
+def menu_fields(web_: Web, name: str) -> dict[str, dict[str, JsonValue]]:
+    response = web_.get(f'/api/plugins/{name}/fields')
+    assert response.status_code == 200, response.text
+    menu = TypeAdapter(dict[str, JsonValue]).validate_python(response.json())
+    fields = TypeAdapter(list[dict[str, JsonValue]]).validate_python(menu['fields'])
+    return {str(field['key']): field for field in fields}
+
+
+def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    first = loaded_plugin(web_, 'declared')
+    fields = menu_fields(web_, 'declared')
+    assert fields['colour'] == {
+        'key': 'colour',
+        'label': 'Colour',
+        'description': 'Which colour.',
+        'value': 'red',
+        'default': 'red',
+        'choices': [
+            {'value': 'red', 'label': 'Red', 'description': ''},
+            {'value': 'blue', 'label': 'Blue', 'description': ''},
+        ],
+        'allow_custom': False,
+        'secret': False,
+        'note': '',
+        'action': False,
+    }
+    assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        # A value the menu rejects is reported with its own message, and nothing is saved or reloaded.
+        rejected = web_.post('/api/plugins/declared/fields/size', {'value': '0'})
+        assert (rejected.status_code, rejected.json()['detail']) == (400, 'Input should be greater than or equal to 1')
+        assert loaded_plugin(web_, 'declared') is first
+        edited = web_.post('/api/plugins/declared/fields/size', {'value': '5'})
+        assert edited.status_code == 200
+        body = edited.json()
+        assert body['messages'] == ['Saved Size.']
+        assert [field['value'] for field in body['menu']['fields']] == ['red', '5', '(not set)']
+        receive_until(socket, PluginsChanged)
+        # The plugin loaded again with what it saved.
+        again = loaded_plugin(web_, 'declared')
+        assert again is not first
+        # Empty text resets, as an empty edit in the terminal menu does.
+        assert web_.post('/api/plugins/declared/fields/size', {'value': ' '}).json()['messages'] == ['Reset Size.']
+        assert web_.post('/api/plugins/declared/fields/size', {}).json()['menu']['fields'][1]['value'] == '2'
+    # The page's own plugin is never edited from it.
+    assert web_.post('/api/plugins/web/fields/host', {'value': 'x'}).json()['detail'] == remote_module.SERVING
+    assert web_.post('/api/plugins/declared/fields/nope', {'value': '1'}).status_code == 404
+    assert web_.post('/api/plugins/declared/fields/size/action').status_code == 404
+    # A plugin without a declared menu, or one that is off, has no fields here.
+    assert web_.get('/api/plugins/sample/fields').status_code == 404
+    assert web_.get('/api/plugins/broken/fields').status_code == 404
+    assert web_.get('/api/plugins/unknown/fields').status_code == 404
+    assert web_.post('/api/plugins/sample/fields/mode', {'value': 'slow'}).status_code == 400
+    # Saved, but the plugin refuses to load with it: the error is the answer, and it shows as failed.
+    failed = web_.post('/api/plugins/declared/fields/size', {'value': '13'})
+    assert failed.status_code == 400 and 'unlucky size' in failed.json()['detail']
+    assert plugin_rows(web_)['declared']['status'] == 'failed'
+
+
+def test_a_settings_menu_action_asks_through_browser_dialogs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    with (
+        ThreadPoolExecutor(1) as pool,
+        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+    ):
+        socket.receive_text()
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        choose = receive_until(socket, DialogOpened)[1].dialog
+        assert (choose.kind, choose.title, choose.current, choose.description) == (
+            'choose',
+            'Token',
+            'type',
+            'How to get one.',
+        )
+        assert [(option.value, option.label, option.description) for option in choose.options] == [
+            ('type', 'Type one', 'Paste it.'),
+            ('sign_in', 'Sign in', ''),
+        ]
+        # A browser that connects now sees the open dialog in its snapshot.
+        assert [dialog['id'] for dialog in web_.get('/api/state').json()['dialogs']] == [choose.id]
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': 'other'}).status_code == 400
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': 'type'}).status_code == 204
+        assert receive_until(socket, DialogClosed)[1].id == choose.id
+        text = receive_until(socket, DialogOpened)[1].dialog
+        # A secret never starts with text in it.
+        assert (text.kind, text.secret, text.initial, text.label) == ('text', True, '', 'Token')
+        rejected = web_.post(f'/api/dialogs/{text.id}', {'value': 'nope'})
+        assert (rejected.status_code, rejected.json()['detail']) == (400, 'Tokens start with tok.')
+        assert web_.post(f'/api/dialogs/{text.id}', {'value': ' tok-1 '}).status_code == 204
+        confirm = receive_until(socket, DialogOpened)[1].dialog
+        assert (confirm.kind, confirm.yes, confirm.no, confirm.description) == (
+            'confirm',
+            'Replace',
+            'Keep',
+            'Others use it.',
+        )
+        # While the action runs, the menu is open: another edit of the same plugin waits its turn.
+        busy = web_.post('/api/plugins/declared/fields/size', {'value': '3'})
+        assert (busy.status_code, busy.json()['detail']) == (
+            400,
+            'The settings menu of declared is already open; finish there first.',
+        )
+        assert web_.post(f'/api/dialogs/{confirm.id}', {'value': 'yes'}).status_code == 204
+        done = action.result(timeout=10)
+        assert done.status_code == 200
+        assert done.json()['messages'] == ['Saved the token.']
+        assert done.json()['menu']['fields'][2]['value'] == '(set)'
+        # Answering what is no longer open is a 404.
+        assert web_.post(f'/api/dialogs/{confirm.id}', {'value': 'yes'}).status_code == 404
+
+        # Backing out of the first dialog saves nothing.
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        choose = receive_until(socket, DialogOpened)[1].dialog
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': None}).status_code == 204
+        assert action.result(timeout=10).json()['messages'] == []
+
+        # A wait shows what its task shows, and closes when the task ends.
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        choose = receive_until(socket, DialogOpened)[1].dialog
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': 'sign_in'}).status_code == 204
+        waiting = receive_until(socket, DialogOpened)[1].dialog
+        assert (waiting.kind, waiting.description) == ('wait', 'Finish there.')
+        shown = receive_until(socket, DialogShown)[1]
+        assert (shown.id, shown.text) == (waiting.id, 'Open https://example.com/device and enter ABCD.')
+        assert action.result(timeout=10).json()['messages'] == ['Signed in.']
+
+
+def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    with (
+        ThreadPoolExecutor(1) as pool,
+        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+    ):
+        socket.receive_text()
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        receive_until(socket, DialogOpened)
+        web_.portal.call(web_.plugin.stop)
+        assert action.result(timeout=10).json()['messages'] == []
+    assert web_.plugin.remote.dialogs.dialogs == []

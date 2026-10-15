@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { PluginAction, PluginRow } from '../protocol'
+import { MenuForm } from './MenuForm'
 import { SettingsForm } from './SettingsForm'
 import { CloseIcon, PuzzleIcon, SearchIcon, TerminalIcon } from './icons'
 
@@ -25,11 +26,13 @@ export function PluginsPanel({
   running,
   onClose,
   onError,
+  onNotice,
 }: {
   version: number
   running: boolean
   onClose: () => void
   onError: (message: string) => void
+  onNotice: (message: string) => void
 }) {
   const [rows, setRows] = useState<PluginRow[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -57,6 +60,8 @@ export function PluginsPanel({
     panel.current?.focus()
     const close = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
+      // An open dialog takes Esc to back out of itself.
+      if (document.querySelector('.dialog-overlay')) return
       // A text field takes the first Esc to undo its edit.
       if ((event.target as HTMLElement).closest('input, textarea, select')) return
       // Capture phase, before the page's own Esc handler can interrupt a turn.
@@ -153,9 +158,11 @@ export function PluginsPanel({
                 key={current.name}
                 row={current}
                 pending={pending === current.name}
+                version={version}
                 onReload={() => void act(current, 'reload')}
                 onMenu={() => void openMenu(current)}
                 onError={onError}
+                onNotice={onNotice}
               />
             ) : (
               rows !== null && <p className="plugin-empty">No plugins.</p>
@@ -175,15 +182,19 @@ export function PluginsPanel({
 function Detail({
   row,
   pending,
+  version,
   onReload,
   onMenu,
   onError,
+  onNotice,
 }: {
   row: PluginRow
   pending: boolean
+  version: number
   onReload: () => void
   onMenu: () => void
   onError: (message: string) => void
+  onNotice: (message: string) => void
 }) {
   const on = row.status === 'on'
   return (
@@ -198,7 +209,7 @@ function Detail({
               Reload
             </button>
           )}
-          {on && row.has_menu && row.terminal && (
+          {on && row.has_menu && !row.settings_menu && row.terminal && (
             <button
               className="ghost small"
               onClick={onMenu}
@@ -228,7 +239,9 @@ function Detail({
         </p>
       )}
       <h4 className="plugin-section">Settings</h4>
-      {row.form ? (
+      {on && row.settings_menu ? (
+        <MenuForm plugin={row.name} version={version} onError={onError} onNotice={onNotice} />
+      ) : row.form ? (
         <>
           {row.serving && (
             <p className="plugin-note">

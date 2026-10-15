@@ -1401,11 +1401,12 @@ pre {
 }
 
 .toast {
-  position: absolute;
+  position: fixed;
   top: 64px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 30;
+  /* Above the plugins panel and dialogs, whose errors it shows. */
+  z-index: 70;
   max-width: min(560px, 90%);
   padding: 10px 16px;
   border-radius: 12px;
@@ -1415,6 +1416,10 @@ pre {
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+}
+
+.toast.info {
+  color: var(--text);
 }
 
 .toast.expired {
@@ -2394,5 +2399,226 @@ textarea.setting-input {
 
   .plugins-hint {
     display: none;
+  }
+}
+
+/* A settings menu row's current value and the button that changes it, and where its value comes from. */
+
+.setting-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting-current {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setting-action .ghost {
+  border: 1px solid var(--border);
+}
+
+.setting-note {
+  margin: 4px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* Dialogs a settings menu opens: above the plugins panel. */
+
+.dialog-overlay {
+  z-index: 60;
+}
+
+.dialog-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(640px, calc(100vh - 48px));
+  padding: 22px 24px 18px;
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  animation: appear 0.12s ease both;
+}
+
+.dialog-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-description,
+.dialog-shown {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.dialog-description p,
+.dialog-shown p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.dialog-description p:last-child,
+.dialog-shown p:last-child {
+  margin-bottom: 0;
+}
+
+.dialog-shown {
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.dialog-description a,
+.dialog-shown a {
+  color: var(--accent-strong);
+}
+
+.dialog-choose {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 4px;
+}
+
+.dialog-choose .search {
+  margin: 0;
+  border: 1px solid var(--border);
+}
+
+.dialog-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 2px 8px;
+  outline: 0;
+}
+
+.dialog-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text-soft);
+  text-align: left;
+}
+
+.dialog-option.active {
+  background: var(--active);
+  color: var(--text);
+}
+
+.dialog-option-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.dialog-option-description {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dialog-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--green);
+  font-size: 11.5px;
+}
+
+.dialog-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dialog-label .setting-input.invalid {
+  border-color: var(--red);
+}
+
+.dialog-waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.dialog-waiting .spinner {
+  flex: none;
+  margin-top: 2px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.dialog-actions .ghost {
+  border: 1px solid var(--border);
+}
+
+.dialog-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+/* The plugins panel and dialogs scroll inside a modal, where an overlay scrollbar that shows only while
+   scrolling hides that there is more: keep a thin one showing. */
+.plugin-detail::-webkit-scrollbar,
+.plugin-list nav::-webkit-scrollbar,
+.dialog-options::-webkit-scrollbar {
+  width: 10px;
+}
+
+.plugin-detail::-webkit-scrollbar-thumb,
+.plugin-list nav::-webkit-scrollbar-thumb,
+.dialog-options::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--border-strong) content-box;
+}
+
+.plugin-detail::-webkit-scrollbar-thumb:hover,
+.plugin-list nav::-webkit-scrollbar-thumb:hover,
+.dialog-options::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted);
+}
+
+/* Elsewhere, such as Firefox, the standard properties; set in Chrome too, they would bring back the overlay. */
+@supports not selector(::-webkit-scrollbar) {
+  .plugin-detail,
+  .plugin-list nav,
+  .dialog-options {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
   }
 }

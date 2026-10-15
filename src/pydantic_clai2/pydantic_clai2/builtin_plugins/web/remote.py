@@ -2,7 +2,7 @@
 
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -22,13 +22,18 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    Choice,
     CompletionInfo,
     EventTranslator,
     Item,
     ItemAdded,
     ItemLog,
+    MenuEdited,
+    MenuField,
+    MenuInfo,
     Notice,
     Palette,
     PluginForm,
@@ -64,6 +69,7 @@ from pydantic_clai2.plugins import (
     TurnOutcome,
 )
 from pydantic_clai2.plugins.loader import PluginError
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 from pydantic_clai2.runtime.repl_cells import is_repl_cell
 
@@ -91,6 +97,8 @@ class Remote:
         self.host = host
         self.hub = hub
         self.answerer = answerer
+        self.dialogs = BrowserDialogs(publish=hub.publish)
+        """Where the settings menus opened in this page ask their questions."""
         self.running = False
         self._translator = EventTranslator()
         """One for the whole load, so item IDs stay unique across turns in a browser that keeps them all."""
@@ -119,6 +127,7 @@ class Remote:
             running=self.running,
             status=self.status(),
             questions=self.answerer.questions,
+            dialogs=self.dialogs.dialogs,
             theme=self.theme(),
         )
 
@@ -300,8 +309,9 @@ class Remote:
             notice=info.notice,
             provides=info.provides,
             has_menu=info.has_menu,
+            settings_menu=info.settings_menu,
             terminal=self.host.console.is_terminal,
-            form=_form(info),
+            form=None if info.settings_menu else _form(info),
             serving=info.name == self.host.name,
         )
 
@@ -345,6 +355,60 @@ class Remote:
     def open_plugin_menu(self, name: str) -> None:
         """Open a plugin's own settings menu in the terminal, as `/plugins configure NAME` typed there does."""
         self.host.send_input(f'/plugins configure {self._plugin(name).name}')
+
+    async def plugin_menu(self, name: str) -> MenuInfo:
+        """A plugin's declared settings menu, with every row's current value."""
+        menu = self.plugin_catalog.settings_menu(self._plugin(name).name)
+        if menu is None:
+            raise LookupError(f'{name} declares no settings menu here; open its own in the terminal.')
+        # Its source may read the keyring or files, so it runs off the loop, as the terminal's menu does.
+        return await to_thread.run_sync(_menu_info, menu)
+
+    async def edit_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
+        """Set a row of a plugin's declared menu to `value`, or reset it with `None` or empty text, as its menu does.
+
+        Raises `ValueError` with the row's own message when the menu rejects the value; nothing is saved then.
+        """
+
+        async def edit(menu: SettingsMenu) -> list[str]:
+            row = await to_thread.run_sync(_row, menu, key)
+            text = (value or '').strip()
+            if not text:
+                return [await to_thread.run_sync(menu.source.reset, row)]
+            if (problem := await to_thread.run_sync(menu.source.problem, row, text)) is not None:
+                raise ValueError(problem)
+            return [await to_thread.run_sync(menu.source.apply, row, text)]
+
+        return await self._edit(name, edit)
+
+    async def run_menu_action(self, name: str, key: str) -> MenuEdited:
+        """Run what a row of a plugin's declared menu does when chosen, asking through this page's dialogs."""
+
+        async def edit(menu: SettingsMenu) -> list[str]:
+            action = menu.actions.get(key)
+            if action is None:
+                raise LookupError(f'{name} has no action {key}.')
+            return list(await action(self.dialogs))
+
+        return await self._edit(name, edit)
+
+    async def _edit(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
+        """One edit, after which the plugin loads again if it saved new settings; shown here and in the terminal."""
+        if name == self.host.name:
+            raise ValueError(SERVING)
+        catalog = self.plugin_catalog
+        try:
+            messages = await catalog.edit_settings(name, edit)
+        except PluginError as error:
+            raise ValueError(str(error)) from error
+        finally:
+            self.hub.publish(PluginsChanged())
+        menu = catalog.settings_menu(name)
+        return MenuEdited(messages=messages, menu=None if menu is None else await to_thread.run_sync(_menu_info, menu))
+
+    def answer_dialog(self, dialog_id: str, value: str | None) -> None:
+        """Answer a settings menu's open dialog, or cancel it with `None`."""
+        self.dialogs.answer(dialog_id, value)
 
     # The sidebar's sessions.
 
@@ -445,6 +509,36 @@ def _form(info: PluginInfo) -> PluginForm | None:
     except PydanticInvalidForJsonSchema:  # A type JSON Schema cannot express; its own menu or `/plugins add` still can.
         return None
     return PluginForm(json_schema=schema, values=info.settings.model_dump(mode='json', by_alias=True))
+
+
+def _menu_info(menu: SettingsMenu) -> MenuInfo:
+    """Every row of `menu` with its current value; reads the menu's source, so call it off the loop."""
+    source = menu.source
+    return MenuInfo(
+        title=source.title,
+        fields=[
+            MenuField(
+                key=row.key,
+                label=row.label or row.key,
+                description=row.description,
+                value=source.current(row),
+                default=row.default,
+                choices=[Choice(value=choice, label=row.display(choice)) for choice in row.choices],
+                allow_custom=row.allow_custom,
+                secret=row.secret,
+                note=row.note,
+                action=row.key in menu.actions,
+            )
+            for row in source.rows()
+        ],
+    )
+
+
+def _row(menu: SettingsMenu, key: str) -> FieldRow:
+    row = next((row for row in menu.source.rows() if row.key == key), None)
+    if row is None:
+        raise LookupError(f'{menu.source.title} has no setting {key}.')
+    return row
 
 
 def _busy(summary: ConversationSummary) -> bool:
