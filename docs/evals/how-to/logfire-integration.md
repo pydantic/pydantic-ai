@@ -189,7 +189,7 @@ This section lists the OpenTelemetry spans and attributes that [`Dataset.evaluat
 !!! note
     As the [version policy](../../version-policy.md) allows, these span attributes may change in minor releases as Evals support in Logfire evolves.
 
-All spans use the instrumentation scope `pydantic-evals`. Each span's OpenTelemetry name is its message template, such as `case: {case_name}`; the rendered message, such as `case: my_case`, is in the `logfire.msg` attribute. Attribute values that are not strings, numbers, or booleans are JSON-encoded strings, and `logfire.json_schema` describes them.
+All spans use the instrumentation scope `pydantic-evals`. Each span's OpenTelemetry name is its message template, such as `case: {case_name}`, except the evaluator span, which is named `evaluator: {evaluator_name}` with the message template `Calling evaluator: {evaluator_name}`. The message template is in the `logfire.msg_template` attribute and the rendered message, such as `case: my_case`, in `logfire.msg`. Attribute values that are not strings, numbers, or booleans are JSON-encoded strings, and `logfire.json_schema` describes them.
 
 A run produces this span tree:
 
