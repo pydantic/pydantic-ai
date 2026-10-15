@@ -12346,3 +12346,19 @@ async def test_closing_while_the_approval_handler_decides_answers_nothing() -> N
         session._start_pump()  # pyright: ignore[reportPrivateUsage]
         await asyncio.wait_for(deciding.wait(), _LIVENESS_TIMEOUT)
     assert conn.sent == []
+
+
+async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_report() -> None:
+    """A version 1 connection whose model makes requests of its own (as GPT-Live's backend does) counts each report."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Hi.', is_final=True),
+            SessionUsage(RequestUsage(input_tokens=1)),
+            SessionUsage(RequestUsage(input_tokens=2)),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, profile=RealtimeModelProfile(responses_are_requests=False))
+    async with session:
+        await drain_events(session)
+    assert (session.usage.requests, session.usage.input_tokens) == (2, 3)
