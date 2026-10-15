@@ -1091,7 +1091,7 @@ class _Shell(Generic[DepsT, OutputT]):
         self.submitted.append(text)
 
     async def monty_command(self, args: list[str]) -> str:
-        """`/monty CODE`: run a cell in the Monty sandbox code mode keeps with the session; the next prompt tells the model."""
+        """`/monty CODE`: run a cell in Monty, code mode's sandbox; the next prompt tells the model."""
         code = args[0].strip() if args else ''
         if not code:
             raise ValueError("Usage: /monty CODE runs your own cell in Monty, this session's run_code sandbox.")

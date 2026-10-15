@@ -188,7 +188,7 @@ class Sessions(Generic[DepsT, OutputT]):
             raise ValueError('Session changed. Refresh and rename again.')
 
     async def delete(self, conversation_id: str) -> None:
-        """Delete a saved conversation other than the current one, with its Monty state; one running elsewhere is refused."""
+        """Delete a saved conversation, not the current one, with its Monty state; one running elsewhere is refused."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be deleted. Switch to another one first.')
         source = (await self.store.get(conversation_id=conversation_id)).summary
