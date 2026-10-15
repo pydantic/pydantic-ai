@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "6255"
+      - "6254"
       content-type:
       - application/json
       host:
@@ -141,9 +141,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792024694-y1hxQR0sstDn4dtnWOdZ
+        id: gen-1792024885-Tz9fAUrfo6Ek6PgUOHRs
         object: chat.completion
-        created: 1792024694
+        created: 1792024885
         model: anthropic/claude-sonnet-4.6
         provider: Anthropic
         system_fingerprint: null
@@ -159,22 +159,22 @@ interactions:
             refusal: null
             reasoning: null
         usage:
-          prompt_tokens: 2066
+          prompt_tokens: 2065
           completion_tokens: 4
-          total_tokens: 2070
-          cost: 0.0007338
+          total_tokens: 2069
+          cost: 0.00778875
           is_byok: false
           prompt_tokens_details:
-            cached_tokens: 2046
-            cache_write_tokens: 0
+            cached_tokens: 0
+            cache_write_tokens: 2045
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0007338
-            upstream_inference_prompt_cost: 0.0006738
+            upstream_inference_cost: 0.00778875
+            upstream_inference_prompt_cost: 0.00772875
             upstream_inference_completions_cost: 0.00006
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-15T00:38:14.822459+00:00
+  recorded_at: 2026-10-15T00:41:26.021588+00:00

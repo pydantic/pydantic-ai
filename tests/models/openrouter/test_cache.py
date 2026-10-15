@@ -1071,8 +1071,8 @@ def _done_mock_client() -> AsyncOpenAI:
     return MockOpenAI.create_mock(completion)
 
 
-_TASK = 'Summarize the incident report in one sentence. ' + 'The service returned 503 for a while. ' * 150
-"""A first user prompt long enough for Anthropic to cache, so the moved breakpoint shows up as a cache write."""
+_TASK = ' '.join(['Summarize the incident report in one sentence.', *['The service returned 503 for a while.'] * 150])
+"""A first user prompt long enough for Anthropic to cache, so the moved breakpoint shows up in the cache usage."""
 
 
 @pytest.mark.parametrize(
@@ -1086,8 +1086,9 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
     This is the shape of a tail reminder appended after the conversation (the harness `Planning` and
     `SystemReminders` capabilities), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
     attach the breakpoint to the previous message. A tool result in between doesn't carry it, since OpenRouter
-    doesn't document `cache_control` on tool messages. The recorded cache write shows OpenRouter's Anthropic
-    route honoring the moved breakpoint.
+    doesn't document `cache_control` on tool messages. The recorded cache usage shows OpenRouter's Anthropic
+    route honoring the moved breakpoint: the tokens it cached, read or written, are exactly the prefix through
+    the first user message.
     """
     agent = Agent(
         openrouter_model('anthropic/claude-sonnet-4.6'),
@@ -1132,8 +1133,8 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
             {'role': 'user', 'content': [{'text': 'Reply with just the word done.', 'type': 'text'}]},
         ]
     )
-    # Both cases read the prefix the breakpoint marks back from cache: the second recording reused the first's.
-    assert (result.usage.cache_read_tokens, result.usage.cache_write_tokens) == snapshot((2046, 0))
+    # In the recordings the user-prompt case writes this prefix and the tool-result case reads it back.
+    assert result.usage.cache_read_tokens + result.usage.cache_write_tokens == snapshot(2045)
 
 
 @pytest.mark.parametrize(
@@ -1239,7 +1240,8 @@ async def test_openrouter_cache_point_after_empty_text_is_left_in_place(allow_mo
     """A user's own empty text part followed by a `CachePoint` keeps its breakpoint where it was.
 
     Only the placeholder a leading `CachePoint` leaves is moved, so a request that already went out
-    unchanged still does. A mocked client: no recording of this request exists.
+    unchanged still does. A mocked client: Anthropic rejects `cache_control` on an empty text block, so
+    this request can't be recorded successfully.
     """
     mock_client = _done_mock_client()
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
