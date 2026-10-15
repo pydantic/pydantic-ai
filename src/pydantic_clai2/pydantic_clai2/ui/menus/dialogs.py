@@ -62,10 +62,11 @@ class TerminalDialogs:
         initial: str = '',
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
+        description: str = '',
     ) -> str | None:
-        """A text input that checks non-empty text as you type; `secret` masks it."""
+        """A text input that checks non-empty text as you type; `secret` masks it, and `description` sits under the title."""
         builder = (
-            TextInputBuilder(title)
+            TextInputBuilder(f'{title}\n\n{description}' if description else title)
             .style(markdown_style())
             .prompt(f'{label}: ')
             .placeholder(placeholder)
