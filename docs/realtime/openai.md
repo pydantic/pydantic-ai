@@ -58,7 +58,7 @@ The provider prefix alone cannot tell the two protocols apart, so the model name
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.6-sol', instructions='You are a helpful voice assistant.')
+agent = Agent('{{ openai:medium }}', instructions='You are a helpful voice assistant.')
 
 # GPT-Live, through `OpenAILiveModel`:
 live = agent.realtime('openai:gpt-live-1')
@@ -90,11 +90,11 @@ The *backend* model, the one that does the delegated work, is a second model nam
 it from the first of these that names one:
 
 1. `openai_live_delegation={'model': ...}` in the [settings](#gpt-live-settings).
-2. A model named after a `+` in the realtime model name: `'openai:gpt-live-1+gpt-6-luna'` delegates to
-   `gpt-6-luna`.
+2. A model named after a `+` in the realtime model name: `'openai:gpt-live-1+{{ openai:small.name }}'` delegates to
+   `{{ openai:small.name }}`.
 3. The agent's own model, since the backend runs the agent's instructions and tools. It counts when it
    is an OpenAI model reached the same way as the Live model, directly or through the same gateway
-   route, so an agent built on `'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`. That holds with
+   route, so an agent built on `'{{ openai:medium }}'` delegates to `{{ openai:medium.name }}`. That holds with
    `defer_model_check=True` too: the name is resolved when the session connects, as the agent's own
    run would resolve it.
 4. `'auto'`: the model Pydantic AI currently recommends
@@ -113,13 +113,13 @@ the model, rather than leaving a call that can talk but never look anything up.
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.6-sol', instructions='You look things up.')
+agent = Agent('{{ openai:medium }}', instructions='You look things up.')
 
-# Delegates to the agent's model, gpt-5.6-sol:
+# Delegates to the agent's model, {{ openai:medium.name }}:
 realtime = agent.realtime('openai:gpt-live-1')
 
-# Delegates to gpt-6-luna instead:
-realtime = agent.realtime('openai:gpt-live-1+gpt-6-luna')
+# Delegates to {{ openai:small.name }} instead:
+realtime = agent.realtime('openai:gpt-live-1+{{ openai:small.name }}')
 ```
 
 ### How delegation works
@@ -165,7 +165,7 @@ realtime = agent.realtime(
         openai_live_instructions=(
             'Speak warmly and briefly. Say you are checking before you delegate a lookup.'
         ),
-        openai_live_delegation={'model': 'gpt-5.6-sol', 'reasoning_effort': 'low'},
+        openai_live_delegation={'model': '{{ openai:medium.name }}', 'reasoning_effort': 'low'},
     ),
 )
 ```
@@ -325,7 +325,7 @@ settings = OpenAILiveModelSettings(
     openai_voice='marin',
     openai_live_turn_silence_ms=1_500,
     openai_live_store=True,
-    openai_live_delegation={'model': 'gpt-5.6-sol', 'verbosity': 'low'},
+    openai_live_delegation={'model': '{{ openai:medium.name }}', 'verbosity': 'low'},
 )
 model = OpenAILiveModel('gpt-live-1', settings=settings)
 ```
@@ -525,7 +525,7 @@ To route through the [Pydantic AI Gateway](../gateway.md), use a `gateway/`-pref
 The gateway does not route GPT-Live yet, so `'gateway/openai:gpt-live-1'` fails to connect. Connect
 through `provider='openai'` or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for
 now. Once it does, the backend follows the same rule as a direct connection: an agent built on
-`'gateway/openai:gpt-6-luna'` delegates to `gpt-6-luna`, because both go through the same gateway
+`'gateway/{{ openai:small }}'` delegates to `{{ openai:small.name }}`, because both go through the same gateway
 route.
 
 gpt-realtime routes through the gateway today:

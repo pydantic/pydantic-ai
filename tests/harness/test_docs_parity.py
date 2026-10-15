@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.docs_model_aliases import resolve_model_aliases
+
 _ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
@@ -385,7 +387,8 @@ _BLOWN_OUT_SURFACES = (
 
 
 def _blown_out_block(path: Path) -> str:
-    text = path.read_text(encoding='utf-8')
+    # Docs pages name models by alias; the READMEs, which GitHub renders, name the models themselves.
+    text = resolve_model_aliases(path.read_text(encoding='utf-8'))
     assert _BLOWN_OUT_MARKER in text, f'{path.relative_to(_ROOT)} lost its blown-out keep-in-sync marker'
     after = text.split(_BLOWN_OUT_MARKER, 1)[1]
     match = re.search(r'```python[^\n]*\n(.*?)```', after, flags=re.DOTALL)

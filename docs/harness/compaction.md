@@ -52,7 +52,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[SummarizingCompaction(max_fraction=0.9, keep_messages=20)],
 )
 ```
@@ -105,7 +105,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'openai:gpt-5.6-luna',  # served by a local endpoint with a smaller window than the registry records
+    '{{ openai:small }}',  # served by a local endpoint with a smaller window than the registry records
     capabilities=[SummarizingCompaction(max_fraction=0.9, context_window=32_000)],
 )
 ```
@@ -154,7 +154,7 @@ from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
 from pydantic_ai_harness.compaction import ContextUsageEvent
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[
         SummarizingCompaction(max_fraction=0.9, keep_messages=20),
         ReportContextUsage(),
@@ -188,7 +188,7 @@ strategy = SummarizingCompaction(max_fraction=0.9, keep_messages=20)
 history = await compact_now(
     strategy,
     history,
-    model='anthropic:claude-sonnet-5',
+    model='{{ anthropic:medium }}',
     focus='the auth refactor, not the earlier CSS work',
 )
 ```
@@ -220,7 +220,7 @@ def my_file_key(call: ToolCallPart) -> str | None:
 
 
 agent = Agent(
-    'openai:gpt-5.6-luna',
+    '{{ openai:small }}',
     capabilities=[
         TieredCompaction(
             tiers=[
@@ -277,7 +277,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ClampOversizedMessages
 
 agent = Agent(
-    'openai:gpt-5.6-terra',
+    '{{ openai:medium }}',
     capabilities=[
         ClampOversizedMessages(max_part_tokens=50_000, keep_head_chars=2_000, keep_tail_chars=2_000)
     ],
@@ -318,7 +318,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ClearToolResults
 
 agent = Agent(
-    'openai:gpt-5.6-luna',
+    '{{ openai:small }}',
     capabilities=[ClearToolResults(max_tokens=100_000, keep_pairs=3)],
 )
 ```
@@ -343,7 +343,7 @@ def file_key(call: ToolCallPart) -> str | None:
     return call.args_as_dict().get('path')
 
 
-agent = Agent('openai:gpt-5.6-terra', capabilities=[DeduplicateFileReads(file_key=file_key)])
+agent = Agent('{{ openai:medium }}', capabilities=[DeduplicateFileReads(file_key=file_key)])
 ```
 
 With no `max_messages` or `max_tokens` trigger set, `DeduplicateFileReads` runs on every request. It is cheap and near-lossless, so that default is usually what you want.
@@ -357,7 +357,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SlidingWindowCompaction
 
 agent = Agent(
-    'openai:gpt-5.6-terra',
+    '{{ openai:medium }}',
     capabilities=[SlidingWindowCompaction(max_messages=80, keep_messages=40)],
 )
 ```
@@ -385,10 +385,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'anthropic:claude-opus-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SummarizingCompaction(
-            model='anthropic:claude-sonnet-5',
+            model='{{ anthropic:medium }}',
             max_messages=60,
             keep_messages=20,
         )
@@ -409,7 +409,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.compaction import SummarizingCompaction, drain_summary_events
 
 agent = Agent(
-    'openai:gpt-5.6-terra',
+    '{{ openai:medium }}',
     capabilities=[
         SummarizingCompaction(max_messages=60, event_stream_handler=drain_summary_events),
     ],
@@ -437,7 +437,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import WarnNearLimits
 
 agent = Agent(
-    'google:gemini-3.6-flash',
+    '{{ google:medium }}',
     capabilities=[
         WarnNearLimits(
             max_iterations=40,
