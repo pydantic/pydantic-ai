@@ -120,6 +120,13 @@ composer) turns plugins on and off and edits their settings, saved and applied a
 and `/keys` entries included, as dialogs in the page; any other plugin's own menu opens in the
 terminal.
 
+Plugins can add a panel on the right, toggled by its button at the top right or Cmd/Ctrl+Shift+L,
+resizable by its left edge, and remembered by the browser. The `observability` plugin's shows
+Logfire's live view of the current conversation, opened at the latest turn. Logfire does not let
+other sites show its pages inside theirs today, so the panel opens it in a window beside CLAI's
+instead, and points that window at each new turn. Without a Logfire project the panel says how to
+set one up.
+
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with
