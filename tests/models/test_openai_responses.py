@@ -14433,6 +14433,74 @@ async def test_response_error_raises_model_api_error(
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('stream', 'content', 'code', 'error_type', 'param'),
+    [
+        pytest.param(
+            True,
+            _sse(
+                _CREATED_EVENT,
+                {
+                    'type': 'error',
+                    'code': 'server_error',
+                    'message': 'The server had an error',
+                    'param': 'temperature',
+                    'sequence_number': 1,
+                },
+            ),
+            'server_error',
+            'error',
+            'temperature',
+            id='stream-error-event',
+        ),
+        pytest.param(
+            True,
+            _sse(_CREATED_EVENT, {'type': 'error', 'message': 'Something broke', 'sequence_number': 1}),
+            None,
+            'error',
+            None,
+            id='stream-error-event-no-code',
+        ),
+        pytest.param(
+            False,
+            json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            'server_error',
+            None,
+            None,
+            id='response-failed',
+        ),
+    ],
+)
+async def test_response_error_exposes_code_type_param(
+    allow_model_requests: None, stream: bool, content: bytes, code: str | None, error_type: str | None, param: str | None
+):
+    """The `code`, `type` and `param` of a Responses API error reported in a 200 body or stream are exposed
+    on `ModelAPIError` without changing the message text.
+    """
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        content_type = 'text/event-stream' if stream else 'application/json'
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
+            else:
+                await agent.run('Hello')
+
+    assert exc_info.value.code == code
+    assert exc_info.value.type == error_type
+    assert exc_info.value.param == param
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 async def test_response_error_event_first_falls_back(allow_model_requests: None):
     """An `error` event that opens the stream fires `FallbackModel`'s default `fallback_on`."""
 

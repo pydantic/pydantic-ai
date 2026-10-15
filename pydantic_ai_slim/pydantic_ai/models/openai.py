@@ -253,9 +253,22 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
-def _response_error(model_name: str, code: str | None, message: str) -> ModelAPIError:
+def _response_error(
+    model_name: str,
+    code: str | None,
+    message: str,
+    *,
+    type: str | None = None,
+    param: str | None = None,
+) -> ModelAPIError:
     """Build the error for a Responses API failure reported in a 200 body or stream, which has no HTTP status."""
-    return ModelAPIError(model_name=model_name, message=f'{code}: {message}' if code else message)
+    return ModelAPIError(
+        model_name=model_name,
+        message=f'{code}: {message}' if code else message,
+        code=code,
+        type=type,
+        param=param,
+    )
 
 
 __all__ = (
@@ -2945,7 +2958,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
-            raise _response_error(self.model_name, first_chunk.code, first_chunk.message)
+            raise _response_error(
+                self.model_name, first_chunk.code, first_chunk.message, type=first_chunk.type, param=first_chunk.param
+            )
 
         if isinstance(first_chunk, responses.ResponseCreatedEvent):
             model_name = first_chunk.response.model
@@ -5448,7 +5463,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, responses.ResponseErrorEvent):
-                    raise _response_error(self._model_name, chunk.code, chunk.message)
+                    raise _response_error(
+                        self._model_name, chunk.code, chunk.message, type=chunk.type, param=chunk.param
+                    )
 
                 else:  # pragma: no cover
                     warnings.warn(
