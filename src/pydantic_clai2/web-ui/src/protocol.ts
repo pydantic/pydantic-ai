@@ -171,11 +171,21 @@ export interface SessionEntry {
   current: boolean
 }
 
+export interface Worktree {
+  root: string
+  /** Its branch, or its folder's name outside Git or when the branch is unknown. */
+  label: string
+  current: boolean
+  /** The folder is gone, as with a removed worktree. */
+  missing: boolean
+  sessions: SessionEntry[]
+}
+
 export interface Project {
   key: string
   name: string
   current: boolean
-  sessions: SessionEntry[]
+  worktrees: Worktree[]
 }
 
 export interface Transcript {

@@ -35,12 +35,28 @@ class ConversationConflict(ValueError):
 
 
 @dataclass(frozen=True, kw_only=True)
+class GitCheckout:
+    """The Git checkout a conversation's workspace was in, so a browser can group it after the folder is gone."""
+
+    repository: str
+    """The repository's common Git directory, the same for each of its worktrees."""
+    name: str
+    """The repository's display name."""
+    root: str
+    """The checkout's top-level folder."""
+    branch: str = ''
+    """The checked-out branch, or a label for a detached checkout."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class ConversationSummary:
     """Browser metadata. Naming edits do not change activity or content revision."""
 
     schema_version: Literal[1] = 1
     id: str = field(default_factory=lambda: str(uuid4()))
     workspace: str
+    checkout: GitCheckout | None = None
+    """The Git checkout `workspace` was in when saved; `None` outside Git or when the application records none."""
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     revision: int = 0
     title: str = 'New session'

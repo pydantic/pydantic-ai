@@ -501,14 +501,27 @@ class SessionEntry:
     current: bool
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
+class Worktree:
+    """A project's checkout, or a folder outside Git, with the sessions saved in it."""
+
+    root: str
+    label: str
+    """Its branch, or its folder's name outside Git or when the branch is unknown."""
+    current: bool
+    missing: bool
+    """The folder is gone, as with a removed worktree."""
+    sessions: list[SessionEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
 class Project:
-    """Saved sessions grouped by repository, as the `/resume` browser groups them."""
+    """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
     name: str
     current: bool
-    sessions: list[SessionEntry]
+    worktrees: list[Worktree]
 
 
 @dataclass(kw_only=True)

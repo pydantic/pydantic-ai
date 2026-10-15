@@ -2,8 +2,20 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { Project, SessionEntry, ThemeInfo } from '../protocol'
-import { ChevronIcon, ComposeIcon, FolderIcon, MoonIcon, MoreIcon, PaletteIcon, PuzzleIcon, SearchIcon, SidebarIcon, SunIcon } from './icons'
+import type { Project, SessionEntry, ThemeInfo, Worktree } from '../protocol'
+import {
+  BranchIcon,
+  ChevronIcon,
+  ComposeIcon,
+  FolderIcon,
+  MoonIcon,
+  MoreIcon,
+  PaletteIcon,
+  PuzzleIcon,
+  SearchIcon,
+  SidebarIcon,
+  SunIcon,
+} from './icons'
 
 export interface SidebarHandle {
   focusSearch: () => void
@@ -34,7 +46,12 @@ export function ago(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-/** Saved sessions grouped by project, as `/resume` lists them, with search and per-session actions. */
+/** Whether a turn runs in one of these sessions, so a collapsed group still shows it. */
+function live(worktrees: Worktree[]): boolean {
+  return worktrees.some((worktree) => worktree.sessions.some((s) => s.state === 'running' || s.state === 'busy'))
+}
+
+/** Saved sessions grouped by project, then worktree, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onCollapse, onPlugins, onError },
   ref,
@@ -100,6 +117,64 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     }
   }
 
+  const row = (session: SessionEntry) => (
+    <div
+      key={session.id}
+      className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''}`}
+    >
+      {renaming === session.id ? (
+        <input
+          className="rename"
+          autoFocus
+          defaultValue={session.title}
+          onBlur={() => setRenaming(null)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              setRenaming(null)
+            }
+            if (event.key === 'Enter') {
+              const title = event.currentTarget.value
+              setRenaming(null)
+              void act(() => api.rename(session.id, title))
+            }
+          }}
+        />
+      ) : (
+        <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
+          <span className={`state ${session.state}`} />
+          <span className="session-title">{session.title}</span>
+          {opening === session.id && <span className="spinner" aria-label="Opening" />}
+          <span className="session-time">{session.state === 'running' ? '' : ago(session.updated_at)}</span>
+        </button>
+      )}
+      <button
+        className="session-more"
+        onClick={() => setMenu(menu === session.id ? null : session.id)}
+        title="Session actions"
+        aria-label="Session actions"
+      >
+        <MoreIcon size={14} />
+      </button>
+      {menu === session.id && (
+        <div className="menu session-menu" role="menu">
+          <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
+          <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
+          <button
+            className="danger"
+            disabled={session.current}
+            onClick={() =>
+              window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
+              void act(() => api.remove(session.id))
+            }
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -139,76 +214,48 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           </div>
         )}
         {projects.map((project) => {
-          const closed = collapsed[project.key] ?? false
+          // A search shows every match, whatever is collapsed.
+          const closed = !query && (collapsed[project.key] ?? false)
+          // A lone checkout needs no heading of its own, unless it is gone.
+          const nested = project.worktrees.length > 1 || project.worktrees.some((worktree) => worktree.missing)
           return (
             <section key={project.key} className="project">
               <button
                 className="project-title"
                 onClick={() => setCollapsed((current) => ({ ...current, [project.key]: !closed }))}
-                title={project.key}
+                title={project.key.includes('\0') ? undefined : project.key}
               >
                 <FolderIcon size={14} />
                 <span className="project-name">{project.name}</span>
+                {closed && live(project.worktrees) && <span className="state running" />}
                 <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
               </button>
               {!closed &&
-                project.sessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''}`}
-                  >
-                    {renaming === session.id ? (
-                      <input
-                        className="rename"
-                        autoFocus
-                        defaultValue={session.title}
-                        onBlur={() => setRenaming(null)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Escape') {
-                            event.preventDefault()
-                            setRenaming(null)
-                          }
-                          if (event.key === 'Enter') {
-                            const title = event.currentTarget.value
-                            setRenaming(null)
-                            void act(() => api.rename(session.id, title))
-                          }
-                        }}
-                      />
-                    ) : (
-                      <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
-                        <span className={`state ${session.state}`} />
-                        <span className="session-title">{session.title}</span>
-                        {opening === session.id && <span className="spinner" aria-label="Opening" />}
-                        <span className="session-time">{session.state === 'running' ? '' : ago(session.updated_at)}</span>
-                      </button>
-                    )}
-                    <button
-                      className="session-more"
-                      onClick={() => setMenu(menu === session.id ? null : session.id)}
-                      title="Session actions"
-                      aria-label="Session actions"
+                project.worktrees.map((worktree) => {
+                  const id = `${project.key}\n${worktree.root}`
+                  const shut = nested && !query && (collapsed[id] ?? false)
+                  return (
+                    <div
+                      key={worktree.root}
+                      className={`worktree ${nested ? 'nested' : ''} ${worktree.current ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
                     >
-                      <MoreIcon size={14} />
-                    </button>
-                    {menu === session.id && (
-                      <div className="menu session-menu" role="menu">
-                        <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
-                        <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
+                      {nested && (
                         <button
-                          className="danger"
-                          disabled={session.current}
-                          onClick={() =>
-                            window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
-                            void act(() => api.remove(session.id))
-                          }
+                          className="worktree-title"
+                          onClick={() => setCollapsed((current) => ({ ...current, [id]: !shut }))}
+                          title={worktree.missing ? `${worktree.root} (removed)` : worktree.root}
                         >
-                          Delete
+                          <BranchIcon size={12} />
+                          <span className="worktree-name">{worktree.label}</span>
+                          {worktree.missing && <span className="worktree-tag">removed</span>}
+                          {shut && live([worktree]) && <span className="state running" />}
+                          <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
                         </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                      {!shut && worktree.sessions.map(row)}
+                    </div>
+                  )
+                })}
             </section>
           )
         })}
