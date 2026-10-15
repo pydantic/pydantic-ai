@@ -1052,6 +1052,58 @@ class TestProcessEventStream:
             for iterator in processors:
                 await iterator.aclose()
 
+    async def test_processor_cleanup_on_cancellation(self):
+        cleanup_started = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        cleanup_complete = anyio.Event()
+        processors: list[AsyncGenerator[AgentStreamEvent, None]] = []
+
+        async def process(stream: AsyncIterable[AgentStreamEvent]) -> AsyncGenerator[AgentStreamEvent, None]:
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                cleanup_started.set()
+                await cleanup_permitted.wait()
+                cleanup_complete.set()
+
+        def processor(
+            ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            iterator = process(stream)
+            processors.append(iterator)
+            return iterator
+
+        async def permit_cleanup() -> None:
+            await cleanup_started.wait()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=simple_stream_function),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(processor)],
+        )
+        scope = anyio.CancelScope()
+        complete_at_run_exit = False
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(permit_cleanup)
+                    with scope:
+                        async with agent.run_stream('hello') as result:
+                            async for _ in result.stream_text(debounce_by=None):
+                                scope.cancel()
+                                await anyio.lowlevel.checkpoint()
+                    complete_at_run_exit = cleanup_complete.is_set()
+                    tg.cancel_scope.cancel()
+
+            assert scope.cancelled_caught
+            assert complete_at_run_exit, 'Processor resource is still open after the cancelled run context exited'
+        finally:
+            cleanup_permitted.set()
+            for iterator in processors:
+                await iterator.aclose()
+
     @pytest.mark.parametrize('wait_for_source', [False, True])
     async def test_observer_cleanup_on_cancellation(self, wait_for_source: bool):
         observer_cleanup_complete = anyio.Event()
