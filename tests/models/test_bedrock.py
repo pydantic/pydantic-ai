@@ -4314,6 +4314,45 @@ async def test_bedrock_stream_cancel_suppresses_urllib3_error(
     assert stream.get().state == 'interrupted'
 
 
+async def test_stream_retained_first_event_delivered_to_consumer(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """The first event, read early so opening errors reach the fallback window, is delivered exactly once."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    def _stream():
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Paris'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        streamed = [chunk async for chunk in result.stream_text(delta=True)]
+        output = await result.get_output()
+
+    assert streamed == ['Paris']
+    assert output == 'Paris'
+    assert [part.content for part in result.all_messages()[-1].parts] == ['Paris']
+
+
+async def test_request_stream_empty_event_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """An event stream with no events still completes without events."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': iter([]), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as stream:
+        events = [event async for event in stream]
+
+    assert events == []
+
+
 @pytest.mark.vcr()
 async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""
