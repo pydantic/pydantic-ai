@@ -3033,7 +3033,7 @@ async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None
     assert ws.sent == []
 
 
-async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usage() -> None:
+async def test_backend_response_ending_as_the_session_ends_is_reported_as_a_request() -> None:
     """A backend response finishing during the drain has no reply left to land on, but it is still billed.
 
     Its report stays response-scoped: it was a request the backend made, which the session counts.

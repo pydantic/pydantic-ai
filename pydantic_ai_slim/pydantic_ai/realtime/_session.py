@@ -2888,10 +2888,22 @@ class RealtimeSession:
                 self._park_error(exceeded)
 
     def _check_final_request(self, usage: RequestUsage) -> None:
-        if (limits := self._usage_limits) is None:
-            return
-        limits.check_per_request_input_tokens(usage.input_tokens)
-        if (request_limit := limits.request_limit) is not None and self.usage.requests > request_limit:
+        """Check the request a response the session reported only as it closed made against the usage limits."""
+        if self._usage_limits is not None:
+            self._usage_limits.check_per_request_input_tokens(usage.input_tokens)
+        self._check_reported_requests()
+
+    def _check_reported_requests(self) -> None:
+        """Check `request_limit` against the requests recorded, for a provider whose responses aren't requests.
+
+        Its requests are only known once the model made them, so the one past the limit is recorded before it ends
+        the session.
+        """
+        if (
+            self._usage_limits is not None
+            and (request_limit := self._usage_limits.request_limit) is not None
+            and self.usage.requests > request_limit
+        ):
             raise UsageLimitExceeded(
                 f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
             )
@@ -4084,16 +4096,8 @@ class RealtimeSession:
                 self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
-        if (
-            event.response_scoped
-            and not self._responses_are_requests
-            and self._usage_limits is not None
-            and (request_limit := self._usage_limits.request_limit) is not None
-            and self.usage.requests > request_limit
-        ):
-            raise UsageLimitExceeded(
-                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
-            )
+        if event.response_scoped and not self._responses_are_requests:
+            self._check_reported_requests()
         self._count_closed_tool_batch_replies()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
