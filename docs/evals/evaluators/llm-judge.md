@@ -120,25 +120,25 @@ Choose the judge model based on cost/quality tradeoffs:
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
-# Default: openai:gpt-5.2
+# Uses the default judge model
 LLMJudge(rubric='...')
 
 # Anthropic Claude (alternative default)
 LLMJudge(
     rubric='...',
-    model='anthropic:claude-sonnet-4-6',
+    model='{{ anthropic:medium }}',
 )
 
 # Lightweight option for simple checks
 LLMJudge(
     rubric='Response contains profanity',
-    model='openai:gpt-5.6-luna',
+    model='{{ openai:small }}',
 )
 
 # Most capable option for nuanced evaluation
 LLMJudge(
     rubric='Response demonstrates deep understanding of quantum mechanics',
-    model='openai:gpt-5.6-sol',
+    model='{{ openai:large }}',
 )
 ```
 
@@ -311,7 +311,7 @@ class Recipe(BaseModel):
 
 
 recipe_agent = Agent(
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     output_type=Recipe,
     instructions=(
         'Generate a recipe to cook the dish that meets the dietary restrictions.'
@@ -359,7 +359,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
         LLMJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
-            model='anthropic:claude-sonnet-4-6',
+            model='{{ anthropic:medium }}',
         ),
     ],
 )
@@ -553,7 +553,7 @@ LLM judges make API calls, which cost money and time.
 
 **Mitigation:**
 
-- Use lightweight models for simple checks (`gpt-5.6-luna`)
+- Use lightweight models for simple checks (`{{ openai:small.name }}`)
 - Run deterministic checks first to fail fast
 - Cache results when possible
 - Limit evaluation to changed cases
@@ -662,9 +662,9 @@ def my_task(inputs: str) -> str:
 
 
 judges = [
-    LLMJudge(rubric='Response is clear', model='openai:gpt-5.2'),
-    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-6'),
-    LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
+    LLMJudge(rubric='Response is clear', model='{{ openai:medium }}'),
+    LLMJudge(rubric='Response is clear', model='{{ anthropic:medium }}'),
+    LLMJudge(rubric='Response is clear', model='{{ openai:small }}'),
 ]
 
 for judge in judges:
@@ -682,7 +682,7 @@ from pydantic_evals.evaluators import LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
 # Set default to Claude
-set_default_judge_model('anthropic:claude-sonnet-4-6')
+set_default_judge_model('{{ anthropic:medium }}')
 
 # Now all LLMJudge instances use Claude by default
 LLMJudge(rubric='...')  # Uses Claude

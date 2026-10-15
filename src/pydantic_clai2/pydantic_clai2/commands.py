@@ -1,6 +1,7 @@
 """One command registry for execution, help, and Termflow completion."""
 
 import json
+import re
 import shlex
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from termflow.tui.completion import (
     Document,
 )
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.config import (
     SETTING_FIELDS,
@@ -27,6 +29,9 @@ from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
+
+_COMMAND_NAME = re.compile(r'\w[\w-]*')
+"""Letters, digits, underscores, and hyphens, not starting with a hyphen: what a skill such as `code-review` is called."""
 
 
 def is_command_input(text: str) -> bool:
@@ -92,6 +97,12 @@ class Command:
     handlers that may take a while and only print through the console: one that reads keys or
     opens a menu needs the suspended editor every other command gets.
     """
+    overridable: bool = False
+    """Give way to another command with the same name, whichever registers first, instead of clashing.
+
+    For commands named after something the user names, such as a skill, which may collide with a
+    built-in like `/model`. The hidden command is reported, not dropped silently.
+    """
 
 
 class Commands(Completer):
@@ -105,19 +116,40 @@ class Commands(Completer):
         """Register one command, rejecting ambiguous duplicate names."""
         self.register_many((command,))
 
-    def register_many(self, commands: Iterable[Command]) -> None:
-        """Validate a provider's declarations atomically, including collisions."""
+    def register_many(self, commands: Iterable[Command]) -> list[Command]:
+        """Validate a provider's declarations atomically, including collisions.
+
+        Returns the `overridable` commands hidden by another of the same name: new ones that found
+        their name taken, and registered ones that a new command took it from.
+        """
         pending: dict[str, Command] = {}
+        hidden: list[Command] = []
         for command in commands:
-            if command.name in self._commands or command.name in pending or not command.name.isidentifier():
+            if not _COMMAND_NAME.fullmatch(command.name):
                 raise ValueError(f'Invalid or duplicate command: {command.name}')
+            existing = pending.get(command.name) or self._commands.get(command.name)
+            if existing is not None and command.overridable:
+                hidden.append(command)
+                continue
+            if existing is not None and not existing.overridable:
+                raise ValueError(f'Invalid or duplicate command: {command.name}')
+            if existing is not None:
+                hidden.append(existing)
             pending[command.name] = command
         self._commands.update(pending)
+        return hidden
 
-    def unregister(self, names: Iterable[str]) -> None:
-        """Remove commands a plugin registered; unknown names are ignored."""
-        for name in names:
-            self._commands.pop(name, None)
+    def unregister(self, commands: Iterable[str | Command]) -> None:
+        """Remove commands a plugin registered; unknown names are ignored.
+
+        A name removes the command registered under it. A `Command` is removed only while it is the
+        one registered, so a command that took the name of a hidden `overridable` one stays.
+        """
+        for command in commands:
+            if isinstance(command, str):
+                self._commands.pop(command, None)
+            elif self._commands.get(command.name) is command:
+                del self._commands[command.name]
 
     def __contains__(self, name: object) -> bool:
         """Whether a command called `name` (without its slash) is registered."""
@@ -163,12 +195,20 @@ class Commands(Completer):
 
         The UI telemetry span names a registered command and counts its arguments; the arguments, and any
         unregistered name, which is just typed text, stay out.
+
+        The shell shows a failure instead of raising it, so one that is not a usage error (`ValueError`,
+        `UserError`) is also recorded here as a handled error, under the command's span.
         """
         name, *arguments = text.removeprefix('/').split() or ['help']
         command = name if name in self else 'unknown'
         with telemetry.span('command /{command}', command=command, arguments=len(arguments)):
-            result = self.execute(text)
-            return result if isinstance(result, str) else await result
+            try:
+                result = self.execute(text)
+                return result if isinstance(result, str) else await result
+            except Exception as error:
+                if not isinstance(error, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', error, command=command)
+                raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""

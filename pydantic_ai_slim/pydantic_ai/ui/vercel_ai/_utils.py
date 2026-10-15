@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from pydantic_ai._mcp_apps import get_mcp_app_tool_result
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
@@ -15,7 +16,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     tool_return_ta,
 )
-from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY
+from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY, MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -49,6 +50,9 @@ TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 
 COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
+
+MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
+"""Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
@@ -187,8 +191,13 @@ def iter_metadata_chunks(
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
     Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
-    yielded; protocol-control chunks are filtered out.
+    yielded; protocol-control chunks are filtered out. MCP Apps data that
+    `MCPToolset` attached becomes a single `data-mcp-apps` chunk.
     """
+    if (app := get_mcp_app_tool_result(tool_result.metadata)) is not None:
+        yield DataChunk(type=MCP_APPS_DATA_TYPE, id=tool_result.tool_call_id, data=mcp_app_ui_payload(app))
+        return
+
     possible = tool_result.metadata or tool_result.content
     if isinstance(possible, DATA_CHUNK_TYPES):
         yield possible

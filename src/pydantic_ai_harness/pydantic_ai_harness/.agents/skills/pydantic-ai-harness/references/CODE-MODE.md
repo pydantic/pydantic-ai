@@ -131,6 +131,16 @@ functions carry over until the run ends. The model passes `restart: true` in the
 reset state. A timeout, worker crash, or interrupted eager statement also resets the session, and the
 retry message says so -- the next snippet must recreate its state.
 
+State does not carry over to the next agent run unless `repl_store` is set: an object with async
+`load(ctx) -> bytes | None` and `save(ctx, state: bytes | None)` methods
+(`pydantic_ai_harness.code_mode.CodeModeReplStore`), usually
+keyed by `ctx.conversation_id`. A run that calls `run_code` restores the saved state before its first
+snippet and saves the REPL when it ends; `restart: true` replaces it (`save(ctx, None)` when nothing
+replaces it), and a state saved under other `resource_limits` or that Monty cannot load is dropped so
+the run starts fresh. Return only states the application saved: Monty does not authenticate them. Restored state skips
+the first-snippet type check. Store errors are logged, not raised. The store is not used under durable
+execution.
+
 ## Sandbox Restrictions
 
 Code runs inside Monty, an implementation of Python which intentionally supports only a subset of features.
@@ -139,7 +149,7 @@ Key restrictions:
 
 - No third-party imports
 - No `import *`
-- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`
+- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
@@ -187,6 +197,7 @@ CodeMode(
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
     monty_sandbox_url: str | None = None,  # ws:// or wss:// remote Monty worker
+    repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
 ```

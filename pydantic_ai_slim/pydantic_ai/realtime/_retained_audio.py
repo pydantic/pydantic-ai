@@ -70,17 +70,17 @@ class RetainedAudioBudget:
             - self._max_weight
         )
 
-    def strip(self, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+    def strip(self, message: ModelMessage, excess: int | None = None) -> tuple[ModelMessage, int]:
         """A copy of `message` without the audio of its tracked speech parts, until `excess` is freed, and the weight freed.
 
-        Returns `message` itself, and `0`, when it has no tracked audio. A copy rather than an in-place edit, so a
+        With `excess=None`, all of its tracked audio goes. Returns `message` itself, and `0`, when it has no tracked audio. A copy rather than an in-place edit, so a
         snapshot of history already handed out doesn't change; the caller swaps it in.
         """
         parts = list(message.parts)
         freed = 0
         for index, part in enumerate(parts):
             if (
-                freed < excess
+                (excess is None or freed < excess)
                 and isinstance(part, SpeechPart)
                 and part.audio is not None
                 and (weight := self._tracked.pop(id(part.audio), None)) is not None

@@ -313,6 +313,11 @@ class TestRecoverableErrors:
         with pytest.raises(ValueError, match='status code 401'):
             await _toolset(client).web_search('q')
 
+    async def test_payment_required_propagates(self) -> None:
+        client = _FakeExaClient(error=ValueError('Request failed with status code 402: payment required'))
+        with pytest.raises(ValueError, match='status code 402'):
+            await _toolset(client).web_search('q')
+
     async def test_network_failure_becomes_model_retry(self) -> None:
         client = _FakeExaClient(error=httpx.ConnectError('connection refused'))
         with pytest.raises(ModelRetry, match='Exa request failed: connection refused'):

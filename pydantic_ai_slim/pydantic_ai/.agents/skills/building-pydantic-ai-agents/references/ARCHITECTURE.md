@@ -172,6 +172,7 @@ Need deterministic, fast tests?
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
+| OpenAI Decisions API (text and image input; structured output only) | `openai-decisions:` | `openai-decisions:gpt-6-luna` |
 | Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
@@ -189,6 +190,7 @@ Need deterministic, fast tests?
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
 | Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
 | Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
+| Meta (Muse; Responses API) | `meta:` | `meta:muse-spark-1.3` |
 
 **Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
 
