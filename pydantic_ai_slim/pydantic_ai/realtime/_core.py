@@ -65,7 +65,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -431,8 +431,8 @@ class SessionCore:
             self._turn(item.turn_id)
         elif isinstance(item, UserTurnEnded):
             self._end_turn(item.turn_id, still_speaking=item.still_speaking, before=item.before_response)
-        elif isinstance(item, UserTurnDiscarded):
-            self._discard_turn(item.turn_id)
+        elif isinstance(item, UserTurnClosed):
+            self._turn_closed(item.turn_id)
         elif isinstance(item, InputTranscript):
             self._input_transcript(item)
         elif isinstance(item, RealtimeInputTranscriptionErrorEvent):
@@ -853,7 +853,7 @@ class SessionCore:
         elif turn.transcribed:
             self._build_turn(turn)
 
-    def _discard_turn(self, turn_id: str) -> None:
+    def _turn_closed(self, turn_id: str) -> None:
         if (turn := self._turns.get(turn_id)) is None:
             return
         if turn.ended:

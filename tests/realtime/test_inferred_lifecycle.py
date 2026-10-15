@@ -86,7 +86,7 @@ def test_a_drop_ends_a_joined_turn_still_waiting_for_its_transcript() -> None:
     tracker = InferredLifecycle(transcribes=True)
     assert lifecycle(tracker.message([RealtimeInputSpeechStartEvent(item_id='u1')])) == snapshot(['UserTurnStarted'])
     assert lifecycle(tracker.message([RealtimeInputSpeechEndEvent(item_id='u1')])) == snapshot(['UserTurnEnded'])
-    assert lifecycle(tracker.connection_lost()) == snapshot(['UserTurnDiscarded'])
+    assert lifecycle(tracker.connection_lost()) == snapshot(['UserTurnClosed'])
 
 
 async def test_frames_take_an_async_iterable_with_nothing_to_close() -> None:

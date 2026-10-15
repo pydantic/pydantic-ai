@@ -23,7 +23,7 @@ from pydantic_ai.realtime._lifecycle import (
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -230,7 +230,7 @@ async def test_a_push_to_talk_commit_starts_and_ends_its_turn_and_a_clear_discar
             UserTurnEnded(turn_id='item_u1'),
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u2'),
-            UserTurnDiscarded(turn_id='item_u2'),
+            UserTurnClosed(turn_id='item_u2'),
             'RealtimeSessionErrorEvent',
         ]
     )
@@ -525,7 +525,7 @@ async def test_a_closed_connection_loses_what_was_open() -> None:
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u1'),
             ResponseEnded(response_id='resp_1', status='lost'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeSessionErrorEvent',
         ]
     )
@@ -588,7 +588,7 @@ async def test_a_reconnect_settles_what_the_new_socket_will_never_answer() -> No
             InputAdded(input_id=2),
             InputLost(input_ids=(1,)),
             ResponseEnded(response_id='resp_2', status='lost'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeSessionReconnectEvent',
             InputLost(input_ids=(3,)),
             'RealtimeSessionErrorEvent',
@@ -633,10 +633,8 @@ async def test_a_reconnect_ends_the_spoken_turns_whose_transcript_it_loses(trans
         reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
         **kwargs,
     )
-    events = [event for event in await stream.rest() if isinstance(event, UserTurnDiscarded)]
-    assert events == (
-        [UserTurnDiscarded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u2')] if transcribes else []
-    )
+    events = [event for event in await stream.rest() if isinstance(event, UserTurnClosed)]
+    assert events == ([UserTurnClosed(turn_id='item_u1'), UserTurnClosed(turn_id='item_u2')] if transcribes else [])
 
 
 async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> None:
@@ -707,7 +705,7 @@ async def test_speech_starts_that_never_stopped_merge_into_the_next() -> None:
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_a'),
             'RealtimeInputSpeechStartEvent',
-            UserTurnDiscarded(turn_id='item_a'),
+            UserTurnClosed(turn_id='item_a'),
             UserTurnStarted(turn_id='item_b'),
             'RealtimeInputSpeechEndEvent',
             UserTurnEnded(turn_id='item_b'),
@@ -733,7 +731,7 @@ async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
             UserTurnStarted(turn_id='item_u1'),
             UserTurnEnded(turn_id='item_u1', still_speaking=True),
             ResponseStarted(response_id='resp_1', user_turn_id='item_u1'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeInputSpeechEndEvent',
             'RealtimeInputSpeechEndEvent',
             'ResponseDone',
@@ -930,7 +928,7 @@ async def test_a_turn_cleared_before_it_joined_never_does() -> None:
         {'type': 'input_audio_buffer.committed', 'item_id': 'item_idle', 'previous_item_id': None},
     )
     events = [event for event in await stream.rest() if not isinstance(event, str)]
-    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')])
+    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnClosed(turn_id='item_u1')])
     assert stream.connection._lifecycle._idle_items == set()  # pyright: ignore[reportPrivateUsage]
 
 

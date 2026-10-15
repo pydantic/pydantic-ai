@@ -25,7 +25,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -458,7 +458,7 @@ class InferredLifecycle:
             self._join(turn, events)
         elif turn.replied:
             # It waited for late words past its reply: no more are coming.
-            events.append(UserTurnDiscarded(turn_id=turn.id))
+            events.append(UserTurnClosed(turn_id=turn.id))
 
     def _join(self, turn: _Turn, events: list[LifecycleEvent]) -> None:
         """`turn` joins the conversation here, ahead of the reply to it."""
@@ -673,7 +673,7 @@ class InferredLifecycle:
         elif turn.words:
             # The provider doesn't say when it has transcribed all of it: what it has is all there is.
             self._turn = None
-            events.append(UserTurnDiscarded(turn_id=turn.id))
+            events.append(UserTurnClosed(turn_id=turn.id))
         else:
             # None of its words came yet: what comes is late, and still this turn's, until the next turn starts.
             turn.replied = True
@@ -705,7 +705,7 @@ class InferredLifecycle:
             if not turn.joined:
                 events.append(UserTurnEnded(turn_id=turn.id))
             # (Its transcript was still to come, or it would be over: what it has is all there will be.)
-            events.append(UserTurnDiscarded(turn_id=turn.id))
+            events.append(UserTurnClosed(turn_id=turn.id))
         self._place_held(events)
         if self._transcribes:
             # What audio was sent is the turn its transcript names, or nothing. (Without transcripts, it is still

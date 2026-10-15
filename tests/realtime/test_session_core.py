@@ -59,7 +59,7 @@ from pydantic_ai.realtime._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     StaleEvent,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -431,7 +431,7 @@ def test_a_turn_that_joins_while_it_is_still_spoken_ends_with_the_speech() -> No
         RealtimeInputSpeechStartEvent(item_id='u2'),
         UserTurnStarted(turn_id='u2'),
         UserTurnEnded(turn_id='u2', still_speaking=True),
-        UserTurnDiscarded(turn_id='u2'),
+        UserTurnClosed(turn_id='u2'),
         RealtimeInputSpeechStartEvent(item_id='u3'),
         UserTurnStarted(turn_id='u3'),
         UserTurnEnded(turn_id='u3', still_speaking=True),
@@ -447,11 +447,11 @@ def test_failed_and_discarded_turns() -> None:
         UserTurnEnded(turn_id='u1'),
         RealtimeInputTranscriptionErrorEvent(message='?', item_id='u1'),
         UserTurnStarted(turn_id='u2'),
-        UserTurnDiscarded(turn_id='u2'),
-        UserTurnDiscarded(turn_id='never'),
+        UserTurnClosed(turn_id='u2'),
+        UserTurnClosed(turn_id='never'),
         UserTurnStarted(turn_id='u3'),
         UserTurnEnded(turn_id='u3'),
-        UserTurnDiscarded(turn_id='u3'),
+        UserTurnClosed(turn_id='u3'),
     )
     assert summary(session_core.all_messages()) == snapshot(['{user:None}', '{user:None}'])
 
@@ -829,7 +829,7 @@ def test_retained_audio_drops_a_cleared_or_discarded_turns_waiting_audio() -> No
         RealtimeInputSpeechStartEvent(item_id='u0'),
         UserTurnStarted(turn_id='u0'),
         RealtimeInputSpeechEndEvent(item_id='u0'),
-        UserTurnDiscarded(turn_id='u0'),
+        UserTurnClosed(turn_id='u0'),
         AudioSent(data=_tenth_of_a_second(1)),
         RealtimeInputSpeechStartEvent(item_id='u1'),
         UserTurnStarted(turn_id='u1'),

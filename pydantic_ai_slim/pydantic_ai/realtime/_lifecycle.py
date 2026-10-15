@@ -86,10 +86,11 @@ class UserTurnEnded:
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnDiscarded:
-    """A spoken turn gets no more audio: it was cleared, or its connection lost.
+class UserTurnClosed:
+    """No more audio or transcript is coming for a spoken turn.
 
-    One that hadn't joined the conversation (`UserTurnEnded`) never will; one that had stays, as it was.
+    It was cleared, its connection lost, or its transcript is over. One that hadn't joined the conversation (`UserTurnEnded`) is dropped, as it never will; one that had keeps
+    what it has.
     """
 
     turn_id: str
@@ -139,7 +140,7 @@ LifecycleEvent = TypeAliasType(
     | ResponseEnded
     | UserTurnStarted
     | UserTurnEnded
-    | UserTurnDiscarded
+    | UserTurnClosed
     | InputAdded
     | InputLost
     | ResponseRequestRefused
@@ -152,7 +153,7 @@ LIFECYCLE_EVENT_TYPES = (
     ResponseEnded,
     UserTurnStarted,
     UserTurnEnded,
-    UserTurnDiscarded,
+    UserTurnClosed,
     InputAdded,
     InputLost,
     ResponseRequestRefused,

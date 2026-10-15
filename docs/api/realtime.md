@@ -134,10 +134,10 @@ yields with its codec events, each [`RealtimeFrame`][pydantic_ai.realtime.lifecy
 message made. They say what the codec events can't: where each response starts and ends
 ([`ResponseStarted`][pydantic_ai.realtime.lifecycle.ResponseStarted] /
 [`ResponseEnded`][pydantic_ai.realtime.lifecycle.ResponseEnded]) and which inputs it answers, where each
-spoken turn starts and joins the conversation
+spoken turn starts, joins the conversation, and gets the last of its audio and transcript
 ([`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted] /
 [`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded] /
-[`UserTurnDiscarded`][pydantic_ai.realtime.lifecycle.UserTurnDiscarded]), where each input joins it
+[`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed]), where each input joins it
 ([`InputAdded`][pydantic_ai.realtime.lifecycle.InputAdded]), and which inputs no response will answer
 ([`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] /
 [`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]). The session builds history,

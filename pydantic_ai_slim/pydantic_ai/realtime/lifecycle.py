@@ -13,9 +13,10 @@ its codec events in the [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.Realtim
 - [`ResponseStarted.answers`][pydantic_ai.realtime.lifecycle.ResponseStarted.answers] names the inputs whose
   reply the response is, which is what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
   waits for;
-- a spoken user turn is bracketed by [`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted] and
-  [`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded] (or
-  [`UserTurnDiscarded`][pydantic_ai.realtime.lifecycle.UserTurnDiscarded]);
+- a spoken user turn starts with [`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted], joins the
+  conversation with [`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded], and gets no more audio or
+  transcript after [`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed] (which drops one that hadn't
+  joined);
 - [`InputAdded`][pydantic_ai.realtime.lifecycle.InputAdded] marks where an input joined the provider's
   conversation, so history can follow the provider's order;
 - [`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] and
@@ -48,7 +49,7 @@ from ._lifecycle import (
     ResponseStarted,
     ResponseStatus,
     StaleEvent,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -67,7 +68,7 @@ __all__ = (
     'ResponseStarted',
     'ResponseStatus',
     'StaleEvent',
-    'UserTurnDiscarded',
+    'UserTurnClosed',
     'UserTurnEnded',
     'UserTurnStarted',
 )
