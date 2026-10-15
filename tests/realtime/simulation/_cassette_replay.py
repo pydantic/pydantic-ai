@@ -229,6 +229,8 @@ async def replay_lifecycle_events(path: Path) -> list[tuple[list[RealtimeCodecEv
         connection = _connection(protocol, frames, close)
         if connection._lifecycle_version == 2:  # pyright: ignore[reportPrivateUsage]
             events.append(([event async for event in connection._lifecycle_events()], inputs_sent))  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(connection, OpenAILiveConnection):
+        else:
+            # GPT-Live's, the only connection left on version 1.
+            assert isinstance(connection, OpenAILiveConnection)
             await connection.aclose()
     return events
