@@ -1552,8 +1552,8 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     """
     from .wrapper import WrapperCapability
 
-    # `CombinedCapability` may sort top-level branches, but it retains each non-combined branch as
-    # the object supplied by its source layer. Associate provenance with that branch before walking
+    # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
+    # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance with that branch before walking
     # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
     # both inside that wrapper and on its own.
     root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}

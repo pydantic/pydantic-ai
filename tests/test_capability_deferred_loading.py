@@ -753,6 +753,14 @@ def test_deferred_capability_inside_deferred_capability_raises() -> None:
         "Deferred capability 'child' is inside deferred capability 'group'. Loading 'group' already loads everything in it, so remove `defer_loading=True` from 'child', or pass it to the agent separately to load it on its own."
     )
 
+    # A member without an `id` gets the error that names that problem.
+    anonymous = Capability[object](description='Child.', defer_loading=True)
+    with pytest.raises(UserError, match='Deferred capabilities must use stable explicit `id` values'):
+        Agent(
+            TestModel(),
+            capabilities=[CombinedCapability([anonymous], id='group', description='G.', defer_loading=True)],
+        )
+
 
 @pytest.mark.parametrize('wrap', [False, True], ids=['combined', 'wrapped-combined'])
 async def test_deferred_capability_group_loads_all_members_together(wrap: bool) -> None:
@@ -796,7 +804,13 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         visible_tools.append(sorted(tool.name for tool in info.function_tools))
         if len(visible_tools) == 1:
-            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'editing'})])
+            # A member isn't loaded on its own, only with its group.
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'editing_tools'}),
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'editing'}),
+                ]
+            )
         if len(visible_tools) == 2:
             return ModelResponse(parts=[ToolCallPart('edit_document', {'doc_id': 'd1'})])
         return make_text_response('done')
@@ -819,6 +833,26 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         if part.tool_name == 'edit_document'
     ] == ['edited d1']
+    assert [part.content for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)] == [
+        "Capability 'editing_tools' is not loaded on its own."
+    ]
+
+
+async def test_a_member_shared_by_two_deferred_groups_is_inactive_until_one_loads() -> None:
+    member = Capability[object](instructions='Shared.')
+    active_ids: list[set[str]] = []
+    observer = Hooks()
+
+    @observer.on.before_model_request
+    async def observe(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        aliases = {i for i, cap in ctx.capabilities.items() if cap is member}
+        assert len(aliases) == 2
+        active_ids.append(aliases & ctx.active_capability_ids)
+        return request_context
+
+    groups = [CombinedCapability[object]([member], id=i, description='G.', defer_loading=True) for i in ('g1', 'g2')]
+    await Agent(TestModel(call_tools=[]), capabilities=[*groups, observer]).run('hi')
+    assert active_ids == [set()]
 
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:

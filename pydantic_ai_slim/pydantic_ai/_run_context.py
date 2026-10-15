@@ -615,15 +615,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         A capability inside a deferred group (a `CombinedCapability` with an `id` and
         `defer_loading=True`) is active only once the group is loaded.
         """
+        # One object can be registered under several ids, e.g. a member shared by two groups.
+        registered_ids: dict[int, list[str]] = {}
+        for capability_id, cap in self.capabilities.items():
+            registered_ids.setdefault(id(cap), []).append(capability_id)
         loaded = self.loaded_capability_ids
-        registered_ids = {id(cap): capability_id for capability_id, cap in self.capabilities.items()}
         withheld: set[str] = set()
         for capability_id, cap in self.capabilities.items():
             if cap.defer_loading is True and capability_id not in loaded:
                 # `apply` visits the capability itself first, then what is registered beneath it.
                 beneath: list[AbstractCapability[RunContextAgentDepsT]] = []
                 cap.apply(beneath.append)
-                withheld.update(registered_ids[id(inner)] for inner in beneath[1:] if id(inner) in registered_ids)
+                withheld.update(alias for inner in beneath[1:] for alias in registered_ids.get(id(inner), ()))
         return {
             id for id, cap in self.capabilities.items() if cap.defer_loading is not True and id not in withheld
         } | loaded

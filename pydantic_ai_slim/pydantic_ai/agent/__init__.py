@@ -4700,6 +4700,8 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
                 capability = capability.wrapped
             if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
                 by_kind.setdefault(kind, []).append(capability)
+            if isinstance(capability, CombinedCapability) and capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+                _reject_one_per_agent_in_group(capability)
     for kind, found in by_kind.items():
         if len(found) > 1:
             names = ', '.join(f'`{type(capability).__name__}`' for capability in found)
@@ -4709,13 +4711,26 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
             )
 
 
+def _reject_one_per_agent_in_group(group: CombinedCapability[Any]) -> None:
+    """Reject a durable execution engine inside a group: it binds after the agent's toolsets are collected."""
+    for inner in leaf_capabilities(group):
+        while isinstance(inner, WrapperCapability):
+            inner = inner.wrapped
+        if (kind := inner._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError(
+                f'`{type(inner).__name__}` is inside capability {group.id!r}, but a {kind} must be passed to '
+                'the agent directly, so it can wrap every toolset the agent has.'
+            )
+
+
 def _reject_nested_deferral(capability: AbstractCapability[Any]) -> None:
     """Reject a deferred capability inside another one: loading the outer one reveals everything in it."""
     descendants: list[AbstractCapability[Any]] = []
     capability.apply(descendants.append)
     for inner in descendants:
         # A wrapper shares its wrapped capability's `id`, so that pair is one capability, not two.
-        if inner.defer_loading is True and inner.id != capability.id:
+        # One without an `id` is left to the explicit-`id` check, which names the actual problem.
+        if inner.defer_loading is True and inner.id is not None and inner.id != capability.id:
             raise exceptions.UserError(
                 f'Deferred capability {inner.id!r} is inside deferred capability {capability.id!r}. '
                 f'Loading {capability.id!r} already loads everything in it, so remove `defer_loading=True` '

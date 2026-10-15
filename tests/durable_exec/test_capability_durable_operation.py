@@ -18,6 +18,7 @@ from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
+    CombinedCapability,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
@@ -289,6 +290,22 @@ def test_a_second_durable_engine_is_refused_at_construction() -> None:
             name='two_engines',
             capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)],
         )
+    assert bound == []
+
+
+def test_a_durable_engine_inside_a_capability_group_is_refused() -> None:
+    """A group binds as one unit, after the toolsets the engine has to wrap are collected."""
+    bound: list[str] = []
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            name='grouped_engine',
+            capabilities=[CombinedCapability([_BindLoggingDurability(bound)], id='infra')],
+        )
+    assert str(exc_info.value) == snapshot(
+        "`_BindLoggingDurability` is inside capability 'infra', but a durable execution engine must be passed to "
+        'the agent directly, so it can wrap every toolset the agent has.'
+    )
     assert bound == []
 
 
