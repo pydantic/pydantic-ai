@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { OpenCardsContext } from '../openCards'
 import type { Item } from '../protocol'
 import type { Entry } from '../state'
 import { cell } from '../code'
@@ -55,7 +56,7 @@ function TurnUsage({ turn }: { turn: TurnSummary }) {
 
 const EDITS = new Set(['edit_file', 'write_file'])
 const COMMANDS = new Set(['shell', 'run_code'])
-const EXPLORING = new Set(['read_file', 'list_files', 'grep', 'glob'])
+const EXPLORING = new Set(['read_file', 'list_files', 'grep'])
 
 /** Consecutive tool calls other than edits fold into one group, as a desktop agent shows its work. */
 type Row = { kind: 'entry'; entry: Entry } | { kind: 'group'; id: string; tools: Item[] }
@@ -103,15 +104,19 @@ export function groupSummary(tools: Item[]): string {
 }
 
 const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
+  const cards = useContext(OpenCardsContext)
   const running = tools.some((tool) => tool.state === 'running')
   const failed = tools.filter((tool) => tool.state === 'error' || (tool.exit_code ?? 0) !== 0).length
+  const interrupted = tools.filter((tool) => tool.state === 'interrupted').length
   const [open, setOpen] = useState<boolean | null>(null)
-  const shown = open ?? running
+  // Open while a call runs, or while the user has one of its cards open, until they close the group.
+  const shown = open ?? (running || tools.some((tool) => cards.open.has(tool.id)))
   return (
     <div className={`tool-group ${shown ? 'open' : ''}`}>
       <button className="row-toggle" onClick={() => setOpen(!shown)} aria-expanded={shown}>
         <span className={running ? 'shimmer' : ''}>{groupSummary(tools)}</span>
         {failed > 0 && <span className="badge error">{plural(failed, 'failed', 'failed')}</span>}
+        {interrupted > 0 && <span className="badge">{plural(interrupted, 'interrupted', 'interrupted')}</span>}
         <ChevronIcon size={12} className="chevron" />
       </button>
       {shown && (
@@ -127,6 +132,19 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
 
 /** The conversation; it follows new output while the reader is at the bottom, and stays put once they scroll up. */
 export function Transcript({ entries, running, empty }: { entries: Entry[]; running: boolean; empty: React.ReactNode }) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
+  const cards = useMemo(
+    () => ({
+      open,
+      toggle: (id: string) =>
+        setOpen((current) => {
+          const next = new Set(current)
+          if (!next.delete(id)) next.add(id)
+          return next
+        }),
+    }),
+    [open],
+  )
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
   useEffect(() => {
@@ -144,6 +162,7 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
   }, [entries])
   const last = entries[entries.length - 1]
   return (
+    <OpenCardsContext.Provider value={cards}>
     <div className="transcript" ref={scroller}>
       <div className="column">
         {entries.length === 0
@@ -164,5 +183,6 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
         )}
       </div>
     </div>
+    </OpenCardsContext.Provider>
   )
 }
