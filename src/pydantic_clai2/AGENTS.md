@@ -78,7 +78,9 @@ they agree in the same PR.
   the shell holds, and its title, change between runs (`/new`, `/resume`, background
   naming); core only sees a `conversation_id` per run. `Session._publish` is the one
   place `ConversationChanged` is fired from. `/commands` never reach the agent, so no core
-  hook sees them; `_execute_command` fires `CommandEnd`, for every command the shell runs. Additional moments need the same
+  hook sees them; the shell fires `CommandEnd` around `_execute_command`, outside the scope
+  Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
+  fires nothing. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
