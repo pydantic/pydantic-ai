@@ -320,6 +320,7 @@ class SessionCore:
         output_sample_rate: int = 24000,
         seeded: Sequence[ModelMessage] = (),
         usage: RunUsage | None = None,
+        annotate_response: Callable[[ModelResponse], None] | None = None,
     ) -> None:
         self._model_name = model_name
         self._provider_name = provider_name
@@ -333,6 +334,8 @@ class SessionCore:
         self._input_rate = input_sample_rate
         self._output_rate = output_sample_rate
         self._seeded = list(seeded)
+        self._annotate_response = annotate_response
+        """Adds what instrumentation knows about each response's parts (its tools' OTel metadata) before it's recorded."""
         self.usage = usage if usage is not None else RunUsage()
         """Token usage and requests, as the provider reported them for this session, added to what it held."""
         self.requests = 0
@@ -765,6 +768,8 @@ class SessionCore:
             state='interrupted' if interrupted else 'complete',
         )
         fill_run_metadata(message, run_id=self._run_id, conversation_id=self._conversation_id)
+        if self._annotate_response is not None:
+            self._annotate_response(message)
         provider_cost = message.usage.cost
         fill_response_cost(message)
         if provider_cost is None:

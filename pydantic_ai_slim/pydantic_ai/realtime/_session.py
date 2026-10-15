@@ -23,6 +23,7 @@ from typing_extensions import TypeAliasType
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
+from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import context_window_fraction
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
@@ -1099,6 +1100,7 @@ class RealtimeSession:
             output_sample_rate=self.audio_output_sample_rate,
             seeded=self._seeded,
             usage=self.usage,
+            annotate_response=self._annotate_response,
         )
 
     async def __aenter__(self) -> RealtimeSession:
@@ -1621,6 +1623,11 @@ class RealtimeSession:
         """
         self._ensure_streamable()
         self._start_pump()
+        if self._send_lock.locked():
+            # A send under way may be asking for a reply (an image's `CreateResponse` goes out after the image):
+            # that is owed at this moment too, once it's out, or nothing is, if it fails.
+            async with self._send_lock:
+                pass
         # What the model owes at this moment, followed to the end: a reply asked for later is not waited for.
         owed = self._core.wait_tokens()
         while True:
@@ -4333,6 +4340,12 @@ class RealtimeSession:
             # A microphone chunk: it neither settles anything owed nor changes what history holds back.
             return
         self._core_advanced(self._core)
+
+    def _annotate_response(self, response: ModelResponse) -> None:
+        """Copy the OTel metadata of the tools it calls onto its tool calls, as the instrumented `chat` span records."""
+        instrumentation = self._session_instrumentation
+        if instrumentation.settings is not None and instrumentation.model_request_parameters is not None:
+            annotate_tool_call_otel_metadata(response, instrumentation.model_request_parameters)
 
     def _core_advanced(self, core: SessionCore) -> None:
         """Wake whoever waits on what the core owes, and bound how long a missing transcript or a stalled response holds history back."""

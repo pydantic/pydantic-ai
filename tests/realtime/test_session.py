@@ -5053,8 +5053,9 @@ async def test_send_accepts_plain_content() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
 
-    await session.send('hello')
+    # (The image goes first: sent while the reply `'hello'` asks for is owed, it would join history after that.)
     await session.send(BinaryImage(data=b'image', media_type='image/png'))
+    await session.send('hello')
     # A WAV container (e.g. retained `SpeechPart.audio`) is unwrapped to the raw PCM the wire expects.
     await session.send(_wav_content(b'\x01\x02\x03\x04'))
     # Raw PCM `BinaryContent` passes through verbatim.
@@ -5062,15 +5063,14 @@ async def test_send_accepts_plain_content() -> None:
 
     assert conn.sent == snapshot(
         [
-            'hello',
             BinaryImage(data=b'image', media_type='image/png'),
+            'hello',
             BinaryAudio(data=b'\x01\x02\x03\x04', media_type='audio/pcm'),
             BinaryAudio(data=b'\xaa\xbb', media_type='audio/pcm'),
         ]
     )
     assert session.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -5080,6 +5080,7 @@ async def test_send_accepts_plain_content() -> None:
                 ],
                 timestamp=IsDatetime(),
             ),
+            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())], timestamp=IsDatetime()),
         ]
     )
 
@@ -5117,7 +5118,8 @@ async def test_send_respond_controls_text_and_image_turns() -> None:
         ]
     )
     assert session._pending_response_requests == 3  # pyright: ignore[reportPrivateUsage]
-    assert len(session.new_messages()) == 6
+    # Each is in the provider's conversation; history holds what was sent while a reply is owed until it comes.
+    assert len(session._core.replayable_messages()) == 6  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_send_respond_sequence_contextualizes_all_but_last() -> None:
