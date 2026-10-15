@@ -2,6 +2,7 @@
 
 import os
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -30,7 +31,7 @@ from pydantic_clai2.builtin_plugins.workspaces import (
 )
 from pydantic_clai2.builtin_plugins.workspaces.backend import is_url, repo_slug
 from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, Workspace, check_id, workspaces_dir
-from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher, LocalProcesses, free_port, probe
+from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher, LocalProcesses, bound_port, probe
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime import worktrees
@@ -124,7 +125,11 @@ class FakeProcesses:
     def spawn(self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], log: Path) -> int:
         self.pid += 1
         self.spawned.append(Spawned(argv=list(argv), cwd=cwd, env=env, log=log))
-        if not self.exits:
+        if self.exits:
+            log.write_text('Traceback: it broke\n', encoding='utf-8')
+        else:
+            # As `clai2 --web --port 0 --token-file` prints once it listens.
+            log.write_text(f'Web UI running at http://127.0.0.1:{40000 + self.pid}/\n', encoding='utf-8')
             self.running.add(self.pid)
         return self.pid
 
@@ -230,8 +235,10 @@ async def test_a_workspace_from_creation_to_destruction(
     [spawned] = rig.processes.spawned
     folder = rig.directory / 'registry' / workspace.id
     token = (folder / 'token').read_text().strip()
-    assert spawned.argv[:5] == ['python', '-P', '-m', 'pydantic_clai2', '--web']
-    assert spawned.argv[7:] == ['--token-file', str(folder / 'token'), '--model', 'test']
+    assert spawned.argv == [
+        *('python', '-P', '-m', 'pydantic_clai2', '--web', '--port', '0'),
+        *('--token-file', str(folder / 'token'), '--model', 'test'),
+    ]
     assert (spawned.cwd, spawned.log) == (workspace.path, folder / 'session.log')
     assert token not in ' '.join(spawned.argv), 'the token stays off the command line'
     assert rig.probe.tokens == [token]
@@ -240,7 +247,8 @@ async def test_a_workspace_from_creation_to_destruction(
     assert stat.S_IMODE(folder.stat().st_mode) == 0o700
     running = await rig.workspaces().get(workspace.id)
     assert running.status == 'running' and running.session is not None
-    port = spawned.argv[6]
+    port = 40000 + rig.processes.pid
+    assert running.session.port == port
     assert shown == f'Workspace {workspace.id} runs at http://127.0.0.1:{port}/; opened in your browser.'
     assert token not in shown and token not in describe(running)
     assert opened == [(folder / 'open.html').as_uri()]
@@ -572,7 +580,18 @@ async def test_probe() -> None:
         assert not await probe(server.port, 'bad')
     finally:
         await server.stop()
-    assert not await probe(free_port(), 'good'), 'nothing listens'
+    with socket.socket() as unused:
+        unused.bind(('127.0.0.1', 0))
+        port = unused.getsockname()[1]
+    assert not await probe(port, 'good'), 'nothing listens'
+
+
+def test_the_port_comes_from_the_log(tmp_path: Path) -> None:
+    assert bound_port(tmp_path / 'missing') is None
+    (tmp_path / 'log').write_text('Loading plugins\nWeb UI running at http://127.0.0.1:4321/\n')
+    assert bound_port(tmp_path / 'log') == 4321
+    (tmp_path / 'log').write_text('Web UI running at http://192.168.1.2:4321/\n')
+    assert bound_port(tmp_path / 'log') is None, 'only loopback'
 
 
 def test_git_helpers_report_failures(repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

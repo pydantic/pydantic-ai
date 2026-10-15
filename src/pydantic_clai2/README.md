@@ -139,9 +139,10 @@ the link private. The `web` plugin starts disabled; `/web` works once it is enab
 `/plugins enable web`, and `--web` loads it for that launch only. See
 [the plugin guide](PLUGINS.md#web-this-session-in-your-browser) for settings and limits.
 
-`clai2 --web --port PORT` listens on PORT for that launch. `--token-file PATH` takes the launch's
-token from a file only you can read, instead of making one, for a program that starts CLAI and
-keeps the token itself: the printed address leaves it out, and no browser opens.
+`clai2 --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
+takes the launch's token from a file only you can read, instead of making one, for a program that
+starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
+leaves the token out, and no browser opens.
 
 ## Workspaces
 

@@ -1281,11 +1281,12 @@ The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship
 package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
 commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
 
-`clai2 --web --port PORT` replaces the saved port for one launch. `--token-file PATH` replaces the
-launch's random token with the one in PATH, which must belong to you, be readable by you alone
-(mode 0600), and hold one URL-safe token of at least 32 characters. That is for a program that
-starts CLAI and talks to it, such as the `workspaces` plugin: the address is printed without the
-token, and no browser opens.
+`clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
+PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
+by you alone (mode 0600), and hold one URL-safe token of at least 32 characters. That is for a
+program that starts CLAI and talks to it, such as the `workspaces` plugin: CLAI then listens on
+127.0.0.1 whatever address is saved, prints `Web UI running at http://127.0.0.1:PORT/` without the
+token, which tells that program the port, and opens no browser.
 
 ### `workspaces`: checkouts with their own CLAI
 
@@ -1328,7 +1329,8 @@ CLAI runs, `token` and `session.log`. Every CLAI reads the same folders, so a wo
 session can be opened and destroyed from another, and its CLAI keeps running when the CLAI that
 started it quits or unloads the plugin. A workspace whose CLAI has ended reads as `stopped`.
 
-**Security.** A workspace's CLAI listens on 127.0.0.1 only, on a free port, with its own random
+**Security.** A workspace's CLAI listens on 127.0.0.1 only, on a port it binds itself (`--port 0`),
+so no other program can take that port first; the launcher reads the port from its log. It has its own random
 token, written to its `token` file (mode 0600) and passed with `--token-file`, never on a command
 line or in a log; `/workspaces` never prints it. `open` hands the browser the address through a
 page in the same folder that only you can read. `stop` signals a process only after it answered

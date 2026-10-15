@@ -20,6 +20,7 @@ from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace, workspace_directory
 
 WEB = 'web'
+LAUNCHER_HOST = '127.0.0.1'
 """The built-in plugin `--web` loads for this session, whether or not it is enabled."""
 
 
@@ -46,7 +47,9 @@ async def run_web(
     moves there, and `/workspace DIRECTORY` starts a new session in another one (see `SessionWorkspace`).
 
     `port` replaces the saved port for this launch. `token` replaces the token `web` makes, for a launcher
-    that keeps it, such as the `workspaces` plugin: the address is then printed without it, and no browser opens.
+    that keeps it, such as the `workspaces` plugin: CLAI then listens on 127.0.0.1 whatever the saved
+    address, prints the address without the token as `Web UI running at http://127.0.0.1:PORT/`, which
+    is how a launcher that passed port 0 learns the port, and opens no browser.
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
@@ -97,7 +100,8 @@ async def run_web(
             if token is None:
                 console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
             else:
-                web.token = token
+                # A launcher talks to it on this machine alone, whatever address the saved settings name.
+                web.token, web.listen = token, LAUNCHER_HOST
                 address, _, _ = (await web.start()).partition('?')
                 console.print(f'Web UI running at {address}', markup=False)
             console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
