@@ -228,7 +228,8 @@ Rewinding removes the selected prompt and all later messages from the saved
 conversation, then restores that prompt and its image attachments to the editor.
 This replaces any unsent draft and its attachments; cancel the menu to keep them.
 Edit the restored prompt and press Enter when ready. It does **not** undo file changes or other
-tool side effects, replay tools, or erase the terminal scrollback. Only prompts
+tool side effects, roll back code mode's saved sandbox state (the model can pass
+`restart: true` to clear it), replay tools, or erase the terminal scrollback. Only prompts
 still present in the retained history are available. Prompts predating retained
 rewritten context, such as a compaction summary, are disabled even if compaction
 kept a copy of the prompt. That summary can contain later facts, so the original
@@ -1577,6 +1578,8 @@ naming token counts separately; `/cost` remains retained foreground-history cost
 
 Conversations, metadata, and step records live in `sessions.db` beside the settings
 database. `--database` therefore also selects the directory for saved sessions.
+Code mode's saved sandbox state lives in `sessions.repl/`, one owner-only file
+per session, next to it.
 New conversation databases use owner-only file permissions where supported. The
 contents are **not encrypted**: prompts, replies, tool results, and media may
 contain secrets. Do not share the database between machines. An unfinished run
@@ -2052,7 +2055,13 @@ updates replace the buffered line rather than printing control-code text; the la
 update appears at newline or tool completion. CRLF works across chunk boundaries.
 Long display lines are ellipsized to terminal width. The command itself wraps
 under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
-count summarizes any rows beyond that.
+count summarizes any rows beyond that. The command is highlighted as Bash, in the
+colours of fenced code but dimmed and without underlines, so it reads as secondary
+to the answer. Code inside it uses its own language: a heredoc body
+takes the language of the command reading it (`python - <<'EOF'`, `psql <<SQL`),
+of the file it is written to (`cat > probe.py <<'EOF'`), or of a delimiter such as
+`PYEOF`, and the quoted code of `python -c '...'` or `node -e '...'` is Python or
+JavaScript. A heredoc in an unknown language stays grey.
 Full output remains in the log; display formatting does not alter model results.
 
 ## Shell preview limit
@@ -2119,6 +2128,15 @@ native as `CodeMode` keeps them by default.
 `run_code` is a persistent Python sandbox with isolated environment variables,
 the host clock (through `datetime`), and no network. The model writes one snippet that calls many tools, and CLAI runs it while the model
 is still writing.
+
+The sandbox keeps its variables, functions, and imports from one prompt to the
+next. CLAI saves them with the session when each turn ends, so `/resume` and
+`--resume` bring them back with the history, and `--fork-session`, `/fork`, and
+resuming a busy session give the copy its own state. When the model passes
+`restart: true`, the turn saves the restarted sandbox instead. Deleting a session
+in the `/resume` browser deletes its state. Sub-agents start each task with an
+empty sandbox. A state Monty cannot load starts a fresh sandbox, and a state over
+32 MiB is not saved, so the next prompt starts with an empty sandbox.
 
 The sandbox's `pathlib` only reaches what the file tools may reach. `pathlib`
 calls on a mount skip the `FileSystem` checks, so CLAI mounts the workspace's

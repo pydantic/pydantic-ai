@@ -1,0 +1,261 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "243"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=9696
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - thoughtSignature: >-
+                Ev4ECvsECAIS9gQBaRR9EyxaOKDpvjCnidQnSgLtKU+SkLeoIk2AwRtVPxKxk2IKtg1oGpXfuiI+8sA5mrooIZaNHGvqXQEWlLQcsmzghxTaDGcRtSoOq8c8CeSIL8P0pVxrb7UG5dLhVsKoHcVbjuMCqllPWOLalerkdmZKfX6YPQZ2R4O/74/m03dtkZpKDjS+LWu/ew2vw2pOap/B1srP8ooQgjbzRkQGTStT79gM5eOzZkfrSuE8OxrJv49+Q+UKKnoAYXV4IlG9K8fsv/PTQrPc7S6lO3A1lgXkKykB6dHS42HzQAT7J4IDn08k/dxsgwx6gmz2viAb8OY/dIZE3UY+RVKEp4BXP+b+4pBAUtDtIoxmlmicuDBhYpkLetX3hW2Qv4c0K6yvw/pDt3UElgpqrm3HEgGkcm1gEt03P9Hw2mP3o26kt7FniRb0bIANhCHw/A527PKLJyivj3fTh9Y2L/382/KUpdyQlHFIYn2QQTny32rAW/93vW5I1aDhB+v9fulgPNpXHjaBgvPC6A8tdrFK70hUK2jahW2via341sxYX0K5XPF6rVLIwwmQGsMm4p0mmZHPfXlys/MYueyLolMDflNvtvnRI6NarAXkPcFkOJ0w/cMH62hvZmnf+mWlpFqxFiZQ5c3TF5uLZh4snE8wax7DOtXEtz8zID8HnAGD1+u78Mu9KFuwqcL3yEzdquQ4EalbQd41FkcYCyulCaok7mfULYE4O0/pgCmVhv5FoBVD2mQ/9YMOAZqdqqhrcUW6oO/PDWcfn3efhFoTyjdlQ8s8S1MP1J1r8s4vfdVbfSSfFZdsEWFGteAJv+UNoY0mQXEN2zcE++Y=
+              toolCall:
+                id: call_156426
+            - thoughtSignature: >-
+                EsACCr0CCAISuAIBaRR9E+ba5gOxXJfR8tL74QKJwBwTtf8SRTK5a72yzrnv75X0qeq86XWGqaxHPjOPUSFdsykisbFd02mSgAxcYOeeuKOHL/3diRD8GzzhmE4G76wFWPQWm7Lu1PphuhLZ5o9OsPAns7Wb+7yhgvyazBMHi4b9QgYktN7tBUWJgOf8xsYHZECNX+nTts0LxyBUW7jGK/BQlnMJE2JDBmTWEZ6fDWvb/Mh+f7NnkDpueK6SHRX8Gv2SuZHDZT3vfOmMGD3ZMN/g7tFFCJEUr1x6Ha6/LbpF1wHNBFvT/cKjeKe+/dW3CvrnjVjseqwfcktUd+YHSALf+Kpkrx98vKcxvT6x7j/VqFZBsoiz9c9a5fJ8Lo6aiOeAXlGqc3RWaaywnBEp7wGvx5LiafGjjCWxgtrpaEMBu2M=
+              toolResponse:
+                id: call_156426
+            - thoughtSignature: >-
+                EvUECvIECAIS7QQBaRR9E5BanosY9VDqolRCQDubSukfvR1ToU3baiOnsJjcFAQl8cZ23PAD+24P1scrB/HcIXhnRF+/70NRWm7KshtNqea59r1X/5MZXf0mL41xfygVryCOy58yCwAdEMLoGqGsOzOHRpfilAW0vkkCk8DK2gYG+m0TSHZoCUIgH7qpCOpXT47LnMFM7Qeg/4gnM2iAyO1VkGEOE3HVCMgi3ntX2Xbjy94evpoID6wJZkljRGbr6Ob9TXk5eHd5StSjdzJ5Efk1ySNmfrokxqWXAFRujKtAU7x7vzeLdxQcGxAKfiTADh3g51wPRB2nyampRV4WA/2v4oROPKlXZdeCRx9jqLmUw3WOL2S+oNE8pOWPQUUDhsMsIziKS1aosKtAmoLIsie6SpVZkE2g8cOsSKQzgk9ad8YLdCfSHrf69khA3dkF0fGv02x7XZ5MH9XqlIgPFFnqzH5cRvg7A83v4zOjw+gtHGsR7XDrywlY6XSPAh+GtkwyrjvCEAK6vZMo3b/Y1HlVJfITPDm7utu1bIq7F1UOlCL6oMoeX35vpzv3Mk/XcHgnGnLdaurfs8NNqfOvgkjmMEdZtVGpcJ3GxpgVthRz07glZT10oVqOSlcYdqRzRbhna2vMv0+0zWqaY7TgtERXa28mZ74c1+NF3HMar0bymHMNcVQluml01eT2wU0XAOAKdnnZUVCXU2e78X++AcNcupMAhUKN60f7wxBKU2w5QMHR0MESyiiOQb6cuKqgsISN+Lyuk4np1KRZm0WgBmEpCe3mwwIdTI/UxZQN5l7BnvSsnjPhjWwNdDMa5Wdy2QyJE6avTB8=
+              toolCall:
+                id: call_156515
+            - thoughtSignature: >-
+                ErUCCrICCAISrQIBaRR9E9vvwoCzYDELWZOwefipU2tdvv15Ux9EL03rDho/ltrEnkn2nvzKzbj6DK8UdoX770MZ882R9R39Dtyg496t7MooSetQI5KDW2QSIuZLd4qIIBR6YxZ+A0WXCVqSCRcXEQIE077s/801Rn+5rbwTICPnuzL6gST9XPNw1x4KtWvgLPv4XkC82RQEL57+M19zioWqqZluBv5z/AyAZ1wV8Sar5eUApoDJlbHowdlvKPMmlHsrSybC8711mwCeylVhH2ftYPCXk8shwxx/nlUgaRIenlQHj/LmUN+1cLQ+wGK0FNh1zmIsxy1nrcx1sOZV4/B25CoeBVthjog3gaDV3DonMYYeOCXhny2vJxBSbVVb9Bu5jjWjvll3A3Ne4fVcXQq4evzQpNNo
+              toolResponse:
+                id: call_156515
+            - text: >-
+                No animals appear in the video, as it is a screen recording of a code editor
+                and AI assistant interface.
+              thoughtSignature: >-
+                EowFCokFAWkUfRMpz23tGR4ZRJFAow1rxdEth3n4mIJFpzmSHvLn1UDNBCchg1XHFUhrQeNA2Uil221E8CSQ0KNDn3h3p5nz/PhGQIiyLeKt4yYsK1WK0h4NNSGKwheDXBFzUtCh41nWlESQHaqbk5ul6hu4z/XI7bTpceuDSLqYZM10tpATbeOfqJbaNF9UrTxTET4qy3ERTICYOwkG0llJGbZFdNFaLjhb+ES4pD/fFisAABepXbCBMr68HbuVDddhVNGH4wU2DJzd1csyovt5LuILNOLRdgUhOd66HhwAgT3TcEQLec2R3SL0Ll1+BYjmjgIPGWkg0F0kPhpcWqtVr8NZh2YYSWKMelAkpuLg1Vl59kLOh5aYVasLJMl1K9v1LYLIRS5dEl4VXBf79k81zUCMeHpJLFUsa/83j62prrxQMYTMyh82/ki5nDDU1k0UdRpCNMv5iaBjXoUvrRUIh1L1wbQzJ1yYZCeae5vDXCQF+s29O1VkJpMLoN8io6kpGO6c1hsQn+3exCjCpASo+9tzFivM7UCBaLiCkb7HTNqH4lofZ+3QXt1+5+jlq9uICK9ptw1SdNL52p94D8Be8xBi2Ss26Zbyv++/hMEpomRrXg6mqelEIEZGesmHyT8afGKs35T1x6liqD9svHHqUzvihyrmATUCJ9AnLldw+ktQz2GeIGlt6PookdBl8BDgx63gb2jPz+yn0qGXId1bNt+DM0wt2zHN/nF2K+4SphKqpWUPUOZA2wXSXNyJSt8o9LubypmAadi8h8IT68X/d2Qjr3cavrlbGqHYDeqcEZX21R+k8FLqozikZwnmHuiPuHiEg33RTGcc9GQx49JYycfEK8AVDoBKEVK97g==
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 125
+          candidatesTokenCount: 122
+          totalTokenCount: 4679
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 125
+          toolUsePromptTokenCount: 4003
+          toolUsePromptTokensDetails:
+          - modality: TEXT
+            tokenCount: 403
+          - modality: VIDEO
+            tokenCount: 3600
+          thoughtsTokenCount: 429
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: 7H3OapeZNIHqz7IP--SliQw
+  recorded_at: 2026-10-13T18:52:38.415404+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "4181"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+        - parts:
+          - thoughtSignature: >-
+              Ev4ECvsECAIS9gQBaRR9EyxaOKDpvjCnidQnSgLtKU-SkLeoIk2AwRtVPxKxk2IKtg1oGpXfuiI-8sA5mrooIZaNHGvqXQEWlLQcsmzghxTaDGcRtSoOq8c8CeSIL8P0pVxrb7UG5dLhVsKoHcVbjuMCqllPWOLalerkdmZKfX6YPQZ2R4O_74_m03dtkZpKDjS-LWu_ew2vw2pOap_B1srP8ooQgjbzRkQGTStT79gM5eOzZkfrSuE8OxrJv49-Q-UKKnoAYXV4IlG9K8fsv_PTQrPc7S6lO3A1lgXkKykB6dHS42HzQAT7J4IDn08k_dxsgwx6gmz2viAb8OY_dIZE3UY-RVKEp4BXP-b-4pBAUtDtIoxmlmicuDBhYpkLetX3hW2Qv4c0K6yvw_pDt3UElgpqrm3HEgGkcm1gEt03P9Hw2mP3o26kt7FniRb0bIANhCHw_A527PKLJyivj3fTh9Y2L_382_KUpdyQlHFIYn2QQTny32rAW_93vW5I1aDhB-v9fulgPNpXHjaBgvPC6A8tdrFK70hUK2jahW2via341sxYX0K5XPF6rVLIwwmQGsMm4p0mmZHPfXlys_MYueyLolMDflNvtvnRI6NarAXkPcFkOJ0w_cMH62hvZmnf-mWlpFqxFiZQ5c3TF5uLZh4snE8wax7DOtXEtz8zID8HnAGD1-u78Mu9KFuwqcL3yEzdquQ4EalbQd41FkcYCyulCaok7mfULYE4O0_pgCmVhv5FoBVD2mQ_9YMOAZqdqqhrcUW6oO_PDWcfn3efhFoTyjdlQ8s8S1MP1J1r8s4vfdVbfSSfFZdsEWFGteAJv-UNoY0mQXEN2zcE--Y=
+            toolCall:
+              id: call_156426
+          - thoughtSignature: >-
+              EsACCr0CCAISuAIBaRR9E-ba5gOxXJfR8tL74QKJwBwTtf8SRTK5a72yzrnv75X0qeq86XWGqaxHPjOPUSFdsykisbFd02mSgAxcYOeeuKOHL_3diRD8GzzhmE4G76wFWPQWm7Lu1PphuhLZ5o9OsPAns7Wb-7yhgvyazBMHi4b9QgYktN7tBUWJgOf8xsYHZECNX-nTts0LxyBUW7jGK_BQlnMJE2JDBmTWEZ6fDWvb_Mh-f7NnkDpueK6SHRX8Gv2SuZHDZT3vfOmMGD3ZMN_g7tFFCJEUr1x6Ha6_LbpF1wHNBFvT_cKjeKe-_dW3CvrnjVjseqwfcktUd-YHSALf-Kpkrx98vKcxvT6x7j_VqFZBsoiz9c9a5fJ8Lo6aiOeAXlGqc3RWaaywnBEp7wGvx5LiafGjjCWxgtrpaEMBu2M=
+            toolResponse:
+              id: call_156426
+          - thoughtSignature: >-
+              EvUECvIECAIS7QQBaRR9E5BanosY9VDqolRCQDubSukfvR1ToU3baiOnsJjcFAQl8cZ23PAD-24P1scrB_HcIXhnRF-_70NRWm7KshtNqea59r1X_5MZXf0mL41xfygVryCOy58yCwAdEMLoGqGsOzOHRpfilAW0vkkCk8DK2gYG-m0TSHZoCUIgH7qpCOpXT47LnMFM7Qeg_4gnM2iAyO1VkGEOE3HVCMgi3ntX2Xbjy94evpoID6wJZkljRGbr6Ob9TXk5eHd5StSjdzJ5Efk1ySNmfrokxqWXAFRujKtAU7x7vzeLdxQcGxAKfiTADh3g51wPRB2nyampRV4WA_2v4oROPKlXZdeCRx9jqLmUw3WOL2S-oNE8pOWPQUUDhsMsIziKS1aosKtAmoLIsie6SpVZkE2g8cOsSKQzgk9ad8YLdCfSHrf69khA3dkF0fGv02x7XZ5MH9XqlIgPFFnqzH5cRvg7A83v4zOjw-gtHGsR7XDrywlY6XSPAh-GtkwyrjvCEAK6vZMo3b_Y1HlVJfITPDm7utu1bIq7F1UOlCL6oMoeX35vpzv3Mk_XcHgnGnLdaurfs8NNqfOvgkjmMEdZtVGpcJ3GxpgVthRz07glZT10oVqOSlcYdqRzRbhna2vMv0-0zWqaY7TgtERXa28mZ74c1-NF3HMar0bymHMNcVQluml01eT2wU0XAOAKdnnZUVCXU2e78X--AcNcupMAhUKN60f7wxBKU2w5QMHR0MESyiiOQb6cuKqgsISN-Lyuk4np1KRZm0WgBmEpCe3mwwIdTI_UxZQN5l7BnvSsnjPhjWwNdDMa5Wdy2QyJE6avTB8=
+            toolCall:
+              id: call_156515
+          - thoughtSignature: >-
+              ErUCCrICCAISrQIBaRR9E9vvwoCzYDELWZOwefipU2tdvv15Ux9EL03rDho_ltrEnkn2nvzKzbj6DK8UdoX770MZ882R9R39Dtyg496t7MooSetQI5KDW2QSIuZLd4qIIBR6YxZ-A0WXCVqSCRcXEQIE077s_801Rn-5rbwTICPnuzL6gST9XPNw1x4KtWvgLPv4XkC82RQEL57-M19zioWqqZluBv5z_AyAZ1wV8Sar5eUApoDJlbHowdlvKPMmlHsrSybC8711mwCeylVhH2ftYPCXk8shwxx_nlUgaRIenlQHj_LmUN-1cLQ-wGK0FNh1zmIsxy1nrcx1sOZV4_B25CoeBVthjog3gaDV3DonMYYeOCXhny2vJxBSbVVb9Bu5jjWjvll3A3Ne4fVcXQq4evzQpNNo
+            toolResponse:
+              id: call_156515
+          - text: >-
+              No animals appear in the video, as it is a screen recording of a code editor
+              and AI assistant interface.
+            thoughtSignature: >-
+              EowFCokFAWkUfRMpz23tGR4ZRJFAow1rxdEth3n4mIJFpzmSHvLn1UDNBCchg1XHFUhrQeNA2Uil221E8CSQ0KNDn3h3p5nz_PhGQIiyLeKt4yYsK1WK0h4NNSGKwheDXBFzUtCh41nWlESQHaqbk5ul6hu4z_XI7bTpceuDSLqYZM10tpATbeOfqJbaNF9UrTxTET4qy3ERTICYOwkG0llJGbZFdNFaLjhb-ES4pD_fFisAABepXbCBMr68HbuVDddhVNGH4wU2DJzd1csyovt5LuILNOLRdgUhOd66HhwAgT3TcEQLec2R3SL0Ll1-BYjmjgIPGWkg0F0kPhpcWqtVr8NZh2YYSWKMelAkpuLg1Vl59kLOh5aYVasLJMl1K9v1LYLIRS5dEl4VXBf79k81zUCMeHpJLFUsa_83j62prrxQMYTMyh82_ki5nDDU1k0UdRpCNMv5iaBjXoUvrRUIh1L1wbQzJ1yYZCeae5vDXCQF-s29O1VkJpMLoN8io6kpGO6c1hsQn-3exCjCpASo-9tzFivM7UCBaLiCkb7HTNqH4lofZ-3QXt1-5-jlq9uICK9ptw1SdNL52p94D8Be8xBi2Ss26Zbyv--_hMEpomRrXg6mqelEIEZGesmHyT8afGKs35T1x6liqD9svHHqUzvihyrmATUCJ9AnLldw-ktQz2GeIGlt6PookdBl8BDgx63gb2jPz-yn0qGXId1bNt-DM0wt2zHN_nF2K-4SphKqpWUPUOZA2wXSXNyJSt8o9LubypmAadi8h8IT68X_d2Qjr3cavrlbGqHYDeqcEZX21R-k8FLqozikZwnmHuiPuHiEg33RTGcc9GQx49JYycfEK8AVDoBKEVK97g==
+          role: model
+        - parts:
+          - text: What filename is open in the active editor tab?
+          role: user
+  response:
+    status: 400
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=158
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          code: 400
+          message: "contents[1].parts[0]: Tool type of tool_call part does not match with tool call context."
+          status: INVALID_ARGUMENT
+  recorded_at: 2026-10-13T18:52:38.692313+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1381"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+        - parts:
+          - text: >-
+              No animals appear in the video, as it is a screen recording of a code editor
+              and AI assistant interface.
+            thoughtSignature: >-
+              EowFCokFAWkUfRMpz23tGR4ZRJFAow1rxdEth3n4mIJFpzmSHvLn1UDNBCchg1XHFUhrQeNA2Uil221E8CSQ0KNDn3h3p5nz_PhGQIiyLeKt4yYsK1WK0h4NNSGKwheDXBFzUtCh41nWlESQHaqbk5ul6hu4z_XI7bTpceuDSLqYZM10tpATbeOfqJbaNF9UrTxTET4qy3ERTICYOwkG0llJGbZFdNFaLjhb-ES4pD_fFisAABepXbCBMr68HbuVDddhVNGH4wU2DJzd1csyovt5LuILNOLRdgUhOd66HhwAgT3TcEQLec2R3SL0Ll1-BYjmjgIPGWkg0F0kPhpcWqtVr8NZh2YYSWKMelAkpuLg1Vl59kLOh5aYVasLJMl1K9v1LYLIRS5dEl4VXBf79k81zUCMeHpJLFUsa_83j62prrxQMYTMyh82_ki5nDDU1k0UdRpCNMv5iaBjXoUvrRUIh1L1wbQzJ1yYZCeae5vDXCQF-s29O1VkJpMLoN8io6kpGO6c1hsQn-3exCjCpASo-9tzFivM7UCBaLiCkb7HTNqH4lofZ-3QXt1-5-jlq9uICK9ptw1SdNL52p94D8Be8xBi2Ss26Zbyv--_hMEpomRrXg6mqelEIEZGesmHyT8afGKs35T1x6liqD9svHHqUzvihyrmATUCJ9AnLldw-ktQz2GeIGlt6PookdBl8BDgx63gb2jPz-yn0qGXId1bNt-DM0wt2zHN_nF2K-4SphKqpWUPUOZA2wXSXNyJSt8o9LubypmAadi8h8IT68X_d2Qjr3cavrlbGqHYDeqcEZX21R-k8FLqozikZwnmHuiPuHiEg33RTGcc9GQx49JYycfEK8AVDoBKEVK97g==
+          role: model
+        - parts:
+          - text: What filename is open in the active editor tab?
+          role: user
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4554
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - thoughtSignature: >-
+                EqgECqUECAISoAQBaRR9E8LQx0skDoesAQ87wlOZ6ORFIToZmL7Ma2cusiVFtjuuuu8tt1NZ3Y4gENtNV2hhEFtWLMcPl/07fexPI75oEEvOvYTtu8HMlDsxP0lGJUOSNDJ7DkCYCOw+lIgNLRpb8B+9fFW/8f1ucyi40WDRrxEhrST1vES+7EXZR4Im446u99SCri0GbTZnfgWmRvT8Igj5UKplMXGf3ZAUbH9BUxgdu+haMTaZbAUNdEXBFe+fdi3ngebtlbDB3ZJRnbC5vl1BmhHZX90vXs+JvfbxGi8JDSQExaiBieZEo8Ofa2fyFO71hBe3VftRQVXrSGaCO9qD6+tVt6vnoOiOIl3HuiA0bT2L+LqWndbWvICUFP7xeiY/oufAjFpnapFsESpA6I5NX1U8LeEct96PMpX0Of7JJjMkKZ0j2b61cIAG05FosQMVjl85r2Dy1+uLstYfgrUalOMnNo4hNm2KwiCziozKjr5kzmjMPkLB1ec1RwP00Tlx11wSy9/SRITRpoJSgZHORxbo0q3nJHoRssKpFoGyw3tHG4HZ6kOvxoXx2dZksy1Lhvg/v6bf9KNky2Av+beqEe6tfUZGYq08BpYvcGCoh9bXY9b5tnMIzj2SomUsIp3xDPmA9AUIXtz6vCwvidWf05CCJyQ6VezP7h0jLHIWw59AtPswypwAoXtKD+DZwh2Oe9nUsphFkWpJu9IofJxRZfqRPgI2eRS6
+              toolCall:
+                id: call_120270
+            - thoughtSignature: >-
+                EsACCr0CCAISuAIBaRR9EwjG85n2CLnVAds5uh8lwMUH67ekG1XuDuLKB5Vt3SJRFvB+jWMBv4CDC8AvxowSjlGI26NqobVptdT47oRT5aH8rqZJEPuuhJ1pHFvgU5wRzfQmcaRsFjHaRPtefQXwwrvyvAlse5ais30WE2p0ldMzCR1kRJoKLvWvxtw6fPg+8GAk4iiINJHno06ldPAhNyg35bUqK4/F6Ql6IxeTbmBtRHyHKcbf0CB6UlpQUH0SQxePolbL6ErWOMhpWEyn9tfjbCYQAmC91eqxuCKmqFqZzKaduN8szdoPeSUvap7w4tN7t4uPwlGqKWQNjq8QUqUZuW5oreDUz8Nx87utGVlciahGOHq3bvjn7caMsvJwIVwcmguJyiaz0ARREairdMfXEdey6tZWG5j/KzWnYRZswiU=
+              toolResponse:
+                id: call_120270
+            - text: The filename open in the active editor tab is **`browserRouter.tsx`**.
+              thoughtSignature: >-
+                EqoECqcEAWkUfROn23GiO/lANgwLI4bfTKNgW3Kcz3ocFefGkL/yTsXqtGUsPE8sFZ8f9U0KlWQvf2/CAHqKG6iJS2eJFaACR35ti1h3FXtmajAeEQUlpE4GugA6drCCz1wF8pGOxWFV6cVbzfL9lgeejanU8P0k4EiOnMZztu/7JiCpa5Upjc2Sm48eZjKOtOCABGnk2xc3DD7RD0RjyWOybEGnFMARNbwZTbHiIJAcgB8B8W9s3ATf917enc3F5NHDZT8A2xgSGy/yskYFN8SfJGxkVv7OZovQ3wDrC8kvbZUbgBt5Y4miia47APYREWRu29UQgp8nSJVN/HHS3IyRANE7/4zqikeafR6mRrgRiZ23EdK9BoS74/U7pQqCoEtSY9n0SyKtEFoBmkO+mwYDtDqxO5OYmm2/IeP9h2YR+fdQ7RgnE5uPKY32lv0N4AhwkKawlwEOZN5xGXdRdWpIo5dazJfa+rZ/xhW0AeN4g1MEqbNFV3+EP0GzVMqOUZLwSUtuBcKtg75j9drYEuSpllbYtAKeBtWNlrDeLdVz78bDZmXC2Kdy3r7rADaJHeWsj5SKyz6wTYHLT1Y1JDGDHEu5QKQRVe+m/tBuwEpOUfcmJUINMuhNrC0SeBQK2rBKMoBSWSgLMCjc4hVDdihxNwcLxswjr13Ad4jvfLG4+BTlya8n9KU66X8y6uhAldX3l5QBzpl8pGQvwczRMCuP3us//4U+2T5kx44=
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 200
+          candidatesTokenCount: 76
+          totalTokenCount: 1313
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 200
+          toolUsePromptTokenCount: 883
+          toolUsePromptTokensDetails:
+          - modality: TEXT
+            tokenCount: 283
+          - modality: VIDEO
+            tokenCount: 600
+          thoughtsTokenCount: 154
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: 9n3OapyeMsutz7IP5P6J8QM
+  recorded_at: 2026-10-13T18:52:43.409453+00:00
