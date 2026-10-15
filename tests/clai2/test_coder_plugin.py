@@ -29,7 +29,7 @@ from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, Cod
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
+from pydantic_clai2.plugins import PluginHost, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
 
 
@@ -69,7 +69,7 @@ def coder_host(*, terminal: bool = False, **settings: JsonValue) -> PluginHost[o
 def test_settings_source_validates_saves_and_resets() -> None:
     host = coder_host(sub_agents=False, instructions='Keep this guidance.')
     source = CoderSource(host)
-    unrestricted, sub_agents, folders = source.rows()
+    unrestricted, sub_agents, folders, _skill_folders = source.rows()
     assert source.current(unrestricted) == 'false'
     assert source.apply(unrestricted, 'true') == 'Saved Unrestricted filesystem.'
     assert host.settings(CoderSettings).unrestricted_filesystem is True
@@ -113,8 +113,13 @@ async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, me
     plugin = CoderPlugin[object].from_host(coder_host(terminal=True))
 
     async def run_worker(work: Callable[[], list[str]]) -> list[str]:
+        return work()
+
+    def run_flow(source: CoderSource[object]) -> list[str]:
+        assert source.host is plugin.host
         return messages
 
+    monkeypatch.setattr(coder_plugin, 'run_coder_flow', run_flow)
     monkeypatch.setattr(coder_plugin, 'run_worker', run_worker)
     assert await plugin.configure() == ('\n'.join(messages) or 'No Coder settings changed.')
 
@@ -132,7 +137,9 @@ async def test_unrestricted_filesystem_setting_controls_paths_outside_the_projec
         'sub_agents': False,
     }
     host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings=settings)
-    loaded = load_plugin(CoderPlugin, host)
+    plugin = CoderPlugin[None].from_host(host)
+    await plugin.prepare()
+    loaded = collect(plugin)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -169,7 +176,7 @@ async def test_old_coder_declarations_load_without_rewriting_preferences(
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
     )
     await loader.load_all()
-    (coder,) = loader.capabilities()
+    coder, *_skills = loader.capabilities()
     assert isinstance(coder, Coder)
     (delegation,) = [
         capability for capability in cast(Coder[None], coder).capabilities if isinstance(capability, SubAgents)

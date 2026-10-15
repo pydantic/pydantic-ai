@@ -9,6 +9,7 @@ from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
+from functools import partial
 from itertools import takewhile
 from time import time_ns
 from types import TracebackType
@@ -104,7 +105,13 @@ from ._instrumentation import (
 )
 from ._lifecycle import LIFECYCLE_EVENT_TYPES
 from ._retained_audio import RetainedAudioBudget
-from ._utils import accumulate_transcript, pcm_to_wav, seed_pcm_audio, user_transcript_update
+from ._utils import (
+    accumulate_transcript,
+    fold_part_transcript,
+    pcm_to_wav,
+    seed_pcm_audio,
+    user_transcript_update,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -933,6 +940,9 @@ class RealtimeSession:
         self._active_assistant_index = 0
         self._assistant_transcript = ''
         self._output_audio = bytearray()
+        # The index and part of each output item whose part ended in the response being assembled, for a
+        # transcript of the item that arrives after it ended.
+        self._ended_assistant_parts: dict[str, tuple[int, SpeechPart | TextPart]] = {}
 
         # A realtime session is duplex: the user's part and the model's assemble at the same time, and
         # each response starts a fresh `_response_parts` list. Numbering streamed parts by their
@@ -1336,6 +1346,11 @@ class RealtimeSession:
                     if report.context_window_used is not None:
                         self._reported_context_window_used = report.context_window_used
                     self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
+                    if report.response_scoped and not self._responses_are_requests:
+                        # A request the model made (GPT-Live's backend finishing as the session closed), held to
+                        # the request limits as one reported while the session ran is.
+                        self.usage.requests += 1  # usage-attribution: the session owns its spans
+                        self._park_exceeded_limit(partial(self._check_final_request, report.usage))
                     self._span_usage.incr(report.usage)  # usage-attribution: what the session span reports
                     recorded = True
         except self._connection.transport_errors:
@@ -1387,13 +1402,18 @@ class RealtimeSession:
                 # A part's start always precedes its deltas and its end, so this is the whole part
                 # going: drop the rest of it rather than leave deltas a reader cannot attach to
                 # anything. Part indexes are unique for the life of the session (`_next_part_index`
-                # only ever increments), so this cannot reach a later part that reused the number.
-                self._drop_queued_part(evicted.index)
+                # only ever increments), except that a late transcript streams an ended part again
+                # under its index (see `_late_assistant_transcript`): that restart is whole by itself.
+                self._drop_queued_part(position, evicted.index)
 
-    def _drop_queued_part(self, index: int) -> None:
-        for position in reversed(range(len(self._queue))):
+    def _drop_queued_part(self, position: int, index: int) -> None:
+        """Drop the deltas and end queued from `position` on for the part at `index`, up to a restart of it."""
+        while position < len(self._queue):
             queued = self._queue[position]
+            if isinstance(queued, PartStartEvent) and queued.index == index:
+                break
             if not isinstance(queued, (PartDeltaEvent, PartEndEvent)) or queued.index != index:
+                position += 1
                 continue
             del self._queue[position]
             if isinstance(queued, PartDeltaEvent):
@@ -1701,7 +1721,10 @@ class RealtimeSession:
         """Stream speech transcripts for both the user and assistant.
 
         By default, yields finalized [`SpeechPart`][pydantic_ai.messages.SpeechPart] instances — one
-        per completed turn, carrying its `speaker` and full `transcript`.
+        per completed turn, carrying its `speaker` and full `transcript`. A model output item whose
+        transcript grows after its part ended, possibly while a later item is still streaming, is
+        yielded again each time it grows, with the transcript so far; `delta=True` carries the
+        `index` to replace it by.
 
         Pass `delta=True` for live captions, which yields
         [`TranscriptUpdate`][pydantic_ai.realtime.TranscriptUpdate]s carrying the new text, the turn's
@@ -2575,6 +2598,8 @@ class RealtimeSession:
         # An id-less provider cannot associate transcripts with overlapping input items. Its first
         # output frame is therefore the boundary that closes the anonymous user turn before the reply.
         events = self._finalize_anonymous_user_before_output()
+        if (late := self._late_assistant_transcript(text, output_text=output_text, item_id=item_id)) is not None:
+            return [*events, *late]
         events.extend(self._ensure_active_assistant(output_text=output_text, item_id=item_id))
         active = self._active_assistant
         assert active is not None
@@ -2590,6 +2615,42 @@ class RealtimeSession:
         if appended:
             events.append(PartDeltaEvent(index=self._active_assistant_index, delta=delta))
         return events
+
+    def _late_assistant_transcript(
+        self, text: str, *, output_text: bool, item_id: str | None
+    ) -> list[RealtimeEvent] | None:
+        """Fold a transcript into the part its item already ended, or `None` when the item has no ended part.
+
+        A provider can finish an item after a later item's content arrived, so the item's transcript comes late.
+        Text the stream already showed only updates the recorded part. New text streams the part again under the
+        index it ended with, which a `PartStartEvent` replaces, so the item still streams as one part. The part
+        under way keeps streaming around it, as the user's and the model's parts do.
+        """
+        if item_id is None or item_id == self._active_assistant_item_id:
+            return None
+        ended = self._ended_assistant_parts.get(item_id)
+        if ended is None or output_text != isinstance(ended[1], TextPart):
+            return None
+        index, part = ended
+        if isinstance(part, TextPart):
+            updated, appended = fold_part_transcript(part, text)
+            restarted: SpeechPart | TextPart = part
+            delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
+        else:
+            updated, appended = fold_part_transcript(part, text)
+            # Retained audio appears at the part's end, not at its start.
+            restarted = replace(part, audio=None)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
+        position = next(position for position, existing in enumerate(self._response_parts) if existing is part)
+        self._response_parts[position] = updated
+        self._ended_assistant_parts[item_id] = (index, updated)
+        if not appended:
+            return []
+        return [
+            PartStartEvent(index=index, part=restarted),
+            PartDeltaEvent(index=index, delta=delta),
+            PartEndEvent(index=index, part=updated),
+        ]
 
     def _handle_assistant_audio(self, data: bytes, *, item_id: str | None = None) -> list[RealtimeEvent]:
         events = self._finalize_anonymous_user_before_output()
@@ -2615,6 +2676,8 @@ class RealtimeSession:
             if self._retain_output and self._output_audio:
                 part = replace(part, audio=self._retain_audio(bytes(self._output_audio), output=True))
         index = self._active_assistant_index
+        if self._active_assistant_item_id is not None:
+            self._ended_assistant_parts[self._active_assistant_item_id] = (index, part)
         self._active_assistant = None
         self._active_assistant_item_id = None
         self._assistant_transcript = ''
@@ -2653,6 +2716,7 @@ class RealtimeSession:
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
+        self._ended_assistant_parts.clear()
         if interrupted:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):
@@ -2808,8 +2872,12 @@ class RealtimeSession:
         if not self._closed:
             self._check_usage_limits()
             return
+        self._park_exceeded_limit(self._check_usage_limits)
+
+    def _park_exceeded_limit(self, check: Callable[[], None]) -> None:
+        """Run a usage limit check on a closed session, parking what it raises for `close()` to raise."""
         try:
-            self._check_usage_limits()
+            check()
         except UsageLimitExceeded as exceeded:
             # Parked rather than raised, so it reaches the caller through the same single delivery point
             # as every other receive-side failure — `close()` takes the first undelivered error, and the
@@ -2818,6 +2886,30 @@ class RealtimeSession:
             # budget against the response it just settled.
             if not any(isinstance(delivered, UsageLimitExceeded) for delivered in self._delivered_errors):
                 self._park_error(exceeded)
+
+    def _check_final_request(self, usage: RequestUsage) -> None:
+        """Check a request reported only as the session closed.
+
+        Against `per_request_input_tokens_limit` and `request_limit`.
+        """
+        if self._usage_limits is not None:
+            self._usage_limits.check_per_request_input_tokens(usage.input_tokens)
+        self._check_reported_requests()
+
+    def _check_reported_requests(self) -> None:
+        """Check `request_limit` against the requests recorded, for a provider whose responses aren't requests.
+
+        Its requests are only known once the model made them, so the one past the limit is recorded before it ends
+        the session.
+        """
+        if (
+            self._usage_limits is not None
+            and (request_limit := self._usage_limits.request_limit) is not None
+            and self.usage.requests > request_limit
+        ):
+            raise UsageLimitExceeded(
+                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
+            )
 
     def _ensure_chat_span(self) -> None:
         """Begin assembling a response and open its `chat {model}` span if not already open.
@@ -4007,16 +4099,8 @@ class RealtimeSession:
                 self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
-        if (
-            event.response_scoped
-            and not self._responses_are_requests
-            and self._usage_limits is not None
-            and (request_limit := self._usage_limits.request_limit) is not None
-            and self.usage.requests > request_limit
-        ):
-            raise UsageLimitExceeded(
-                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
-            )
+        if event.response_scoped and not self._responses_are_requests:
+            self._check_reported_requests()
         self._count_closed_tool_batch_replies()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
@@ -4289,8 +4373,9 @@ class RealtimeSession:
     async def _pump(self, context: Context | None) -> None:
         """Drain the connection into the session queue under the explicit session-span context."""
         token = otel_context.attach(context) if context is not None else None
+        core_events = self._core_events(self._core) if self._core is not None else None
         try:
-            events = self._connection if self._core is None else self._core_events(self._core)
+            events = self._connection if core_events is None else core_events
             async for event in events:
                 if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
                     # Requests the connection answered with a response it was already asking for: none of
@@ -4304,6 +4389,9 @@ class RealtimeSession:
         except Exception as e:
             self._pump_error = e
         finally:
+            if core_events is not None:
+                # Closed here rather than whenever it is collected, so what it settles is settled before receiving ends.
+                await core_events.aclose()
             self._pump_finished = True
             self._apply_core(ReceiveEnded())
             self._exchange_progress.set()
@@ -4335,7 +4423,7 @@ class RealtimeSession:
         del self._transcript_watchdogs[turn_id]
         self._apply_core(TranscriptOverdue(turn_id=turn_id))
 
-    async def _core_events(self, core: SessionCore) -> AsyncIterator[RealtimeCodecEvent]:
+    async def _core_events(self, core: SessionCore) -> AsyncGenerator[RealtimeCodecEvent]:
         """The connection's codec events, feeding the core its lifecycle stream on the way."""
         async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
             # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
@@ -4344,9 +4432,20 @@ class RealtimeSession:
                 if not stale:
                     core.apply(event)
             self._core_advanced(core)
-            for event, _ in frame:
-                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+            codec = [event for event, _ in frame if not isinstance(event, LIFECYCLE_EVENT_TYPES)]
+            handled = 0
+            try:
+                for event in codec:
+                    handled += 1
                     yield event
+            finally:
+                # Receiving stopped (a limit tripped, or the session closed) before this session got to the rest of
+                # the frame: a tool call in it never runs. It is refused, so it is left out of history, or given an
+                # interrupted return if its response is recorded already (Gemini ends a tool-call response in the
+                # message that makes the calls).
+                for event in codec[handled:]:
+                    if isinstance(event, ToolCall):
+                        self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
 
     def _ensure_streamable(self) -> None:
         if not self._entered:

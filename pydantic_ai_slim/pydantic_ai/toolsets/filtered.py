@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -23,8 +23,9 @@ class FilteredToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result: dict[str, ToolsetTool[AgentDepsT]] = {}
+        filter_ctx = without_tool_name_path(ctx)
         for name, tool in (await super().get_tools(ctx)).items():
-            match = self.filter_func(ctx, tool.tool_def)
+            match = self.filter_func(filter_ctx, tool.tool_def)
             if inspect.isawaitable(match):
                 match = await match
             if match:

@@ -6522,6 +6522,73 @@ async def test_unconsumed_session_queue_never_orphans_a_delta(frames_per_turn: i
         assert {event.index for event in queued if isinstance(event, PartEndEvent)} <= started
 
 
+async def test_unconsumed_session_queue_keeps_a_restarted_part_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evicting a part's start leaves alone a later start under the same index, which carries the part again.
+
+    A late transcript streams its item's ended part again under the part's index, so the eviction of the first
+    start must stop at the restart rather than take its delta and end too. Not a VCR test: the queue bound is
+    internal, and a recording can't produce the late order on demand.
+    """
+    monkeypatch.setattr('pydantic_ai.realtime._session._SESSION_STRUCTURAL_QUEUE_SIZE', 5)
+    events: list[RealtimeCodecEvent] = [
+        OutputTranscript('Hello', is_final=False, item_id='a'),
+        OutputTranscript('Bonjour.', is_final=False, item_id='b'),
+        OutputTranscript(' world.', is_final=False, item_id='a'),
+        ResponseDone(),
+    ]
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+        parts: dict[int, list[tuple[str, str | None]]] = {}
+        for event in _queued_realtime_events(session):
+            if isinstance(event, PartDeltaEvent):
+                assert isinstance(event.delta, SpeechPartDelta)
+                parts.setdefault(event.index, []).append(('delta', event.delta.transcript_delta))
+            elif isinstance(event, (PartStartEvent, PartEndEvent)):
+                assert isinstance(event.part, SpeechPart)
+                kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+                parts.setdefault(event.index, []).append((kind, event.part.transcript))
+        assert list(parts.values()) == [
+            [('start', ''), ('delta', 'Bonjour.'), ('end', 'Bonjour.')],
+            [('start', 'Hello'), ('delta', ' world.'), ('end', 'Hello world.')],
+        ]
+
+
+async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> None:
+    """Text arriving for an ended part while a later item streams re-yields that turn, with the transcript so far.
+
+    `delta=True` carries the part's `index`, so a caption UI replaces that turn rather than adding one. Not a VCR
+    test: a recording can't produce the late order on demand.
+    """
+    events: list[RealtimeCodecEvent] = [
+        OutputTranscript('Hello', is_final=False, item_id='a'),
+        OutputTranscript('Bonjour.', is_final=False, item_id='b'),
+        OutputTranscript(' world.', is_final=False, item_id='a'),
+        ResponseDone(),
+    ]
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        transcripts, updates = await asyncio.gather(
+            aiter_to_list(session.stream_transcripts()), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert transcripts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Hello'),
+            SpeechPart(speaker='assistant', transcript='Hello world.'),
+            SpeechPart(speaker='assistant', transcript='Bonjour.'),
+        ]
+    )
+    assert updates == snapshot(
+        [
+            TranscriptUpdate(index=0, speaker='assistant', delta='Hello', transcript='Hello'),
+            TranscriptUpdate(index=1, speaker='assistant', delta='Bonjour.', transcript='Bonjour.'),
+            TranscriptUpdate(index=0, speaker='assistant', delta=' world.', transcript='Hello world.'),
+        ]
+    )
+
+
 async def test_parked_exception_survives_a_trimmed_queue() -> None:
     """A failure parked after heavy trimming is still delivered when the session closes."""
     events: list[RealtimeCodecEvent] = []
@@ -12002,6 +12069,16 @@ async def test_closing_records_the_usage_the_provider_reports_as_its_session_end
     assert conn.ended == 1
     assert session.usage.audio_seconds == 5
     assert session.context_window_used == 0.25
+
+
+async def test_closing_records_a_response_report_on_a_provider_whose_responses_are_requests() -> None:
+    """Such a provider counts a request as it records a response: a report made at the close only adds usage."""
+    conn = _EndingConnection([SessionUsage(RequestUsage(input_tokens=10))])
+    async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(request_limit=0)) as session:
+        pass
+
+    assert session.usage.input_tokens == 10
+    assert session.usage.requests == 0
 
 
 async def test_a_session_that_never_read_still_ends_the_provider_session() -> None:

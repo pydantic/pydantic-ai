@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
+from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
     MAX_SPECULATIONS_PER_PART,
     SpeculationCoordinator,
@@ -175,6 +176,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     your agent executes, so anyone who can intercept it can choose what your tools run.
     """
 
+    repl_store: CodeModeReplStore[AgentDepsT] | None = None
+    """Keep the `run_code` REPL across agent runs in this store.
+
+    Unset, each agent run starts a fresh REPL. With a store, a run that calls `run_code` restores
+    the state the store returns and saves the REPL when it ends, so a conversation of several runs
+    keeps its variables, imports, and function definitions. After `restart: true` the run saves its
+    new REPL, or `None` when the restarted snippet failed before creating one. A state Monty cannot
+    load is dropped and the run starts fresh. Not used under durable execution. See the Code Mode
+    guide for an example.
+    """
+
     dynamic_catalog: bool = False
     """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
 
@@ -265,6 +277,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_access=self.os_access,
                 mount=self.mount,
                 monty_sandbox_url=self.monty_sandbox_url,
+                repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -278,6 +291,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
             monty_sandbox_url=self.monty_sandbox_url,
+            repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
         )

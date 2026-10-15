@@ -85,6 +85,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
@@ -349,6 +350,16 @@ def test_openai_gpt_5_4():
             'supported_cache_retentions': (),
         }
     )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
+def test_openai_gpt_5_4_nano(model_name: str):
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
+    assert expected is not None
+    expected['supported_native_tools'] -= {ToolSearchTool}
+    assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -2097,6 +2108,34 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supported_cache_retentions': ('5m', '1h'),
             'supports_auto_cache': True,
         }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_meta_muse():
+    assert _normalize(MetaProvider.model_profile('muse-spark-1.3')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_forced_tool_choice': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_phase': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'openai_chat_supports_web_search': True,
+            'supported_native_tools': frozenset({WebSearchTool}),
+            'context_window': 1048576,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_meta_non_text_model():
+    """Image and transcription models only get the endpoint-wide facts, not the Muse text-model profile."""
+    assert _normalize(MetaProvider.model_profile('muse-image-1.0')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_forced_tool_choice': False}
     )
 
 

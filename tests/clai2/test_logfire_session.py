@@ -9,7 +9,7 @@ from pathlib import Path
 import anyio
 import pytest
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -198,7 +198,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
         assert (await shell.run_turn(TurnStart(text='first'), headless=True)).outcome == 'completed'
         child = shell.fork_session(None, [])
         await child.prompt('fork')
-        shell.session.clear()
+        await shell.session.clear()
         second_id = shell.session.summary.id
         assert (await shell.run_turn(TurnStart(text='second'), headless=True)).outcome == 'completed'
         with telemetry.span('resume command'):
@@ -408,6 +408,67 @@ async def test_background_run_keeps_nested_agents_and_threaded_ui_in_its_convers
     foreground_ui = next(span for span in spans if span.name == 'foreground UI')
     assert background_ui.parent == tool.context
     assert foreground_ui.parent == roots[0].context
+
+
+async def test_roots_end_within_their_lifetime_even_when_idle_until_exit(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Logfire rejects a span that started over a day before export, so a root left open until exit was lost."""
+    monkeypatch.setattr(logfire_session, 'ROOT_LIFETIME', 0)
+    session_id: str | None = None
+    plugin = load_logfire(
+        PluginHost(
+            name='observability',
+            console=Console(file=io.StringIO()),
+            settings={'ui_events': True},
+            session_id=lambda: session_id,
+        )
+    )
+    agent = Agent(TestModel(), deps_type=type(None), name='parent')
+    nested = Agent(TestModel(), deps_type=type(None), name='child')
+
+    def roots() -> list[ReadableSpan]:
+        return [span for span in recorder.spans() if span.name == 'CLAI session']
+
+    async def ended(count: int) -> None:
+        with anyio.fail_after(5):
+            while len(roots()) < count:
+                await anyio.sleep(0)
+
+    @agent.tool_plain
+    async def delegate() -> str:
+        await ended(2)
+        # The run's root has ended, but what the run records still nests where it ran.
+        telemetry.record('during run')
+        return (await nested.run('nested', capabilities=plugin.capabilities)).output
+
+    await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+    try:
+        # Ended before startup selects the conversation: it is not bound to it, a new root is.
+        await ended(1)
+        session_id = 'session-1'
+        await agent.run('first', capabilities=plugin.capabilities)
+        # `/clear` selects another conversation; the first one's ended root stays ended.
+        session_id = 'session-2'
+        telemetry.record('after run')
+        # Left idle until exit, as a terminal left open overnight.
+        await ended(3)
+    finally:
+        await close(plugin)
+
+    spans = recorder.spans()
+    provisional, run_root, later = roots()
+    assert [(span.attributes or {})['agent_session_id'] for span in (run_root, later)] == ['session-1', 'session-2']
+    assert (provisional.attributes or {})['agent_session_id'] not in {'session-1', 'session-2'}
+    assert all('reason' not in (span.attributes or {}) for span in roots())
+    opened = [span for span in spans if span.name == 'CLAI session opened']
+    assert [span.parent for span in opened] == [span.context for span in roots()]
+    tool = next(span for span in spans if operation(span) == 'execute_tool')
+    child_run, parent_run = [span for span in spans if operation(span) == 'invoke_agent']
+    assert parent_run.parent == run_root.context
+    assert child_run.parent == tool.context
+    assert next(span for span in spans if span.name == 'during run').parent == tool.context
+    assert next(span for span in spans if span.name == 'after run').parent == later.context
 
 
 @pytest.mark.parametrize('email', [None, '', 'developer@example.com'])

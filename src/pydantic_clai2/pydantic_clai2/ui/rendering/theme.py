@@ -8,8 +8,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import IO, TYPE_CHECKING
 
-from pydantic_clai2.config.theme_names import names as theme_names
-
 if TYPE_CHECKING:
     from rich.syntax import SyntaxTheme
     from termflow.diff import DiffRenderer, DiffTheme
@@ -21,6 +19,10 @@ _BRANDED: ContextVar[bool] = ContextVar('clai_branded', default=False)
 
 def names() -> tuple[str, ...]:
     """Use the same theme choices as settings validation."""
+    # Imported on use: the splash imports this module before it paints, and importing the `config`
+    # package builds Pydantic models, whose first build loads every installed Pydantic plugin.
+    from pydantic_clai2.config.theme_names import names as theme_names
+
     return theme_names()
 
 
