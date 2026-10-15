@@ -170,7 +170,7 @@ class SystemPromptMenu:
             .list_width(_LIST_WIDTH)
             .preview(self.details)
         )
-        return slash_search(builder, footer='enter select · esc close', key_source=menu_key)
+        return slash_search(builder, footer='Enter select - Esc close', key_source=menu_key)
 
     def edit(self, editor: TextEditor) -> str | None:
         """Edit your instructions; `None` when cancelled or unchanged. Emptying them removes them."""
@@ -205,7 +205,7 @@ def build_pager(text: str) -> Pager:
         PagerBuilder('System prompt (read-only)')
         .style(markdown_style())
         .reflow(lambda width: _wrap(text, width))
-        .footer_hint('↑↓ scroll · q close')
+        .footer_hint('↑↓ scroll - q close')
         .key_source(menu_key)
         .build()
     )

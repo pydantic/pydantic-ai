@@ -159,7 +159,7 @@ class DirectoryPicker:
             )
             .on_key('left', lambda _menu, _item: MenuResult(item=MenuItem('', value=self.current.parent)))
             .on_key('ctrl-l', lambda _menu, _item: MenuResult(item=MenuItem('', value='path')))
-            .footer_hint('Enter open/use | Left up | Ctrl+L path | Esc back')
+            .footer_hint('Enter open/use - Left up - Ctrl+L path - Esc back')
             .key_source(menu_key),
             items,
         )
@@ -285,7 +285,7 @@ class FolderMenu(Generic[DepsT]):
             .on_key('b', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='browse'))))
             .on_key('e', lambda _, item: self.action(item, kind='edit'))
             .on_key('d', lambda _, item: self.action(item, kind='remove'))
-            .footer_hint('Enter menu | a add/b browse | e edit/d rm | Esc')
+            .footer_hint('Enter menu - a add/b browse - e edit/d rm - Esc')
             .key_source(menu_key),
             [*notices, *items],
             initial=min(initial, len(items) - 1) + len(notices),
@@ -358,7 +358,7 @@ class FolderMenu(Generic[DepsT]):
             .initial(_safe_initial(self.folders()[index]) if index is not None else '')
             .placeholder('agents or global' if named else './team-agents (in each project) or ~/my-agents')
             .validator(lambda text: self.problem(text, named=named, index=index))
-            .footer_hint('Enter save | Esc cancel | Empty never removes')
+            .footer_hint('Enter save - Esc cancel - Empty never removes')
             .key_source(menu_key)
             .build()
         )

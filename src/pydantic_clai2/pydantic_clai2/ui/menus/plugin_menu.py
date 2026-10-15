@@ -20,7 +20,7 @@ from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
-_HINT = 'space on/off · c configure · r reload · d remove · esc close'
+_HINT = 'Enter/Space on/off - c configure - r reload - d remove - Esc close'
 _RESET = '\x1b[0m'
 _UNDIM = '\x1b[22m'
 """Termflow dims row descriptions; the status word cancels that so its colour reads clearly."""
@@ -129,6 +129,10 @@ class PluginMenu(Generic[DepsT]):
             lines += ['', *self._wrap(TURN_NOTICE, theme.MUTED)]
         return '\n'.join(lines)
 
+    def activate(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:
+        """Enter: toggle a plugin, like Space, or close on Save & close."""
+        return self.close(menu, item) if is_save_and_close(item) else self.toggle(menu, item)
+
     def toggle(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:
         """Space: enable or disable, saved immediately. Enabling opens the plugin's settings menu, if it has one."""
         entry = self._find(item)
@@ -180,7 +184,14 @@ class PluginMenu(Generic[DepsT]):
             .list_width(self._list_width())
             .preview(self.details)
         )
-        hotkeys = {' ': self.toggle, 'c': self.configure, 'r': self.reload, 'd': self.remove, 'q': self.close}
+        hotkeys = {
+            'enter': self.activate,
+            ' ': self.toggle,
+            'c': self.configure,
+            'r': self.reload,
+            'd': self.remove,
+            'q': self.close,
+        }
         return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys)
 
     def _name_width(self) -> int:

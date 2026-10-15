@@ -1709,7 +1709,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- / search · space on/off · c configure · r reload · d remove · esc close
+ / search - Enter/Space on/off - c configure - r reload - d remove - Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1722,17 +1722,17 @@ paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
-Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
-it, and `d` removes it. Press `/` to search: while searching, every key you type
+Enter or Space turns the highlighted plugin on or off; `c` configures it, `r`
+reloads it, and `d` removes it. Press `/` to search: while searching, every key you type
 filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
 Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
 close.
 
-Turning a plugin on with Space opens its settings menu straight away when it
+Turning a plugin on with Enter or Space opens its settings menu straight away when it
 offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
@@ -2388,9 +2388,9 @@ values from then on.
 ### Offer a settings menu: `async def configure(self)`
 
 Override `configure` with an async method that shows a settings menu and returns
-a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
-`/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`, and on
-`/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
+a line to show afterwards. CLAI opens it when the plugin is turned on (Enter or
+Space in `/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`,
+and on `/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
 the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
 and save only a key's name: let the user pick one with
 `prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to

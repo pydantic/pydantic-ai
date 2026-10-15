@@ -147,7 +147,7 @@ def pick_project(runners: Runners, projects: list[Project]) -> Project | None:
         .preview(lambda item: 'CLAI creates a write token for this project and saves it in /keys.')
     )
     result = runners.run_choice(
-        slash_search(builder, footer='enter use this project · esc cancel, nothing changes', key_source=menu_key)
+        slash_search(builder, footer='Enter use this project - Esc cancel, nothing changes', key_source=menu_key)
     )
     if result.cancelled or result.item is None or not isinstance(result.item.value, Project):
         return None

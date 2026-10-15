@@ -294,9 +294,9 @@ class SessionBrowser:
     def footer(self) -> str:
         """Mode-specific hints, including explicit confirmation of destructive actions."""
         if self.confirm is not None:
-            return plain(f'Delete saved session: {self.confirm.title}? y confirm / any other key cancel')
+            return plain(f'Delete saved session: {self.confirm.title}? y confirm - any other key cancel')
         if self.mode in ('search', 'rename'):
-            return plain(f'{self.mode}: {self.buffer} | Enter apply / Esc cancel')
+            return plain(f'{self.mode}: {self.buffer} - Enter apply - Esc cancel')
         if self.mode == 'preview':
             return 'Up/Down scroll - Esc back - Ctrl-C close'
         if self.mode == 'projects':
