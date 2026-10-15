@@ -1519,3 +1519,20 @@ def message_part(
 
 
 # endregion
+
+
+@pytest.fixture(autouse=True)
+def _hang_watchdog(request: pytest.FixtureRequest) -> Any:  # pragma: no cover  # TEMPORARY diagnostic
+    import faulthandler
+    import os
+    import threading
+
+    def report() -> None:
+        os.write(2, f'\nHANG? {request.node.nodeid}\n'.encode())
+        faulthandler.dump_traceback(all_threads=True)
+
+    timer = threading.Timer(120, report)
+    timer.daemon = True
+    timer.start()
+    yield
+    timer.cancel()
