@@ -349,7 +349,7 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
 
 
 class _SentFrameNormalizer:
-    """Map random client-generated ids in outbound frames to stable `<client-id-N>` placeholders."""
+    """Map random client-generated ids in outbound frames to stable `<client-id-N>` placeholders, and the library version to one."""
 
     def __init__(self) -> None:
         self._ids: dict[str, str] = {}
@@ -360,6 +360,9 @@ class _SentFrameNormalizer:
             for key, item in cast('dict[str, Any]', value).items():
                 if key in _CLIENT_ID_KEYS and isinstance(item, str) and _CLIENT_ID_RE.fullmatch(item):
                     result[key] = self._ids.setdefault(item, f'<client-id-{len(self._ids) + 1}>')
+                elif key == 'version' and isinstance(item, str) and item.startswith('pydantic-ai/'):
+                    # The library version an ElevenLabs `source_info` reports changes with every commit.
+                    result[key] = 'pydantic-ai/<version>'
                 else:
                     result[key] = self.normalize(item)
             return result
@@ -460,6 +463,10 @@ class ReplayWebSocket:
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
             if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
                 del actual['response']
+        if actual.get('type') == 'conversation_initiation_client_data' and 'source_info' not in expected:
+            # Recorded before ElevenLabs conversations reported the library in `source_info`; only that is let
+            # through, and the rest of the frame is still pinned.
+            actual.pop('source_info', None)
         if actual.get('type') == 'session.update' and _transcription_model(expected) == 'gpt-realtime-whisper':
             # Recorded before OpenAI's `input_transcription_model='auto'` resolved to `gpt-live-transcribe`;
             # only that model is let through, and the rest of the frame is still pinned.

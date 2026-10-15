@@ -73,11 +73,13 @@ from ..messages import (
     UploadedFile,
     VideoUrl,
 )
-from ..models import ModelRequestParameters
+from ..models import ModelRequestParameters, get_user_agent
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._utils import inject_trace_context, require_pcm_audio
+from ._inferred_lifecycle import InferredLifecycle
+from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
+from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -427,6 +429,17 @@ class _ClientToolCallPayload(BaseModel):
 
 class _ClientToolCallEvent(BaseModel):
     client_tool_call: _ClientToolCallPayload
+
+
+class _QueueStatusPayload(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    status: str
+    """`waiting` (hold audio follows as regular `audio` frames), `admitted`, or `timed_out` (a 4300 close follows)."""
+
+
+class _QueueStatusEvent(BaseModel):
+    queue_status_event: _QueueStatusPayload
 
 
 class _ContextUsagePayload(BaseModel):
@@ -954,7 +967,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         page = _DependentAgentsResponse.model_validate_json(response.content)
         return bool(page.agents) or page.has_more
 
-    async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> None:
+    async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> list[str]:
         """Make the agent's client tools match the session's tools over REST (`elevenlabs_tool_sync='sync'`).
 
         Creates missing workspace client tools, updates differing ones (`PATCH /v1/convai/tools/{id}`
@@ -967,10 +980,12 @@ class ElevenLabsRealtimeModel(RealtimeModel):
 
         When nothing differs, no extra request is made. Otherwise the workspace tool listing is
         fetched once to resolve tool ids, which the agent's resolved tool configs do not carry.
+
+        Returns the workspace tool ids attached to the agent once the sync is done.
         """
         remote_by_name = {tool.name: tool for tool in agent.client_tools if tool.name}
         if not _tool_mismatches(tools, agent.client_tools):
-            return
+            return agent.tool_ids
 
         # Convert every local tool into the ElevenLabs tool config dialect before the first REST
         # call: a validation failure must cost zero workspace mutations. Validating inside the create
@@ -1065,6 +1080,25 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                     ).decode(),
                 )
             _raise_for_status(response, self.agent_id)
+        return target_tool_ids
+
+    async def _restricted_tool_ids(self, attached_ids: list[str], allowed: set[str]) -> list[str]:
+        """The attached tool ids a conversation restricted to the `allowed` function tools may use.
+
+        Client tools outside `allowed` are left out; server-side (webhook/MCP/system) tools, and ids
+        the workspace listing doesn't report, are kept, as they are ElevenLabs' rather than the run's.
+        """
+        workspace_tools = await self._workspace_tool_listing()
+        restricted: list[str] = []
+        for tool_id in attached_ids:
+            workspace_tool = workspace_tools.get(tool_id)
+            if (
+                workspace_tool is None
+                or workspace_tool.tool_config.type != 'client'
+                or workspace_tool.tool_config.name in allowed
+            ):
+                restricted.append(tool_id)
+        return restricted
 
     # --- Configuration assembly -------------------------------------------------------------------
 
@@ -1087,22 +1121,15 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 'ElevenLabs Agents cannot disable input transcription per conversation (ASR drives the '
                 'agent pipeline), so `input_transcription_model=None` cannot be honored. Remove the setting.'
             )
-        if (tool_choice := settings.get('tool_choice')) is not None and tool_choice != 'auto':
-            # The agent's client tools are workspace state, not a per-conversation set, so nothing on
-            # the wire can hold the agent to a restriction; enforcing it on receipt would filter calls
-            # above the tool manager, which the realtime codec contract forbids.
-            raise UserError(
-                f'ElevenLabs Agents do not support `tool_choice` (got {tool_choice!r}): the tools an agent can '
-                'call are configured on the agent, not per conversation. Remove the setting and restrict the '
-                "run's tools with a filtered toolset or `prepare_tools` instead."
-            )
 
     @staticmethod
     def _requested_overrides(
-        instructions: str, settings: ElevenLabsRealtimeModelSettings
+        instructions: str, settings: ElevenLabsRealtimeModelSettings, tool_ids: list[str] | None
     ) -> list[tuple[tuple[str, ...], Any, str]]:
         """The `conversation_config_override` entries the session asks for, each with its source."""
         requested: list[tuple[tuple[str, ...], Any, str]] = []
+        if tool_ids is not None:
+            requested.append((('agent', 'prompt', 'tool_ids'), tool_ids, 'the `tool_choice` setting'))
         if instructions:
             # When the Pydantic AI agent defines instructions, the prompt override MUST
             # be permitted; without instructions the ElevenLabs-side prompt is inherited silently.
@@ -1127,10 +1154,11 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         instructions: str,
         agent: _AgentPreflight,
         settings: ElevenLabsRealtimeModelSettings,
+        tool_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Build `conversation_initiation_client_data`, preflight-checking every override's toggle."""
         permissions = agent.override_permissions
-        requested = self._requested_overrides(instructions, settings)
+        requested = self._requested_overrides(instructions, settings, tool_ids)
         overrides: dict[str, Any] = {}
         for path, value, source in requested:
             if not _override_allowed(permissions, path):
@@ -1145,7 +1173,11 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         if config_override := settings.get('elevenlabs_config_override'):
             _deep_merge(overrides, config_override)
 
-        payload: dict[str, Any] = {'type': 'conversation_initiation_client_data'}
+        payload: dict[str, Any] = {
+            'type': 'conversation_initiation_client_data',
+            # ElevenLabs' `source` enum names its own SDKs and integrations only.
+            'source_info': {'source': 'unknown', 'version': get_user_agent()},
+        }
         if overrides:
             payload['conversation_config_override'] = overrides
         if (extra_body := settings.get('elevenlabs_custom_llm_extra_body')) is not None:
@@ -1174,11 +1206,23 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         self._check_settings(settings)
         instructions = get_instructions(messages, model_request_parameters) or ''
         tools = model_request_parameters.function_tools or []
+        advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
+        if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
+            raise UserError(
+                "A realtime session can't force a tool call: ElevenLabs Agents have no per-response tool "
+                "choice, so `tool_choice='required'` or a list of tool names would never let the agent "
+                'answer. To restrict which tools the agent can use, pass `ToolOrOutput(function_tools=[...])` '
+                'instead.'
+            )
 
         # One REST round-trip yields the override-permission allowlist, the client tools, and the
         # agent's auth mode, so every fail-loudly check happens before the socket is dialed.
         agent = await self._fetch_agent()
+        # The agent's client tools are reconciled with every tool of the run, as they are workspace
+        # state shared with every conversation; a `tool_choice` restriction is this conversation's, and
+        # narrows the attached tools through the `tool_ids` override below.
         tool_sync = settings.get('elevenlabs_tool_sync', 'error')
+        attached_ids = agent.tool_ids
         if tool_sync == 'error':
             if mismatches := _tool_mismatches(tools, agent.client_tools):
                 details = '\n'.join(f'- {mismatch}' for mismatch in mismatches)
@@ -1189,13 +1233,20 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                     "sync them from Pydantic AI, or set `elevenlabs_tool_sync='off'` to trust the agent."
                 )
         elif tool_sync == 'sync':
-            await self._sync_tools(agent, tools)
+            attached_ids = await self._sync_tools(agent, tools)
         elif tool_sync == 'off':
             pass
         else:
             assert_never(tool_sync)
 
-        payload = self._initiation_payload(instructions=instructions, agent=agent, settings=settings)
+        restricted_tool_ids: list[str] | None = None
+        if len(advertised_tools) < len(tools):
+            restricted_tool_ids = await self._restricted_tool_ids(
+                attached_ids, {tool.name for tool in advertised_tools}
+            )
+        payload = self._initiation_payload(
+            instructions=instructions, agent=agent, settings=settings, tool_ids=restricted_tool_ids
+        )
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         url = await self._signed_url()
         headers: dict[str, str] = {}
@@ -1259,7 +1310,19 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         # event never finalizes a turn that produced nothing.
         self._response_open = False
         self._turn_interrupted = False
-        self._correction: _AgentResponseCorrectionPayload | None = None
+        # Whether the conversation is waiting in the workspace's concurrency queue, where the server
+        # plays hold audio over regular `audio` frames: that audio is no response of the agent's.
+        self._queued = False
+        # The responses, spoken turns, and inputs are worked out from the order of what is sent and
+        # received. The protocol does carry ids (`event_id` per turn, `response_id` on the whole-text
+        # `agent_response`, `in_response_to_ids`), but each arrives only with a response's *end*, while
+        # a response has to be announced with its first audio, and a tool round shares one `event_id`
+        # between the response that calls the tool and the one that answers its result.
+        self._lifecycle = InferredLifecycle()
+        # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
+        self._deferred_cut: RealtimeResponseInterruptedEvent | None = None
+        # Whether the lifecycle saw that barge-in before the cut-off response's terminal came.
+        self._cut_shown = False
 
     @property
     def model_name(self) -> str | None:
@@ -1287,7 +1350,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         """
         return self._context_limit_tokens
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
         """Send content to the ElevenLabs Agents conversation.
 
         Accepts `BinaryAudio` (raw PCM16 mono at the agent's input rate), a `str` text turn,
@@ -1295,6 +1358,20 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         interrupting or answering), and `ToolResult`. Manual turn-taking verbs, response
         cancellation, truncation, and images are not supported by the conversation WebSocket.
         """
+        input_id = self._lifecycle.input_sent(content)
+        try:
+            sent = await self._send(content)
+        except BaseException:
+            self._lifecycle.input_failed(input_id)
+            raise
+        if not sent:
+            # A fire-and-forget call's result: the agent asked for none, so none will be answered.
+            self._lifecycle.input_unanswerable(input_id)
+        # ElevenLabs acknowledges nothing: where the input joined the conversation is known now.
+        return self._lifecycle.take_pending()
+
+    async def _send(self, content: RealtimeInput) -> bool:
+        """Send `content` on the wire, returning whether anything was sent."""
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=_PROVIDER_LABEL)
             # The one client message without a `type` discriminator.
@@ -1312,12 +1389,15 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
                 # (verified live), but the protocol contract is that none is expected, so it is
                 # swallowed here.
                 self._fire_and_forget_tool_call_ids.discard(content.tool_call_id)
-                return
+                return False
+            # Rendered before anything goes out, so a result that can't be delivered raises a
+            # `UserError` rather than a transport error.
+            result = self._render_tool_output(content)
             await self._send_event(
                 {
                     'type': 'client_tool_result',
                     'tool_call_id': content.tool_call_id,
-                    'result': self._render_tool_output(content),
+                    'result': result,
                     # The codec's `ToolResult` is the already-rendered success/retry text, with no
                     # error flag left to map, so results always report success here; the model reads
                     # the retry semantics from the rendered text itself, as on Gemini.
@@ -1326,6 +1406,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             )
         else:
             raise UserError(f'{_PROVIDER_LABEL} does not support {type(content).__name__} input.')
+        return True
 
     def _render_tool_output(self, result: ToolResult) -> str:
         """Fold a tool result's text attachments into its string output; media cannot be delivered."""
@@ -1353,15 +1434,12 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(to_json(event).decode())
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def frames(self) -> AsyncIterator[RealtimeFrame]:
         while True:
             try:
                 raw = await self._ws.recv()
             except self.transport_errors as e:
-                # No reconnect support: a dropped conversation is fatal. Surface it as a
-                # non-recoverable error and end the stream cleanly (mirroring the Gemini provider),
-                # so callers don't treat a truncated turn as complete.
-                yield RealtimeSessionErrorEvent(message=f'{_PROVIDER_LABEL} connection closed: {e}', recoverable=False)
+                yield self._connection_lost(e)
                 return
             if not isinstance(raw, str):
                 continue
@@ -1371,17 +1449,60 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
                 # (mirroring the OpenAI provider), so it surfaces as a recoverable error instead.
                 events = await self._map_event(_loads_obj(raw))
             except ValueError as e:
-                yield RealtimeSessionErrorEvent(
+                error = RealtimeSessionErrorEvent(
                     message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True
                 )
+                yield self._lifecycle.message([error])
                 continue
             except self.transport_errors as e:
                 # Answering a ping can hit an already-dropped socket; that is the same fatal
                 # condition as a failed receive.
-                yield RealtimeSessionErrorEvent(message=f'{_PROVIDER_LABEL} connection closed: {e}', recoverable=False)
+                yield self._connection_lost(e)
                 return
-            for event in events:
-                yield event
+            if events:
+                yield self._frame(events)
+
+    def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
+        """The frame for the codec events one server message makes, with their lifecycle events."""
+        deferred, self._deferred_cut = self._deferred_cut, None
+        ends_response = any(isinstance(event, ResponseDone) for event in events)
+        if self._response_open and len(events) == 1 and isinstance(events[0], RealtimeResponseInterruptedEvent):
+            # The user barged in on the response under way. The server answers with that response's
+            # `agent_response`, cut down to what was heard (recorded live, right after the
+            # interruption), which is still the cut-off response's: shown to the lifecycle now, the cut
+            # would make that transcript a response of its own. So the application gets the barge-in
+            # now, and the lifecycle once something other than that terminal follows.
+            self._deferred_cut = events[0]
+            return [*self._lifecycle.take_pending(), events[0]]
+        if deferred is not None and not ends_response:
+            # Something else came first (the user's words, say): the lifecycle needs the cut now, to tell
+            # the speech that cut in from the turn being answered.
+            self._cut_shown = True
+            frame = self._lifecycle.message([deferred, *events])
+            return [event for event in frame if event is not deferred]
+        if self._cut_shown and ends_response:
+            # The cut-off response's terminal, after the lifecycle saw the cut: what it says was heard comes
+            # after the response is over, so it ends the response, and its transcript trails it.
+            self._cut_shown = False
+            late = [event for event in events if isinstance(event, OutputTranscript)]
+            frame = self._lifecycle.message([event for event in events if not isinstance(event, OutputTranscript)])
+            return [*frame, *(StaleEvent(event) for event in late)]
+        return self._lifecycle.message(events)
+
+    def _connection_lost(self, error: Exception) -> RealtimeFrame:
+        """The frame ending the conversation: no reconnect support, so a dropped conversation is fatal.
+
+        It is surfaced as a non-recoverable error (mirroring the Gemini provider), so callers don't treat
+        a truncated turn as complete, and everything under way on it is lost.
+        """
+        if isinstance(error, websockets.ConnectionClosed) and error.rcvd is not None and error.rcvd.code == 4300:
+            message = (
+                f"{_PROVIDER_LABEL} closed the conversation: it timed out in the workspace's concurrency queue "
+                'before the agent was free. Retry later, or raise the workspace concurrency limit.'
+            )
+        else:
+            message = f'{_PROVIDER_LABEL} connection closed: {error}'
+        return [*self._lifecycle.connection_lost(), RealtimeSessionErrorEvent(message=message, recoverable=False)]
 
     async def _map_event(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         """Map one server frame to codec events; pings are answered here and yield nothing."""
@@ -1389,15 +1510,23 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         if event_type == 'ping':
             await _send_pong(self._ws, data)
             return []
+        if event_type == 'queue_status':
+            status = _QueueStatusEvent.model_validate(data).queue_status_event.status
+            # A `timed_out` conversation is closed with code 4300 next, which ends the stream.
+            self._queued = status == 'waiting'
+            return []
         if event_type == 'audio':
             # Parse (and decode) before marking the response open, so a malformed frame that is
             # reported as a recoverable error leaves the turn state untouched.
             payload = _AudioEvent.model_validate(data).audio_event
             # `validate=True` so corrupted base64 raises (a `ValueError` the receive loop reports as
             # a recoverable error) instead of silently decoding to garbage or empty bytes.
-            delta = AudioDelta(data=base64.b64decode(payload.audio_base_64, validate=True))
+            audio = base64.b64decode(payload.audio_base_64, validate=True)
+            if self._queued:
+                # Hold audio the server plays while the conversation waits for a free slot.
+                return []
             self._response_open = True
-            return [delta]
+            return [AudioDelta(data=audio)]
         if event_type == 'client_tool_call':
             call = _ClientToolCallEvent.model_validate(data).client_tool_call
             # Every call goes through, including one naming a tool this run does not define (possible
