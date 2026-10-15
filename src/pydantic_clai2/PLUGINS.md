@@ -1539,7 +1539,9 @@ later, so you can change anything without reinstalling. It is the same field
 editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
 **Save & close** or Esc closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
-menu closes.
+menu closes. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the `/keys` picker, the masked token input, and the browser
+sign-in show as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1561,7 +1563,7 @@ will not rename a key while Ordinal uses it. Several plugins and providers can
 name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
 
 `/ordinal login` (or choosing browser sign-in in the menu) signs in through the
-browser, behind a waiting screen that Esc cancels. CLAI keeps the OAuth tokens in
+browser, behind a waiting screen that Esc cancels (a dialog, from the web UI). CLAI keeps the OAuth tokens in
 the OS keyring (the private credential file when no keyring exists), as `/mcp`
 does for OAuth servers, so later launches reuse them. It only works on the
 machine you run CLAI on. Loading and prompts never open the browser: until you
