@@ -319,11 +319,11 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
 )
-# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts both tool-search variants, but an unset
-# strategy resolves to `regex` there, the only variant it accepted until Bedrock added `bm25`, so requests that
-# don't ask for `bm25` keep the algorithm they've been sending. For the same reason, recorded `bm25` calls replay
-# as `regex` there unless the request asks for `bm25`. The other transports (Vertex, Foundry, and the
-# Messages-API-based `AsyncAnthropicBedrockMantle`) default to `bm25`.
+# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts both tool-search variants on models that
+# support tool search, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
+# and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
+# reason, recorded `bm25` calls replay as `regex` there unless the request asks for `bm25`. The other transports
+# (Vertex, Foundry, and the Messages-API-based `AsyncAnthropicBedrockMantle`) default to `bm25`.
 _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch

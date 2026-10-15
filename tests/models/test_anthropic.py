@@ -842,9 +842,10 @@ def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> 
 
 
 def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
-    """An unset strategy resolves to `regex` on the legacy Bedrock InvokeModel API, and `bm25` everywhere else.
+    """An unset strategy resolves to `regex` on the legacy Bedrock InvokeModel API.
 
-    The API accepts both variants; an explicit `bm25` is covered by `test_anthropic_tool_search_bm25_on_legacy_bedrock`.
+    Pins the outgoing tool parameter directly, which a cassette's default matchers wouldn't catch. An explicit
+    `bm25` is covered by `test_anthropic_tool_search_bm25_on_legacy_bedrock`.
     """
     base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
@@ -894,6 +895,7 @@ async def test_anthropic_tool_search_bm25_on_legacy_bedrock(
     await agent.run('Now search my files for the quarterly report.', message_history=result.all_messages())
 
     bodies = request_capture.bodies()
+    assert [body.get('anthropic_beta') for body in bodies] == [None, None, None, None]
     assert [
         [tool for tool in json_objects(body['tools']) if str(tool['name']).startswith('tool_search_tool_')]
         for body in bodies
