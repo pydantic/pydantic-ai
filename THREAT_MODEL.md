@@ -164,7 +164,7 @@ Canonical guidance: [filesystem security model](docs/harness/filesystem.md#secur
 
 On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its default Coder has unrestricted file access and uses a local workspace unless configured otherwise. Stock CLAI 2 does not provide an agent workspace on Windows. Launching from a directory does not contain its commands or file access. Stock defaults that matter for review:
 
-- The nearest `.env`, searched from the launch directory up through its parents, loads at startup without approval. It can set any environment variable not already set, including credentials and endpoints, before CLAI 2 reads its settings or loads plugins.
+- The nearest `.env`, searched from the launch directory up through its parents, loads at startup without approval. It can set any environment variable not already set, including credentials and endpoints, before CLAI 2 reads its settings or loads plugins. Setting `XDG_CONFIG_HOME` moves the settings, drop-in plugins, MCP trust records, and saved logins CLAI 2 uses.
 - Repository instructions, project skills, and project agent definitions reach the model by default. Agent definitions get no tools or model choice of their own.
 - Most tools, `shell` included, run through eager Code Mode by default, from `run_code` statements while the model is still writing. The REPL state is saved with the session.
 - `!` commands run in the host shell, not the agent workspace, and their output is saved for the next prompt.
