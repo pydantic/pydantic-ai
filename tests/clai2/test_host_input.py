@@ -1,4 +1,4 @@
-"""`PluginHost.send_input`, `interrupt`, `complete`, `sessions`, and the `on_command_end` moment."""
+"""`PluginHost.send_input`, `setting`, `interrupt`, `complete`, `sessions`, and the `on_command_end` moment."""
 
 import io
 from collections.abc import AsyncIterator, Sequence
