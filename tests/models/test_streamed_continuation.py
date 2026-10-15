@@ -1526,7 +1526,9 @@ async def test_resumed_stream_usage_before_its_first_segment_is_zero() -> None:
     agent = Agent(_ScriptedModel(segments=list(_RESUMED_SHAPES['pause-turn'][0])))
 
     async with agent.iter(message_history=messages) as run:
-        node = await run.next(run.next_node)
+        first = run.next_node
+        assert not isinstance(first, End)
+        node = await run.next(first)
         assert Agent.is_model_request_node(node)
         async with node.stream(run.ctx) as stream:
             assert stream.usage.total_tokens == 0
