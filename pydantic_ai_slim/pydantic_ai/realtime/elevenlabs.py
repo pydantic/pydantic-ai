@@ -1285,6 +1285,19 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 await opening.__aexit__(None, None, None)
 
 
+class _CascadeLifecycle(InferredLifecycle):
+    """The inferred lifecycle of a cascaded pipeline, which replies to speech only once it has transcribed it.
+
+    ElevenLabs' speech recognition hands the agent's LLM the user's words, and sends their transcript, before
+    the LLM answers them. So audio with no transcript is never what a reply answers: microphone audio streamed
+    before the agent's greeting (a reply nobody asked for) makes no spoken turn ahead of it.
+    """
+
+    def _join_turn(self, events: list[LifecycleEvent], *, replying: bool) -> str | None:
+        self._audio_since_reply = False
+        return super()._join_turn(events, replying=replying)
+
+
 class ElevenLabsRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to an ElevenLabs Agents conversation."""
 
@@ -1318,7 +1331,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         # a response has to be announced with its first audio, and a tool round shares one `event_id`
         # between the response that calls the tool and the one that answers its result.
         # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
-        self._lifecycle = InferredLifecycle(transcripts_lag_replies=False, replies_follow_transcripts=True)
+        self._lifecycle = _CascadeLifecycle(transcripts_lag_replies=False)
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
         self._deferred_cut: RealtimeResponseInterruptedEvent | None = None
         # Whether the lifecycle saw that barge-in before the cut-off response's terminal came.
@@ -1398,10 +1411,10 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
                     'type': 'client_tool_result',
                     'tool_call_id': content.tool_call_id,
                     'result': result,
-                    # The codec's `ToolResult` is the already-rendered success/retry text, with no
-                    # error flag left to map, so results always report success here; the model reads
-                    # the retry semantics from the rendered text itself, as on Gemini.
-                    'is_error': False,
+                    # A failed call, or one the model is asked to retry, as a standard run flags it on
+                    # Anthropic. (`error_type` is left to ElevenLabs' default: its values classify where an
+                    # integration's failure came from, which a Pydantic AI tool failure doesn't say.)
+                    'is_error': content.failed,
                 }
             )
         else:
