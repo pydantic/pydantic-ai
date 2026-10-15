@@ -776,10 +776,9 @@ def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]
         allowed_domain_sets: list[set[str]] = []
         for job in jobs.values():
             steps_value: object = _as_mapping(job).get('steps')
-            if not isinstance(steps_value, list):
+            if not _is_object_sequence(steps_value):
                 continue
-            steps: list[object] = steps_value
-            for step in steps:
+            for step in steps_value:
                 domains = _as_mapping(_as_mapping(step).get('env')).get('GH_AW_ALLOWED_DOMAINS')
                 if isinstance(domains, str):
                     allowed_domain_sets.append(set(domains.split(',')))
