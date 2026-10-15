@@ -7,6 +7,8 @@ A repository's `.clai/mcp_servers.json` and Claude Code-style `.mcp.json` load a
 settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 """
 
+import logging
+import os
 from collections.abc import Sequence
 
 from pydantic_ai.capabilities import AgentCapability, Toolset
@@ -29,6 +31,12 @@ from pydantic_clai2.mcp._settings import (
 from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
 from pydantic_clai2.mcp._tokens import OAuthSignIn, SignIn, TokenStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+
+# FastMCP configures its logger at import time, so override it after the imports above.
+# Its OAuth INFO logs include the callback URL and would otherwise appear over the prompt.
+# An explicit `FASTMCP_LOG_LEVEL` still wins for debugging.
+if 'FASTMCP_LOG_LEVEL' not in os.environ:  # pragma: no branch
+    logging.getLogger('fastmcp').setLevel(logging.WARNING)
 
 __all__ = [
     'CLAUDE_MCP_FILE',
