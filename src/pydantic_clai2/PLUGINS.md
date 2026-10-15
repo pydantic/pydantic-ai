@@ -1287,6 +1287,41 @@ launch's random token with the one in PATH, which must belong to you, be readabl
 starts CLAI and talks to it, such as the `workspaces` plugin: the address is printed without the
 token, and no browser opens.
 
+#### Driving another CLAI from Python: `web.client`
+
+`pydantic_clai2.builtin_plugins.web.client` makes the page's calls from Python, for a plugin or
+program that drives another CLAI's web UI, such as a workspace's:
+
+```python
+from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient
+
+async with WebClient(url='http://127.0.0.1:8765/', token=token) as client:
+    view = SessionView(client)
+    async with anyio.create_task_group() as group:
+        group.start_soon(view.follow)  # Keeps `view` current from the WebSocket.
+        await view.ready()
+        await view.send('Fix the failing test')
+        if await view.wait(timeout=600) == 'asking':
+            [asked] = view.questions.values()
+            await view.answer(asked.id, None)  # Or one `AskUserAnswer` per question.
+        print(view.items[-1].text, view.last_turn)
+        group.cancel_scope.cancel()
+```
+
+`WebClient(url=, token=)`, an async context manager, has `state()` (the page's `Snapshot`),
+`send(text)` (a prompt or `/command`), `interrupt()`, `transcript(session_id)`,
+`answer(request_id, answers)`, `answer_dialog(dialog_id, value)`, and `messages()`, the WebSocket's
+`ServerMessage`s. It sends the token in the header, and as the WebSocket's query parameter with the
+server's own `Origin`, never through a proxy. Failures raise what the server raised: `LookupError`
+(404), `RuntimeError` (409), `ValueError` (400 and 422), and `PermissionError` (403, a wrong token).
+
+`SessionView(client)` follows the stream as the page does: `items` (the transcript, the running turn
+included), `running`, `questions`, `dialogs`, `notices` (command results), `last_turn` (how it ended,
+with its usage), and `session`. `wait(timeout=)` returns `'idle'` once no turn runs and nothing sent
+through the view is still queued, `'asking'` while a question or dialog waits, `'timeout'`, or
+`'closed'` once the connection ended. `send`, `answer`, and `answer_dialog` go through the view so
+`wait` counts what they started or closed.
+
 ### `workspaces`: checkouts with their own CLAI
 
 The built-in `workspaces` plugin (`pydantic_clai2.builtin_plugins.workspaces`) starts disabled.

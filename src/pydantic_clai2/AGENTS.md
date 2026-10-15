@@ -378,6 +378,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/web/dialogs.py` | `BrowserDialogs`, `Dialogs` in the page: each dialog a message to every browser, answered with `POST /api/dialogs/ID`, open until then |
 | `builtin_plugins/web/live.py` | `Hub`, the connected browsers' queues on the shell's loop, and `BrowserAnswerer`, which races the browser against the terminal picker |
 | `builtin_plugins/web/app.py` | the FastAPI app and `Guard` (Host, token, and WebSocket Origin checks); every handler is `async`, so it runs on the shell's loop |
+| `builtin_plugins/web/client.py` | the client for another CLAI's web UI: `WebClient` (the page's API calls and WebSocket, with the token and `Origin` the `Guard` checks) and `SessionView`, which follows the stream as the page does and `wait`s for a turn, counting what it sent as queued until it starts; tested against the real app served in-process |
 | `builtin_plugins/web/server.py` | `WebServer`: uvicorn on CLAI's own loop, without its signal handlers or logs |
 | `builtin_plugins/web/static/` | the built browser UI, committed so installs need no Node; rebuild with `npm run build` in `web-ui/` |
 | `cli/web.py` | `clai2 --web`: a shell with no terminal prompt, `web` loaded for that launch, the transcript logged as plain text, and a `SessionWorkspace` attached; `--resume ID` starts in the session's directory (`_start_in`); `--port` and `--token-file` (read by `_cli.read_token`) set `WebPlugin.port` and `token` for a launcher |
