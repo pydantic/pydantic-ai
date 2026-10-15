@@ -297,6 +297,7 @@ async def test_a_host_without_a_shell() -> None:
     assert not host.interrupt()
     assert await host.complete('/') == []
     assert host.sessions is None
+    assert host.tasks is None
 
 
 def response(text: str) -> list[ModelMessage]:

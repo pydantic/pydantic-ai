@@ -1977,16 +1977,16 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`
 
-Seven `async` methods fire outside the agent run, in the shell:
+Eight `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -1997,6 +1997,7 @@ Seven `async` methods fire outside the agent run, in the shell:
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+| `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2025,6 +2026,15 @@ instead, including a `/plugins` command refused while delegated tasks run. A com
 with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
+
+`on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
+event from the task's own run (text, thinking, tool calls and results), its
+`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
+it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
+shows. It fires for every stream event of every running task, down to each text and thinking
+delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
+elsewhere. A failure is printed and the task goes on.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2188,7 +2198,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2232,6 +2242,17 @@ prompt the keyboard does:
   model, as its menu would with `host.save_settings`, then loads it again if they changed. Adding
   and removing declarations, and a plugin's own menu, go through the prompt:
   `send_input('/plugins configure NAME')`.
+- `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
+  conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
+  such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
+  `-p` run; with an agent other than CLAI's stock one; and on a host built outside the shell. Read
+  it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
+  each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
+  (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
+  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
+  `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
+  `send_input` would. An ID from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
