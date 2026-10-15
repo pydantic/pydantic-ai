@@ -543,10 +543,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     async def _emit_changes(self, ctx: RunContext[AgentDepsT], before: list[PlanItem], after: list[PlanItem]) -> None:
         """Emit typed run events for the difference between two store snapshots.
 
-        Every plan tool emits as its last durable action. Under an engine that runs function tools in
-        workflow code, like DBOS, the event stream handler's steps for these events start while the
-        tool is still running and share its step counter, so store calls made after emitting could
-        replay in a different order than they were recorded.
+        Each plan tool that changes the plan calls this as its last durable action. Under an engine
+        that runs function tools in workflow code, like DBOS, the event stream handler's steps for
+        these events start while the tool is still running and share its step counter, so store
+        calls made after emitting could replay in a different order than they were recorded.
         """
         old = {item.id: item for item in before}
         new = {item.id: item for item in after}
@@ -672,13 +672,13 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         return f"Cannot block '{item.content}': every step it depends on is already resolved."
 
     @staticmethod
-    def _stored_status(items: list[PlanItem], task_id: str, requested: TaskStatus) -> str:
+    async def _stored_status(store: PlanStore, task_id: str, requested: TaskStatus) -> str:
         """The status the store now holds, which is not always the one that was asked for.
 
         Reconciliation may have blocked the step on an unmet dependency. Reporting the request
         instead would tell the model one thing and show it another in the next turn's plan.
         """
-        item = find_item(items, task_id)
+        item = await store.get_item(task_id)
         return (requested if item is None else item.status).value
 
     async def update_task_status(self, ctx: RunContext[AgentDepsT], task_id: str, status: TaskStatus) -> str:
@@ -703,8 +703,9 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         await store.update_item(task_id, status=status)
         await self._sync_dependency_blocks(store)
         after = await store.get_items()
+        stored = await self._stored_status(store, task_id, status)
         await self._emit_changes(ctx, items, after)
-        return f"Updated step '{item.content}' status to '{self._stored_status(after, task_id, status)}'."
+        return f"Updated step '{item.content}' status to '{stored}'."
 
     async def update_task_statuses(self, ctx: RunContext[AgentDepsT], updates: list[PlanStatusUpdate]) -> str:
         """Update several steps' statuses in one call.
@@ -748,11 +749,11 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             await store.update_item(item.id, status=status)
         await self._sync_dependency_blocks(store)
         after = await store.get_items()
-        await self._emit_changes(ctx, before, after)
         lines = [
-            f'- [{item.id}] {item.content} -> {self._stored_status(after, item.id, status)}'
+            f'- [{item.id}] {item.content} -> {await self._stored_status(store, item.id, status)}'
             for item, status in resolved
         ]
+        await self._emit_changes(ctx, before, after)
         return f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines)
 
     async def remove_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:

@@ -31,12 +31,13 @@ from collections.abc import (
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
 from pydantic_ai_harness.localstack import LocalStack
@@ -400,21 +401,31 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
         assert f'{agent_name}__capability__{capability_id}.{name}' in step_names
 
 
-class _SlowReadPlanStore(InMemoryPlanStore):
-    """A plan store whose `get_item` returns once the event stream handler has handled `last_event`.
+_READINESS_WAIT_TIMEOUT = 5.0
 
-    It stands in for a read slow enough that the handler steps for a plan tool's events all start
-    while it is in flight. A replay returns the recorded read without calling the store. The status
-    tools read nothing after emitting, so only a regression reaches it.
+
+class _SlowReadPlanStore(InMemoryPlanStore):
+    """A plan store whose `get_item`, once a plan tool has emitted `last_event`, waits until it's handled.
+
+    It stands in for a read slow enough that the event stream handler's steps for the tool's events
+    all start while it is in flight. A replay returns the recorded read without calling the store.
+    The status tools read before emitting, so only a regression makes the wait.
     """
 
     def __init__(self, last_event: tuple[type[PlanStatusChangedEvent | PlanCompletedEvent], str]) -> None:
         super().__init__()
         self.last_event = last_event
-        self.handled = asyncio.Event()
+        self.handled: asyncio.Event | None = None
+        """Created when the tool emits `last_event`, inside the run's event loop, and set once it's handled."""
 
-    async def get_item(self, item_id: str) -> PlanItem | None:  # pragma: no cover - a read after emitting
-        await self.handled.wait()
+    def is_last_event(self, event: object) -> bool:
+        event_type, task_id = self.last_event
+        return isinstance(event, event_type) and event.item.id == task_id
+
+    async def get_item(self, item_id: str) -> PlanItem | None:
+        if self.handled is not None:
+            with anyio.fail_after(_READINESS_WAIT_TIMEOUT):  # pragma: no cover
+                await self.handled.wait()
         return await super().get_item(item_id)
 
 
@@ -462,9 +473,8 @@ def _plan_event_agent(
     store = _SlowReadPlanStore(last_event)
 
     async def handle(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
-        event_type, task_id = store.last_event
         async for event in events:
-            if isinstance(event, event_type) and event.item.id == task_id:
+            if store.handled is not None and store.is_last_event(event):
                 store.handled.set()
 
     agent = Agent(
@@ -485,8 +495,8 @@ _PLAN_EVENT_AGENTS: dict[str, tuple[Agent[None, str], _SlowReadPlanStore]] = {
         ),
         (PlanStatusChangedEvent, 'b'),
     ),
-    # One status change, so the tool's own reads give it one durable step after its events at most.
-    # Another capability's hook adds the second.
+    # A single update reads one step back, so another capability's hook supplies the second durable
+    # call that could follow the tool's events.
     'update_task_status': _plan_event_agent(
         'plan_status_agent',
         ('update_task_status', {'task_id': 'a', 'status': 'completed'}),
@@ -498,7 +508,9 @@ _PLAN_EVENT_WORKFLOWS = {key: _workflow(agent) for key, (agent, _) in _PLAN_EVEN
 
 
 @pytest.mark.parametrize('scenario', sorted(_PLAN_EVENT_AGENTS))
-async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(scenario: str, dbos: DBOS) -> None:
+async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
+    scenario: str, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A plan tool emits its events as its last durable action, so their handler steps keep their order.
 
     DBOS runs a function tool in workflow code and starts a handler step for each event the tool
@@ -508,7 +520,15 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(scenario
     round trip live, a journal lookup on replay.
     """
     _, store = _PLAN_EVENT_AGENTS[scenario]
-    store.handled = asyncio.Event()
+    store.handled = None
+    emit = RunContext.emit
+
+    async def emit_marking_last_event(self: RunContext[None], event: CapabilityEvent, /) -> CapabilityEvent:
+        if store.is_last_event(event):
+            store.handled = asyncio.Event()
+        return await emit(self, event)
+
+    monkeypatch.setattr(RunContext, 'emit', emit_marking_last_event)
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
         assert await _PLAN_EVENT_WORKFLOWS[scenario]() == 'done'
