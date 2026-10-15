@@ -121,6 +121,7 @@ class DelegationTasks:
         self._stopping: set[str] = set()
         self._receivers: dict[tuple[str, str | None], Callable[[SystemPromptPart], str | None]] = {}
         self._steering: dict[str, Callable[[str], str | None]] = {}
+        self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._open = False
@@ -328,6 +329,7 @@ class DelegationTasks:
             record.output = f'{type(exc).__name__}: {exc}'
         finally:
             _CHILD.reset(token)
+            self._unsteered.pop(record.id, None)
             record.status, record.finished_at = 'finished', time.time()
             # A cancelled/failed parent cannot leave descendants without an observer.
             if record.outcome != 'ok':
@@ -399,14 +401,19 @@ class DelegationTasks:
         """Send a running child a user message, which its run reads at its next model request.
 
         Returns `False` when the child is not running, so a caller can offer to resume it instead.
-        A message sent as the child's final response settles may arrive too late for it to read.
+        A message sent before the child's run starts waits for it; one sent as its final response
+        settles may arrive too late for it to read. Raises `ValueError` for blank text and `KeyError`
+        for an unknown task.
         """
         if not text.strip():
             raise ValueError('Steering text must not be empty')
-        enqueue = self._steering.get(task_id)
-        if self.records[task_id].status != 'running' or enqueue is None:
+        if self.records[task_id].status != 'running':
             return False
-        enqueue(text)
+        enqueue = self._steering.get(task_id)
+        if enqueue is None:
+            self._unsteered.setdefault(task_id, []).append(text)
+        else:
+            enqueue(text)
         return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
@@ -455,6 +462,8 @@ class DelegationTasks:
         self._receivers[key] = enqueue
         if steer is not None and parent_id is not None:
             self._steering[parent_id] = steer
+            for text in self._unsteered.pop(parent_id, ()):
+                steer(text)
         self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
         try:
             yield

@@ -263,6 +263,27 @@ async def test_steer_reaches_a_running_child_only() -> None:
                 owner.steer('unknown', 'hello')
 
 
+async def test_steer_sent_before_the_child_run_starts_waits_for_it() -> None:
+    seen: list[list[ModelMessage]] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'child answer'
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.event is None and update.task.status == 'running':
+            assert owner.steer(update.task.id, 'start with the README')
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    owner = DelegationTasks(observer=observe)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                await parent.run('go', conversation_id='parent')
+    assert 'start with the README' in str(seen[0])
+
+
 async def test_promotion_and_targeted_cancellation(tmp_path: Path) -> None:
     first_started, second_started = asyncio.Event(), asyncio.Event()
     release = asyncio.Event()
