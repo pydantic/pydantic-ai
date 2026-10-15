@@ -115,6 +115,12 @@ async def test_check_refuses_a_picked_or_typed_value_the_service_would_reject(mo
         with pytest.raises(ValueError, match='Bot tokens are refused'):
             await choose_key(name='DEMO_TOKEN', label='Demo token', dialogs=ScriptedDialogs(answers), check=reject_bots)
     assert 'DEMO_TOKEN' not in api_keys.load_keys()
+    # A value `check` accepts is saved as usual.
+    accepted = ScriptedDialogs([Pick(value='enter'), Type(text='user-typed')])
+    assert await choose_key(name='DEMO_TOKEN', label='Demo token', dialogs=accepted, check=reject_bots) == KeyReference(
+        name='DEMO_TOKEN'
+    )
+    api_keys.delete_key(name='DEMO_TOKEN')
 
     real_load_keys = api_keys.load_keys
     dialogs = ScriptedDialogs([Pick(value='BOT')])
