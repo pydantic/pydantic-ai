@@ -39,7 +39,7 @@ with try_import() as imports_successful:
     from starlette.routing import Route
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
-    from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ResourceContents, ToolResult
+    from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ToolResult
     from pydantic_ai.ui.ag_ui import AGUIAdapter
     from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -310,22 +310,25 @@ async def test_tool_span_omits_app_binary_without_binary_content(capfire: Captur
     )
 
 
-async def test_read_resource_contents_keeps_mime_type_and_meta(weather: MCPToolset[Any]):
-    """`read_resource_contents` keeps what `read_resource` drops: the UI resource's MIME type and `_meta.ui`."""
-    async with weather:
-        contents = await weather.read_resource_contents('ui://weather/forecast')
-        text = await weather.read_resource('ui://weather/forecast')
-    assert contents == snapshot(
-        [
-            ResourceContents(
-                uri='ui://weather/forecast',
-                content='<!doctype html><html><body>forecast</body></html>',
-                mime_type='text/html;profile=mcp-app',
-                metadata={'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
-            )
-        ]
-    )
-    assert text == contents[0].content
+UI_RESOURCE_READ = {
+    'contents': [
+        {
+            'uri': 'ui://weather/forecast',
+            'mimeType': 'text/html;profile=mcp-app',
+            '_meta': {'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
+            'text': '<!doctype html><html><body>forecast</body></html>',
+        }
+    ],
+    **READ_FIELDS,
+}
+"""The `ReadResourceResult` the server returns for the UI resource, as the page expects to receive it."""
+
+
+async def test_read_resource_for_app(weather: MCPToolset[Any]):
+    """Reading the app's page keeps the MIME type and `_meta.ui` that `read_resource` drops, in wire form."""
+    assert await weather.read_resource_for_app('ui://weather/forecast') == UI_RESOURCE_READ
+    with pytest.raises(MCPError, match='ui://missing'):
+        await weather.read_resource_for_app('ui://missing')
 
 
 async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[None, str]):
@@ -523,20 +526,6 @@ def wrapped_text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
     }
 
 
-UI_RESOURCE_READ = {
-    'contents': [
-        {
-            'uri': 'ui://weather/forecast',
-            'mimeType': 'text/html;profile=mcp-app',
-            '_meta': {'ui': {'csp': {'connectDomains': ['https://api.weather.example']}}},
-            'text': '<!doctype html><html><body>forecast</body></html>',
-        }
-    ],
-    **READ_FIELDS,
-}
-"""The `ReadResourceResult` the server returns for the UI resource, as the page expects to receive it."""
-
-
 @pytest.mark.parametrize(
     ('name', 'arguments', 'expected'),
     [
@@ -603,13 +592,6 @@ async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any]
     monkeypatch.setattr(weather.client, 'call_tool', refuse)
     with pytest.raises(MCPError, match='call refused'):
         await weather.call_tool_for_app('select_day', {'day': 'friday'})
-
-
-async def test_read_resource_for_app(weather: MCPToolset[Any]):
-    """A page's resource reads get the server's full result in wire form."""
-    assert await weather.read_resource_for_app('ui://weather/forecast') == UI_RESOURCE_READ
-    with pytest.raises(MCPError, match='ui://missing'):
-        await weather.read_resource_for_app('ui://missing')
 
 
 @pytest.mark.skipif(not MCP_SDK_V2, reason='FastMCP 3 clients have no client extensions')

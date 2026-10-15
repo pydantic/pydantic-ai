@@ -138,7 +138,6 @@ __all__ = (
     'EmbeddedResource',
     'ContentBlock',
     'PromptRole',
-    'ResourceContents',
     'MCPAppToolResult',
 )
 
@@ -555,45 +554,6 @@ class EmbeddedResource:
 
 ContentBlock = messages.TextContent | messages.BinaryContent | ResourceLink | EmbeddedResource
 """A content block that can be used in prompts and tool results."""
-
-
-@dataclass(repr=False, kw_only=True)
-class ResourceContents:
-    """One content item read from a resource, with the MIME type and `_meta` the server sent alongside it.
-
-    Returned by [`MCPToolset.read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents].
-
-    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#reading-resources).
-    """
-
-    uri: str
-    """The URI of the content item."""
-
-    content: str | messages.BinaryContent
-    """The content: text as `str`, binary data as [`BinaryContent`][pydantic_ai.messages.BinaryContent]."""
-
-    mime_type: str | None = None
-    """The MIME type of the content, if known."""
-
-    metadata: dict[str, Any] | None = None
-    """
-    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
-    for notes on _meta usage.
-    """
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-    @classmethod
-    def from_mcp_sdk(
-        cls, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> ResourceContents:
-        """Convert from MCP SDK resource contents to Pydantic AI `ResourceContents`."""
-        return cls(
-            uri=str(resource.uri),
-            content=_resource_content_to_pai(resource),
-            mime_type=mcp_optional_field(resource, 'mime_type', str),
-            metadata=resource.meta,
-        )
 
 
 @dataclass(repr=False, kw_only=True)
@@ -1726,27 +1686,18 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        contents = await self._read_resource(uri)
+        resource_uri = uri if isinstance(uri, str) else uri.uri
+        async with self:
+            try:
+                contents = await self.client.read_resource(AnyUrl(resource_uri))
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+
         return (
             _resource_content_to_pai(contents[0])
             if len(contents) == 1
             else [_resource_content_to_pai(c) for c in contents]
         )
-
-    async def read_resource_contents(self, uri: str | Resource) -> list[ResourceContents]:
-        """Read a resource, keeping each content item's URI, MIME type and `_meta`.
-
-        Use this over [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource] when the metadata matters,
-        such as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) UI resource, whose
-        `_meta.ui` carries the Content Security Policy and permissions its sandbox needs.
-
-        Args:
-            uri: The URI of the resource to read, or a [`Resource`][pydantic_ai.mcp.Resource] object.
-
-        Raises:
-            MCPError: If the server returns an error.
-        """
-        return [ResourceContents.from_mcp_sdk(c) for c in await self._read_resource(uri)]
 
     async def call_tool_for_app(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call a tool for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
@@ -1789,12 +1740,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     async def read_resource_for_app(self, uri: str) -> dict[str, Any]:
         """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
 
-        The counterpart of [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] for the page's
-        `resources/read` requests. Send the result back to the page as is. MCP Apps has no visibility setting for
-        resources, so any resource on the server can be read; check `uri` first if a page should only reach some.
+        Unlike [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource], this keeps each item's MIME type and
+        `_meta`, where `_meta.ui` holds the Content Security Policy and permissions for the page's iframe. Use it to
+        load the page itself, and to answer the page's own `resources/read` requests: send the result back as is.
+        MCP Apps has no visibility setting for resources, so any resource on the server can be read; check `uri`
+        first if a page should only reach some.
 
         Args:
-            uri: The URI of the resource the page asked for.
+            uri: The URI of the resource.
 
         Returns:
             The MCP `ReadResourceResult` in wire format (camelCase keys), with its `contents`.
@@ -1808,16 +1761,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return result.model_dump(mode='json', by_alias=True, exclude_none=True)
-
-    async def _read_resource(
-        self, uri: str | Resource
-    ) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
-        resource_uri = uri if isinstance(uri, str) else uri.uri
-        async with self:
-            try:
-                return await self.client.read_resource(AnyUrl(resource_uri))
-            except McpError as e:
-                raise MCPError.from_mcp_sdk(e) from e
 
     def __repr__(self) -> str:
         repr_args = [f'client={self.client!r}']

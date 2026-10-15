@@ -426,7 +426,7 @@ MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concept
 - [`list_resources()`][pydantic_ai.mcp.MCPToolset.list_resources] — list all available resources on the server
 - [`list_resource_templates()`][pydantic_ai.mcp.MCPToolset.list_resource_templates] — list resource templates with parameter placeholders
 - [`read_resource(uri)`][pydantic_ai.mcp.MCPToolset.read_resource] — read the contents of a specific resource by URI
-- [`read_resource_contents(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_contents] — read a resource as [`ResourceContents`][pydantic_ai.mcp.ResourceContents], keeping each item's MIME type and `_meta`
+- [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] — read a resource as the MCP result, keeping each item's MIME type and `_meta`
 
 Text content is returned as `str`, and binary content as [`BinaryContent`][pydantic_ai.messages.BinaryContent].
 
@@ -487,9 +487,9 @@ When the agent calls such a tool, the [`ToolReturn`][pydantic_ai.messages.ToolRe
 
 Your frontend needs three things from your backend:
 
-- The page: [`read_resource_contents(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_contents] returns the HTML with its MIME type and `_meta`; `_meta.ui` holds the CSP and permissions for the iframe.
+- The page: [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] returns the MCP result as is, the shape app hosts expect: each item in `contents` has the HTML, its `mimeType` and its `_meta`, where `_meta.ui` holds the CSP and permissions for the iframe.
 - Tool calls the page makes: [`call_tool_for_app(name, arguments)`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] returns the MCP result as is, including `isError` results. Only tools whose `_meta.ui.visibility` includes `"app"`, or omits `visibility`, can be called. `process_tool_call` doesn't apply.
-- Resource reads the page makes: [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app] returns the MCP result as is. Any resource on the server can be read.
+- Resource reads the page makes: the same [`read_resource_for_app(uri)`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. Any resource on the server can be read.
 
 Protocol errors raise [`MCPError`][pydantic_ai.mcp.MCPError]; send its `code`, `message` and `data` back to the page as the JSON-RPC error. Other failures, such as an unreachable server, raise as they are.
 
@@ -507,9 +507,8 @@ agent = Agent('openai:gpt-5.2', toolsets=[weather])
 
 async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
     """Return the page's HTML and its `_meta.ui`."""
-    [contents] = await weather.read_resource_contents(resource_uri)
-    assert isinstance(contents.content, str)
-    return contents.content, (contents.metadata or {}).get('ui', {})
+    [contents] = (await weather.read_resource_for_app(resource_uri))['contents']
+    return contents['text'], contents.get('_meta', {}).get('ui', {})
 
 
 async def app_request(method: str, params: dict[str, Any]) -> dict[str, Any]:

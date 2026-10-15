@@ -29,7 +29,7 @@ class MCPAppToolResult(TypedDict):
 
     resource_uri: str
     """The `ui://` URI of the app's HTML resource, read with
-    [`MCPToolset.read_resource_contents`][pydantic_ai.mcp.MCPToolset.read_resource_contents]."""
+    [`MCPToolset.read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]."""
 
     tool_input: dict[str, Any]
     """The arguments the model called the tool with."""
