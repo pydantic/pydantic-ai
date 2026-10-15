@@ -9,6 +9,7 @@ from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
+from functools import partial
 from itertools import takewhile
 from time import time_ns
 from types import TracebackType
@@ -1345,6 +1346,11 @@ class RealtimeSession:
                     if report.context_window_used is not None:
                         self._reported_context_window_used = report.context_window_used
                     self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
+                    if report.response_scoped and not self._responses_are_requests:
+                        # A request the model made (GPT-Live's backend finishing as the session closed), held to
+                        # the request limits as one reported while the session ran is.
+                        self.usage.requests += 1  # usage-attribution: the session owns its spans
+                        self._park_exceeded_limit(partial(self._check_final_request, report.usage))
                     self._span_usage.incr(report.usage)  # usage-attribution: what the session span reports
                     recorded = True
         except self._connection.transport_errors:
@@ -2866,8 +2872,12 @@ class RealtimeSession:
         if not self._closed:
             self._check_usage_limits()
             return
+        self._park_exceeded_limit(self._check_usage_limits)
+
+    def _park_exceeded_limit(self, check: Callable[[], None]) -> None:
+        """Run a usage limit check on a closed session, parking what it raises for `close()` to raise."""
         try:
-            self._check_usage_limits()
+            check()
         except UsageLimitExceeded as exceeded:
             # Parked rather than raised, so it reaches the caller through the same single delivery point
             # as every other receive-side failure — `close()` takes the first undelivered error, and the
@@ -2876,6 +2886,30 @@ class RealtimeSession:
             # budget against the response it just settled.
             if not any(isinstance(delivered, UsageLimitExceeded) for delivered in self._delivered_errors):
                 self._park_error(exceeded)
+
+    def _check_final_request(self, usage: RequestUsage) -> None:
+        """Check a request reported only as the session closed.
+
+        Against `per_request_input_tokens_limit` and `request_limit`.
+        """
+        if self._usage_limits is not None:
+            self._usage_limits.check_per_request_input_tokens(usage.input_tokens)
+        self._check_reported_requests()
+
+    def _check_reported_requests(self) -> None:
+        """Check `request_limit` against the requests recorded, for a provider whose responses aren't requests.
+
+        Its requests are only known once the model made them, so the one past the limit is recorded before it ends
+        the session.
+        """
+        if (
+            self._usage_limits is not None
+            and (request_limit := self._usage_limits.request_limit) is not None
+            and self.usage.requests > request_limit
+        ):
+            raise UsageLimitExceeded(
+                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
+            )
 
     def _ensure_chat_span(self) -> None:
         """Begin assembling a response and open its `chat {model}` span if not already open.
@@ -4065,16 +4099,8 @@ class RealtimeSession:
                 self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
-        if (
-            event.response_scoped
-            and not self._responses_are_requests
-            and self._usage_limits is not None
-            and (request_limit := self._usage_limits.request_limit) is not None
-            and self.usage.requests > request_limit
-        ):
-            raise UsageLimitExceeded(
-                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
-            )
+        if event.response_scoped and not self._responses_are_requests:
+            self._check_reported_requests()
         self._count_closed_tool_batch_replies()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
