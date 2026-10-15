@@ -2721,9 +2721,9 @@ browser's callback won the race, closes the prompt. A slash command or
 screen first, inside `async with host.full_screen()`. Without the live editor it
 is a plain terminal prompt.
 
-Do not draw a prompt yourself from a `run_worker` operation. `run_worker` opens
-full-screen widgets: it takes the live panel, and the transcript with your URL,
-off the screen while the operation runs.
+Do not draw a prompt yourself from a `run_worker` operation. By default
+`run_worker` takes the live panel, and the transcript with your URL, off the
+screen while the operation runs.
 
 ### Several accounts: `resolve_profile` and `profile_handler`
 

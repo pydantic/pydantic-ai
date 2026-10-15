@@ -316,7 +316,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/shell_terminal.py` | `PtyRun`: a `!` command on a pseudo-terminal (controlling terminal, `PAGER=cat`, keys relayed, Ctrl-C to CLAI's interrupt), `TerminalText` for transcript text, and the hand-over when the program switches to the alternate screen; no list of programs |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
-| `ui/prompt/line_input.py` | `read_line`: one line pinned under the transcript through the live panel (`run_worker(inline=True)`), for a prompt after printed output such as a sign-in URL; every CLAI and plugin paste-back prompt goes through it |
+| `ui/prompt/line_input.py` | `read_line`: one line pinned under the transcript through the live panel (`run_worker(inline=True)`), for a prompt after printed output such as a sign-in URL; `CodexAuth` and `OpenRouterAuth` default to it |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
 | `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
