@@ -21,6 +21,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
     Toolset,
+    WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -735,6 +736,73 @@ def test_deferred_capability_without_id_raises_at_construction() -> None:
     """A statically-provided deferred capability without an `id` fails fast at construction."""
     with pytest.raises(UserError, match='stable explicit `id` values'):
         Agent(TestModel(), capabilities=[Capability[object](description='No id.', defer_loading=True)])
+    # A deferred group is not merged into the agent's capabilities, so its missing `id` is reported too.
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        Agent(TestModel(), capabilities=[CombinedCapability[object]([Capability[object]()], defer_loading=True)])
+
+
+def test_deferred_capability_inside_deferred_capability_raises() -> None:
+    """Loading a deferred group loads everything in it, so a member can't also be deferred on its own."""
+    child = Capability[object](id='child', description='Child.', defer_loading=True)
+    group = CombinedCapability[object]([child], id='group', description='Group.', defer_loading=True)
+
+    with pytest.raises(UserError) as exc_info:
+        Agent(TestModel(), capabilities=[group])
+
+    assert str(exc_info.value) == snapshot(
+        "Deferred capability 'child' is inside deferred capability 'group'. Loading 'group' already loads everything in it, so remove `defer_loading=True` from 'child', or pass it to the agent separately to load it on its own."
+    )
+
+
+@pytest.mark.parametrize('wrap', [False, True], ids=['combined', 'wrapped-combined'])
+async def test_deferred_capability_group_loads_all_members_together(wrap: bool) -> None:
+    """A deferred group hides its members' tools, instructions and hooks until it loads, then activates all of them."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def edit_document(doc_id: str) -> str:
+        return f'edited {doc_id}'
+
+    hooks = Hooks()
+    hook_steps: list[int] = []
+
+    @hooks.on.before_model_request
+    async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        hook_steps.append(ctx.run_step)
+        return request_context
+
+    members: list[AbstractCapability[object]] = [
+        Capability[object](instructions='Editing instructions.', toolsets=[toolset]),
+        hooks,
+    ]
+    group = (
+        WrapperCapability[object](CombinedCapability(members), id='editing', description='Editing.', defer_loading=True)
+        if wrap
+        else CombinedCapability[object](members, id='editing', description='Editing.', defer_loading=True)
+    )
+    visible_tools: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        visible_tools.append(sorted(tool.name for tool in info.function_tools))
+        if len(visible_tools) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'editing'})])
+        if len(visible_tools) == 2:
+            return ModelResponse(parts=[ToolCallPart('edit_document', {'doc_id': 'd1'})])
+        return make_text_response('done')
+
+    result = await Agent(FunctionModel(model_fn), capabilities=[group]).run('Edit d1.')
+
+    assert visible_tools == snapshot(
+        [['load_capability'], ['edit_document', 'load_capability'], ['edit_document', 'load_capability']]
+    )
+    assert hook_steps == [2, 3]
+    load_return = next(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
+    assert load_return.instructions == 'Editing instructions.'
+    assert [
+        part.content
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'edit_document'
+    ] == ['edited d1']
 
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:

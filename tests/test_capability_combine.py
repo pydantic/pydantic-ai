@@ -36,6 +36,7 @@ from pydantic_ai.capabilities import (
     ReinjectSystemPrompt,
     Thinking,
     ToolSearch,
+    Toolset,
     UseThreadExecutor,
     WebFetch,
     WebSearch,
@@ -1069,6 +1070,57 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
     await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
 
     assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+async def test_a_run_level_group_replaces_the_agent_level_group_whole() -> None:
+    """A named `CombinedCapability` is one capability, so a run-level one with its `id` replaces all its members.
+
+    The replaced group's members are gone with it, so a member id the new group reuses for a
+    different class is not a clash.
+    """
+
+    def agent_tool() -> str:
+        return 'agent'  # pragma: no cover
+
+    def run_tool() -> str:
+        return 'run'  # pragma: no cover
+
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[CombinedCapability([Capability(id='member', tools=[agent_tool]), Hooks()], id='group')],
+    )
+
+    await agent.run(
+        'hi', capabilities=[CombinedCapability([Toolset(FunctionToolset([run_tool]), id='member')], id='group')]
+    )
+
+    assert seen == [['run_tool']]
+
+
+async def test_a_group_can_be_prefixed_and_reused_across_layers() -> None:
+    """A wrapper stands in for the named group it wraps, and the same group passed again keeps its members."""
+
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    seen: list[tuple[list[str], str | None]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append((sorted(tool.name for tool in info.function_tools), info.instructions))
+        return ModelResponse(parts=[TextPart('done')])
+
+    group = CombinedCapability([Capability(id='member', instructions='Policy.', tools=[lookup])], id='group')
+
+    await Agent(FunctionModel(model_fn), capabilities=[group.prefix_tools('p')]).run('hi')
+    await Agent(FunctionModel(model_fn), capabilities=[group]).run('hi', capabilities=[group])
+
+    assert seen == [(['p_lookup'], 'Policy.'), (['lookup'], 'Policy.')]
 
 
 @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])

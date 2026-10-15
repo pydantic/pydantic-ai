@@ -96,7 +96,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self.wrapped.apply(wrapped_capabilities.append)
         if _registers_children(self.wrapped, wrapped_capabilities):
             for capability in wrapped_capabilities:
-                visitor(capability)
+                if not self._stands_in_for(capability):
+                    visitor(capability)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
@@ -119,7 +120,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self.wrapped.apply(wrapped_capabilities.append)
         if not _registers_children(self.wrapped, wrapped_capabilities):
             return self
-        new_wrapped = self.wrapped.visit_and_replace(visitor)
+        new_wrapped = self.wrapped.visit_and_replace(
+            lambda capability: capability if self._stands_in_for(capability) else visitor(capability)
+        )
         if new_wrapped is None:
             # `wrapped` is required, and a wrapper whose subtree is gone has nothing left to modify.
             return None
@@ -128,6 +131,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_self = replace_no_init(self, wrapped=new_wrapped)
         new_self.__adopt_wrapped_identity()
         return new_self
+
+    def _stands_in_for(self, capability: AbstractCapability[AgentDepsT]) -> bool:
+        """Whether `capability` is the wrapped capability registering itself under this wrapper's own `id`.
+
+        A container that registers itself (one with an `id`, see `CombinedCapability`) shares that
+        `id` with a wrapper that adopted it, so only the wrapper is registered for the pair.
+        """
+        return capability is self.wrapped and self.id is not None and capability.id == self.id
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -224,7 +235,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             relayed = self.wrapped._collect_instructions()
             return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
         # Pass through the wrapped capability's own attribution: a wrapper adopts the id of the
-        # capability it wraps, but a wrapper over a container has none to adopt and would
+        # capability it wraps, but a wrapper over an unnamed container has none to adopt and would
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
 
