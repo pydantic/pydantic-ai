@@ -106,7 +106,7 @@ The repo contains a `uv` workspace defining multiple Python packages:
 
 The project uses:
 
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.11 through 3.14
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.11 through 3.15
     - Install all dependencies with `make install`
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
@@ -141,6 +141,7 @@ Additionally, always read the directory-specific instructions when working in th
 
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [docs/harness/AGENTS.md](docs/harness/AGENTS.md)
+- [docs/model_aliases/AGENTS.md](docs/model_aliases/AGENTS.md)
 - [docs/realtime/AGENTS.md](docs/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)

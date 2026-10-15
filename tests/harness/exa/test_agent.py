@@ -453,6 +453,23 @@ class TestExaAgent:
         with pytest.raises(ValueError, match='status code 401'):
             await capability.handle_deferred_tool_calls(ctx, requests=requests)
 
+    async def test_poll_payment_required_propagates(self) -> None:
+        creator_runs = _FakeRuns(created=_run('queued', run_id='run_x'))
+        capability = ExaAgent[None](runs=creator_runs)
+        with pytest.raises(CallDeferred) as exc_info:
+            await capability.get_toolset().exa_agent('task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+
+        capability.runs = _FakeRuns(poll_error=ValueError('Request failed with status code 402: payment required'))
+        requests = DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
+            metadata={'c1': metadata},
+        )
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        with pytest.raises(ValueError, match='status code 402'):
+            await capability.handle_deferred_tool_calls(ctx, requests=requests)
+
     async def test_external_execution_bubbles_deferred_requests(self) -> None:
         runs = _FakeRuns(created=_run('queued', run_id='run_9'))
         agent = Agent(
