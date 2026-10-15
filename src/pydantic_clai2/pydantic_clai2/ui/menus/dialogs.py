@@ -135,6 +135,9 @@ class TerminalDialogs:
             running.cancel()
             waiting.cancel()
             await asyncio.gather(running, waiting, return_exceptions=True)
+        # A screen that failed, rather than one the user closed, says why instead of reading as a cancel.
+        if not waiting.cancelled() and (failure := waiting.exception()) is not None:
+            raise failure
         if running.cancelled():
             return False
         running.result()
