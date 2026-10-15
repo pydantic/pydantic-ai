@@ -208,7 +208,11 @@ export function App() {
           </div>
         ) : (
           <>
-            <Transcript entries={entries} running={!preview && state.running} empty={null} />
+            <Transcript
+              entries={entries}
+              running={!preview && state.running}
+              empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
+            />
             <footer className="bottom">
               {!preview &&
                 state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}

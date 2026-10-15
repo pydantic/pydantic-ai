@@ -29,6 +29,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
 
+  // The composer moves from the new-session hero to the bottom bar when the first message lands; keep typing there.
+  useEffect(() => area.current?.focus(), [])
+
   useEffect(() => {
     const element = area.current
     if (!element) return
