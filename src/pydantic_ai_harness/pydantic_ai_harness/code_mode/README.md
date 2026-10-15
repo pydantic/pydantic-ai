@@ -506,7 +506,8 @@ history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible 
 | `hidden_ms` | `run_code` return | Sum of launch-to-settlement durations for adopted calls. |
 
 `hidden_ms` is **not measured end-to-end time saved**: calls can overlap, and it includes time
-spent waiting for a launch that was still running when claimed. Compare total run latency and
+spent waiting for a launch that was still running when claimed, or for a parallel
+`InputGuardrail` verdict. Compare total run latency and
 external request cost with speculation on and off. Neither `evicted` nor `wasted` proves that
 an unused call completed, stopped, or avoided its cost.
 

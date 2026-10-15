@@ -36,7 +36,13 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 import anyio
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    Instrumentation,
+    WrapModelRequestHandler,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -352,6 +358,9 @@ async def input_guardrails_allow(ctx: RunContext[object]) -> bool:
     Work that runs tools while the model is still streaming awaits the same verdict here first.
     """
     for capability in ctx.capabilities.values():
+        # A guard returned from a `CapabilityFunc` or given `prefix_tools()` is registered as its wrapper.
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
         verdict = capability._parallel_verdict if isinstance(capability, InputGuardrail) else None  # pyright: ignore[reportPrivateUsage]
         if verdict is None:
             continue

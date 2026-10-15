@@ -15,6 +15,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail
@@ -48,9 +49,10 @@ STREAMED_TIERS = [
 class GuardedRun:
     """A streamed `run_code` call whose last chunk waits for `ping(n=1)` to run.
 
-    After the first chunk, the stream gives streamed execution `reach_grace` seconds to reach `ping`,
-    records which calls ran by then, and lets a parallel guard decide. Holding the last chunk until
-    `ping(n=1)` ran makes any call that runs at all run before the stream finished.
+    The stream sends its first chunk once `first_chunk_released` is set, which it is by default.
+    It then gives streamed execution `reach_grace` seconds to reach `ping`, records which calls ran
+    by then, and lets a parallel guard decide. Holding the last chunk until `ping(n=1)` ran makes
+    any call that runs at all run before the stream finished.
     """
 
     def __init__(self, reach_grace: float) -> None:
@@ -59,6 +61,9 @@ class GuardedRun:
         self.calls_at_verdict: list[int] | None = None
         self.verdict_due = asyncio.Event()
         self.first_call_ran = asyncio.Event()
+        self.requested = asyncio.Event()
+        self.first_chunk_released = asyncio.Event()
+        self.first_chunk_released.set()
 
     async def ping(self, n: int) -> int:
         self.calls.append(n)
@@ -71,6 +76,8 @@ class GuardedRun:
         if isinstance(last, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in last.parts):
             yield 'done'
             return
+        self.requested.set()
+        await self.first_chunk_released.wait()
         yield {0: DeltaToolCall(name='run_code', json_args=FIRST_CHUNK, tool_call_id='run_code_1')}
         with anyio.move_on_after(self.reach_grace):
             await self.first_call_ran.wait()
@@ -80,8 +87,7 @@ class GuardedRun:
         await asyncio.wait_for(self.first_call_ran.wait(), timeout=5)
         yield {0: DeltaToolCall(json_args=LAST_CHUNK)}
 
-    def agent(self, code_mode: CodeMode[None], guardrail: InputGuardrail[None] | None) -> Agent[None, str]:
-        capabilities = [code_mode] if guardrail is None else [code_mode, guardrail]
+    def agent(self, *capabilities: AgentCapability[None]) -> Agent[None, str]:
         agent = Agent(FunctionModel(stream_function=self.stream), deps_type=type(None), capabilities=capabilities)
         agent.tool_plain(self.ping)
         return agent
@@ -101,6 +107,48 @@ class TestCodeModeInputGuardrail:
         result = await run.agent(code_mode(), InputGuardrail(guard=guard, parallel=True)).run('go')
 
         assert result.output == 'blocked'
+        assert run.calls == []
+
+    @pytest.mark.parametrize('wrapper', ['capability-func', 'prefix-tools'])
+    async def test_parallel_guard_behind_a_wrapper_blocks_nested_calls(self, wrapper: str):
+        run = GuardedRun(reach_grace=0.1)
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await run.verdict_due.wait()
+            return GuardrailResult.block('blocked')
+
+        guardrail = InputGuardrail[None](guard=guard, parallel=True)
+        wrapped: AgentCapability[None] = (
+            guardrail.prefix_tools('guard') if wrapper == 'prefix-tools' else (lambda ctx: guardrail)
+        )
+
+        result = await run.agent(CodeMode[None](speculate=['ping']), wrapped).run('go')
+
+        assert result.output == 'blocked'
+        assert run.calls == []
+
+    async def test_concurrent_run_allowed_first_does_not_release_another_runs_calls(self):
+        run = GuardedRun(reach_grace=0.1)
+        run.first_chunk_released.clear()
+
+        async def guard(prompt: str) -> GuardrailResult:
+            if prompt == 'allowed':
+                return GuardrailResult.allow()
+            await run.verdict_due.wait()
+            return GuardrailResult.block('blocked')
+
+        async def reply(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'done'
+
+        agent = run.agent(CodeMode[None](speculate=['ping']), InputGuardrail(guard=guard, parallel=True))
+        blocked_run = asyncio.create_task(agent.run('blocked'))
+        await run.requested.wait()
+        allowed = await agent.run('allowed', model=FunctionModel(stream_function=reply))
+        run.first_chunk_released.set()
+        blocked = await blocked_run
+
+        assert allowed.output == 'done'
+        assert blocked.output == 'blocked'
         assert run.calls == []
 
     @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
@@ -125,9 +173,11 @@ class TestCodeModeInputGuardrail:
         self, code_mode: Callable[[], CodeMode[None]], with_sequential_guard: bool
     ):
         run = GuardedRun(reach_grace=5)
-        guardrail = InputGuardrail[None](guard=lambda prompt: True) if with_sequential_guard else None
+        capabilities: list[AgentCapability[None]] = [code_mode()]
+        if with_sequential_guard:
+            capabilities.append(InputGuardrail[None](guard=lambda prompt: True))
 
-        result = await run.agent(code_mode(), guardrail).run('go')
+        result = await run.agent(*capabilities).run('go')
 
         assert result.output == 'done'
         assert run.calls_at_verdict is not None and 1 in run.calls_at_verdict
