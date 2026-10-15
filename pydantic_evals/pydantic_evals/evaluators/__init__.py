@@ -20,7 +20,16 @@ from .common import (
     OutputConfig,
 )
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
+from .evaluator import (
+    EvaluationReason,
+    EvaluationResult,
+    Evaluator,
+    EvaluatorFailure,
+    EvaluatorFunc,
+    EvaluatorOutput,
+    EvaluatorSpec,
+    FunctionEvaluator,
+)
 from .report_common import (
     ConfusionMatrixEvaluator,
     KolmogorovSmirnovEvaluator,
@@ -55,9 +64,11 @@ __all__ = (
     'Evaluator',
     'EvaluationReason',
     'EvaluatorFailure',
+    'EvaluatorFunc',
     'EvaluatorOutput',
     'EvaluatorSpec',
     'EvaluationResult',
+    'FunctionEvaluator',
     # report evaluators
     'ReportEvaluator',
     'ReportEvaluatorContext',

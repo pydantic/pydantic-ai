@@ -44,9 +44,9 @@ from pydantic_ai._utils import is_async_callable
 from . import _online as _online_internal, _task_run
 from ._online import CallbackSink, EvaluationSink, SinkPayload
 from ._utils import UNSET, Unset, logfire_span
-from .evaluators._run_evaluator import run_evaluator
+from .evaluators._run_evaluator import as_evaluator, run_evaluator
 from .evaluators.context import EvaluatorContext
-from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
+from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorFunc
 
 try:
     import logfire as _logfire  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -298,7 +298,7 @@ class EvaluatorContextSource(Protocol):
 
 
 async def run_evaluators(
-    evaluators: Sequence[Evaluator],
+    evaluators: Sequence[Evaluator | EvaluatorFunc],
     context: EvaluatorContext,
 ) -> tuple[list[EvaluationResult], list[EvaluatorFailure]]:
     """Run evaluators on a context and return results.
@@ -306,7 +306,8 @@ async def run_evaluators(
     Useful for re-running evaluators from stored data.
 
     Args:
-        evaluators: The evaluators to run.
+        evaluators: The evaluators to run. Plain functions are wrapped in a
+            [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
         context: The evaluator context to evaluate against.
 
     Returns:
@@ -323,7 +324,7 @@ async def run_evaluators(
             results_by_index[idx] = await run_evaluator(evaluator, context)
 
         for i, evaluator in enumerate(evaluators):
-            tg.start_soon(_run, i, evaluator)
+            tg.start_soon(_run, i, as_evaluator(evaluator))
 
     for i in range(len(evaluators)):
         result = results_by_index[i]
@@ -495,7 +496,7 @@ class OnlineEvalConfig:
 
     def evaluate(
         self,
-        *evaluators: Evaluator | OnlineEvaluator,
+        *evaluators: Evaluator | EvaluatorFunc | OnlineEvaluator,
         target: str | None = None,
         msg_template: LiteralString | None = None,
         span_name: str | None = None,
@@ -508,7 +509,7 @@ class OnlineEvalConfig:
         invocation — evaluator events are parented to this span, and the span
         itself appears in the user's configured OTel/logfire traces.
 
-        Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at decoration time
+        Bare `Evaluator` instances and functions are auto-wrapped in `OnlineEvaluator` at decoration time
         (so concurrency semaphores are shared across calls). Their `sample_rate` defaults to
         `None`, which resolves to the config's `default_sample_rate` at each call — so
         changes to the config after decoration take effect.
@@ -541,7 +542,8 @@ class OnlineEvalConfig:
         ```
 
         Args:
-            *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
+            *evaluators: Evaluators to attach. Can be `Evaluator` instances, plain evaluator functions, or
+                `OnlineEvaluator` instances.
             target: Name of the thing being evaluated. Written to sinks and emitted
                 OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
                 function's `__name__` when omitted.
@@ -561,7 +563,9 @@ class OnlineEvalConfig:
         Returns:
             A decorator that wraps the function with online evaluation.
         """
-        online_evals = [e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in evaluators]
+        online_evals = [
+            e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=as_evaluator(e)) for e in evaluators
+        ]
 
         if (extract_args or record_return) and not _LOGFIRE_INSTALLED:
             raise RuntimeError(
@@ -843,7 +847,7 @@ Module-level functions like `evaluate()` and `configure()` delegate to this inst
 
 
 def evaluate(
-    *evaluators: Evaluator | OnlineEvaluator,
+    *evaluators: Evaluator | EvaluatorFunc | OnlineEvaluator,
     target: str | None = None,
     msg_template: LiteralString | None = None,
     span_name: str | None = None,
@@ -855,7 +859,8 @@ def evaluate(
     Equivalent to `DEFAULT_CONFIG.evaluate(...)`.
 
     Args:
-        *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
+        *evaluators: Evaluators to attach. Can be `Evaluator` instances, plain evaluator functions, or
+            `OnlineEvaluator` instances.
         target: Name of the thing being evaluated. Written to sinks and emitted
             OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
             function's `__name__` when omitted.
