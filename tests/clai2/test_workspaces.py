@@ -550,8 +550,9 @@ async def test_local_processes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     log = tmp_path / 'log'
 
     async def reaped(pid: int) -> None:
-        [reaper] = [thread for thread in threading.enumerate() if thread.name == f'clai2-workspace-{pid}']
-        await anyio.to_thread.run_sync(reaper.join, 10)
+        # The reaper thread may already have finished, having reaped the process.
+        reapers = [thread for thread in threading.enumerate() if thread.name == f'clai2-workspace-{pid}']
+        await anyio.to_thread.run_sync(lambda: [reaper.join(10) for reaper in reapers])
 
     pid = processes.spawn(['sleep', '30'], cwd=tmp_path, env=os.environ, log=log)
     assert processes.alive(pid)
