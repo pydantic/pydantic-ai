@@ -747,7 +747,7 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     )
     assert reporter['if'] == "always() && steps.detection_guard.outputs.run_detection == 'true'"
     assert reporter['env']['DETECTOR_OUTCOME'] == '${{ steps.detection_agentic_execution.outcome }}'
-    assert reporter['env']['DETECTOR_CANCELLED'] == '${{ cancelled() }}'
+    assert reporter['env']['DETECTOR_JOB_STATUS'] == '${{ job.status }}'
     assert reporter['env']['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert reporter['continue-on-error'] is True
     assert 'gh-aw.detector.result' in reporter['with']['script']

@@ -74,7 +74,7 @@ safe-outputs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           DETECTOR_OUTCOME: ${{ steps.detection_agentic_execution.outcome }}
-          DETECTOR_CANCELLED: ${{ cancelled() }}
+          DETECTOR_JOB_STATUS: ${{ job.status }}
           OTEL_SERVICE_NAME: gh-aw.threat-detection
         with:
           script: |
@@ -118,7 +118,7 @@ safe-outputs:
             const marker = log.match(/THREAT_DETECTION_STATUS: reason=(\w+) exit=(\d+)/);
             const verdictText = read(path.join(directory, 'detection_result.json'));
             const verdict = verdictText ? JSON.parse(verdictText) : null;
-            const outcome = process.env.DETECTOR_CANCELLED === 'true' ? 'cancelled' : process.env.DETECTOR_OUTCOME || 'unknown';
+            const outcome = process.env.DETECTOR_JOB_STATUS === 'cancelled' ? 'cancelled' : process.env.DETECTOR_OUTCOME || 'unknown';
             const valid = verdict && ['prompt_injection', 'secret_leak', 'malicious_patch'].every(key => typeof verdict[key] === 'boolean');
             const failed = outcome !== 'success' || !valid;
             const attributes = {

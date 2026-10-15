@@ -33,7 +33,7 @@ async function report(files, outcome = 'success', cancelled = false) {
   }, {
     env: {
       RUNNER_TEMP: '/runner', DETECTOR_OUTCOME: outcome,
-      DETECTOR_CANCELLED: String(cancelled), GITHUB_AW_OTEL_JOB_START_MS: '1000',
+      DETECTOR_JOB_STATUS: cancelled ? 'cancelled' : 'success', GITHUB_AW_OTEL_JOB_START_MS: '1000',
     },
   });
   return spans;
