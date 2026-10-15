@@ -2381,7 +2381,8 @@ only from its settings menu or its `login` command, and Esc cancels the wait. Se
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 `/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by
-default, and opens its settings menu (`/plugins configure linear` reopens it). The
+default, and opens its settings menu (`/plugins configure linear` reopens it, and
+the web UI's plugins panel shows it too). The
 key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
 or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-projects).
 

@@ -573,6 +573,9 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 Enter edits a row, R resets it to the default, and Esc backs out of a picker
 without changing anything. Each change is saved as you make it, so **Save & close**
 and Esc both just leave the menu, and the plugin is reloaded with the new settings.
+The same rows show in the [web UI](#web-this-session-in-your-browser)'s plugins
+panel, where Sign-in, API key, and Access have a **Change…** button: their pickers,
+key prompt, and sign-in open as dialogs in the page.
 Read-only is the default because tools that create or change issues act on a
 workspace your team shares. These rows are the settings harness `Linear` takes
 from a user. Linear's hosted server has a single URL (with a read-only variant)
@@ -591,7 +594,9 @@ rather than running without Linear. Harness's `LINEAR_ACCESS_TOKEN` environment
 variable is not read.
 
 With browser sign-in, the key row is hidden. Choosing it signs in right away,
-behind a waiting screen that Esc cancels; `/linear login` signs in again later,
+behind a waiting screen that Esc cancels, unless you are already signed in.
+Tokens belong to one endpoint, so choosing an Access you are not signed in for
+signs in again the same way. `/linear login` signs in again later,
 `/linear logout` signs out, and `/linear` shows whether you are signed in. Tokens
 go to the keyring the way `/mcp` OAuth tokens do. Loading and prompts never open
 the browser: until you sign in, runs have no Linear tools and the session start
@@ -2610,7 +2615,7 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`. The built-in `github`, `grain`, `linear`, `notion`, and
+`api_keys.prompt_api_key`. The built-in `github`, `grain`, `notion`, and
 [`pylon`](#configuring-pylon) plugins still work this way.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
