@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,6 +57,42 @@ def test_ci_review_compiled_membership_admits_installed_app_without_widening_rol
         'GH_AW_REQUIRED_ROLES': 'admin,maintainer,write',
         'GH_AW_ALLOWED_BOTS': 'pydantic-docs',
     }
+
+
+@pytest.mark.parametrize(
+    'body,commit_id,expected',
+    [
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'current-head', 1),
+        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-pr-review"', 'current-head', 1),
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-ui-security-review -->', 'current-head', 0),
+        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-ui-security-review"', 'current-head', 0),
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'older-head', 0),
+        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-pr-review"', 'older-head', 0),
+        ('No findings.', 'current-head', 0),
+        (None, 'current-head', 0),
+    ],
+)
+def test_ci_review_deduplicates_both_footer_formats(body: str | None, commit_id: str, expected: int):
+    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
+    gate = next(step for step in lock['jobs']['eligibility']['steps'] if step.get('id') == 'gate')
+    query = re.search(
+        r"""jq --arg sha "\$HEAD_SHA" --arg caller "\$REVIEW_CALL_ID" '(.+?)'\)""", gate['run'], re.DOTALL
+    )
+    assert query is not None
+    caller = gate['env']['REVIEW_CALL_ID'].replace('${{ github.repository }}', 'pydantic/pydantic-ai')
+    reviews: list[list[dict[str, object]]] = [
+        [{'commit_id': commit_id, 'body': body, 'user': {'login': 'github-actions[bot]'}}],
+        [{'commit_id': 'current-head', 'body': 'Another review from the same bot.'}],
+    ]
+    # Exercise the compiled jq program with its production interpreter.
+    result = subprocess.run(
+        ['jq', '--arg', 'sha', 'current-head', '--arg', 'caller', caller, query.group(1)],
+        input=json.dumps(reviews),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert int(result.stdout) == expected
 
 
 def _write(path: Path, text: str) -> Path:

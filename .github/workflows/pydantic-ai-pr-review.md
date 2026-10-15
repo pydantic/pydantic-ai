@@ -207,7 +207,7 @@ jobs:
           RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
-          REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
+          REVIEW_CALL_ID: "${{ github.repository }}/pydantic-ai-pr-review"
         run: |
           set -euo pipefail
 
@@ -326,9 +326,12 @@ jobs:
           # not the bot account: every gh-aw reviewer here posts as
           # `github-actions[bot]`, so an actor match would let a UI Security Review
           # on this head suppress this review entirely.
+          # Accept both footer encodings to deduplicate across compiler versions.
           ALREADY=$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
-              '[add[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
+            | jq --arg sha "$HEAD_SHA" --arg caller "$REVIEW_CALL_ID" '
+              [add[] | select(.commit_id == $sha) | select((.body // "") |
+                contains("<!-- gh-aw-workflow-call-id: \($caller) -->") or
+                contains("[gh-aw-workflow-call-id]: # \"\($caller | @uri)\""))] | length')
           [ "$ALREADY" -eq 0 ] || skip "already reviewed ${HEAD_SHA}"
 
           {
