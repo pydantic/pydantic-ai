@@ -1691,7 +1691,9 @@ settings later, run `/plugins configure posthog` or press `c` on it in
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
 edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
-new settings.
+new settings. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the `/keys` picker, the masked key input, the feature-group
+list, and the browser sign-in show as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1699,7 +1701,7 @@ new settings.
 | Sign-in | API key from `/keys` | or browser sign-in, with tokens kept in the keyring |
 | Region | US cloud | US (`mcp.posthog.com`), EU (`mcp-eu.posthog.com`), or a typed `https://` URL for a PostHog MCP server you run (`http://` only for localhost) |
 | Tools | read-only | read-only, or read and write (for example editing feature flags) |
-| Feature groups | every group | a searchable list of PostHog's feature groups; Enter toggles one and saves it |
+| Feature groups | every group | a searchable list of PostHog's feature groups; each pick toggles one and saves it, until **Done** or Esc |
 | Server mode | server default | one `posthog` tool driven by commands, or one tool per operation |
 | Project ID | not set | pin every request to one project (`x-posthog-project-id`) |
 | Organization ID | not set | pin every request to one organization (`x-posthog-organization-id`) |
@@ -1728,7 +1730,7 @@ plugin still loads with a warning and keeps its menu, and each run fails with an
 error naming the fix instead of connecting without the key.
 
 With browser sign-in, `/posthog login` (or choosing browser sign-in in the menu)
-opens the browser behind a waiting screen that Esc cancels. Loading and prompts
+opens the browser behind a waiting screen that Esc cancels (a dialog, from the web UI). Loading and prompts
 never open the browser: until you sign in, runs have no PostHog tools and the
 session start says how to sign in. The tokens go to the keyring (the
 `mcp-posthog_plugin` entry under `pydantic-clai2`), the same storage `/mcp` uses
