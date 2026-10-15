@@ -61,7 +61,8 @@ class Planning(AbstractCapability[AgentDepsT]):
     tail of each request and never persisted. The reminder leads with a
     `CachePoint`, which providers attach to the content right before it -- the
     last user prompt, tool result, or retry prompt, which the next request
-    starts with -- so only the reminder itself is re-read each turn.
+    starts with -- so on most providers only the reminder itself is re-read each
+    turn. On OpenRouter the breakpoint stops at the previous user message.
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
