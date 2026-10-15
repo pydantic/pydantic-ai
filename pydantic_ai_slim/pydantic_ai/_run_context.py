@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import sys
 import warnings
+from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -615,20 +616,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         A capability inside a deferred group (a `CombinedCapability` with an `id` and
         `defer_loading=True`) is active only once the group is loaded.
         """
-        # One object can be registered under several ids, e.g. a member shared by two groups.
-        registered_ids: dict[int, list[str]] = {}
-        for capability_id, cap in self.capabilities.items():
-            registered_ids.setdefault(id(cap), []).append(capability_id)
+        # The registry first: a Temporal run context without it raises an error that names it.
+        registry = self.capabilities
         loaded = self.loaded_capability_ids
-        withheld: set[str] = set()
-        for capability_id, cap in self.capabilities.items():
+        # How often each object occurs beneath an unloaded deferred capability.
+        hidden: Counter[int] = Counter()
+        for capability_id, cap in registry.items():
             if cap.defer_loading is True and capability_id not in loaded:
                 # `apply` visits the capability itself first, then what is registered beneath it.
                 beneath: list[AbstractCapability[RunContextAgentDepsT]] = []
                 cap.apply(beneath.append)
-                withheld.update(alias for inner in beneath[1:] for alias in registered_ids.get(id(inner), ()))
+                hidden.update(map(id, beneath[1:]))
+        # The registry holds one id per occurrence, so an object that also occurs elsewhere stays active.
+        occurrences = Counter(map(id, registry.values()))
         return {
-            id for id, cap in self.capabilities.items() if cap.defer_loading is not True and id not in withheld
+            capability_id
+            for capability_id, cap in registry.items()
+            if cap.defer_loading is not True and hidden[id(cap)] < occurrences[id(cap)]
         } | loaded
 
     @property

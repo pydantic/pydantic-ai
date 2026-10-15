@@ -1500,11 +1500,8 @@ def _outside_discarded_subtrees(
     visit_index = {position: index for index, (_, _, position) in enumerate(visited)}
     discarded: set[int] = set()
     for duplicates in _occurrences_by_id(visited)[1].values():
-        duplicates = sorted(duplicates, key=lambda occurrence: occurrence.position)
-        last_layer = duplicates[-1].layer_index
-        survivors = sum(duplicate.layer_index == last_layer for duplicate in duplicates)
-        # The last occurrence stays in place, unless several survive and `combine` replaces it.
-        for duplicate in duplicates[:-1] if survivors == 1 else duplicates:
+        # Every occurrence but the last is removed. The last keeps its place, or `combine`'s result takes it.
+        for duplicate in sorted(duplicates, key=lambda occurrence: occurrence.position)[:-1]:
             start = visit_index[duplicate.position] + 1
             discarded.update(range(start, start + len(leaf_capabilities(duplicate.capability)) - 1))
     return [visit for index, visit in enumerate(visited) if index not in discarded]
@@ -1553,8 +1550,8 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     from .wrapper import WrapperCapability
 
     # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
-    # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance with that branch before walking
-    # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
+    # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
+    # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
     # both inside that wrapper and on its own.
     root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
     position = 0

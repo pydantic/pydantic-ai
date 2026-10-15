@@ -4725,12 +4725,9 @@ def _reject_one_per_agent_in_group(group: CombinedCapability[Any]) -> None:
 
 def _reject_nested_deferral(capability: AbstractCapability[Any]) -> None:
     """Reject a deferred capability inside another one: loading the outer one reveals everything in it."""
-    descendants: list[AbstractCapability[Any]] = []
-    capability.apply(descendants.append)
-    for inner in descendants:
-        # A wrapper shares its wrapped capability's `id`, so that pair is one capability, not two.
+    for inner in leaf_capabilities(capability):
         # One without an `id` is left to the explicit-`id` check, which names the actual problem.
-        if inner.defer_loading is True and inner.id is not None and inner.id != capability.id:
+        if inner is not capability and inner.defer_loading is True and inner.id is not None:
             raise exceptions.UserError(
                 f'Deferred capability {inner.id!r} is inside deferred capability {capability.id!r}. '
                 f'Loading {capability.id!r} already loads everything in it, so remove `defer_loading=True` '

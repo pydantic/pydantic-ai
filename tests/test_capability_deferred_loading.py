@@ -838,7 +838,9 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
     ]
 
 
-async def test_a_member_shared_by_two_deferred_groups_is_inactive_until_one_loads() -> None:
+@pytest.mark.parametrize('also_eager', [False, True], ids=['only-deferred', 'also-eager'])
+async def test_a_shared_member_is_active_only_when_it_occurs_outside_an_unloaded_group(also_eager: bool) -> None:
+    """A shared member is inactive only while every occurrence is in an unloaded deferred group."""
     member = Capability[object](instructions='Shared.')
     active_ids: list[set[str]] = []
     observer = Hooks()
@@ -846,13 +848,13 @@ async def test_a_member_shared_by_two_deferred_groups_is_inactive_until_one_load
     @observer.on.before_model_request
     async def observe(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
         aliases = {i for i, cap in ctx.capabilities.items() if cap is member}
-        assert len(aliases) == 2
         active_ids.append(aliases & ctx.active_capability_ids)
         return request_context
 
     groups = [CombinedCapability[object]([member], id=i, description='G.', defer_loading=True) for i in ('g1', 'g2')]
-    await Agent(TestModel(call_tools=[]), capabilities=[*groups, observer]).run('hi')
-    assert active_ids == [set()]
+    eager = [member] if also_eager else []
+    await Agent(TestModel(call_tools=[]), capabilities=[*groups, *eager, observer]).run('hi')
+    assert [len(ids) for ids in active_ids] == [3 if also_eager else 0]
 
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:

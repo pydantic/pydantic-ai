@@ -1123,6 +1123,20 @@ async def test_a_group_can_be_prefixed_and_reused_across_layers() -> None:
     assert seen == [(['p_lookup'], 'Policy.'), (['lookup'], 'Policy.')]
 
 
+def test_a_wrapper_repeated_in_one_layer_still_combines_what_it_wraps() -> None:
+    """`combine` may keep the last repeat as it is, and then what it wraps still takes part in combining."""
+
+    @dataclass(kw_only=True)
+    class Mergeable(WrapperCapability[object]):
+        id: str | None = 'mergeable'
+
+    wrapped = Mergeable(CombinedCapability([WebSearch(allowed_domains=['wrapped.example'])]))
+    agent = Agent(TestModel(), capabilities=[wrapped, wrapped, WebSearch(allowed_domains=['sibling.example'])])
+
+    native_tools = [tool for tool in agent.root_capability.get_native_tools() if isinstance(tool, WebSearchTool)]
+    assert native_tools == [WebSearchTool(allowed_domains=['wrapped.example', 'sibling.example'])]
+
+
 @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
 async def test_different_capability_classes_cannot_share_an_id_across_layers(wrapper_depth: int) -> None:
     """An id always names one capability type, even when the later layer would replace the first."""
