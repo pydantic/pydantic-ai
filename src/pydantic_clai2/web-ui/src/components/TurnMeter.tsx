@@ -16,12 +16,12 @@ export function TurnMeter({ status, startedAt }: { status: StatusInfo | null; st
   return (
     <span className="turn-meter" title="Output is estimated from the streamed text until the turn reports it">
       {seconds !== null && <span className="meter-time">{duration(seconds)}</span>}
-      <span className="meter-figure">
+      <span>
         <span className="meter-arrow">↓</span>~{compact(streamed)}
       </span>
       {rate !== null && <span className="meter-rate">{rate} tok/s</span>}
       {input ? (
-        <span className="meter-figure" title="Input tokens of the requests finished so far">
+        <span title="Input tokens of the requests finished so far">
           <span className="meter-arrow">↑</span>
           {compact(input)}
         </span>
