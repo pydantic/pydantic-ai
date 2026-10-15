@@ -203,7 +203,8 @@ class OnlineEvaluator:
 
     To version an evaluator, override
     [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
-    `Evaluator` subclass (see `Evaluator` docstring). The framework calls it at dispatch time and
+    `Evaluator` subclass (see `Evaluator` docstring), or pass `version` to a
+    [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator]. The framework calls it at dispatch time and
     propagates the value to sinks alongside each result.
     """
     sample_rate: float | Callable[[SamplingContext], float | bool] | None = None

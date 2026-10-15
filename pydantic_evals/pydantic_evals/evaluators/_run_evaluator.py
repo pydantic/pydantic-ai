@@ -42,6 +42,10 @@ def as_evaluator(
         # Pyright also narrows the function arm to an `Evaluator` subclass that's callable, with unknown
         # type parameters, but either way the value is an `Evaluator[InputsT, OutputT, MetadataT]`.
         return cast(Evaluator[InputsT, OutputT, MetadataT], evaluator)
+    if isinstance(evaluator, type):
+        raise TypeError(f'Expected an evaluator instance or function, got the class {evaluator.__name__!r}.')
+    if not callable(evaluator):
+        raise TypeError(f'Expected an evaluator instance or function, got {evaluator!r}.')
     return FunctionEvaluator(evaluator)
 
 

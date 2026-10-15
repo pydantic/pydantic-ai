@@ -206,10 +206,10 @@ async def test_add_case_and_failure():
 
 
 async def test_function_evaluator_name_and_version():
-    """An explicit `FunctionEvaluator` can set the result name and version, and keeps the same source spec shape."""
-    evaluator = FunctionEvaluator(exact_match, name='matches', version='v2')
+    """An explicit `FunctionEvaluator` can set the result name and version; the source still names the function."""
+    evaluator = FunctionEvaluator(exact_match, evaluation_name='matches', version='v2')
     assert repr(evaluator) == 'FunctionEvaluator(matches)'
-    assert evaluator.as_spec() == EvaluatorSpec(name='matches', arguments=None)
+    assert evaluator.as_spec() == EvaluatorSpec(name='exact_match', arguments={'evaluation_name': 'matches'})
 
     results, failures = await run_evaluators([evaluator, output_length], _make_context('HELLO'))
 
@@ -220,7 +220,7 @@ async def test_function_evaluator_name_and_version():
                 name='matches',
                 value=False,
                 reason=None,
-                source=EvaluatorSpec(name='matches', arguments=None),
+                source=EvaluatorSpec(name='exact_match', arguments={'evaluation_name': 'matches'}),
                 evaluator_version='v2',
             ),
             EvaluationResult(
@@ -363,3 +363,17 @@ def test_evaluator_function_typing():
     dataset = Dataset[str, str, None](name='typed', cases=[], evaluators=[typed])
     dataset.add_evaluator(int_inputs)  # pyright: ignore[reportArgumentType]
     Case[str, str, None](inputs='x', evaluators=[int_inputs])  # pyright: ignore[reportArgumentType]
+
+
+def test_non_function_evaluators_rejected():
+    """An evaluator class or a non-callable is rejected up front, instead of failing on every case at run time."""
+
+    class IsHello(Evaluator[str, str, None]):
+        def evaluate(self, ctx: EvaluatorContext[str, str, None]) -> bool:
+            return ctx.output == 'hello'  # pragma: no cover
+
+    with pytest.raises(TypeError, match="Expected an evaluator instance or function, got the class 'IsHello'"):
+        Dataset[str, str, None](name='classes', cases=[], evaluators=[IsHello])  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(TypeError, match="Expected an evaluator instance or function, got 'nope'"):
+        Case[str, str, None](inputs='x', evaluators=['nope'])  # pyright: ignore[reportArgumentType]

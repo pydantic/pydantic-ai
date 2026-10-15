@@ -254,6 +254,8 @@ class ToneCheck(Evaluator):
 
 The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
 
+For an [evaluator function](evaluators/custom.md#function-evaluators), pass the version to a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator]: `FunctionEvaluator(tone_check, version='v2')`.
+
 ## Sampling
 
 Control evaluation frequency with per-evaluator sample rates to balance quality monitoring against cost.

@@ -487,7 +487,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs: The inputs to the task being evaluated.
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: The expected output of the task, used for comparison in evaluators.
-            evaluators: Evaluators specific to this case, in addition to dataset-level evaluators.
+            evaluators: Evaluators specific to this case, in addition to dataset-level evaluators. Plain functions
+                are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
         """
         if name in {case.name for case in self.cases}:
             raise ValueError(f'Duplicate case name: {name!r}')

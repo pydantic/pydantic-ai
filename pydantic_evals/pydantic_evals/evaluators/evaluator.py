@@ -271,7 +271,7 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
     """An evaluator that calls a plain sync or async function.
 
     You rarely need to construct this yourself: a function passed wherever evaluators are accepted is
-    wrapped automatically. Construct it explicitly to set a `name` or `version`, or to pass a function to
+    wrapped automatically. Construct it explicitly to set an `evaluation_name` or `version`, or to pass a function to
     [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator].
 
     A function evaluator can't be saved to a dataset file, since a Python function has no
@@ -287,14 +287,14 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
         return 'please' in ctx.output.lower()
 
 
-    evaluator = FunctionEvaluator(is_polite, name='politeness', version='v2')
+    evaluator = FunctionEvaluator(is_polite, evaluation_name='politeness', version='v2')
     ```
     """
 
     function: EvaluatorFunc[InputsT, OutputT, MetadataT]
     """The function to call with the evaluator context."""
     _: KW_ONLY
-    name: str | None = None
+    evaluation_name: str | None = None
     """The name to use for the function's result in reports. Defaults to the function's name."""
     version: str | None = None
     """The version tag to record on the function's results, see
@@ -306,14 +306,18 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
         return self.function(ctx)
 
     def get_default_evaluation_name(self) -> str:
-        return self.name if self.name is not None else get_unwrapped_function_name(self.function)
+        return self.evaluation_name or get_unwrapped_function_name(self.function)
 
     def get_evaluator_version(self) -> str | None:
         return self.version
 
     def as_spec(self) -> EvaluatorSpec:
         # Used as the `source` of every result, so this must not raise like serialization does.
-        return EvaluatorSpec(name=self.get_default_evaluation_name(), arguments=None)
+        # Like the built-in evaluators, the spec names the evaluator itself and carries any `evaluation_name` override.
+        return EvaluatorSpec(
+            name=get_unwrapped_function_name(self.function),
+            arguments={'evaluation_name': self.evaluation_name} if self.evaluation_name else None,
+        )
 
     def _serialization_spec(self) -> EvaluatorSpec:
         raise TypeError(

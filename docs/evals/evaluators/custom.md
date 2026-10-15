@@ -33,7 +33,7 @@ class ExactMatch(Evaluator):
 
 ## Function Evaluators
 
-For a check that doesn't need parameters, a plain sync or async function that takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] works wherever an evaluator does:
+For a check that doesn't need parameters, a plain sync or async function that takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] works anywhere a list of evaluators is accepted, including [online evaluation](../online-evaluation.md#onlineevaluator):
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -64,7 +64,7 @@ print(report.cases[0].scores['word_count'].value)
 #> 2
 ```
 
-Results are named after the function, and it can return anything an `evaluate` method can. To set a different name or a [version](../online-evaluation.md#evaluator-versioning), wrap the function in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator] yourself, as in `FunctionEvaluator(exact_match, name='matches', version='v2')`.
+Results are named after the function, and it can return anything an `evaluate` method can. To set a different name or a [version](../online-evaluation.md#evaluator-versioning), wrap the function in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator] yourself, as in `FunctionEvaluator(exact_match, evaluation_name='matches', version='v2')`.
 
 A Python function has no serialized form, so a dataset with a function evaluator can't be [saved to a file](../how-to/dataset-serialization.md). Use an `Evaluator` subclass for evaluators that need to be saved, or that take parameters.
 
