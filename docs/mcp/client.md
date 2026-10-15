@@ -494,7 +494,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 weather = MCPToolset('http://localhost:8000/mcp', id='weather')
-agent = Agent('openai:gpt-5.2', toolsets=[weather])
+agent = Agent('{{ openai:medium }}', toolsets=[weather])
 
 
 async def app_page(resource_uri: str) -> tuple[str, dict[str, Any]]:
