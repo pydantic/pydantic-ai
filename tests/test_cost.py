@@ -224,9 +224,7 @@ async def test_cost_service_tier_without_tier_rates_is_standard(allow_model_requ
     agent = Agent(
         OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        result = await agent.run('hello')
+    result = await agent.run('hello')
     # 100 input tokens at $2/MTok + 50 output tokens at $10/MTok.
     assert result.usage.cost == snapshot(Decimal('0.0007'))
 
@@ -248,9 +246,7 @@ def test_service_tier_only_changes_openai_prices():
             provider_details={'service_tier': service_tier},
             timestamp=timestamp,
         )
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            prices[provider_name] = response.cost().total_price
+        prices[provider_name] = response.cost().total_price
     # OpenAI at its $4/MTok priority rate (standard is $2); Gemini at its standard rate.
     assert prices == snapshot({'openai': Decimal('0.4'), 'google': Decimal('0.03')})
 

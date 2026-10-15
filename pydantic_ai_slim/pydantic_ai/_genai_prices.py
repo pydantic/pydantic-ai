@@ -97,32 +97,27 @@ def calculate_price_for_usage(
     Normally tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
     `openai-decisions` uses its provider name first because it shares OpenAI's URL with another endpoint. Only
     `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
-
-    A `price_context` that matches no rates for the model (e.g. a service tier only OpenAI prices) means standard
-    prices; genai-prices warns about that, which is silenced here since every provider's tier is passed along.
     """
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='No price variant matched', category=UserWarning)
-        if provider_api_url and provider_name != 'openai-decisions':
-            try:
-                return calc_price(
-                    usage,
-                    model_name,
-                    provider_api_url=provider_api_url,
-                    genai_request_timestamp=genai_request_timestamp,
-                    price_context=price_context,
-                )
-            except LookupError:
-                # genai-prices doesn't know this URL, but the provider name may still resolve.
-                pass
+    if provider_api_url and provider_name != 'openai-decisions':
+        try:
+            return calc_price(
+                usage,
+                model_name,
+                provider_api_url=provider_api_url,
+                genai_request_timestamp=genai_request_timestamp,
+                price_context=price_context,
+            )
+        except LookupError:
+            # genai-prices doesn't know this URL, but the provider name may still resolve.
+            pass
 
-        return calc_price(
-            usage,
-            model_name,
-            provider_id=provider_name,
-            genai_request_timestamp=genai_request_timestamp,
-            price_context=price_context,
-        )
+    return calc_price(
+        usage,
+        model_name,
+        provider_id=provider_name,
+        genai_request_timestamp=genai_request_timestamp,
+        price_context=price_context,
+    )
 
 
 def response_price_context(response: ModelResponse) -> PriceContext | None:
