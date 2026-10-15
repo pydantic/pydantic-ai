@@ -71,7 +71,9 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
 from pydantic_clai2.ui.rendering import theme as terminal_theme
+from tests.clai2.test_session_browser import git, repository
 
 TOKEN = 'secret-token'
 HOSTS = frozenset({'testserver'})
@@ -464,11 +466,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
 
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
-        assert [(entry['title'], entry['state'], entry['current']) for entry in projects[0]['sessions']] == [
+        [here] = projects[0]['worktrees']
+        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
             ('first', 'completed', True)
         ]
-        assert [project['name'] for project in projects[1:]] == ['else']
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['sessions'][0]['id'] == elsewhere.id
+        assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
+            ('Removed folders', ['else'])
+        ]
+        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -521,12 +526,78 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
                 messages=[],
             )
         )
-    sessions = {entry['title']: entry['state'] for entry in web_.get('/api/sessions').json()[-1]['sessions']}
-    assert sessions == {'Live': 'busy', 'Dead': 'cancelled'}
+    [removed] = web_.get('/api/sessions').json()[-1]['worktrees']
+    assert {entry['title']: entry['state'] for entry in removed['sessions']} == {'Live': 'busy', 'Dead': 'cancelled'}
     web_.plugin.remote.running = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
-    current = web_.get('/api/sessions').json()[0]['sessions'][0]
+    current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Each repository is one project, its checkouts nested in it, removed worktrees included.
+
+    A removed worktree keeps the checkout saved with its sessions; an older one without it is placed by
+    where it was. Folders outside Git are their own project, and removed ones no project claims are last.
+    """
+    web_ = make_web(Agent(TestModel()))
+    worktrees = tmp_path / 'worktrees' / 'alpha'
+    repo, feature, gone = tmp_path / 'code' / 'alpha', worktrees / 'feature', worktrees / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'fix/gone', str(gone))
+    saved = git_checkout(project_identity(str(gone.resolve())))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    workspaces = {
+        'Removed here': (tmp_path / 'one' / 'x', None),
+        'Removed elsewhere': (tmp_path / 'two' / 'x', None),
+        'Plain': (plain, None),
+        'Before recording': (worktrees / 'old' / 'src', None),
+        'Recorded': (gone / 'src', saved),
+        'Deleted subfolder': (repo / 'deleted', None),
+        'Main': (repo, None),
+        'Feature': (feature, None),
+    }
+    for title, (workspace, checkout) in workspaces.items():
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title, checkout=checkout)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.plugin.host.status.workspace = str(feature.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    shown = [
+        (
+            project['name'],
+            project['current'],
+            [
+                (w['label'], w['current'], w['missing'], [entry['title'] for entry in w['sessions']])
+                for w in project['worktrees']
+            ],
+        )
+        for project in projects
+    ]
+    one, two = (str((tmp_path / name / 'x').resolve()) for name in ('one', 'two'))
+    assert shown == [
+        (
+            'alpha',
+            True,
+            [
+                ('feature', True, False, ['Feature']),
+                ('main', False, False, ['Main', 'Deleted subfolder']),
+                ('fix/gone', False, True, ['Recorded']),
+                ('old', False, True, ['Before recording']),
+            ],
+        ),
+        ('plain', False, [('plain', False, False, ['Plain'])]),
+        (
+            'Removed folders',
+            False,
+            [(two, False, True, ['Removed elsewhere']), (one, False, True, ['Removed here'])],
+        ),
+    ]
+    # A search lists only matching sessions, in the same places.
+    [found] = web_.get('/api/sessions?q=Before').json()
+    assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:

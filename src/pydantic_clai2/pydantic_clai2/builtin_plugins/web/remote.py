@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import PurePath
 from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
@@ -55,6 +56,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
     TurnStarted,
     Usage,
+    Worktree,
     history_items,
     user_text,
 )
@@ -70,7 +72,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.repl_cells import is_repl_cell
 
 THEME = 'display.theme'
@@ -419,10 +421,10 @@ class Remote:
         return self.host.sessions
 
     async def projects(self, query: str = '') -> list[Project]:
-        """Saved sessions grouped by repository, the current one's project first."""
+        """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
         entries = await self.catalog.listing(query=query)
         workspaces = {entry.workspace for entry in entries} | {self.host.status.workspace}
-        unknown = [workspace for workspace in workspaces if workspace and workspace not in self._identities]
+        unknown = [workspace for workspace in workspaces if workspace not in self._identities]
         if unknown:
             found = await to_thread.run_sync(lambda: [project_identity(workspace) for workspace in unknown])
             self._identities.update(zip(unknown, found))
@@ -431,19 +433,24 @@ class Remote:
         busy: set[str] = (
             await to_thread.run_sync(lambda: {entry.id for entry in running if _busy(entry)}) if running else set()
         )
-        here = self._identity(self.host.status.workspace).key
-        projects: dict[str, Project] = {}
+        # Every workspace seen so far, not only this search's, tells where a removed folder belonged.
+        places = placements(entries, identities=self._identities)
+        here = places[self.host.status.workspace]
+        checkouts: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
-            identity = self._identity(entry.workspace)
-            project = projects.setdefault(
-                identity.key,
-                Project(key=identity.key, name=identity.name, current=identity.key == here, sessions=[]),
+            identity = places[entry.workspace]
+            _, sessions = checkouts.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
+            sessions.append(self._entry(entry, busy=entry.id in busy))
+        projects = [
+            Project(
+                key=key,
+                name=next(iter(found.values()))[0].name,
+                current=key == here.key,
+                worktrees=_worktrees(found, here=here),
             )
-            project.sessions.append(self._entry(entry, busy=entry.id in busy))
-        return sorted(projects.values(), key=lambda project: not project.current)
-
-    def _identity(self, workspace: str) -> ProjectIdentity:
-        return self._identities.get(workspace) or ProjectIdentity(key=workspace, name=workspace, root=workspace)
+            for key, found in checkouts.items()
+        ]
+        return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
     def _entry(self, summary: ConversationSummary, *, busy: bool) -> SessionEntry:
         current = summary.id == self.host.conversation.conversation_id
@@ -494,6 +501,27 @@ class Remote:
     async def delete(self, conversation_id: str) -> None:
         await self.catalog.delete(conversation_id)
         self.hub.publish(SessionsChanged())
+
+
+def _worktrees(
+    found: Mapping[str, tuple[ProjectIdentity, list[SessionEntry]]], *, here: ProjectIdentity
+) -> list[Worktree]:
+    """A project's checkouts, the current one first, each labelled by its branch or else its folder.
+
+    A label two of them share, such as two removed folders of one name, shows the folder's path instead.
+    """
+    labels = {root: identity.checkout or PurePath(root).name or root for root, (identity, _) in found.items()}
+    worktrees = [
+        Worktree(
+            root=root,
+            label=labels[root] if list(labels.values()).count(labels[root]) == 1 else root,
+            current=(identity.key, root) == (here.key, here.root),
+            missing=identity.missing,
+            sessions=sessions,
+        )
+        for root, (identity, sessions) in found.items()
+    ]
+    return sorted(worktrees, key=lambda worktree: not worktree.current)
 
 
 def _usage(usage: RunUsage) -> Usage:
