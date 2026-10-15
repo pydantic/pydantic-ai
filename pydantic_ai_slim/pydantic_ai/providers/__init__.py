@@ -5,6 +5,7 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -50,11 +51,13 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     When used as an async context manager, providers that create their own HTTP client will close it on exit.
     This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
+    Outside one, a run on a different event loop than the client was last used on gets a new client.
     """
 
     _client: InterfaceClient
     _own_http_client: AsyncHTTPClient | None = None
     _http_client_factory: Callable[[], AsyncHTTPClient] | None = None
+    _own_client_loop: asyncio.AbstractEventLoop | None = None
     _entered_count: int = 0
     _model_id_namespace: str | None = None
 
@@ -111,13 +114,40 @@ class Provider(ABC, Generic[InterfaceClient]):
         the new client into their SDK client after re-creation.
         """
 
+    def _moved_to_another_event_loop(self) -> bool:
+        """Record the running event loop as the one this provider's own client is used on.
+
+        Returns whether the client was used on a different event loop before. Connections belong to the event
+        loop that opened them, so a client can't be used from another one, and one whose loop has closed can't
+        be closed either.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No asyncio event loop, e.g. under Trio, so there's nothing to compare.
+            return False
+        previous_loop, self._own_client_loop = self._own_client_loop, loop
+        return previous_loop is not None and previous_loop is not loop
+
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client this provider created if it's closed or was used on another event loop.
+
+        Called when the provider is entered, and at the start of a run that uses it without entering it. While
+        the provider is entered, whoever entered it owns the client, so it's left alone. The replaced client
+        isn't closed: either it already is, or its event loop is gone or belongs to other code. A client that
+        was passed in is never replaced.
+        """
+        own_client = self._own_http_client
+        if self._entered_count or own_client is None or self._http_client_factory is None:
+            return
+        if self._moved_to_another_event_loop() or own_client.is_closed:
+            new_client = self._http_client_factory()
+            self._own_http_client = new_client
+            self._set_http_client(new_client)
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
-            if self._entered_count == 0 and self._own_http_client is not None:
-                if self._own_http_client.is_closed and self._http_client_factory is not None:
-                    new_client = self._http_client_factory()
-                    self._own_http_client = new_client
-                    self._set_http_client(new_client)
+            self._refresh_http_client()
             self._entered_count += 1
         return self
 

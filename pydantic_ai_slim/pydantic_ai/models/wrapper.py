@@ -54,6 +54,9 @@ class WrapperModel(Model):
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
+    def _refresh_http_client(self) -> None:
+        self.wrapped._refresh_http_client()
+
     @asynccontextmanager
     async def connect(self) -> AsyncGenerator[Self]:
         """Connect the wrapped model while preserving this wrapper's behavior."""

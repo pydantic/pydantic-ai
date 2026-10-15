@@ -203,6 +203,10 @@ class FallbackModel(Model):
             if self._entered_count == 0:
                 await self._exit_stack.aclose()
 
+    def _refresh_http_client(self) -> None:
+        for model in self.models:
+            model._refresh_http_client()
+
     @property
     def provider(self) -> None:
         return None  # pragma: no cover

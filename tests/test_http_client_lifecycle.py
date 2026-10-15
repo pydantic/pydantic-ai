@@ -1,4 +1,4 @@
-"""Which runs reuse, and which close, the HTTP clients of models an agent builds from a model name.
+"""Which runs reuse, close or replace the HTTP clients of the models an agent uses.
 
 These tests replace the transport's `handle_async_request` instead of replaying a cassette, and build
 every provider-owned client fresh instead of through the per-test client cache in `conftest.py`, so
@@ -8,18 +8,21 @@ that what they count and check is each client the provider itself creates.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import httpx2
 import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._http import create_async_httpx2_client as create_uncached_client
-from pydantic_ai.capabilities import AbstractCapability, ResolveModelId
-from pydantic_ai.models import Model, ModelResolutionContext
+from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, SelectModel
+from pydantic_ai.models import Model, ModelResolutionContext, ModelSelectionContext
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 
 from .conftest import try_import
 
@@ -27,6 +30,10 @@ with try_import() as imports_successful:
     import pydantic_ai.providers._openai_compatible as openai_compatible
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as huggingface_imports_successful:
+    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -41,10 +48,11 @@ _OPENAI_RESPONSE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def provider_clients(
-    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
-) -> AsyncIterator[list[httpx2.AsyncClient]]:
-    """Every HTTP client an OpenAI provider creates for itself, each one new, answered without a network."""
+def new_provider_clients(monkeypatch: pytest.MonkeyPatch, allow_model_requests: None) -> list[httpx2.AsyncClient]:
+    """Every HTTP client an OpenAI provider creates for itself, each one new, answered without a network.
+
+    Clients used on an event loop that has since closed can't be closed, so this leaves closing them to the test.
+    """
     clients: list[httpx2.AsyncClient] = []
 
     def create_client() -> httpx2.AsyncClient:
@@ -59,9 +67,106 @@ async def provider_clients(
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     monkeypatch.setattr(openai_compatible, 'create_async_httpx2_client', create_client)
     monkeypatch.setattr(httpx2.AsyncHTTPTransport, 'handle_async_request', handle)
-    yield clients
-    for client in clients:
+    return clients
+
+
+@pytest.fixture
+async def provider_clients(new_provider_clients: list[httpx2.AsyncClient]) -> AsyncIterator[list[httpx2.AsyncClient]]:
+    """The clients of `new_provider_clients`, closed when the test ends."""
+    yield new_provider_clients
+    for client in new_provider_clients:
         await client.aclose()
+
+
+def _run_on_new_event_loops(agent: Agent[Any, str], *, count: int) -> list[str]:
+    """Run the agent with `asyncio.run()` `count` times, each on a new event loop that closes when it ends."""
+
+    async def run() -> str:
+        return (await agent.run('What is the capital of France?')).output
+
+    return [asyncio.run(run()) for _ in range(count)]
+
+
+def _openai_http_client(model: Model) -> object:
+    """The HTTP client the OpenAI SDK client of the innermost wrapped model sends requests with."""
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    if isinstance(model, FallbackModel):
+        return _openai_http_client(model.models[0])
+    assert isinstance(model, OpenAIChatModel)
+    return model.client._client  # pyright: ignore[reportPrivateUsage]
+
+
+def _unwrapped(model: Model) -> Model:
+    return model
+
+
+@pytest.mark.parametrize(
+    'wrap',
+    [
+        pytest.param(_unwrapped, id='model'),
+        pytest.param(WrapperModel, id='wrapper'),
+        pytest.param(FallbackModel, id='fallback'),
+    ],
+)
+def test_unentered_agent_gets_new_client_on_new_event_loop(
+    new_provider_clients: list[httpx2.AsyncClient], wrap: Callable[[Model], Model]
+):
+    """An agent that isn't entered keeps its model's HTTP client between runs, and replaces it on a new event loop."""
+    model = wrap(OpenAIChatModel('gpt-5.2', provider=OpenAIProvider()))
+    agent = Agent(model)
+
+    loop = asyncio.new_event_loop()
+    try:
+        for _ in range(2):
+            result = loop.run_until_complete(agent.run('What is the capital of France?'))
+            assert result.output == 'Paris'
+    finally:
+        loop.close()
+    # Runs on one event loop share the client.
+    assert len(new_provider_clients) == 1
+
+    assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
+    assert len(new_provider_clients) == 3
+    assert _openai_http_client(model) is new_provider_clients[2]
+    # Nothing closes a client whose event loop is gone.
+    assert [client.is_closed for client in new_provider_clients] == [False, False, False]
+
+
+def test_unentered_agent_keeps_passed_in_client_on_new_event_loop(new_provider_clients: list[httpx2.AsyncClient]):
+    """An HTTP client passed to the provider is the caller's, so it's never replaced."""
+    http_client = create_uncached_client()
+    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=http_client))
+    agent = Agent(model)
+
+    assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
+    assert new_provider_clients == []
+    assert _openai_http_client(model) is http_client
+
+
+async def test_unentered_run_after_agent_exit_gets_new_client(provider_clients: list[httpx2.AsyncClient]):
+    """A run outside `async with agent:` replaces the client the agent closed on exit."""
+    agent = Agent(OpenAIChatModel('gpt-5.2', provider=OpenAIProvider()))
+
+    async with agent:
+        await agent.run('What is the capital of France?')
+    assert [client.is_closed for client in provider_clients] == [True]
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == 'Paris'
+    assert [client.is_closed for client in provider_clients] == [True, False]
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_provider_entered_without_asyncio_keeps_client(provider_clients: list[httpx2.AsyncClient]):
+    """Without an asyncio event loop there's no loop to compare, so entering a provider keeps its client."""
+    provider = OpenAIProvider()
+
+    async with provider:
+        pass
+    async with provider:
+        pass
+    assert len(provider_clients) == 2
 
 
 async def test_run_closes_client_of_model_built_from_name(provider_clients: list[httpx2.AsyncClient]):
@@ -147,6 +252,70 @@ async def test_run_leaves_client_of_passed_model_open(provider_clients: list[htt
     assert [client.is_closed for client in provider_clients] == [False]
 
 
+async def test_entered_agent_enters_model_its_selector_returns_once(provider_clients: list[httpx2.AsyncClient]):
+    """Inside `async with agent:`, a `Model` instance a model selector returns stays open until the agent exits."""
+    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
+
+    def select(ctx: ModelSelectionContext[Any]) -> Model:
+        return model
+
+    agent = Agent(capabilities=[SelectModel(select)])
+
+    # Without the block, each run enters the model and closes its client when it ends.
+    await agent.run('What is the capital of France?')
+    assert [client.is_closed for client in provider_clients] == [True]
+
+    async with agent:
+        await agent.run('What is the capital of France?')
+        # Concurrent runs that are the first to select the model still enter it once.
+        await asyncio.gather(
+            agent.run('What is the capital of France?'),
+            agent.run('What is the capital of France?'),
+        )
+        assert [client.is_closed for client in provider_clients] == [True, False]
+    assert [client.is_closed for client in provider_clients] == [True, True]
+
+
+async def test_entered_agent_enters_model_selected_after_first_step_once(provider_clients: list[httpx2.AsyncClient]):
+    """A model a selector returns for a later step of a run is entered on the agent's exit stack too."""
+    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
+
+    def select(ctx: ModelSelectionContext[Any]) -> Model | str:
+        return model if ctx.run_step > 1 else 'test'
+
+    agent = Agent(capabilities=[SelectModel(select)])
+
+    @agent.tool_plain
+    def capital() -> str:
+        return 'Paris'
+
+    async with agent:
+        await agent.run('What is the capital of France?')
+        await agent.run('What is the capital of France?')
+        assert [client.is_closed for client in provider_clients] == [False]
+    assert [client.is_closed for client in provider_clients] == [True]
+
+
+async def test_model_selected_with_resolve_model_id_capability_is_entered_per_run(
+    provider_clients: list[httpx2.AsyncClient],
+):
+    """With a `resolve_model_id` capability, a `Model` instance a selector returns is entered by each run."""
+    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
+
+    def select(ctx: ModelSelectionContext[Any]) -> Model:
+        return model
+
+    def resolve(ctx: ModelResolutionContext[Any], model_id: str) -> Model | None:
+        return None  # pragma: no cover
+
+    agent = Agent(capabilities=[SelectModel(select), ResolveModelId(resolve)])
+
+    async with agent:
+        await agent.run('What is the capital of France?')
+        await agent.run('What is the capital of France?')
+    assert [client.is_closed for client in provider_clients] == [True, True]
+
+
 async def test_names_resolved_through_capability_are_not_reused(provider_clients: list[httpx2.AsyncClient]):
     """With a `resolve_model_id` capability, a name is resolved every run, and a model built for it closed when the run ends."""
     seen: list[str] = []
@@ -162,3 +331,30 @@ async def test_names_resolved_through_capability_are_not_reused(provider_clients
         await agent.run('What is the capital of France?', model='openai-chat:gpt-5.2')
     assert seen == ['openai-chat:gpt-5.2', 'openai-chat:gpt-5.2']
     assert [client.is_closed for client in provider_clients] == [True, True]
+
+
+@pytest.mark.skipif(not huggingface_imports_successful(), reason='huggingface_hub not installed')
+def test_unentered_huggingface_model_gets_new_client_on_new_event_loop(
+    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """The Hugging Face client opens its HTTP client on first use, so the provider builds a new one on a new event loop."""
+    transports: list[httpx.AsyncHTTPTransport] = []
+
+    async def handle(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        transports.append(self)
+        return httpx.Response(200, json={**_OPENAI_RESPONSE, 'system_fingerprint': 'test'})
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', handle)
+    provider = HuggingFaceProvider(base_url='https://hf.example.com/v1', api_key='test-key')
+    hf_client = provider.client
+    agent = Agent(HuggingFaceModel('Qwen/Qwen3-8B', provider=provider))
+
+    assert _run_on_new_event_loops(agent, count=2) == ['Paris', 'Paris']
+    assert provider.client is not hf_client
+    assert transports[0] is not transports[1]
+
+    # A client that was passed in is never replaced.
+    provider = HuggingFaceProvider(hf_client=hf_client, api_key='test-key')
+    agent = Agent(HuggingFaceModel('Qwen/Qwen3-8B', provider=provider))
+    assert _run_on_new_event_loops(agent, count=1) == ['Paris']
+    assert provider.client is hf_client
