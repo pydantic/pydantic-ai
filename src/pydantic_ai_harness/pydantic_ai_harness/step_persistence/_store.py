@@ -971,6 +971,26 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_run ON snapshots(run_id, seq);
 
+CREATE TABLE IF NOT EXISTS snapshot_idempotency_keys (
+    run_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    PRIMARY KEY (run_id, idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS tool_effects (
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    idempotency_key TEXT,
+    effect_summary TEXT,
+    PRIMARY KEY (run_id, tool_call_id)
+);
+"""
+
+# Created after `_ensure_schema`'s column migrations, which must reach existing tables first.
+_SQLITE_MESSAGES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshot_messages (
     sha256 TEXT PRIMARY KEY,
     message TEXT NOT NULL
@@ -993,23 +1013,6 @@ WHEN NOT EXISTS (SELECT 1 FROM snapshot_message_refs WHERE sha256 = OLD.sha256)
 BEGIN
     DELETE FROM snapshot_messages WHERE sha256 = OLD.sha256;
 END;
-
-CREATE TABLE IF NOT EXISTS snapshot_idempotency_keys (
-    run_id TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    PRIMARY KEY (run_id, idempotency_key)
-);
-CREATE TABLE IF NOT EXISTS tool_effects (
-    run_id TEXT NOT NULL,
-    tool_call_id TEXT NOT NULL,
-    tool_name TEXT NOT NULL,
-    status TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    ended_at TEXT,
-    idempotency_key TEXT,
-    effect_summary TEXT,
-    PRIMARY KEY (run_id, tool_call_id)
-);
 """
 
 
@@ -1171,6 +1174,7 @@ class SqliteStepStore:
             END;
             """
         )
+        conn.executescript(_SQLITE_MESSAGES_SCHEMA)
         conn.commit()
         self._schema_ready = True
 
