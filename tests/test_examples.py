@@ -220,6 +220,7 @@ class MockRealtimeConnection(InferredConnection):
 
     def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
         self._function_tool_names = function_tool_names
+        self._input_received = asyncio.Event()
         self._tool_result_received = asyncio.Event()
         self._closed = asyncio.Event()
 
@@ -227,6 +228,7 @@ class MockRealtimeConnection(InferredConnection):
         self._closed.set()
 
     async def send_input(self, content: RealtimeInput) -> None:
+        self._input_received.set()
         if isinstance(content, ToolResult):
             self._tool_result_received.set()
 
@@ -243,6 +245,10 @@ class MockRealtimeConnection(InferredConnection):
             yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
             yield ResponseDone()
         else:
+            # A real provider answers what it was sent: an example that sends something gets the turn as its reply.
+            # (One that only listens gets it all the same, a moment later.)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._input_received.wait(), 0.5)
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()
