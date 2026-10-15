@@ -5,10 +5,11 @@ acknowledgements, so their connections feed this tracker the inputs they send an
 server message makes, and yield the [lifecycle events](./_lifecycle.py) it works out from their order
 alongside them:
 
-- A response starts with its first output (audio, a transcript, a native tool part, a tool call), or where the
-  connection says the model took the turn without one (GPT-Live delegating work), and ends at its terminal
-  (`ResponseDone`), or at the usage report that closes a response's tool calls. Its id is made up
-  (`ResponseStarted.provider_id=False`).
+- A response starts with its first output (audio, a transcript, a native tool part, a tool call), where the
+  connection says the model took the turn without one (GPT-Live delegating work), or, when the model says
+  nothing, at a terminal that answers an owed reply or reports something (an interruption, a finish reason). It
+  ends at its terminal (`ResponseDone`), or at the usage report that closes a response's tool calls. Its id is
+  made up (`ResponseStarted.provider_id=False`).
 - A response answers every input that asked for one and hadn't been answered when it started (a typed turn, a
   tool result): the model replies to each on its own, in order (`ResponseStarted.basis='inferred'`).
 - A spoken turn has no id and no speech frames either: it starts with its first input transcript, joins the
@@ -261,7 +262,7 @@ class InferredLifecycle:
     # --- responses ----------------------------------------------------------------------------------
 
     def _ensure_response(self, events: list[LifecycleEvent]) -> None:
-        """Start a response, if none is under way: its first output (or usage) is all that announces it."""
+        """Start a response, if none is under way: its first output (or a terminal that answers an owed reply) is all that announces it."""
         if self._open is not None:
             return
         answers = tuple(self._unanswered)
