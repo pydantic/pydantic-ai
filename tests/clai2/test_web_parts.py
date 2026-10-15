@@ -8,6 +8,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from anyio import from_thread
 from rich.console import Console
 
 from pydantic_ai import (
@@ -355,7 +356,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
     opened = anyio.Event()
 
     def open_browser(url: str) -> None:
-        opened.set()
+        from_thread.run_sync(opened.set)
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', open_browser)
     store = SettingsStore(tmp_path / 'config.db')
@@ -380,6 +381,8 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
                 )
             )
             await opened.wait()
+            # The browser opens from a worker thread; let `/web` return and print before quitting.
+            await anyio.wait_all_tasks_blocked()
             group.cancel_scope.cancel()
     text = output.getvalue()
     assert 'Web UI running at http://127.0.0.1:' in text and 'Press Ctrl-C to quit.' in text
