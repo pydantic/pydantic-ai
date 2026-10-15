@@ -78,7 +78,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     InstructionPart,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     FileSearchTool,
     WebFetchTool,
@@ -128,6 +128,7 @@ with try_import() as imports_successful:
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -1146,7 +1147,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
                     web_searches=1,
-                    cost=Decimal('0.00431'),
+                    cost=Decimal('0.03931'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1235,7 +1236,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
                     web_searches=1,
-                    cost=Decimal('0.00398875'),
+                    cost=Decimal('0.03898875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1391,7 +1392,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
                     web_searches=1,
-                    cost=Decimal('0.00667875'),
+                    cost=Decimal('0.04167875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1638,7 +1639,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
                     web_searches=1,
-                    cost=Decimal('0.00612'),
+                    cost=Decimal('0.04112'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -3729,7 +3730,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     output_tokens=706,
                     output_reasoning_tokens=456,
                     web_searches=1,
-                    cost=Decimal('0.0021805'),
+                    cost=Decimal('0.0161805'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -5974,17 +5975,33 @@ async def test_google_stream_safety_filter(
     assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
 
 
-def test_google_provider_sets_http_options_timeout(google_provider: GoogleProvider):
-    """Test that GoogleProvider sets HttpOptions.timeout to prevent requests hanging indefinitely.
+@pytest.mark.parametrize('route', ['gemini-api', 'google-cloud', 'gateway'])
+def test_google_provider_sets_http_options_timeout(route: str, gemini_api_key: str):
+    """Test that the Google providers set HttpOptions.timeout to prevent requests hanging indefinitely.
 
     The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
     explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
     client. This would cause requests to hang indefinitely.
 
+    The client a Google provider creates, directly or on the Gateway's Google route, waits 20 minutes rather
+    than `DEFAULT_HTTP_TIMEOUT`, as Google recommends for long decode, and so does a client recreated after it
+    is closed.
+
     See https://github.com/pydantic/pydantic-ai/issues/4031
     """
-    http_options = google_provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
-    assert http_options.timeout == DEFAULT_HTTP_TIMEOUT * 1000
+    if route == 'gemini-api':
+        provider = GoogleProvider(api_key=gemini_api_key)
+    elif route == 'google-cloud':
+        provider = GoogleCloudProvider(project='test-project')
+    else:
+        provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
+    http_options = provider.client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.timeout == 20 * 60 * 1000
+    factory = provider._http_client_factory  # pyright: ignore[reportPrivateUsage]
+    assert factory is not None
+    recreated = factory()
+    assert recreated.timeout.read == 20 * 60
+    assert recreated.timeout.connect == 5
 
 
 def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str):

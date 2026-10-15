@@ -35,7 +35,7 @@ class Browser:
                 raise webbrowser.Error('no browser')
             return opens
 
-        monkeypatch.setattr(slack_plugin.webbrowser, 'open', open_url)
+        monkeypatch.setattr(slack_plugin, 'open_browser', open_url)
 
 
 class SlackAccount:

@@ -199,10 +199,6 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
     return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
 
 
-def is_async_generator_already_running(exc: RuntimeError) -> bool:
-    return 'asynchronous generator is already running' in str(exc)
-
-
 def is_model_like(type_: Any) -> bool:
     """Check if something is a pydantic model, dataclass or typedict.
 

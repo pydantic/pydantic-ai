@@ -1482,6 +1482,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 model_name=response.model,
                 provider_api_url=self._provider_url,
                 provider_name=self._provider_name,
+                price_context={'service_tier': response.service_tier} if response.service_tier else None,
             )
         ) is not None:
             mapped.cost = price.total_price

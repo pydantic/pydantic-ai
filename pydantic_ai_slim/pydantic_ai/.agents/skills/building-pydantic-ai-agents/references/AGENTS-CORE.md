@@ -1,6 +1,6 @@
 # Agents Core
 
-Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, or choosing how to run/stream an agent.
+Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, reusing an OpenAI Responses WebSocket, or choosing how to run/stream an agent.
 
 ## Create a Basic Agent
 
@@ -144,6 +144,22 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 - `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
+
+## Reuse an OpenAI Responses WebSocket
+
+Use `async with agent.connect():` on an agent configured with an OpenAI Responses model, including `Agent('openai-responses:gpt-6-astra')`. Call the agent's ordinary run methods inside the context; the context binds the connection automatically. Keep passing the conversation between runs. Set `OpenAIResponsesModelSettings(openai_previous_response_id='auto')` to send only new input, including internal tool results.
+
+Runs that select no model of their own use the connection. A run's `model=`, a run `spec` model, and a run capability model are honored as usual. An `override(model=...)` entered inside the context wins over the connection; `connect()` entered under an active override connects the overriding model instead.
+
+Keep the connection context open for the whole tool loop. Run one response at a time per connection. Parallel tool calls that each start a child run on `ctx.model` overlap on the parent's socket and fail; give those child runs their own model or connection. Concurrent tasks can open separate contexts on the same agent. An agent connection owns the provider client of a temporary model created for the connection; existing model instances and agent tools keep their lifetimes. Context exit restores the agent's previous model selection.
+
+For direct model use or connection options, open `async with model.connect() as connected` on an `OpenAIResponsesModel`. Pass `connected` to an `Agent` or a run's `model` argument. The source model continues to use HTTP. To use a `FallbackModel`, connect each concrete `OpenAIResponsesModel` with an `AsyncExitStack` first, then construct the fallback from those connected models; other fallback models can keep using HTTP.
+
+For a low-level warmup without generated output, call `connected.request()` with a `ModelRequest` containing a `UserPromptPart`, `OpenAIResponsesModelSettings(extra_body={'generate': False})`, and `ModelRequestParameters()`. Pass the returned `provider_response_id` as `openai_previous_response_id` on a later `Agent.run()`. The warmup input is not added to agent history, so store its content and response ID in application state. Do not warm up through `Agent.run()`: it treats the empty warmup response as invalid output and can exhaust output retries.
+
+A connection owns one ordered response stream. It does not support parallel responses on one socket or native mid-turn steering; use separate connection contexts for parallel runs. A cancelled or incompletely consumed response, or an API `error` event, closes its socket. Open a new connection after interruption; there is no automatic retry. Resume with the full `message_history`, and pass `OpenAIResponsesModelSettings(openai_previous_response_id=None)` on the recovery run to clear an inherited `'auto'` value from model or agent settings. This sends the full history without a previous response ID. With `openai_store=False`, the prior response may exist only in the old socket's cache.
+
+Set handshake headers before connecting. Use SDK authentication supported by WebSocket handshakes. See [OpenAI Responses WebSocket mode](https://pydantic.dev/docs/ai/models/openai/#websocket-mode) for provider-specific limits. Do not call `connect()` inside a durable execution workflow or flow; it raises `UserError` there. Ordinary tools, structured output, and capability hooks continue through the standard agent loop.
 
 ## Run Methods and Streaming
 

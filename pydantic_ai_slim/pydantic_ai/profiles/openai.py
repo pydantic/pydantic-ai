@@ -204,7 +204,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
     it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
     default when receiving responses. If your provider uses a different field name, you must explicitly set
-    `openai_chat_thinking_field` to that field name.
+    `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
+    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
+    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
@@ -454,7 +456,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # and the GPT-6 family verified live). Like the other gates in
     # this function, this enumerates known versions rather than matching open-endedly, so a new
     # family must be added here explicitly once confirmed; until then it falls back to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES))
+    # gpt-5.4-nano (incl. its dated snapshots) rejects `tool_search` with a 400, and its model page
+    # leaves it out of the supported tools: https://developers.openai.com/api/docs/models/gpt-5.4-nano
+    supports_tool_search = model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
