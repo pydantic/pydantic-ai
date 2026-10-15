@@ -139,7 +139,7 @@ class InferredLifecycle:
         """An input went (or was meant to go) out, but the provider will never reply to it."""
         if input_id in self._unanswered:
             self._unanswered.remove(input_id)
-            # (Nor does it join the conversation, after the reply under way or anywhere else.)
+            # (Held behind the reply under way, it doesn't join the conversation after it either.)
             self._held = [held for held in self._held if held != input_id]
             self._pending.append(InputLost(input_ids=(input_id,)))
 
