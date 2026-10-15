@@ -1719,14 +1719,16 @@ calls appear in core's spans.
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
 the Grain meetings, transcripts, and notes you can see. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
-settings menu. Until you have opened the menu once or picked a key, loading it
-prints a line pointing there.
+settings menu. Until you have closed the menu in the terminal once, changed a
+setting, or chosen the token source, loading it prints a line pointing there.
 
 `/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
 menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
 close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
-different key:
+different key. The same menu shows in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the Token row's **Change…** button asks its steps (the key
+picker, the masked token, the browser sign-in's waiting screen) as dialogs in the page:
 
 ```text
  Grain
@@ -1751,15 +1753,16 @@ the first of these that applies:
 1. The `GRAIN_ACCESS_TOKEN` environment variable. The Token row shows it and says
    it overrides the choice there while it is set.
 2. A [saved API key](#saved-api-keys) picked on the Token row, or with
-   `/grain key`. The searchable picker lists your `/keys` entries by name; you can
-   also type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
-   the name harness's `Grain` documents. CLAI keeps only the key's name and looks
+   `/grain key`: choose "A /keys entry", then pick one of your `/keys` entries by
+   name or type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
+   the name harness's `Grain` documents, after asking before it replaces a saved
+   `GRAIN_ACCESS_TOKEN`. CLAI keeps only the key's name and looks
    the key up on every run, so replacing it in `/keys` takes effect on the next
    prompt, deleting it makes Grain fail rather than connect without it, and
    `/keys` refuses to rename it while Grain uses it. Several plugins can share one
    named key, the way `vllm` and `openrouter` connections can. Choose "No API
-   key" to go back to the browser sign-in.
-3. A browser sign-in, made with `/grain login`, behind a waiting screen that
+   key" to go back to the browser sign-in, which starts then unless you are signed in.
+3. A browser sign-in, made with `/grain login` or "No API key", behind a waiting screen that
    shows the sign-in URL in case the browser does not open (over SSH, for
    example) and that Esc cancels. The tokens go to the OS keyring (or CLAI's
    private credential file when there is no keyring), the way `/mcp` OAuth
