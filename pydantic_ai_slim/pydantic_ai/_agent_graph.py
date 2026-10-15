@@ -1924,6 +1924,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()
+        # The drain capability ran ahead of the other hooks, so `'asap'` content a `before_model_request` hook
+        # enqueued would wait for the next request. Delivering it now puts it in this request and in history with
+        # one call, which is what a turn-scoped reminder needs.
+        queue = ctx.state.pending_messages
+        assert isinstance(queue, _enqueue.PendingMessageQueue)
+        processed_context = _enqueue.deliver_asap_messages(run_context, queue, processed_context)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original

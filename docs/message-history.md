@@ -269,7 +269,30 @@ def run_tests(ctx: RunContext) -> str:
     return '3 failed, 41 passed'
 ```
 
-A capability that nudges the model on every request adds one from `before_model_request`, to both the persistent history (`ctx.messages.append(...)`) and the request being prepared (`request_context.messages = [*request_context.messages, ...]`), as a `ModelRequest` of its own. Write it to both: added to the request alone, it never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation.
+A capability that nudges the model on every request enqueues one from `before_model_request`. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
+
+```python {title="turn_scoped_reminder_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass
+class StayTerse(AbstractCapability[Any]):
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep answers to one line.', scope='turn'))
+        return request_context
+
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[StayTerse()])
+```
+
+Don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation.
 
 A turn-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
 
@@ -873,7 +896,9 @@ async def main():
 
 `'when_idle'` messages are only drained when the agent would otherwise reach an `End`. That
 drain runs after every capability's `after_node_run` hook, so a capability that redirects the run
-can still enqueue there. `'asap'` messages are drained in `before_model_request`, and also at the
+can still enqueue there. `'asap'` messages are drained in `before_model_request`, once ahead of the other
+capabilities' hooks and once after them, so content a `before_model_request` hook enqueues goes into the request
+being prepared. They're also drained at the
 same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`

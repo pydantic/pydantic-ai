@@ -92,18 +92,25 @@ PROMPT = 'Get the weather in Paris, then in Oslo, then summarize in one line.'
 class TurnReminder(AbstractCapability[Any]):
     """Adds a turn-scoped reminder to every model request, the way a harness capability does.
 
-    The reminder goes into persistent history through `ctx.messages` and into this request through a
-    new `request_context.messages` list, which is the contract `before_model_request` hooks follow.
+    By default it enqueues the reminder, the documented pattern: content enqueued from
+    `before_model_request` goes into this request and into history. With `two_writes`, it writes the
+    reminder to both itself, into persistent history through `ctx.messages` and into this request through
+    a new `request_context.messages` list, which works too and lands the reminder ahead of later hooks.
     """
 
     text: str = 'Reminder: be terse. This is request {n}.'
+    two_writes: bool = False
     requests: int = field(default=0, init=False)
 
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         self.requests += 1
-        reminder = ModelRequest(parts=[SystemPromptPart(self.text.format(n=self.requests), scope='turn')])
+        part = SystemPromptPart(self.text.format(n=self.requests), scope='turn')
+        if not self.two_writes:
+            ctx.enqueue(part)
+            return request_context
+        reminder = ModelRequest(parts=[part])
         ctx.messages.append(reminder)
         request_context.messages = [*request_context.messages, reminder]
         return request_context
@@ -385,6 +392,42 @@ async def test_native_support_sends_every_reminder():
     ]
 
 
+async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
+    """`ctx.enqueue` from `before_model_request` delivers into the request being prepared, and into history.
+
+    It's the one-call form of writing the reminder to `ctx.messages` and `request_context.messages`: the model
+    is sent the same requests and the run records the same history either way. An enqueue from a hook used to
+    wait for the next request, since the queue is drained ahead of the other hooks.
+    """
+    runs: list[tuple[list[list[ModelMessage]], list[ModelMessage]]] = []
+    for two_writes in (False, True):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(recording_function_model(seen), capabilities=[TurnReminder(two_writes=two_writes)])
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            return f'{city}: 18C, cloudy'
+
+        result = await agent.run(PROMPT)
+        runs.append((seen, result.all_messages()))
+
+    (enqueued_seen, enqueued_history), (written_seen, written_history) = runs
+    assert [turn_scoped_texts(messages) for messages in enqueued_seen] == [[], [], []]
+    assert [
+        [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)]
+        for messages in enqueued_seen
+    ] == [
+        [PROMPT, '<system>Reminder: be terse. This is request 1.</system>'],
+        ['<system>Reminder: be terse. This is request 2.</system>'],
+        ['<system>Reminder: be terse. This is request 3.</system>'],
+    ]
+    assert [[type(part) for message in messages for part in message.parts] for messages in enqueued_seen] == [
+        [type(part) for message in messages for part in message.parts] for messages in written_seen
+    ]
+    assert turn_scoped_texts(enqueued_history) == turn_scoped_texts(written_history)
+    assert [type(message) for message in enqueued_history] == [type(message) for message in written_history]
+
+
 async def test_enqueued_turn_scoped_prompt():
     """`ctx.enqueue` delivers a turn-scoped prompt into the next request, and it's gone from the one after."""
     seen: list[list[ModelMessage]] = []
@@ -432,13 +475,13 @@ class KeepLastRequest(AbstractCapability[Any]):
 async def test_current_reminder_survives_compaction():
     """A compaction capability that keeps the current request keeps its turn-scoped prompt too.
 
-    The reminder capability runs first, so compaction sees its reminder in the last request, the one
-    it keeps; the request goes out with it, and the history still records it.
+    The reminder capability writes its reminder itself ahead of compaction, so compaction sees it in the
+    last request, the one it keeps; the request goes out with it, and the history still records it.
     """
     seen: list[list[ModelMessage]] = []
     agent = Agent(
         recording_function_model(seen),
-        capabilities=[TurnReminder(), KeepLastRequest()],
+        capabilities=[TurnReminder(two_writes=True), KeepLastRequest()],
     )
 
     @agent.tool_plain
@@ -476,7 +519,7 @@ async def test_failed_step_drops_its_turn_scoped_prompt(stream: bool):
     next request alongside the one that request adds for itself. (A stream that fails after it opened
     commits its partial response, which answers the request, so that case keeps the reminder.)
     """
-    agent = Agent(TestModel(), capabilities=[TurnReminder(), ProviderDown()])
+    agent = Agent(TestModel(), capabilities=[TurnReminder(two_writes=True), ProviderDown()])
 
     with capture_run_messages() as messages:
         with pytest.raises(RuntimeError, match='provider down'):
