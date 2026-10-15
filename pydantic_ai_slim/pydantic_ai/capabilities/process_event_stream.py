@@ -138,6 +138,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # scope or task group open across one of its `yield`s: entering and exiting it from
         # different tasks raises that same error.
         handler_task = asyncio.create_task(run_handler())
+        handler_cancel_requested = False
         next_task: asyncio.Task[AgentStreamEvent] | None = None
         next_scope = anyio.CancelScope()
         stream_iterator = aiter(stream)
@@ -184,8 +185,10 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                         yield event
                         next_scope = anyio.CancelScope()
                 except BaseException:
-                    # Cancel while the handler is still waiting on receive, before sender closure wakes it.
-                    handler_scope.cancel()
+                    # Request one edge cancellation before sender closure. The handler's
+                    # async finally can then await without inheriting a cancelled scope.
+                    handler_task.cancel()
+                    handler_cancel_requested = True
                     raise
 
             # Cancelling a pull must not forward Task.cancel() into the handler's
@@ -194,10 +197,11 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         except BaseException:
             # The consumer stopped early or the inner stream failed: tear the handler down rather
             # than leaving it parked on `receive`, and let the original exception propagate.
-            # Cancel both tasks through their scopes so their own shielded finalizers
-            # can finish before the upstream iterator is closed.
+            # After EOF, use the handler's scope so an in-progress shielded finalizer
+            # can finish. A forwarding error has already requested its single edge cancel.
             with anyio.CancelScope(shield=True):
-                handler_scope.cancel()
+                if not handler_cancel_requested:
+                    handler_scope.cancel()
                 next_scope.cancel()
                 await asyncio.gather(handler_task, *filter(None, (next_task,)), return_exceptions=True)
                 await _utils.aclose_if_supported(stream_iterator)

@@ -1052,6 +1052,72 @@ class TestProcessEventStream:
             for iterator in processors:
                 await iterator.aclose()
 
+    async def test_observer_async_cleanup_after_consumer_error(self):
+        cleanup_complete = anyio.Event()
+        cleanup_checkpoint = anyio.Event()
+        cleanup_checkpoint.set()
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            try:
+                async for _ in stream:
+                    pass
+            finally:
+                await cleanup_checkpoint.wait()
+                cleanup_complete.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=simple_stream_function),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        consumer_error = ValueError('consumer failed')
+        with pytest.raises(ValueError, match='consumer failed') as exc_info:
+            async with agent.run_stream('hello') as result:
+                async for _ in result.stream_text(debounce_by=None):
+                    raise consumer_error
+
+        assert exc_info.value is consumer_error
+        assert cleanup_complete.is_set(), 'Observer resource cleanup was interrupted during teardown'
+
+    async def test_observer_cleanup_finishes_when_cancelled_after_eof(self):
+        cleanup_started = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        cleanup_complete = anyio.Event()
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            try:
+                async for _ in stream:
+                    pass
+            finally:
+                with anyio.CancelScope(shield=True):
+                    cleanup_started.set()
+                    await cleanup_permitted.wait()
+                    cleanup_complete.set()
+
+        scope = anyio.CancelScope()
+
+        async def cancel_during_cleanup() -> None:
+            await cleanup_started.wait()
+            scope.cancel()
+            await anyio.lowlevel.checkpoint()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=simple_stream_function),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(cancel_during_cleanup)
+                with scope:
+                    async with agent.run_stream('hello') as result:
+                        async for _ in result.stream_text(debounce_by=None):
+                            pass
+                assert cleanup_complete.is_set(), 'Observer finalizer was interrupted after receiving EOF'
+
+        assert scope.cancelled_caught
+
     async def test_processor_cleanup_on_cancellation(self):
         cleanup_started = anyio.Event()
         cleanup_permitted = anyio.Event()
