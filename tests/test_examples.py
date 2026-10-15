@@ -76,6 +76,7 @@ from pydantic_ai.realtime.codec import (
 
 from .conftest import TestEnv, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
+from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -208,7 +209,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
         pass
 
 
-class MockRealtimeConnection(RealtimeConnection):
+class MockRealtimeConnection(InferredConnection):
     """A scripted realtime connection for executable documentation examples.
 
     The default script speaks one assistant turn. When the example's agent defines a
@@ -219,17 +220,19 @@ class MockRealtimeConnection(RealtimeConnection):
 
     def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
         self._function_tool_names = function_tool_names
+        self._input_received = asyncio.Event()
         self._tool_result_received = asyncio.Event()
         self._closed = asyncio.Event()
 
     async def aclose(self) -> None:
         self._closed.set()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
+        self._input_received.set()
         if isinstance(content, ToolResult):
             self._tool_result_received.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         if 'check_availability' in self._function_tool_names:
             yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
             yield ToolCall(
@@ -242,6 +245,10 @@ class MockRealtimeConnection(RealtimeConnection):
             yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
             yield ResponseDone()
         else:
+            # A real provider answers what it was sent: an example that sends something gets the turn as its reply.
+            # (One that only listens gets it all the same, a moment later.)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._input_received.wait(), 0.5)
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()

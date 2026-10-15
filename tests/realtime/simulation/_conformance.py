@@ -51,7 +51,7 @@ from pydantic_ai.realtime._lifecycle import (
     OutputItemDetails,
     ResponseEnded,
     ResponseStarted,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -170,7 +170,7 @@ class LifecycleChecker:
                 issue('lifecycle.end_without_start', f'{event.response_id!r} ended without starting')
             self._open_responses.discard(event.response_id)
             self._responses_ended.add(event.response_id)
-        elif isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnDiscarded)):
+        elif isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnClosed)):
             self._feed_turn(event, issue)
         elif isinstance(event, InputAdded):
             if event.input_id in self._added_inputs:
@@ -183,7 +183,7 @@ class LifecycleChecker:
             self._settle(event.input_ids, issue)
 
     def _feed_turn(
-        self, event: UserTurnStarted | UserTurnEnded | UserTurnDiscarded, issue: Callable[[str, str], None]
+        self, event: UserTurnStarted | UserTurnEnded | UserTurnClosed, issue: Callable[[str, str], None]
     ) -> None:
         if isinstance(event, UserTurnStarted):
             if event.turn_id in self._turns:

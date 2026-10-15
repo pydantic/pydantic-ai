@@ -162,8 +162,8 @@ delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.message
 waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
 their part's audio until they are consumed.
 
-On OpenAI, Azure OpenAI, and xAI, retained audio is kept in the history
-[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns. The conversation a
+Retained audio is kept in the history
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns, on every provider. The conversation a
 tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input recorded on
 each response's [span](observability.md), carry transcripts without that audio for now; the events and
 the response a span records keep it.
@@ -207,18 +207,18 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn (on Gemini Live, until that
-response ends: see below).
+even when they arrive after that turn's response or overlap the following turn (on Gemini Live and
+GPT-Live, until that response ends: see below).
 
-On OpenAI, Azure OpenAI, xAI, and Gemini Live, history follows the order of the provider's own conversation:
+History follows the order of the provider's own conversation:
 
 - A spoken turn sits where the provider added it, and text, images, and tool results where they reached
   it. A turn the user started while the model was still answering, but which the provider only committed
-  after that answer ended, is recorded after the answer. Gemini Live doesn't say where an input joined its
-  conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and something
-  sent while a reply is owed (requested, or already being spoken) is recorded after that reply. Gemini Live
-  rarely marks a transcript finished either, so a spoken turn's transcript is complete when the reply to it
-  ends, and words transcribed after that are recorded as a turn of their own, after the reply.
+  after that answer ended, is recorded after the answer. Gemini Live and GPT-Live don't say where an input
+  joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and
+  something sent while a reply is owed (requested, or already being spoken) is recorded after that reply. On
+  them, a spoken turn's transcript is complete when the reply to it ends, and words transcribed after that are
+  recorded as a turn of their own, after the reply.
 - A message appears in `all_messages()` once everything before it is final. On OpenAI, Azure OpenAI, and
   xAI, a reply waits for the transcript of the spoken turn before it, which can arrive after the reply
   itself is done, for up to 30 seconds after that; past that, the turn is recorded with the transcript it
@@ -230,13 +230,6 @@ On OpenAI, Azure OpenAI, xAI, and Gemini Live, history follows the order of the 
 - Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
   records [text phases](../models/openai.md#text-phases).
-
-On GPT-Live, a turn the user starts while the model is still answering, whether they
-[barge in](turns.md#barge-in) or push to talk over it, is recorded after that answer. Such a turn joins
-history once the provider ends the answer it cut off, or after a few seconds if the provider never does.
-In that fallback the turn is recorded where history stands, so it lands before the answer it interrupted,
-and ahead of anything sent with [`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was
-still in flight.
 
 If a reported speech segment never receives a transcript, the session still records its retained audio or
 a content-less `SpeechPart`, at the latest when the session closes.
