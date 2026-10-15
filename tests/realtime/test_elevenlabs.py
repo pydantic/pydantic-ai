@@ -2371,3 +2371,18 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
             ),
         ]
     )
+
+
+async def test_the_greeting_answers_no_microphone_audio() -> None:
+    # The agent replies to speech only once it has transcribed it, so the microphone audio streamed before its
+    # greeting is no turn the greeting answers.
+    connection, ws = _connection()
+    await connection.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    assert await _frames(connection, ws, [_AUDIO]) == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                AudioDelta(data=b'\x00\x01'),
+            ]
+        ]
+    )

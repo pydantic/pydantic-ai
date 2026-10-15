@@ -1318,7 +1318,8 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         # `agent_response`, `in_response_to_ids`), but each arrives only with a response's *end*, while
         # a response has to be announced with its first audio, and a tool round shares one `event_id`
         # between the response that calls the tool and the one that answers its result.
-        self._lifecycle = InferredLifecycle()
+        # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
+        self._lifecycle = InferredLifecycle(transcripts_lag_replies=False, replies_follow_transcripts=True)
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
         self._deferred_cut: RealtimeResponseInterruptedEvent | None = None
         # Whether the lifecycle saw that barge-in before the cut-off response's terminal came.
@@ -1533,7 +1534,10 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             # with `elevenlabs_tool_sync='off'`, or after a dashboard edit that races the preflight):
             # the session's tool manager answers it with the standard unknown-tool error, so the call
             # and its outcome land in history and reach consumers like any other.
-            self._response_open = True
+            # The calls end the response that makes them (the agent goes on in a response of its own once their
+            # results are in, which the turn's `agent_response` then ends), so a barge-in from here on cuts nothing.
+            self._response_open = False
+            self._turn_interrupted = False
             if not call.expects_response:
                 self._fire_and_forget_tool_call_ids.add(call.tool_call_id)
             if isinstance(call.parameters, str):

@@ -103,7 +103,12 @@ class InferredLifecycle:
     """
 
     def __init__(
-        self, *, transcribes: bool = True, transcripts_lag_replies: bool = True, audio_starts_response: bool = True
+        self,
+        *,
+        transcribes: bool = True,
+        transcripts_lag_replies: bool = True,
+        audio_starts_response: bool = True,
+        replies_follow_transcripts: bool = False,
     ) -> None:
         """Track a connection's lifecycle.
 
@@ -116,8 +121,13 @@ class InferredLifecycle:
             audio_starts_response: Whether output audio is the model speaking. GPT-Live's output is a continuous
                 track, silent between replies: its connection says where the model takes the turn instead
                 (`message(takes_turn=True)`), and audio outside a reply is no response.
+            replies_follow_transcripts: Whether the model replies to speech only once its transcript is in, as a
+                cascaded pipeline (speech recognition, then the LLM) like ElevenLabs Agents does: audio the provider
+                hasn't transcribed is then never what a reply answers, so a reply nobody asked for (the agent's
+                greeting) doesn't make the microphone audio sent before it a spoken turn.
         """
         self._audio_starts_response = audio_starts_response
+        self._replies_follow_transcripts = replies_follow_transcripts
         self._transcribes = transcribes
         self._transcripts_lag_replies = transcripts_lag_replies
         self._inputs = 0
@@ -610,7 +620,11 @@ class InferredLifecycle:
                 events.append(UserTurnEnded(turn_id=turn.id))
             # (A turn that joined already, at its speech end or commit, is the one this replies to all the same.)
             return turn.id
-        if not (audio and replying) or (self._transcribes and self._identified) or self._spoken_unanswered:
+        if (
+            not (audio and replying)
+            or (self._transcribes and (self._identified or self._replies_follow_transcripts))
+            or self._spoken_unanswered
+        ):
             # Nothing was said for the model to reply to (or the provider names its turns, and named none here), or
             # what was said joined the conversation already, at its last transcript, say.
             return None
