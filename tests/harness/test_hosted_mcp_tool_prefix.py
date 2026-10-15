@@ -39,7 +39,9 @@ class HostedMCP(Protocol):
     ) -> AbstractCapability[None]: ...
 
 
-class ReadOnlyCapable(HostedMCP, Protocol):
+class ReadOnlyCapable(Protocol):
+    __name__: str
+
     def __call__(
         self,
         *,
