@@ -24,6 +24,7 @@ from pydantic_clai2.config import (
     UPDATE_CHANNELS,
     PluginSettings,
 )
+from pydantic_clai2.config.builtins import STOCK_PLUGINS
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
@@ -349,7 +350,9 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
         # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
         store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
     elif len(args) == 2 and args[0] in ('enable', 'disable'):
-        plugin = next((p for p in declarations if p.id == args[1]), None)
+        # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
+        builtin = {p.id: p for p in STOCK_PLUGINS}
+        plugin = next((p for p in declarations if p.id == args[1]), builtin.get(args[1]))
         if plugin is None:
             raise ValueError(f'Unknown plugin: {args[1]}')
         store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))
