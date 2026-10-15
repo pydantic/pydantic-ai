@@ -66,7 +66,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
     Async generator processors are closed and observer handlers are awaited during stream teardown.
     Release resources in a `finally` block, using a shielded AnyIO cancel scope for asynchronous
-    cleanup that must finish under cancellation.
+    cleanup that must finish under cancellation. An observer that stops reading before the stream
+    ends is not protected this way: its cleanup is cancelled if the stream then ends early.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
@@ -190,7 +191,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                 except BaseException:
                     # Cancel the handler natively, once, before `send_stream` closes, so it sees a
                     # cancellation rather than a normal end of stream. A native cancel is edge-triggered,
-                    # so the handler's `finally` can still await cleanup without shielding it.
+                    # so the handler's `finally` can still await cleanup without shielding it. This assumes
+                    # the handler is still reading: one already in shielded cleanup is interrupted.
                     handler_task.cancel()
                     handler_cancel_requested = True
                     raise
