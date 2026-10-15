@@ -1,11 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from contextlib import (
-    AsyncExitStack,
-    asynccontextmanager,
-    suppress,
-)
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from functools import cached_property
@@ -292,7 +288,7 @@ class FallbackModel(Model):
             else:
                 if response.state == 'suspended':
                     _stamp_continuation(response, pinned)
-                    _carry_request_deadline(response, deadline)
+                    carry_deadline(response, deadline)
                 self._set_span_attributes(pinned, prepared_parameters)
                 return response
 
@@ -330,7 +326,7 @@ class FallbackModel(Model):
                 _stamp_replace_previous(response)
             if response.state == 'suspended':
                 _stamp_continuation(response, model)
-                _carry_request_deadline(response, deadline)
+                carry_deadline(response, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -398,7 +394,7 @@ class FallbackModel(Model):
                     # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
-                        _carry_request_deadline(streamed_response, deadline)
+                        carry_deadline(streamed_response, deadline)
                     return
 
         for model in self.models:
@@ -442,7 +438,7 @@ class FallbackModel(Model):
                 # caller has consumed the stream, so callers must call `get()` after the context exits.
                 if streamed_response.state == 'suspended':
                     _stamp_continuation(streamed_response, model)
-                    _carry_request_deadline(streamed_response, deadline)
+                    carry_deadline(streamed_response, deadline)
                 return
 
         _raise_fallback_exception_group(exceptions, [], attempts)
@@ -608,15 +604,6 @@ def _pinned_request_deadline(
     if deadline is not None and (expires_at := carried_deadline(suspended_response)) is not None:
         return deadline.until(expires_at)
     return deadline
-
-
-def _carry_request_deadline(response: ModelResponse | StreamedResponse, deadline: RequestDeadline | None) -> None:
-    """Carry the deadline of the model a response suspended on over to the segments that continue it.
-
-    A nested `FallbackModel` has no deadline of its own, and has already carried the one of the model it picked.
-    """
-    if deadline is not None:
-        carry_deadline(response, deadline)
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

@@ -97,11 +97,14 @@ class RequestDeadline:
             yield item
 
 
-def carry_deadline(response: ModelResponse | StreamedResponse, deadline: RequestDeadline) -> None:
-    """Carry `deadline` on a suspended response, for the segments that continue it.
+def carry_deadline(response: ModelResponse | StreamedResponse, deadline: RequestDeadline | None) -> None:
+    """Carry `deadline` on a suspended response, for the segments that continue it, if there is one.
 
-    It goes next to the continuation pin, which a `FallbackModel` stamps on the response first.
+    It goes next to the continuation pin, which a `FallbackModel` stamps on the response first. A nested
+    `FallbackModel` has no deadline of its own, and has already carried the one of the model it picked.
     """
+    if deadline is None:
+        return
     assert response.metadata is not None, 'The continuation pin is stamped before the deadline is carried'
     namespace = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
     namespace[_CARRIED_DEADLINE_KEY] = deadline.expires_at().isoformat()

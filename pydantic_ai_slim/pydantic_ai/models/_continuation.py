@@ -50,7 +50,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import Model, ModelRequestContext, StreamedResponse
-from ._request_timeout import RequestDeadline, without_carried_deadline
+from ._request_timeout import without_carried_deadline
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -321,9 +321,6 @@ class _ContinuationStreamedResponse(StreamedResponse):
     segment_context: Callable[[], AbstractContextManager[Any]] = nullcontext
     # The request whose segment observers (see `observe_continuation_segments`) see each segment response.
     request_context: ModelRequestContext | None = None
-    # The `request_timeout` deadline every pull of the stitched stream runs under, so it covers opening each
-    # segment, the waits between segments, and reading each segment's events.
-    request_deadline: RequestDeadline | None = None
 
     _merged_response: ModelResponse | None = field(default=None, init=False)
     _current_sub: StreamedResponse | None = field(default=None, init=False)
@@ -357,8 +354,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
         if self._event_iterator is None:
             self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
             events: AsyncIterator[ModelResponseStreamEvent] = self._segment_stream
-            if self.request_deadline is not None:
-                events = self.request_deadline.iterate(events)
+            # The `request_timeout` deadline covers opening each segment, the waits between segments, and reading
+            # each segment's events.
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
             self._event_iterator = self._iterator_with_cancel_guard(events)
         return self._event_iterator
 

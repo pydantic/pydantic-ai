@@ -1333,9 +1333,10 @@ async def model_request_stream(
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
             request_context=request_context,
-            # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
-            request_deadline=start_request_deadline(model, request_context.model_settings),
         )
+        # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
+        if (deadline := start_request_deadline(model, request_context.model_settings)) is not None:
+            sr._enforce_request_deadline(deadline)  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
         finally:
