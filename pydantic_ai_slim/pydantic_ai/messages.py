@@ -3069,6 +3069,7 @@ class ModelResponse:
             provider_api_url=self.provider_url,
             provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
+            price_context=self.provider_details,
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
