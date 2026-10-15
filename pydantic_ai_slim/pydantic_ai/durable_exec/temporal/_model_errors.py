@@ -22,7 +22,16 @@ from typing import Any, cast
 from pydantic_core import to_jsonable_python
 from temporalio.exceptions import ActivityError, ApplicationError
 
-from ...exceptions import ModelAPIError
+from ...exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+)
 
 _DETAILS_KEY = 'pydantic_ai_model_error'
 """Marks the `ApplicationError` detail that holds an encoded model error."""
@@ -87,10 +96,8 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
 def model_errors_as_application_errors() -> Generator[None]:
     """In a model activity, raise a model error as an `ApplicationError` the workflow can rebuild it from.
 
-    The `ApplicationError`'s `type` is the error's class name, which is what Temporal would have used
-    for the raw exception, so the activity's retry policy treats it exactly as before. An HTTP error with an
-    error category is an instance of a private class (see `ModelHTTPError.for_category`), so it reports
-    `ModelHTTPError`, the name a retry policy can refer to.
+    The `ApplicationError`'s `type` is what a retry policy's `non_retryable_error_types` matches; see
+    `_retry_policy_type`.
     """
     try:
         yield
@@ -103,12 +110,32 @@ def model_errors_as_application_errors() -> Generator[None]:
             encoded = None
         if encoded is None or _decode(encoded) is None:
             raise
-        raise ApplicationError(str(error), {_DETAILS_KEY: encoded}, type=_public_class_name(error)) from error
+        raise ApplicationError(str(error), {_DETAILS_KEY: encoded}, type=_retry_policy_type(error)) from error
 
 
-def _public_class_name(error: ModelAPIError) -> str:
-    """The name of the first public class in the error's MRO."""
-    return next(cls.__name__ for cls in type(error).__mro__ if not cls.__name__.startswith('_'))
+_ERROR_CATEGORIES = (
+    ModelRateLimitError,
+    ModelQuotaExceededError,
+    ModelUnavailableError,
+    ModelServerError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
+)
+
+
+def _retry_policy_type(error: ModelAPIError) -> str:
+    """The `ApplicationError` type for `error`, which a retry policy's `non_retryable_error_types` matches.
+
+    An error with a category reports the class it was before categories existed, `ModelHTTPError` if it came with
+    an HTTP status and `ModelAPIError` otherwise, so a retry policy matches exactly what it matched before. Any other
+    error reports its own class name, which is what Temporal would have used for the raw exception. The workflow
+    still rebuilds the error as its own class.
+    """
+    if isinstance(error, ModelHTTPError):
+        return 'ModelHTTPError'
+    if isinstance(error, _ERROR_CATEGORIES):
+        return 'ModelAPIError'
+    return type(error).__name__
 
 
 @contextmanager

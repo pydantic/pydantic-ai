@@ -3167,11 +3167,16 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             'ModelHTTPError',
             id='http-category',
         ),
-        pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelTimeoutError', id='category'),
+        pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
+        pytest.param(
+            ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
+        ),
+        pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
-def test_a_categorized_error_keeps_a_public_type_name(error: ModelAPIError, type_name: str):
-    """An HTTP error with a category keeps the `ModelHTTPError` type a retry policy can name, and still crosses."""
+def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIError, type_name: str):
+    """A retry policy sees an error with a category as the class it was before categories existed, so
+    `non_retryable_error_types` matches what it did; the workflow still rebuilds it as its own class."""
     with pytest.raises(ApplicationError) as raised:
         with model_errors_as_application_errors():
             raise error
