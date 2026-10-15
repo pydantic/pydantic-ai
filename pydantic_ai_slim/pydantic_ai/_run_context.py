@@ -1000,9 +1000,8 @@ RunContext.__init__ = _run_context_init_with_capability_loaded
 def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunContext[AgentDepsT]:
     """A copy of the context with the given tool name path.
 
-    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields:
-    `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
-    outside them.
+    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields: a custom
+    `TemporalRunContext` subclass keeps the extra keys its payload adds outside them.
     """
     return _utils.replace_no_init(ctx, _tool_name_path=path)
 
