@@ -467,9 +467,9 @@ Whether a deferred tool can be forced by name depends on how its definition reac
   it, and can be named in `tool_choice` on every model unless `openai_previous_response_id` or
   `openai_conversation_id` is set. GPT-5.6 and later accept the name as is. On earlier models,
   Pydantic AI declares the tool in `tools` for the request whose `tool_choice` names it, so that one
-  request misses the prompt cache. With either setting, the request goes out unchanged: earlier
-  models reject the name with the same 400, and so does GPT-5.6 once a stored response holds the
-  item.
+  request misses the prompt cache. With either setting, Pydantic AI keeps the tool in the item alone:
+  earlier models reject the name with a 400 (`Tool choice '<name>' not found in 'tools' parameter.`),
+  and so does GPT-5.6 once a stored response holds the item.
 
 ### Example
 

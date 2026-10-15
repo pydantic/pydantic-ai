@@ -356,7 +356,7 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
 def test_resolve_tool_choice_keeps_via_history_names() -> None:
     """A `'via_history'` definition travels on the tool-addition channel and stays forcible, so it must survive the
     hidden-name filter: GPT-5.6 and later accept the item-only name, and `OpenAIResponsesModel` redeclares it in
-    `tools` for earlier models."""
+    `tools` for earlier models when the request uses no server-side state."""
     params = ModelRequestParameters(
         function_tools=[make_tool('visible'), make_tool('revealed')],
         tool_visibility={'visible': 'visible', 'revealed': 'via_history'},
@@ -902,7 +902,7 @@ def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: To
     A unit test rather than VCR: cassette replay doesn't match on the request body, so only the built payload shows
     an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
     define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs`, and GPT-5.6 accepts it in
-    `allowed_tools` all the same; earlier models get it redeclared in `tools`, which
+    `allowed_tools` all the same; earlier models get it redeclared in `tools` without server-side state, which
     `test_tool_availability_delta_resolves_tool_choice_from_revealed_tools` covers.
     """
     m = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=MagicMock()))

@@ -3009,19 +3009,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if visibility == 'via_history' and name not in post_trim_revealed
         }
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        # A stored response keeps its input, so whatever a request moves into or out of it carries over to every
+        # request that continues it. Decided by the setting, whatever it resolves to.
+        uses_server_side_state = (
+            model_settings.get('openai_previous_response_id') is not None
+            or model_settings.get('openai_conversation_id') is not None
+        )
         # Before GPT-5.6, a `tool_choice` naming a tool that only an `additional_tools` item declares is
         # rejected ("Tool choice '<name>' not found in 'tools' parameter."), by name and in `allowed_tools`
         # alike, and so is declaring it in both places. A `'via_history'` tool the choice names is redeclared
         # in `tools` for this request instead, and the item leaves it out. Only such a request pays the cache miss.
-        # A stored response keeps its input, so one that left the item out would hide the tool from every request
-        # that continues it, and redeclaring a forced name next to an item it holds gets a 500. Only requests that
-        # don't use server-side state redeclare, whatever the setting resolves to.
+        # With server-side state the item stays: a stored response without it would hide the tool from every
+        # request that continues it, and redeclaring a forced name next to an item it holds gets a 500.
         chosen_reveals: set[str] = set()
         if (
             isinstance(resolved_tool_choice, tuple)
             and not profile.get('openai_responses_tool_choice_accepts_additional_tools', False)
-            and model_settings.get('openai_previous_response_id') is None
-            and model_settings.get('openai_conversation_id') is None
+            and not uses_server_side_state
         ):
             chosen_reveals = {
                 name
@@ -3065,11 +3069,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and profile.get('openai_supports_prompt_cache_breakpoints', False)
             # A `'user'` system prompt role can't be told apart from a real user turn.
             and system_prompt_role != 'user'
-            # A stored response keeps its input, so instructions relocated there would be replayed
-            # to any request that continues it, next to that request's own instructions. Only
-            # requests that don't use server-side state relocate them, whatever the setting resolves to.
-            and model_settings.get('openai_previous_response_id') is None
-            and model_settings.get('openai_conversation_id') is None
+            # Instructions relocated into a stored response's input would be replayed to any request
+            # that continues it, next to that request's own instructions.
+            and not uses_server_side_state
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not _has_dynamic_system_prompt(messages)
             # A compaction item retains the window's leading system items, so they aren't resent.
@@ -3503,7 +3505,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # Ignore names that are not currently available, keeping declaration order.
                     # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
                     # `additional_tools` item instead of `tools`, which GPT-5.6 and later accept in
-                    # `allowed_tools`; for earlier models `_build_responses_request_params` redeclares it.
+                    # `allowed_tools`; for earlier models `_build_responses_request_params` redeclares it
+                    # unless the request uses server-side state.
                     tools=[
                         {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
                     ],
