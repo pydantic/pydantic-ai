@@ -88,7 +88,7 @@ from pydantic_ai.realtime import (
     _session as realtime_session_module,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
-from pydantic_ai.realtime._lifecycle import LIFECYCLE_EVENT_TYPES, TaggedEvent
+from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime._retained_audio import RetainedAudioBudget
 from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
@@ -12226,12 +12226,6 @@ class _CoreProviderToolConnection(_ProviderToolConnection):
             yield self._lifecycle.message([event])
         await asyncio.Event().wait()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        async for frame in self._tagged_frames():
-            for event, _ in frame:
-                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
-                    yield event
-
 
 def _provider_tool_connection(core: bool) -> _ProviderToolConnection:
     return _CoreProviderToolConnection() if core else _ProviderToolConnection()
@@ -12396,3 +12390,29 @@ async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_r
     async with session:
         await drain_events(session)
     assert (session.usage.requests, session.usage.input_tokens) == (2, 3)
+
+
+async def test_a_wait_covers_an_approval_asked_between_responses() -> None:
+    """A provider can ask before any output of the response the call belongs to: the decision is owed all the same."""
+    asked = asyncio.Event()
+    decide_now = asyncio.Event()
+
+    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        asked.set()
+        await decide_now.wait()
+        return requests.build_results(approve_all=True)
+
+    agent: Agent[None, str] = Agent()
+    conn = _CoreProviderToolConnection()
+    conn._events = [conn._events[2]]  # pyright: ignore[reportPrivateUsage]  (the request alone)
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(
+        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
+    ).session() as session:
+        session._start_pump()  # pyright: ignore[reportPrivateUsage]
+        await asyncio.wait_for(asked.wait(), _LIVENESS_TIMEOUT)
+        waiter = asyncio.create_task(session.wait_for_reply())
+        await asyncio.sleep(0.01)
+        assert not waiter.done()
+        decide_now.set()
+        await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
