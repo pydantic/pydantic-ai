@@ -67,7 +67,7 @@ Examples of providers and models that can be used are:
 | --- |-----------------|------------------------------------------|
 | OpenAI | `openai`        | `gateway/{{ openai:medium }}`                 |
 | Anthropic | `anthropic`     | `gateway/{{ anthropic:medium }}`    |
-| Google Cloud (formerly Vertex AI) | `google-cloud` | `gateway/google-cloud:{{ google:medium.name }}` |
+| Google Cloud (formerly Vertex AI) | `google-cloud`, `google` | `gateway/google-cloud:{{ google:medium.name }}` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 

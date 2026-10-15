@@ -1011,7 +1011,7 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_file_search_results`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_file_search_results] [model setting](agent.md#model-run-settings). |
 | Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Mapped to xAI collections search. Requires collection IDs. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], enable the [`XaiModelSettings.xai_include_collections_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_collections_search_output] [model setting](agent.md#model-run-settings). |
-|| Google Cloud | ❌ | Not supported |
+| Google Cloud | ❌ | Not supported; the same limitation applies to Google routes through the [Pydantic AI Gateway](gateway.md). |
 | Anthropic | ❌ | Not supported |
 | Groq | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |
@@ -1062,7 +1062,7 @@ asyncio.run(main())
 
 With Gemini, you need to first [create a file search store via the Files API](https://ai.google.dev/gemini-api/docs/files), then reference the file search store names.
 
-```py {title="file_search_google_upload.py" test="skip"}
+```py {title="file_search_google_upload.py" test="skip" gateway_toggle="skip"}
 import asyncio
 
 from pydantic_ai import Agent, FileSearchTool
