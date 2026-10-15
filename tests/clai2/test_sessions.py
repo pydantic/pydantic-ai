@@ -1,7 +1,9 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
 import os
+import sqlite3
 from collections.abc import AsyncIterator, Sequence
+from contextlib import closing
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -259,6 +261,24 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert snapshot.conversation_id == session.summary.id
     bare = PluginHost(name='persistence', console=Console(file=StringIO()), settings={})
     assert not load_plugin(PersistencePlugin, bare).capabilities
+
+
+async def test_session_checkpoints_store_each_message_once_and_go_with_the_session(tmp_path: Path) -> None:
+    session = saved_session(tmp_path)
+    host = PluginHost(name='persistence', console=Console(file=StringIO()), settings={}, conversation=session)
+    session.plugins = list(load_plugin(PersistencePlugin, host).capabilities)
+    await session.prompt('hello')
+    await session.prompt('again')
+
+    def stored_messages() -> int:
+        with closing(sqlite3.connect(tmp_path / 'sessions.db')) as conn:
+            return conn.execute('SELECT count(*) FROM snapshot_messages').fetchone()[0]
+
+    # The second turn's checkpoints repeat the first turn's messages without storing them again.
+    assert stored_messages() == len(session.messages)
+    assert session.conversations is not None
+    await session.conversations.delete(source=session.summary)
+    assert stored_messages() == 0
 
 
 async def test_cancellation_still_propagates_when_saving_fails(

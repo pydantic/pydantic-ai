@@ -300,12 +300,21 @@ class TestPostgresStepStoreSnapshots:
                 datetime.now(UTC).isoformat(),
                 '[]',
             )
+            # Not text: the stand-in's TEXT affinity keeps a BLOB as bytes.
+            await connection.execute(
+                'INSERT INTO step_persistence_snapshots (run_id, step_index, timestamp, messages) '
+                'VALUES ($1, $2, $3, $4)',
+                'r1',
+                1,
+                datetime.now(UTC).isoformat(),
+                b'\x00bin',
+            )
 
         with caplog.at_level(logging.WARNING):
             snapshots = await store.list_snapshots(run_id='r1')
 
         assert snapshots == [good]
-        assert 'Skipping unparsable snapshot row for run r1' in caplog.text
+        assert caplog.text.count('Skipping unparsable snapshot row for run r1') == 2
         with pytest.raises(ValueError, match='snapshot row has wrong types'):
             await store.latest_snapshot(run_id='r1')
 
@@ -439,7 +448,7 @@ def _assert_media_restored(snapshot: ContinuableSnapshot | None, big_binary: byt
 
 class TestPostgresStepStoreMedia:
     async def test_large_parts_are_externalized_and_restored(self, pool: SqlitePool) -> None:
-        """The default media store keeps large parts in `{table}_media`, out of the snapshot row."""
+        """The default media store keeps large parts in `{table}_media`, out of the stored messages."""
         big_binary = b'\xab' * 100_000
         big_text = 'Z' * 100_000
         store = PostgresStepStore(pool, table='steps', media_threshold_bytes=64 * 1024)
@@ -449,7 +458,7 @@ class TestPostgresStepStoreMedia:
 
         assert await pool.count_rows('steps_media') == 2
         async with pool.acquire() as connection:
-            stored_length = await connection.fetchval('SELECT length(messages) FROM steps_snapshots')
+            stored_length = await connection.fetchval('SELECT max(length(message)) FROM steps_messages')
         assert isinstance(stored_length, int) and stored_length < 64 * 1024
         _assert_media_restored(await store.latest_snapshot(run_id='r1'), big_binary, big_text)
         [listed] = await store.list_snapshots(run_id='r1')

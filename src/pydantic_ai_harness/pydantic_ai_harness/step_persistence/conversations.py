@@ -127,7 +127,10 @@ def conversation_text(messages: Sequence[ModelMessage]) -> str:
 class SqliteConversationStore:
     """Local conversation heads with atomic compare-and-swap writes.
 
-    Messages share the step store's media format. Deletion removes associated top-level run records and checkpoints but leaves shared blobs; only explicitly catalogued conversations are browsable.
+    Messages share the step store's media format. Deletion removes associated top-level run records and checkpoints,
+    and every stored step message no remaining checkpoint references, but leaves shared media blobs; only explicitly
+    catalogued conversations are browsable. A `SqliteStepStore` sharing the database should use `database=`, which
+    commits a checkpoint's messages with its row, so deletion never sees one without the other.
     Connections are short-lived and all SQL runs off the caller's event loop.
     """
 
@@ -323,3 +326,15 @@ class SqliteConversationStore:
                             (source.id,),
                         )
                 conn.execute('DELETE FROM runs WHERE conversation_id=?', (source.id,))
+                if 'snapshot_messages' in tables:
+                    # Checkpoints share messages (a fork copies history), and pruning leaves the ones
+                    # only older checkpoints held, so delete every message no remaining one references.
+                    # Inline message lists start with `[`, and a damaged row is skipped. One statement
+                    # keeps the write lock short for other sessions sharing the database.
+                    conn.execute(
+                        'WITH referencing AS MATERIALIZED ('
+                        "SELECT messages FROM snapshots WHERE messages LIKE '{%' AND json_valid(messages)) "
+                        'DELETE FROM snapshot_messages WHERE sha256 NOT IN ('
+                        "SELECT ref.value FROM referencing, json_each(referencing.messages, '$.message_refs') AS ref "
+                        "WHERE ref.type = 'text')"
+                    )

@@ -65,6 +65,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import (
     MediaContext,
@@ -176,6 +177,7 @@ def _derived_tables(prefix: str) -> list[str]:
         f'{prefix}_runs',
         f'{prefix}_events',
         f'{prefix}_snapshots',
+        f'{prefix}_messages',
         f'{prefix}_snapshot_keys',
         f'{prefix}_tool_effects',
         f'{prefix}_media',
@@ -699,6 +701,29 @@ async def test_unkeyed_snapshots_always_append() -> None:
         assert await _count_rows(pool, f'{prefix}_snapshots') == 2
 
 
+async def test_snapshots_share_stored_messages_and_inline_rows_still_load() -> None:
+    """Each message is stored once, a suppressed retry stores none, and a full-history row reads back."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresStepStore(pool, table=prefix, media_store=None)
+        first = _user_messages('first')
+        second = [*first, ModelResponse(parts=[TextPart(content='second')])]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='k0'))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='k1'))
+        retried = [*second, *_user_messages('retried')]
+        await store.save_snapshot(
+            ContinuableSnapshot(run_id='r1', step_index=2, messages=retried, idempotency_key='k1')
+        )
+        with pytest.warns(HarnessDeprecationWarning, match='deduplicate_messages=False'):
+            inline = PostgresStepStore(pool, table=prefix, media_store=None, deduplicate_messages=False)
+        await inline.save_snapshot(ContinuableSnapshot(run_id='r2', step_index=0, messages=second))
+
+        assert await _count_rows(pool, f'{prefix}_messages') == 2
+        assert [s.messages for s in await store.list_snapshots(run_id='r1')] == [first, second]
+        latest = await store.latest_snapshot(run_id='r2')
+        assert latest is not None
+        assert latest.messages == second
+
+
 async def test_keyed_writes_are_idempotent_after_snapshot_pruning() -> None:
     """The key ledger outlives the snapshot row, so a late replay cannot resurrect it."""
     async with _live_tables() as (pool, prefix):
@@ -1051,7 +1076,7 @@ def _assert_media_restored(snapshot: ContinuableSnapshot | None, big_binary: byt
 
 async def _stored_messages_length(pool: PostgresPool, prefix: str) -> int:
     async with pool.acquire() as connection:
-        length = await connection.fetchval(f'SELECT octet_length(messages::text) FROM {prefix}_snapshots')
+        length = await connection.fetchval(f'SELECT max(octet_length(message)) FROM {prefix}_messages')
     assert isinstance(length, int)
     return length
 
@@ -1068,7 +1093,7 @@ async def test_large_binary_and_text_externalized_and_restored() -> None:
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_messages_with_media(big_binary, big_text))
         )
 
-        # Two blobs (binary + text) live in the sibling media table, not in the snapshot row.
+        # Two blobs (binary + text) live in the sibling media table, not in the stored message.
         assert await _count_rows(pool, f'{prefix}_media') == 2
         assert await _stored_messages_length(pool, prefix) < 64 * 1024
         _assert_media_restored(await store.latest_snapshot(run_id='r1'), big_binary, big_text)

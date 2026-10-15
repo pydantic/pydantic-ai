@@ -21,6 +21,8 @@ lifecycle.
   whose `step_index` reset to 0 cannot clobber an earlier snapshot.
 - `{table}_snapshot_keys` -- `(run_id, idempotency_key)` primary key; replay
   suppression retained after pruning.
+- `{table}_messages` -- each message once, keyed by the SHA-256 of its JSON; a
+  snapshot's `messages` column holds `{"message_refs": [...]}`.
 - `{table}_tool_effects` -- upsert per `(run_id, tool_call_id)`.
 - `{table}_media` -- the default `PostgresMediaStore` table.
 
@@ -46,6 +48,13 @@ from pydantic_ai_harness.media import (
     PostgresPool,
     externalize_media,
     restore_media,
+)
+from pydantic_ai_harness.step_persistence._messages import (
+    join_messages,
+    message_refs,
+    split_messages,
+    unknown_refs,
+    warn_full_history_deprecated,
 )
 from pydantic_ai_harness.step_persistence._store import (
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]
@@ -111,6 +120,11 @@ class PostgresStepStore:
     `max_snapshots_per_run` (default `None`, unbounded) bounds per-run
     snapshot growth: after each write, one `DELETE` prunes the rows outside
     the retain set (see `_prune_snapshots`).
+
+    A snapshot's new messages are inserted into `{table}_messages` in the
+    transaction that inserts its row. Rows with inline messages, written by
+    earlier releases, still load. `deduplicate_messages=False` writes inline
+    messages instead and is deprecated.
     """
 
     def __init__(
@@ -121,17 +135,22 @@ class PostgresStepStore:
         media_store: MediaStore | None | _AutoMedia = 'auto',
         media_threshold_bytes: int = _DEFAULT_MEDIA_THRESHOLD_BYTES,
         max_snapshots_per_run: int | None = None,
+        deduplicate_messages: bool = True,
     ) -> None:
         if not _TABLE_RE.fullmatch(table):
             raise ValueError(f'invalid table name: {table!r}')
         _validate_max_snapshots(max_snapshots_per_run)
+        if not deduplicate_messages:
+            warn_full_history_deprecated('PostgresStepStore')
         self._max_snapshots_per_run = max_snapshots_per_run
+        self._deduplicate_messages = deduplicate_messages
         self._pool = pool
         self._table = table
         self._runs_table = f'{table}_runs'
         self._events_table = f'{table}_events'
         self._snapshots_table = f'{table}_snapshots'
         self._snapshot_keys_table = f'{table}_snapshot_keys'
+        self._messages_table = f'{table}_messages'
         self._tool_effects_table = f'{table}_tool_effects'
         resolved: MediaStore | None
         if media_store == 'auto':
@@ -214,6 +233,11 @@ class PostgresStepStore:
                     'run_id TEXT NOT NULL, '
                     'idempotency_key TEXT NOT NULL, '
                     'PRIMARY KEY (run_id, idempotency_key))'
+                )
+                await connection.execute(
+                    f'CREATE TABLE IF NOT EXISTS {self._messages_table} ('
+                    'sha256 TEXT PRIMARY KEY, '
+                    'message TEXT NOT NULL)'
                 )
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._tool_effects_table} ('
@@ -326,6 +350,10 @@ class PostgresStepStore:
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
             )
+        stored: object = messages_json
+        texts: dict[str, str] = {}
+        if self._deduplicate_messages:
+            stored, texts = split_messages(messages_json)
         async with self._pool.acquire() as connection, connection.transaction():
             if snapshot.idempotency_key is not None:
                 # This ledger is independent of retained snapshot rows, so pruning cannot
@@ -339,6 +367,19 @@ class PostgresStepStore:
                 )
                 if claimed is None:
                     return
+            if texts:
+                # Messages go in only after the key is claimed, so a suppressed retry adds none.
+                rows = await connection.fetch(
+                    f'SELECT sha256 FROM {self._messages_table} WHERE sha256 = ANY($1::text[])', list(texts)
+                )
+                # Sorted, so concurrent saves inserting the same new messages take their locks in one order.
+                for digest in sorted(texts.keys() - {row[0] for row in rows}):
+                    await connection.execute(
+                        f'INSERT INTO {self._messages_table} (sha256, message) VALUES ($1, $2) '
+                        'ON CONFLICT (sha256) DO NOTHING',
+                        digest,
+                        texts[digest],
+                    )
             await connection.execute(
                 f'INSERT INTO {self._snapshots_table} ({_SNAPSHOT_COLUMNS}) '
                 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
@@ -349,7 +390,7 @@ class PostgresStepStore:
                 snapshot.agent_name,
                 snapshot.timestamp.isoformat(),
                 snapshot.state,
-                json.dumps(messages_json),
+                json.dumps(stored),
                 snapshot.idempotency_key,
             )
             await self._prune_snapshots(connection, snapshot.run_id)
@@ -390,11 +431,29 @@ class PostgresStepStore:
             sorted(seq for seq, _ in entries),
         )
 
-    async def _snapshot_from_row(self, run_id: str, row: Sequence[object]) -> ContinuableSnapshot:
-        step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_text, key = row
-        if not (isinstance(step_index, int) and isinstance(timestamp_iso, str) and isinstance(messages_text, str)):
+    async def _expand_messages(
+        self, connection: PostgresConnection, messages_text: object, cache: dict[str, str]
+    ) -> object:
+        """Parse a row's `messages` column, reading referenced messages into `cache` as needed."""
+        if not isinstance(messages_text, str):
             raise ValueError('snapshot row has wrong types')
-        messages_json: object = json.loads(messages_text)
+        stored: object = json.loads(messages_text)
+        refs = message_refs(stored)
+        if refs is None:
+            return stored
+        if unknown := unknown_refs(refs, cache):
+            rows = await connection.fetch(
+                f'SELECT sha256, message FROM {self._messages_table} WHERE sha256 = ANY($1::text[])', unknown
+            )
+            cache.update((str(row[0]), str(row[1])) for row in rows)
+        return join_messages(refs, cache)
+
+    async def _snapshot_from_row(
+        self, run_id: str, row: Sequence[object], messages_json: object
+    ) -> ContinuableSnapshot:
+        step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, _, key = row
+        if not (isinstance(step_index, int) and isinstance(timestamp_iso, str)):
+            raise ValueError('snapshot row has wrong types')
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
         messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
@@ -424,11 +483,12 @@ class PostgresStepStore:
         sql = self._select_snapshots_sql(include_interrupted) + ' ORDER BY seq DESC LIMIT 1'
         async with self._pool.acquire() as connection:
             row = await connection.fetchrow(sql, run_id)
-        if row is None:
-            return None
+            if row is None:
+                return None
+            messages_json = await self._expand_messages(connection, row[6], {})
         # The connection is released before media is restored, for the same
         # reason `save_snapshot` externalizes before its transaction.
-        return await self._snapshot_from_row(run_id, row)
+        return await self._snapshot_from_row(run_id, row, messages_json)
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
         """Return retained snapshots for `run_id` in write order.
@@ -441,12 +501,18 @@ class PostgresStepStore:
         """
         await self._ensure_schema()
         sql = self._select_snapshots_sql(include_interrupted) + ' ORDER BY seq ASC'
+        loaded: list[tuple[Sequence[object], object]] = []
+        cache: dict[str, str] = {}
         async with self._pool.acquire() as connection:
-            rows = await connection.fetch(sql, run_id)
+            for row in await connection.fetch(sql, run_id):
+                try:
+                    loaded.append((row, await self._expand_messages(connection, row[6], cache)))
+                except ValueError:
+                    _logger.warning('Skipping unparsable snapshot row for run %s', run_id, exc_info=True)
         snapshots: list[ContinuableSnapshot] = []
-        for row in rows:
+        for row, messages_json in loaded:
             try:
-                snapshots.append(await self._snapshot_from_row(run_id, row))
+                snapshots.append(await self._snapshot_from_row(run_id, row, messages_json))
             except Exception:
                 _logger.warning('Skipping unparsable snapshot row for run %s', run_id, exc_info=True)
         return snapshots

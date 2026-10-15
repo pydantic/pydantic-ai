@@ -25,10 +25,12 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import MongoMediaStore
 from pydantic_ai_harness.step_persistence import (
@@ -493,6 +495,96 @@ class TestMongoStepStoreMedia:
         assert isinstance(prompt.content, list)
         binary = next(p for p in prompt.content if isinstance(p, BinaryContent))
         assert binary.data == big
+
+
+def _conversation(turns: int) -> list[list[ModelMessage]]:
+    """The history after each turn; each is a prefix of the next, as across a conversation's runs."""
+    histories: list[list[ModelMessage]] = []
+    history: list[ModelMessage] = []
+    for turn in range(turns):
+        history = [
+            *history,
+            ModelRequest(parts=[UserPromptPart(content=f'question {turn}')]),
+            ModelResponse(parts=[TextPart(content=f'answer {turn}')]),
+        ]
+        histories.append(history)
+    return histories
+
+
+class TestMongoStepStoreMessageStorage:
+    async def test_each_message_is_stored_once_across_a_conversation(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None, max_snapshots_per_run=1)
+        histories = _conversation(4)
+        for turn, history in enumerate(histories):
+            for step in range(2):
+                await store.save_snapshot(ContinuableSnapshot(run_id=f'r{turn}', step_index=step, messages=history))
+
+        assert await client['t']['snapshot_messages'].count_documents({}) == len(histories[-1])
+        for turn, history in enumerate(histories):
+            snapshot = await store.latest_snapshot(run_id=f'r{turn}')
+            assert snapshot is not None
+            assert snapshot.messages == history
+
+    async def test_restored_tool_arguments_keep_their_key_order(self) -> None:
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        call = ModelResponse(parts=[ToolCallPart('lookup', {'b': 1, 'a': 2}, tool_call_id='t1')])
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[call]))
+
+        snapshot = await store.latest_snapshot(run_id='r1')
+        assert snapshot is not None
+        [part] = snapshot.messages[0].parts
+        assert isinstance(part, ToolCallPart) and isinstance(part.args, dict)
+        assert list(part.args) == ['b', 'a']
+
+    async def test_list_reads_shared_messages_once(self) -> None:
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        history = _conversation(1)[0]
+        for step in range(2):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=history))
+
+        assert [s.messages for s in await store.list_snapshots(run_id='r1')] == [history, history]
+
+    async def test_reads_snapshots_with_inline_messages(self) -> None:
+        client = _mock_client()
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r'`MongoStepStore\(deduplicate_messages=False\)` is deprecated: .* Remove the argument',
+        ):
+            inline = MongoStepStore(client=client, database='t', media_store=None, deduplicate_messages=False)
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        first, second = _conversation(2)
+        await inline.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
+
+        assert await client['t']['snapshot_messages'].count_documents({}) == len(second)
+        for reader in (inline, store):
+            assert [s.messages for s in await reader.list_snapshots(run_id='r1')] == [first, second]
+
+    async def test_a_missing_message_fails_latest_and_is_skipped_by_list(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        first, second = _conversation(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second))
+        await client['t']['snapshot_messages'].delete_one({'message': {'$regex': 'question 1'}})
+
+        with pytest.raises(ValueError, match=r'references 1 stored message\(s\) that are missing'):
+            await store.latest_snapshot(run_id='r1')
+        with caplog.at_level(logging.WARNING):
+            assert [s.messages for s in await store.list_snapshots(run_id='r1')] == [first]
+        assert 'Skipping unparsable snapshot document for run r1' in caplog.text
+
+    async def test_a_suppressed_retry_stores_no_messages(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        first, second = _conversation(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='k'))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='k'))
+
+        assert await client['t']['snapshot_messages'].count_documents({}) == len(first)
 
 
 class TestStepPersistenceLazyExport:
