@@ -67,6 +67,10 @@ from ..messages import (
     DocumentUrl,
     ImageUrl,
     ModelMessage,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     TextContent,
@@ -83,6 +87,8 @@ from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_
 from .codec import (
     AudioDelta,
     InputTranscript,
+    NativeToolApproval,
+    NativeToolApprovalRequest,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -447,6 +453,26 @@ class _QueueStatusPayload(BaseModel):
 
 class _QueueStatusEvent(BaseModel):
     queue_status_event: _QueueStatusPayload
+
+
+class _McpToolCallPayload(BaseModel):
+    """One step of a call to a tool on an MCP server the agent is connected to, which ElevenLabs runs itself."""
+
+    model_config = ConfigDict(extra='allow')
+
+    service_id: str | None = None
+    tool_call_id: str
+    tool_name: str
+    parameters: dict[str, Any] | None = None
+    state: str
+    """`loading`, `awaiting_approval` (the agent waits for an `mcp_tool_approval_result`), `success`, or `failure`."""
+    approval_timeout_secs: int | None = None
+    result: list[Any] | None = None
+    error_message: str | None = None
+
+
+class _McpToolCallEvent(BaseModel):
+    mcp_tool_call: _McpToolCallPayload
 
 
 class _ContextUsagePayload(BaseModel):
@@ -1342,6 +1368,12 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         # event never finalizes a turn that produced nothing.
         self._response_open = False
         self._turn_interrupted = False
+        # The MCP calls ElevenLabs runs itself, reported as native tool parts: those whose call part is out, and
+        # those denied whose outcome ElevenLabs hasn't reported, which the response they belong to records.
+        self._mcp_calls: set[str] = set()
+        self._mcp_tool_names: dict[str, str] = {}
+        self._mcp_denied: dict[str, NativeToolReturnPart] = {}
+        self._native_part_index = 0
         # Whether the conversation is waiting in the workspace's concurrency queue, where the server
         # plays hold audio over regular `audio` frames: that audio is no response of the agent's.
         self._queued = False
@@ -1416,6 +1448,22 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             # neither stops speaking nor replies; the optional `context_id` (which lets a later update
             # supersede an earlier one) has no counterpart in `TextContext` and is not sent.
             await self._send_event({'type': 'contextual_update', 'text': content.text})
+        elif isinstance(content, NativeToolApproval):
+            await self._send_event(
+                {
+                    'type': 'mcp_tool_approval_result',
+                    'tool_call_id': content.tool_call_id,
+                    'is_approved': content.approved,
+                }
+            )
+            if not content.approved:
+                self._mcp_denied[content.tool_call_id] = NativeToolReturnPart(
+                    tool_name=self._mcp_tool_names.get(content.tool_call_id, ''),
+                    content=content.reason,
+                    tool_call_id=content.tool_call_id,
+                    provider_name='elevenlabs',
+                    outcome='denied',
+                )
         elif isinstance(content, ToolResult):
             if content.tool_call_id in self._fire_and_forget_tool_call_ids:
                 # The agent asked for fire-and-forget; the server tolerates a result sent anyway
@@ -1577,6 +1625,8 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             else:
                 args = to_json(call.parameters or {}).decode()
             return [ToolCall(tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args)]
+        if event_type == 'mcp_tool_call':
+            return self._map_mcp_tool_call(_McpToolCallEvent.model_validate(data).mcp_tool_call)
         if event_type == 'context_usage':
             usage = _ContextUsageEvent.model_validate(data).context_usage_event
             if usage.context_limit_tokens is not None:
@@ -1605,6 +1655,57 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             message = error.message or error.error_name or 'unknown error'
             return [RealtimeSessionErrorEvent(message=f'{_PROVIDER_LABEL} error: {message}', recoverable=True)]
         return self._map_turn_event(event_type, data)
+
+    def _map_mcp_tool_call(self, call: _McpToolCallPayload) -> list[RealtimeCodecEvent]:
+        """A step of an MCP call ElevenLabs runs itself: its call part, a request for approval, or its outcome."""
+        events: list[RealtimeCodecEvent] = []
+        if call.tool_call_id not in self._mcp_calls:
+            self._mcp_calls.add(call.tool_call_id)
+            self._mcp_tool_names[call.tool_call_id] = call.tool_name
+            events += self._native_part(
+                NativeToolCallPart(
+                    tool_name=call.tool_name,
+                    args=call.parameters,
+                    tool_call_id=call.tool_call_id,
+                    provider_name='elevenlabs',
+                    provider_details={'service_id': call.service_id} if call.service_id else None,
+                )
+            )
+        if call.state == 'awaiting_approval':
+            metadata: dict[str, Any] = {}
+            if call.service_id is not None:
+                metadata['service_id'] = call.service_id
+            if call.approval_timeout_secs is not None:
+                metadata['approval_timeout_secs'] = call.approval_timeout_secs
+            events.append(
+                NativeToolApprovalRequest(
+                    call.tool_call_id, tool_name=call.tool_name, args=call.parameters, metadata=metadata or None
+                )
+            )
+        elif call.state in ('success', 'failure'):
+            denied = self._mcp_denied.pop(call.tool_call_id, None)
+            if call.state == 'success':
+                outcome, content = 'success', call.result
+            else:
+                # A call the session denied is reported as failed: it stays the denial it was.
+                outcome, content = ('denied', denied.content) if denied is not None else ('failed', call.error_message)
+            events += self._native_part(
+                NativeToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=content,
+                    tool_call_id=call.tool_call_id,
+                    provider_name='elevenlabs',
+                    outcome=outcome,
+                )
+            )
+        # (`loading` says nothing more than the call part.)
+        return events
+
+    def _native_part(self, part: NativeToolCallPart | NativeToolReturnPart) -> list[RealtimeCodecEvent]:
+        self._response_open = True
+        index = self._native_part_index
+        self._native_part_index += 1
+        return [PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)]
 
     def _map_turn_event(self, event_type: Any, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         """Map the frames making up the agent's turn: transcripts, the boundary, and interruptions."""
@@ -1680,6 +1781,10 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         self._turn_interrupted = False
         if not self._response_open:
             return []
+        # A denied call whose outcome ElevenLabs never reported still gets its return, in the response it was in.
+        denied = [event for part in self._mcp_denied.values() for event in self._native_part(part)]
+        self._mcp_denied.clear()
+        self._native_part_index = 0
         self._response_open = False
         # The conversation id rides on every response's `provider_details`: nothing billable reaches
         # the socket, so it is the key a consumer needs for the post-hoc cost lookup on the
@@ -1689,7 +1794,8 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         if self._conversation_id is not None:
             details.setdefault('conversation_id', self._conversation_id)
         return [
+            *denied,
             ResponseDone(
                 interrupted=interrupted, provider_response_id=provider_response_id, provider_details=details or None
-            )
+            ),
         ]

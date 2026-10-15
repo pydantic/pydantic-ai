@@ -138,7 +138,12 @@ at connect time:
   with the standard unknown-tool error, which lands in the session's history.
 
 Server-side webhook, MCP, and system tools on the agent are ElevenLabs-owned and never touched, and
-tool executions the server runs itself are not surfaced as session tool calls. The agent's attached
+ElevenLabs runs them itself. Its calls to MCP tools are recorded as a
+[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], and one on a server that requires
+approval goes to the session's approval handler, as an
+[approval-required function tool](tools.md#deferred-and-approval-required-tools) does: without one, it
+is denied rather than left waiting. The agent's attached
 tools are read from the resolved `prompt.tools` in its configuration; should ElevenLabs stop
 returning them inline (the field is deprecated in favor of `tool_ids`), each attached id is fetched
 from the workspace instead, so the comparison keeps working.

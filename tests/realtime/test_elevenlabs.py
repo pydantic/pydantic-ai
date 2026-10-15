@@ -12,7 +12,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
-from collections.abc import Generator, Sequence
+from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from typing import Any
 from unittest import mock
@@ -22,7 +22,7 @@ import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartEndEvent, PartStartEvent
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
@@ -44,6 +44,8 @@ from pydantic_ai.realtime.codec import (
     AudioDelta,
     CommitAudio,
     InputTranscript,
+    NativeToolApproval,
+    NativeToolApprovalRequest,
     OutputTranscript,
     ResponseDone,
     SessionUsage,
@@ -64,7 +66,7 @@ from pydantic_ai.realtime.lifecycle import (
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
@@ -2515,3 +2517,149 @@ async def test_an_allow_list_that_leaves_nothing_out_needs_no_override() -> None
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
     assert 'conversation_config_override' not in ws.sent_frames()[0]
+
+
+# --- MCP tools ElevenLabs runs itself ------------------------------------------------------------------
+
+
+def _mcp_call(state: str, **fields: Any) -> dict[str, Any]:
+    return {
+        'type': 'mcp_tool_call',
+        'mcp_tool_call': {
+            'service_id': 'crm',
+            'tool_call_id': 'mcp_1',
+            'tool_name': 'lookup_customer',
+            'tool_description': None,
+            'parameters': {'email': 'ada@example.com'},
+            'timestamp': '2026-10-16T00:00:00Z',
+            'state': state,
+            **fields,
+        },
+    }
+
+
+async def test_an_mcp_call_awaiting_approval_asks_the_session_and_reports_its_outcome() -> None:
+    connection, ws = _connection()
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _mcp_call('loading'),
+            _mcp_call('awaiting_approval', approval_timeout_secs=300),
+            _mcp_call('success', result=[{'type': 'text', 'text': 'Ada is a customer.'}]),
+            _agent_response('Ada is a customer.'),
+        ],
+    )
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                PartStartEvent(
+                    index=0,
+                    part=NativeToolCallPart(
+                        tool_name='lookup_customer',
+                        args={'email': 'ada@example.com'},
+                        tool_call_id='mcp_1',
+                        provider_name='elevenlabs',
+                        provider_details={'service_id': 'crm'},
+                    ),
+                ),
+                PartEndEvent(
+                    index=0,
+                    part=NativeToolCallPart(
+                        tool_name='lookup_customer',
+                        args={'email': 'ada@example.com'},
+                        tool_call_id='mcp_1',
+                        provider_name='elevenlabs',
+                        provider_details={'service_id': 'crm'},
+                    ),
+                ),
+            ],
+            [
+                NativeToolApprovalRequest(
+                    tool_call_id='mcp_1',
+                    tool_name='lookup_customer',
+                    args={'email': 'ada@example.com'},
+                    metadata={'service_id': 'crm', 'approval_timeout_secs': 300},
+                )
+            ],
+            [
+                PartStartEvent(
+                    index=1,
+                    part=NativeToolReturnPart(
+                        tool_name='lookup_customer',
+                        content=[{'type': 'text', 'text': 'Ada is a customer.'}],
+                        tool_call_id='mcp_1',
+                        timestamp=IsDatetime(),
+                        provider_name='elevenlabs',
+                    ),
+                ),
+                PartEndEvent(
+                    index=1,
+                    part=NativeToolReturnPart(
+                        tool_name='lookup_customer',
+                        content=[{'type': 'text', 'text': 'Ada is a customer.'}],
+                        tool_call_id='mcp_1',
+                        timestamp=IsDatetime(),
+                        provider_name='elevenlabs',
+                    ),
+                ),
+            ],
+            [
+                OutputTranscript(text='Ada is a customer.', is_final=True),
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+            ],
+        ]
+    )
+
+
+async def test_an_mcp_approval_is_sent_as_an_approval_result() -> None:
+    connection, ws = _connection()
+    await connection.send(NativeToolApproval('mcp_1', approved=True))
+    assert ws.sent_frames() == [{'type': 'mcp_tool_approval_result', 'tool_call_id': 'mcp_1', 'is_approved': True}]
+
+
+async def _next_frames(
+    frames: AsyncIterator[RealtimeFrame], ws: FakeWebSocket, incoming: Sequence[dict[str, Any]]
+) -> list[RealtimeFrame]:
+    """The frames the connection makes of `incoming`, one each, leaving the connection open."""
+    ws._incoming.extend(json.dumps(frame) for frame in incoming)  # pyright: ignore[reportPrivateUsage]
+    return [await anext(frames) for _ in incoming]
+
+
+@pytest.mark.parametrize('reported', [False, True], ids=['unreported', 'reported-as-failed'])
+async def test_a_denied_mcp_call_is_recorded_as_denied(reported: bool) -> None:
+    # Whether ElevenLabs reports the denied call as failed or not at all, it is recorded as the denial it was, in
+    # the response it belongs to.
+    connection, ws = _connection()
+    frames = connection.frames()
+    await _next_frames(frames, ws, [_mcp_call('awaiting_approval')])
+    await connection.send(NativeToolApproval('mcp_1', approved=False, reason='Not for this caller.'))
+    outcome = [_mcp_call('failure', error_message='Rejected by the user.')] if reported else []
+    rest = await _next_frames(frames, ws, [*outcome, _agent_response('I cannot look that up.')])
+    returns = [
+        event.part
+        for frame in rest
+        for event in frame
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+    ]
+    assert [(part.outcome, part.content) for part in returns] == [('denied', 'Not for this caller.')]
+    ended = [event for frame in rest for event in frame if isinstance(event, ResponseEnded)]
+    assert [event.response_id for event in ended] == ['pydantic_ai_response_1']
+
+
+async def test_a_failed_mcp_call_is_recorded_as_failed() -> None:
+    connection, ws = _connection()
+    frames = connection.frames()
+    [frame] = await _next_frames(frames, ws, [_mcp_call('failure', error_message='The CRM is down.')])
+    returns = [
+        event.part
+        for event in frame
+        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
+    ]
+    assert [(part.outcome, part.content) for part in returns] == [('failed', 'The CRM is down.')]
