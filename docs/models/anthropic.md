@@ -723,9 +723,11 @@ result = agent.run_sync(
 
 ## Server-side tool loops
 
-With a server-side tool such as [web search](../native-tools.md#web-search-tool), Anthropic can sample the model several times within one request, once per tool round. The response's usage sums every pass, which is what Anthropic bills, but each pass re-reads the conversation so far, so the sum can be several times the context the model was given.
+With a server-side tool such as [web search](../native-tools.md#web-search-tool), Anthropic can sample the model several times within one request, once per tool round. The response's usage sums every pass, which is what Anthropic bills, but each pass re-reads the conversation so far, so the sum can be several times the context the model was given. A response in which [compaction](#message-compaction) ran likewise sums the compaction pass and the pass after it, which saw only the compacted context.
 
-Anthropic reports each pass only under a beta that returns `usage.iterations`, such as the `compact-2026-01-12` beta that [compaction](#message-compaction) uses, which the `AnthropicCompaction` capability and `anthropic_context_management` send for you. With it, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used], [`per_request_input_tokens_limit`][pydantic_ai.usage.UsageLimits.per_request_input_tokens_limit], and harness compaction measure the context by the last pass's input tokens, cached tokens included. Without it, they read the summed usage. To get the last pass without compaction, send the beta yourself:
+Anthropic reports each pass only under a beta that returns `usage.iterations`. With it, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used], [`per_request_input_tokens_limit`][pydantic_ai.usage.UsageLimits.per_request_input_tokens_limit], and [harness compaction](../harness/compaction.md) measure the context by the last pass's input tokens, cached tokens included. Without it, they read the summed usage.
+
+[`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] and [`anthropic_context_management`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_context_management] send the `compact-2026-01-12` beta, and the betas that the [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] and [`anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget] send return `usage.iterations` too. Otherwise, send the compaction beta yourself:
 
 ```python {title="anthropic_server_tool_loop_context.py"}
 from pydantic_ai import Agent

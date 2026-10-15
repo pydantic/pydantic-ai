@@ -9,6 +9,8 @@ limit and harness compaction read that instead of the sum.
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, NativeToolCallPart, RunContext
@@ -23,6 +25,9 @@ from ..test_anthropic import MockAnthropic, completion_message
 
 with try_import() as imports_successful:
     from anthropic.types.beta import (
+        BetaCompactionIterationUsage,
+        BetaFallbackMessageIterationUsage,
+        BetaIterationsUsage,
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
@@ -64,7 +69,7 @@ def _context_window_used(model: AnthropicModel, messages: list[ModelMessage]) ->
 # The recorded `usage`: the summed input of every pass, and the last `message` iteration's input (none of these
 # requests read or wrote the cache).
 SERVER_TOOL_LOOP_USAGE: dict[bool, tuple[int, int]] = {
-    False: (50_743, 22_293),
+    False: (50_807, 22_262),
     True: (50_356, 21_897),
 }
 
@@ -86,7 +91,10 @@ async def test_server_tool_loop_reads_context_from_last_pass(
             await result.get_output()
         messages = result.all_messages()
     else:
-        messages = (await agent.run(THREE_SEARCHES, usage_limits=usage_limits)).all_messages()
+        # Under the SDK's non-streaming output limit, so the response arrives as one JSON message rather than a
+        # stream `AnthropicModel.request` reads behind the scenes.
+        settings = AnthropicModelSettings(max_tokens=4096)
+        messages = (await agent.run(THREE_SEARCHES, usage_limits=usage_limits, model_settings=settings)).all_messages()
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
@@ -213,3 +221,52 @@ async def test_pause_turn_segment_without_iterations_reads_its_own_input(allow_m
     assert (response.usage.input_tokens, response.metadata) == snapshot(
         (1000, {'__pydantic_ai__': {'context_input_tokens': 500}})
     )
+
+
+def _trailing_compaction() -> list[BetaMessageIterationUsage | BetaCompactionIterationUsage]:
+    compaction = BetaCompactionIterationUsage(
+        type='compaction', input_tokens=900, output_tokens=50, cache_read_input_tokens=0, cache_creation_input_tokens=0
+    )
+    return [_iteration(100, 10), _iteration(400, 10), compaction]
+
+
+def _fallback_message() -> list[BetaMessageIterationUsage | BetaFallbackMessageIterationUsage]:
+    fallback = BetaFallbackMessageIterationUsage(
+        type='fallback_message',
+        model='claude-sonnet-4-5',
+        input_tokens=300,
+        output_tokens=10,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    return [_iteration(100, 10), fallback]
+
+
+@pytest.mark.parametrize(
+    ('iterations', 'context_input_tokens'),
+    [
+        pytest.param(_trailing_compaction, 400, id='trailing-compaction'),
+        pytest.param(_fallback_message, 300, id='fallback-message'),
+    ],
+)
+async def test_context_is_last_message_or_fallback_message_pass(
+    allow_model_requests: None, iterations: Callable[[], BetaIterationsUsage], context_input_tokens: int
+):
+    """The context is the last `message` or `fallback_message` pass; a `compaction` entry isn't, even the last one.
+
+    A `compaction` entry measures the compaction, not the context it leaves, and `fallback_message` replaces `message`
+    as the last entry of a turn a fallback model served. Not a VCR test: a server-side model fallback can't be
+    triggered on demand, and a response that ends with a compaction needs a history past the compaction threshold.
+    """
+    message = completion_message(
+        [BetaTextBlock(text='done', type='text')],
+        BetaUsage(input_tokens=500, output_tokens=20, iterations=iterations()),
+    )
+    model = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(message))
+    )
+
+    response = (await Agent(model).run('hello')).all_messages()[-1]
+
+    assert isinstance(response, ModelResponse)
+    assert response.metadata == {'__pydantic_ai__': {'context_input_tokens': context_input_tokens}}

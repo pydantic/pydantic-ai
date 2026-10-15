@@ -1,8 +1,8 @@
 """The context size of a model response, which its usage overstates when it sums several model requests.
 
 Some responses sum the usage of several requests to the model: google-genai continues a long decode in further
-requests, each sending the output so far back as input, and an Anthropic server-side tool loop samples the model once
-per tool round. That sum is what the requests cost, but overstates the context the model was given. The model stamps
+requests, each sending the output so far back as input, and Anthropic samples the model once per round of a
+server-side tool loop and once more for a compaction. That sum is what the requests cost, but overstates the context the model was given. The model stamps
 the context size on the response, and context-size readers (`RunContext.context_window_used`, the per-request input
 token limit, harness compaction) read it back here.
 """
@@ -52,7 +52,7 @@ def context_input_tokens(response: ModelResponse) -> int:
 
     That is `usage.input_tokens`, except for a response whose usage sums several model requests (see
     `mark_context_input_tokens`): the first request's input tokens for a Google long decode, the last sampling pass's
-    for an Anthropic server-side tool loop.
+    for an Anthropic response that reported its passes.
     """
     marked = marked_context_input_tokens(response)
     return response.usage.input_tokens if marked is None else marked

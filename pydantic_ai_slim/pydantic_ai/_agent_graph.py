@@ -2178,10 +2178,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
             # The limit caps context size, so it reads `context_input_tokens`: `usage.input_tokens`, except for
             # a response whose usage sums several model requests. A Google long decode is checked against its
-            # first request's input, and an Anthropic server-side tool loop that reported its passes against its
-            # last pass's. A continuation chain (Anthropic `pause_turn`, OpenAI background mode) sums usage across
-            # segments (see `_check_continuation_usage`), so it is checked against that sum, unless the last
-            # segment stamped its context size: then against that segment's.
+            # first request's input, and an Anthropic response that reported its sampling passes against its
+            # last pass's. An Anthropic `pause_turn` chain sums usage across segments (see
+            # `_check_continuation_usage`), so it is checked against that sum, unless the last segment stamped its
+            # context size: then against that segment's.
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 

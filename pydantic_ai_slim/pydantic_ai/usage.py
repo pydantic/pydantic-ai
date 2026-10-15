@@ -519,8 +519,8 @@ class UsageLimits:
     the provider-reported `input_tokens` of the response. For a response whose usage sums several
     model requests, it is checked against the input tokens of the one that measures the context:
     the first request of a [Google long decode](../models/google.md#long-decode), and the last
-    sampling pass of an [Anthropic server-side tool loop](../models/anthropic.md#server-side-tool-loops)
-    that reported its passes.
+    sampling pass of an [Anthropic response that reported its passes](../models/anthropic.md#server-side-tool-loops),
+    such as a server-side tool loop or a compaction.
 
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop
