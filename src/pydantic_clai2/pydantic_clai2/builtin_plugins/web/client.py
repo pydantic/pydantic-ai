@@ -11,6 +11,7 @@ the `Host` and `Origin`, as `app.Guard` requires. Nothing here prints or logs it
 
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Literal, Self
 from urllib.parse import urlsplit
@@ -159,11 +160,21 @@ WaitOutcome = Literal['idle', 'asking', 'timeout', 'closed']
 the time ran out, or the connection ended."""
 
 
+@dataclass(eq=False)
+class _Sent:
+    """One input sent through a view and not started yet; each is its own, compared by identity."""
+
+    command: bool
+    """A `/command`, which ends without a turn."""
+
+
 class SessionView:
     """One CLAI's session as its page follows it, kept current by `follow` from the WebSocket.
 
     Prompts and commands sent through `send` count as queued until their turn starts or the command ends,
-    so `wait` right after `send` waits for that turn, not for a session that has not started it yet.
+    so `wait` right after `send` waits for that turn, not for a session that has not started it yet. The
+    server says a command ended only with `PluginsChanged`, which a plugin panel edit also sends, so a
+    command sent while another page edits plugins may count as ended early.
     """
 
     def __init__(self, client: WebClient) -> None:
@@ -178,8 +189,8 @@ class SessionView:
         """`/command` results and other lines, oldest first."""
         self.closed = False
         self._log = ItemLog()
-        self._queued: list[bool] = []
-        """Sent and not yet started, oldest first: `True` for a command, which ends without a turn."""
+        self._queued: list[_Sent] = []
+        """Sent and not yet started, oldest first."""
         self._changed = anyio.Event()
         self._ready = anyio.Event()
 
@@ -240,16 +251,19 @@ class SessionView:
         self._changed = anyio.Event()
 
     def _dequeue(self, *, command: bool) -> None:
-        if self._queued and self._queued[0] is command:
+        if self._queued and self._queued[0].command is command:
             self._queued.pop(0)
 
     async def send(self, text: str) -> None:
         """Enter a prompt or `/command`, counted as queued until it starts."""
-        self._queued.append(text.strip().startswith('/'))
+        sent = _Sent(command=text.strip().startswith('/'))
+        self._queued.append(sent)
         try:
             await self.client.send(text)
         except BaseException:
-            self._queued.pop()
+            # Only this input's own marker: concurrent sends each queued theirs, and one may have started.
+            if sent in self._queued:
+                self._queued.remove(sent)
             raise
 
     async def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:

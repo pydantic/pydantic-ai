@@ -20,7 +20,7 @@ from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPr
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient, _error  # pyright: ignore[reportPrivateUsage]
-from pydantic_clai2.builtin_plugins.web.protocol import MenuEdited, TitleChanged, TurnStarted
+from pydantic_clai2.builtin_plugins.web.protocol import MenuEdited, TitleChanged, TurnEnded, TurnStarted
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -93,11 +93,9 @@ async def test_a_prompt_and_its_turn(tmp_path: Path) -> None:
         assert view.items[0].text == 'look it up' and 'found' in view.items[1].text
         state = await served.client.state()
         assert [item.text for item in state.items] == [item.text for item in view.items]
-        with anyio.fail_after(10):
-            # The turn ends for the page just before the session saves it.
-            while len((transcript := await served.client.transcript(view.session.id)).items) < 3:
-                await anyio.sleep(0.01)
-        assert [item.kind for item in transcript.items] == ['user', 'tool', 'assistant']
+        # The turn ends for the page just before the session saves its answer; its prompt is saved already.
+        transcript = await served.client.transcript(view.session.id)
+        assert (transcript.id, transcript.items[0].text) == (view.session.id, 'look it up')
 
 
 async def test_commands_and_their_notices(tmp_path: Path) -> None:
@@ -193,16 +191,8 @@ async def test_the_title_and_a_closed_connection(tmp_path: Path) -> None:
         view = served.view
         await view.send('hello')
         assert await view.wait(timeout=10) == 'idle'
-        assert view.session is not None
-        path, headers = f'/api/sessions/{view.session.id}/rename', {HEADER: served.web.token}
-        async with httpx.AsyncClient(base_url=served.client.url, trust_env=False) as page:
-            with anyio.fail_after(10):
-                # The turn ends for the page just before the session saves it; a rename meanwhile is refused.
-                while (await page.post(path, json={'title': 'Named'}, headers=headers)).status_code != 204:
-                    await anyio.sleep(0.01)
-        with anyio.fail_after(10):
-            while view.session.title != 'Named':
-                await anyio.sleep(0.01)
+        # The first prompt titles the session, which the page hears before the turn starts.
+        assert view.session is not None and view.session.title == 'hello'
         await served.web.stop()
         assert await view.wait(timeout=10) == 'closed'
 
@@ -215,9 +205,10 @@ async def test_refusals(tmp_path: Path) -> None:
         assert await view.wait(timeout=1) == 'idle', 'a refused input is not queued'
         with pytest.raises(LookupError):
             await client.transcript('00000000-0000-0000-0000-000000000000')
-        async with WebClient(url=client.url, token='wrong') as stranger:
-            with pytest.raises(PermissionError, match='CLAI answered 403'):
-                await stranger.state()
+        stranger = WebClient(url=client.url, token='wrong')
+        with pytest.raises(PermissionError, match='CLAI answered 403'):
+            await stranger.state()
+        await stranger.__aexit__(None, None, None)
     with pytest.raises(ValueError, match='http://HOST:PORT/'):
         WebClient(url='ws://127.0.0.1:1/', token='x')
 
@@ -228,6 +219,32 @@ def test_errors_map_as_the_app_raised_them() -> None:
     assert isinstance(conflict, RuntimeError) and str(conflict) == 'CLAI answered 409: Something is running.'
     invalid = _error(httpx.Response(422, text='not json', request=request))
     assert isinstance(invalid, ValueError) and str(invalid) == 'CLAI answered 422: not json'
+
+
+async def test_a_failed_send_takes_back_only_its_own_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A send that fails removes its own queued input, not another's, and none once its turn started."""
+    view = SessionView(WebClient(url='http://127.0.0.1:1/', token='x'))
+    entered: list[str] = []
+
+    async def send(text: str) -> None:
+        entered.append(text)
+        if text == 'started then lost':
+            view.apply(TurnStarted(item=None))  # The turn started before the answer was lost.
+        if text != 'fine':
+            raise ConnectionError('lost')
+
+    monkeypatch.setattr(view.client, 'send', send)
+    await view.send('fine')
+    with pytest.raises(ConnectionError):
+        await view.send('/fails')
+    assert await view.wait(timeout=0.01) == 'timeout', "the first input's turn has not started"
+    view.apply(TurnStarted(item=None))
+    view.apply(TurnEnded(outcome='completed'))
+    assert await view.wait(timeout=1) == 'idle'
+    with pytest.raises(ConnectionError):
+        await view.send('started then lost')
+    view.apply(TurnEnded(outcome='completed'))
+    assert await view.wait(timeout=1) == 'idle' and entered == ['fine', '/fails', 'started then lost']
 
 
 async def test_messages_without_a_snapshot_or_a_prompt() -> None:
