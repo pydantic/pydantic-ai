@@ -59,6 +59,7 @@ export function paletteVariables(palette: Palette): Record<string, string> {
     '--lithium-deep': blend(accent, '#000000', 0.2),
     '--accent': accent,
     '--accent-hover': blend(accent, light ? '#000000' : '#ffffff', 0.15),
+    '--accent-strong-hover': blend(accent, '#000000', 0.34),
     '--accent-text': accentText,
     '--link': accent,
     '--focus': alpha(accent, 0.55),
