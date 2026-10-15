@@ -250,13 +250,10 @@ After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stre
 With `sdk_version=7`, the `tool-output-available` chunk of every [`MCPToolset`](../mcp/client.md) tool call carries `toolMetadata` in the shape AI SDK's own MCP client sets: `clientName` (the toolset `id`), `toolName`, and `title` and `annotations` when the server sets them. For a tool with a page it also has `app` with `resourceUri` and `mimeType`, and `output` is the full result. AI SDK UI's `experimental_MCPAppRenderer` (AI SDK 7.0.120 or later) shows the page from that:
 
 ```tsx
+const handlers = { allowedTools: ['select_day'], callTool, readResource };
+
 return part.toolMetadata?.app ? (
-  <MCPAppRenderer
-    part={part}
-    loadResource={loadResource}
-    handlers={{ allowedTools: ['select_day'], callTool, readResource }}
-    sandbox={sandbox}
-  />
+  <MCPAppRenderer part={part} loadResource={loadResource} handlers={handlers} sandbox={sandbox} />
 ) : null;
 ```
 
