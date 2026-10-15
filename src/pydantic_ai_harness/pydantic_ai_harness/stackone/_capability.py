@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
+from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness.stackone._toolset import (
     STACKONE_BASE_URL,
     MCPToolsetClient,
@@ -56,8 +59,12 @@ class StackOne(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
-    api_key: str | None = field(default=None, repr=False)
-    """StackOne API key. Defaults to the `STACKONE_API_KEY` environment variable."""
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
+    """A StackOne API key or a function of the run context that returns one.
+
+    Unset, it uses `STACKONE_API_KEY`. A function never does: if it returns `None` or `''`, that run has no
+    StackOne tools.
+    """
 
     base_url: str = STACKONE_BASE_URL
     """HTTPS StackOne API host. Point at a regional or staging host if needed."""
@@ -84,15 +91,33 @@ class StackOne(AbstractCapability[AgentDepsT]):
     prebuilt clients keep their own transport, auth, and account selection, so `account_id`
     is not applied to them."""
 
+    api_key: str | None = field(default=None, repr=False)
+    """Deprecated: renamed to `auth`."""
+
     def __post_init__(self) -> None:
+        if self.api_key is not None:
+            if self.auth is not None:
+                raise UserError('Pass `auth` only: `api_key` is its deprecated name.')
+            warn_argument_renamed('StackOne', 'api_key', 'auth', stacklevel=4)
+            self.auth, self.api_key = self.api_key, None
         self.tool_mode, self.actions = validate_configuration(self.tool_mode, self.actions)
         self.id = self._derived_id()
 
-    def get_toolset(self) -> StackOneToolset[AgentDepsT]:
+    def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Build the StackOne toolset."""
+        if callable(self.auth):
+            # Registered once under a fixed `id`, as durable execution requires; filled per run.
+            return DynamicToolset(self._connect_for_run, per_run_step=False, id=self._derived_id())
+        return self._connect(self.auth)
+
+    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> StackOneToolset[AgentDepsT] | None:
+        auth = self.auth(ctx) if callable(self.auth) else self.auth
+        return self._connect(auth) if auth else None
+
+    def _connect(self, api_key: str | None) -> StackOneToolset[AgentDepsT]:
         return StackOneToolset[AgentDepsT](
             account_id=self.account_id,
-            api_key=self.api_key,
+            api_key=api_key,
             base_url=self.base_url,
             actions=self.actions,
             tool_mode=self.tool_mode,
@@ -120,12 +145,13 @@ class StackOne(AbstractCapability[AgentDepsT]):
         id: str | None = None,
         description: str | None = _DEFAULT_DESCRIPTION,
         defer_loading: bool = False,
-        api_key: str | None = None,
+        auth: str | None = None,
         base_url: str = STACKONE_BASE_URL,
         actions: str | Sequence[str] = (),
         tool_mode: ToolMode | None = None,
         include_instructions: bool = True,
         metadata: Mapping[str, object] | None = None,
+        api_key: str | None = None,
     ) -> StackOne[AgentDepsT]:
         """Construct from serializable options, excluding the runtime-only `client`."""
         return cls(
@@ -133,6 +159,7 @@ class StackOne(AbstractCapability[AgentDepsT]):
             id=id,
             description=description,
             defer_loading=defer_loading,
+            auth=auth,
             api_key=api_key,
             base_url=base_url,
             actions=actions,
