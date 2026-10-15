@@ -59,7 +59,7 @@ from pydantic_ai import Agent
 
 agent = Agent()
 realtime = agent.realtime(
-    'openai:gpt-realtime',
+    '{{ openai:realtime }}',
     model_settings={'reconnect': {'max_attempts': 5}},
 )
 ```
@@ -177,7 +177,7 @@ async def close_after(session: RealtimeSession, seconds: float) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         watchdog = asyncio.create_task(close_after(session, 300))
         try:
             async for event in session:

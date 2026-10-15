@@ -20,10 +20,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import Advisor
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[
         Advisor(
-            'anthropic:claude-opus-4-8',
+            '{{ anthropic:large }}',
             max_uses=1,
             max_tokens=4096,
         )
@@ -56,8 +56,8 @@ class Decision(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.4',
-    capabilities=[Advisor('openai:gpt-5.4', output_type=Decision)],
+    '{{ openai:medium }}',
+    capabilities=[Advisor('{{ openai:medium }}', output_type=Decision)],
 )
 ```
 
@@ -76,7 +76,7 @@ In the default `auto` mode, native selection is conservative. The capability onl
 from pydantic_ai_harness import Advisor
 
 # Native for an Anthropic executor; local for OpenAI, Google, and other executors.
-anthropic_advisor = Advisor('anthropic:claude-opus-4-8')
+anthropic_advisor = Advisor('{{ anthropic:large }}')
 
 # Native for an OpenRouter executor.
 openrouter_advisor = Advisor('openrouter:anthropic/claude-opus-4.8')

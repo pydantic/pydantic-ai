@@ -32,7 +32,7 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-6-sol')
+agent = Agent('{{ openai:medium }}')
 ...
 ```
 
@@ -48,7 +48,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-6-sol')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -65,7 +65,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -84,7 +84,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -106,7 +106,7 @@ client = AsyncAzureOpenAI(
 )
 
 model = OpenAIChatModel(
-    'gpt-5.2',
+    '{{ openai:medium.name }}',
     provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
@@ -150,9 +150,9 @@ You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
-    temperature=0.2,
+    openai_reasoning_effort='low',
     service_tier='flex',
 )
 agent = Agent(model, model_settings=settings)
@@ -164,7 +164,7 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
-OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`.
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`, and the request's cost is calculated at that tier's prices.
 
 ### Prompt caching
 
@@ -233,7 +233,9 @@ On the Responses API the top-level `instructions` field cannot carry a breakpoin
 - Don't continue a response created with `openai_cache_instructions` (which `cache=True` turns on) through `openai_previous_response_id` later on, since its stored input includes the instructions it was created with.
 - Requests that continue server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
 
-Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
+Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value.
+
+On GPT-5.6 and later, OpenAI routes requests to the cache automatically, so you don't need [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to get cache hits. Requests with different keys don't reuse each other's cached prefixes, so every new key pays the cache write again. Leave the key unset so all requests share a common prefix, or set one stable key per group you want cached separately, such as a customer. Don't set a new key per request or conversation. On earlier models, a stable key helps OpenAI send requests with the same prefix to the same cache; OpenAI suggests about 15 requests per minute per key.
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
 
@@ -247,7 +249,7 @@ Both the Responses and Chat Completions APIs can run [moderation](https://platfo
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
     openai_moderation={'model': 'omni-moderation-latest'}
 )
@@ -330,7 +332,7 @@ model_settings = OpenAIResponsesModelSettings(
         )
     ],
 )
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('Open a new browser tab')
@@ -348,7 +350,7 @@ When the field is set to `'auto'`, Pydantic AI automatically selects the most re
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result1 = agent.run_sync('Tell me a joke.')
@@ -371,7 +373,7 @@ As an alternative to passing `message_history`, you can pass a concrete `provide
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
@@ -394,7 +396,7 @@ OpenAI's [Conversations API](https://platform.openai.com/docs/guides/conversatio
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -410,7 +412,7 @@ When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conver
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -438,7 +440,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction()],
 )
 ```
@@ -454,7 +456,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(token_threshold=100_000)],
 )
 ```
@@ -466,7 +468,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(message_count_threshold=20)],
 )
 ```
@@ -520,7 +522,7 @@ For long-running requests, such as large reasoning or tool-heavy jobs that may e
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(openai_background=True)
 agent = Agent(model, model_settings=settings)
 ...
@@ -540,7 +542,7 @@ If you need the [Chat Completions API](https://platform.openai.com/docs/api-refe
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai-chat:gpt-5.2')
+agent = Agent('openai-chat:{{ openai:medium.name }}')
 ...
 ```
 
@@ -548,7 +550,7 @@ agent = Agent('openai-chat:gpt-5.2')
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIChatModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import functools
 import os
 import re
@@ -90,12 +91,14 @@ else:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
+from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
 _JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, Any])
 _STOP_SEQUENCES_ADAPTER = TypeAdapter(list[str])
+_EXTENSIONS_ADAPTER = TypeAdapter(dict[str, dict[str, Any]])
 
 
 class _ToolTask(Protocol):
@@ -135,6 +138,7 @@ __all__ = (
     'EmbeddedResource',
     'ContentBlock',
     'PromptRole',
+    'MCPAppToolResult',
 )
 
 
@@ -591,6 +595,13 @@ class ServerCapabilities:
     experimental: list[str] | None = None
     """Experimental, non-standard capabilities that the server supports."""
 
+    extensions: dict[str, dict[str, Any]] | None = None
+    """MCP extensions the server supports, keyed by extension identifier, with each extension's settings.
+
+    For example, a server with [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) support
+    declares `'io.modelcontextprotocol/ui'`.
+    """
+
     logging: bool = False
     """Whether the server supports sending log messages to the client."""
 
@@ -629,6 +640,7 @@ class ServerCapabilities:
         tools_cap = mcp_capabilities.tools
         return cls(
             experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
+            extensions=mcp_validated_field(mcp_capabilities, 'extensions', _EXTENSIONS_ADAPTER),
             logging=mcp_capabilities.logging is not None,
             prompts=prompts_cap is not None,
             prompts_list_changed=bool(mcp_optional_field(prompts_cap, 'list_changed', bool)) if prompts_cap else False,
@@ -1313,12 +1325,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
-            # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
-            match mcp_tool.meta:
-                case {'ui': {'visibility': visibility}} if isinstance(visibility, list) and 'model' not in visibility:
-                    continue
-                case _:
-                    pass
+            if not _is_visible_to(mcp_tool, 'model'):
+                continue
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
@@ -1402,6 +1410,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         """Call a tool on the server directly.
 
+        The agent's calls to tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)
+        UI don't go through this method, because they need the raw result, so an override doesn't see them.
+
         Args:
             name: The name of the tool to call.
             args: The arguments to pass to the tool.
@@ -1422,6 +1433,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 session, which has no task path.
             ImportError: If `use_task=True` on FastMCP 4 and `fastmcp-tasks` is not installed.
         """
+        result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+        return _map_mcp_call_tool_result(result)
+
+    async def _call_tool_checked(
+        self, name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None, use_task: bool
+    ) -> CallToolResult:
+        """Call a tool and return its successful result, raising per `tool_error_behavior` otherwise."""
         async with self:
             try:
                 if use_task:
@@ -1475,19 +1493,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     error = error.exceptions[0]
                 _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
-        mapped_result = _map_mcp_call_tool_result(result, prefer_structured=result.is_error)
         if result.is_error:
             if result.structured_content is None and not result.content:
                 message = f'Tool {name!r} returned an error'
             else:
-                message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
+                mapped_error = _map_mcp_call_tool_result(result, prefer_structured=True)
+                message = messages.ToolReturnPart(tool_name=name, content=mapped_error).model_response_str(
                     wrap_if_error=False
                 )
                 if not message:
                     message = f'Tool {name!r} returned an error'
             _raise_mcp_tool_error(message, self.tool_error_behavior)
 
-        return mapped_result
+        return result
 
     async def call_tool(
         self,
@@ -1499,11 +1517,49 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # `get_tools()` resolves the server's `execution.taskSupport` and the client's
         # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
+        resource_uri = _app_resource_uri(tool.tool_def)
+        if resource_uri is None:
+            if self.process_tool_call is not None:
+                return await self.process_tool_call(
+                    ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
+                )
+            return await self.direct_call_tool(name, tool_args, use_task=use_task)
+
+        # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
+        # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
+        # for the model, and the mapping drops `_meta` and sometimes the content blocks, which the app needs.
+        tool_name = name
+        sent: CallToolResult | None = None
+
+        async def call_tool_func(
+            name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
+        ) -> ToolResult:
+            nonlocal sent
+            result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+            if name == tool_name:
+                # A copy, as the mapped value shares objects with the result and a hook may edit it in place.
+                sent = copy.deepcopy(result)
+            return _map_mcp_call_tool_result(result)
+
+        # The app gets the model's arguments, which the frontend already has, not ones a hook added (such as a key).
+        # A copy, as a hook may edit them in place.
+        model_args = copy.deepcopy(tool_args)
         if self.process_tool_call is not None:
-            return await self.process_tool_call(
-                ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
-            )
-        return await self.direct_call_tool(name, tool_args, use_task=use_task)
+            return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
+        else:
+            return_value = await call_tool_func(name, tool_args)
+
+        # Mapping the kept result again gives what the model would have got, so a `process_tool_call` hook that
+        # changed the result keeps the raw one from reaching the app.
+        if sent is None or return_value != _map_mcp_call_tool_result(sent):
+            return return_value
+        app = MCPAppToolResult(
+            resource_uri=resource_uri,
+            tool_input=model_args,
+            result=_call_tool_result_to_wire(sent),
+            toolset_id=self.id,
+        )
+        return messages.ToolReturn(return_value=return_value, metadata={MCP_APP_METADATA_KEY: app})
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve the prompts currently exposed by the server.
@@ -1639,6 +1695,69 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if len(contents) == 1
             else [_resource_content_to_pai(c) for c in contents]
         )
+
+    async def call_tool_for_app(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call a tool for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
+
+        An MCP Apps page runs in the browser and can't reach the server, so the host relays its `tools/call`
+        requests. Call this from the endpoint your frontend forwards them to, and send the result back to the
+        page as is.
+
+        Only tools on this server that are visible to apps can be called: `_meta.ui.visibility` includes `"app"`,
+        or is omitted. `isError` results are returned rather than raised, and
+        [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply.
+
+        Args:
+            name: The name of the tool the page called.
+            arguments: The arguments the page passed.
+
+        Returns:
+            The MCP `CallToolResult` in wire format (camelCase keys): `content`, `structuredContent` and `_meta`
+            when the server sent them, and `isError`.
+
+        Raises:
+            MCPError: If `arguments` isn't an object or the tool isn't available to apps (code `INVALID_PARAMS`), or
+                the server returns a protocol error.
+        """
+        # The arguments come from the page's JSON, so their type is checked here rather than trusted.
+        if arguments is None:
+            arguments = {}
+        elif not _utils.is_str_dict(arguments):
+            raise MCPError(message='Tool arguments must be an object', code=mcp_types.INVALID_PARAMS)
+        async with self:
+            try:
+                tool = next((t for t in await self.list_tools() if t.name == name), None)
+                if tool is None or not _is_visible_to(tool, 'app'):
+                    raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
+                result = await self.client.call_tool(name=name, arguments=arguments, raise_on_error=False)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return _call_tool_result_to_wire(result)
+
+    async def read_resource_for_app(self, uri: str) -> dict[str, Any]:
+        """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
+
+        Unlike [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource], this keeps each item's MIME type and
+        `_meta`, where `_meta.ui` holds the Content Security Policy and permissions for the page's iframe. Use it to
+        load the page itself, and to answer the page's own `resources/read` requests: send the result back as is.
+        MCP Apps has no visibility setting for resources, so any resource on the server can be read; check `uri`
+        first if a page should only reach some.
+
+        Args:
+            uri: The URI of the resource.
+
+        Returns:
+            The MCP `ReadResourceResult` in wire format (camelCase keys), with its `contents`.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        async with self:
+            try:
+                result = await self.client.read_resource_mcp(uri)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
 
     def __repr__(self) -> str:
         repr_args = [f'client={self.client!r}']
@@ -1815,6 +1934,41 @@ def _raise_mcp_tool_error(
         raise ToolError(message) from cause
     else:
         assert_never(behavior)
+
+
+def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
+    """Return the MCP Apps UI resource a tool renders with, from `_meta.ui.resourceUri` or the deprecated flat key."""
+    match (tool_def.metadata or {}).get('meta'):
+        case {'ui': {'resourceUri': str(uri)}} | {'ui/resourceUri': str(uri)}:
+            return uri
+        case _:
+            return None
+
+
+def _is_visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool:
+    """Whether `audience` can see `tool`, per MCP Apps (SEP-1865).
+
+    A server lists who can see a tool in `_meta.ui.visibility`, such as `["app"]` for a tool only its page calls.
+    A tool without that list is visible to both the model and the app.
+    """
+    match tool.meta:
+        case {'ui': {'visibility': visibility}} if isinstance(visibility, list):
+            return audience in visibility
+        case _:
+            return True
+
+
+def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:
+    """Rebuild the MCP wire form of a `CallToolResult`, which MCP Apps hand to the app as is."""
+    wire: dict[str, Any] = {
+        'content': [block.model_dump(mode='json', by_alias=True, exclude_none=True) for block in result.content]
+    }
+    if result.structured_content is not None:
+        wire['structuredContent'] = result.structured_content
+    if result.meta is not None:
+        wire['_meta'] = result.meta
+    wire['isError'] = result.is_error
+    return wire
 
 
 def _map_mcp_call_tool_result(result: CallToolResult, *, prefer_structured: bool = False) -> Any:

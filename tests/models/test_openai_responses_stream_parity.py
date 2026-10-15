@@ -39,6 +39,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.toolsets._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
@@ -76,6 +77,8 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
         return BedrockMantleResponsesModel(model_name, provider=BedrockMantleProvider(openai_client=client))
     if host == 'api.deepseek.com':
         return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
+    if host == 'api.meta.ai':
+        return OpenAIResponsesModel(model_name, provider=MetaProvider(openai_client=client))
     assert host == 'api.openai.com', host
     return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 

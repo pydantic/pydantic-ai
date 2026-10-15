@@ -30,10 +30,11 @@ from pydantic_ai_harness.compaction import (
     SlidingWindowCompaction,
     SummarizingCompaction,
     compact_now,
-    estimate_token_count,
+    estimate_message_tokens,
 )
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering.status import Status
@@ -57,7 +58,7 @@ class CompactionSettings(BaseModel):
     protected_tokens: int = Field(
         default=50_000,
         ge=0,
-        description='Tokens of the most recent messages that are never compacted; /compact keeps at most half.',
+        description='Tokens of the most recent messages that are never compacted; /compact caps it at half.',
     )
     context_window: int | None = Field(
         default=None,
@@ -224,13 +225,17 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         model = await conversation.resolved_model()
         if model is None:
             raise ValueError('Choose a model first: /set model <Tab>')
-        tokens = estimate_token_count(before)
-        # Protect at most half the history: a conversation just over the protected tail would
-        # otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+        # Counted as the provider reported them, so thinking returned without text is not missed.
+        tokens = sum(estimate_message_tokens(before))
+        # Cap the protected target at half the history: a conversation just over the protected tail
+        # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+        # The kept messages can still exceed it by the whole message that crosses it.
         tail = min(self.settings.protected_tokens, tokens // 2)
         chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
-        after = await compact_now(chain, before, model=model, focus=' '.join(args) or None)
-        saved = tokens - estimate_token_count(after)
+        after = await compact_now(
+            chain, before, model=model, focus=' '.join(args) or None, tracer=agent_instrumentation.tracer()
+        )
+        saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:
             return 'Nothing to compact: compacting would not make the conversation smaller.'
         await conversation.commit_messages(after)

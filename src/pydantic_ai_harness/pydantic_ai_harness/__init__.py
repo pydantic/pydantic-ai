@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .browser_use import BrowserUse
@@ -49,15 +50,18 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
+    from .render import RenderWorkflows
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
+    from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
@@ -74,6 +78,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
     'BrowserUse',
@@ -114,12 +119,14 @@ __all__ = [
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
+    'PGTaskDurability',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
     'Researcher',
@@ -128,6 +135,8 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
+    'SmolSandbox',
+    'SmolSandboxBackend',
     'SpendLimits',
     'SpritesSandbox',
     'SpritesSandboxBackend',
@@ -151,6 +160,7 @@ __all__ = [
 _CAPABILITY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',
@@ -176,17 +186,20 @@ _CAPABILITY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
+    'PGTaskDurability': 'pgtask',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
+    'RenderWorkflows': 'render',
     'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
+    'SmolSandbox': 'smol_sandbox',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',
@@ -213,6 +226,7 @@ _CONSTANT_EXPORTS = {
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'SmolSandboxBackend': 'smol_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
