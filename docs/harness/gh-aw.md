@@ -171,8 +171,8 @@ Four things about that module.
 - **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
-- **No third-party imports.** The engine installs `pydantic-clai2==0.54.0`,
-  `pydantic-ai-harness==0.54.0` and
+- **No third-party imports.** The engine installs `pydantic-clai2` and
+  `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
   `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
@@ -543,8 +543,9 @@ activity. These artifacts complement the Actions summary and run logs.
 
 The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
-emits canonical typed events during the run. The inline parser selects the framed records
-from captured engine stdio rather than reconstructing a transcript from terminal output.
+captures assistant messages, reasoning, tool calls and results (including native tools),
+and usage. The inline parser selects the framed records from captured engine stdio rather
+than reconstructing a transcript from terminal output.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
 includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with

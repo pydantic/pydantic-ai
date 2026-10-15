@@ -27,7 +27,7 @@ from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])],
 )
 ```
@@ -94,7 +94,7 @@ from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget, SpendRecordedEvent
 
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'))])
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[limits])
+agent = Agent('{{ anthropic:medium }}', capabilities=[limits])
 
 @agent.on_event(SpendRecordedEvent)
 async def show(ctx, event):
@@ -153,7 +153,7 @@ class ApproveBeforeSpending(AbstractCapability[None]):
         return request_context
 
 
-agent = Agent('openai:gpt-5.4', deps_type=type(None), capabilities=[limits, ApproveBeforeSpending()])
+agent = Agent('{{ openai:medium }}', deps_type=type(None), capabilities=[limits, ApproveBeforeSpending()])
 ```
 
 The gate reads numbers `SpendLimits` has already accrued, because the previous response was counted inside `wrap_model_request` before this request was prepared. It gates the first request of a run too, which is what carries a threshold crossed by an earlier run into the next one. A capability listed after it can still skip the request with `SkipModelRequest`, so an approval taken here is not proof that a request followed.
@@ -174,7 +174,7 @@ from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
 
 limits = SpendLimits[None](budgets=[Budget(usd=Decimal('1'), name='daily')])
-agent = Agent('openai:gpt-5.4', deps_type=type(None), capabilities=[limits])
+agent = Agent('{{ openai:medium }}', deps_type=type(None), capabilities=[limits])
 
 
 async def ask(prompt: str, ceiling: Decimal) -> str:

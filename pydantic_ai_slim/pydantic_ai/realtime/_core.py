@@ -68,7 +68,7 @@ from ._lifecycle import (
     UserTurnStarted,
 )
 from ._retained_audio import RetainedAudioBudget
-from ._utils import accumulate_transcript, pcm_to_wav, user_transcript_update
+from ._utils import accumulate_transcript, fold_part_transcript, pcm_to_wav, user_transcript_update
 from .codec import (
     AudioDelta,
     ConversationCreated,
@@ -113,14 +113,12 @@ class InputWithdrawn:
 
 @dataclass(frozen=True, kw_only=True)
 class AudioSent:
-    """Input audio the caller streamed, retained for the spoken turn it belongs to."""
+    """Input audio the caller streamed went out, retained for the spoken turn it belongs to.
+
+    Reported once its send completed: a turn the provider ended while it was on its way was ended without it.
+    """
 
     data: bytes
-
-
-@dataclass(frozen=True, kw_only=True)
-class AudioUnsent:
-    """The input audio last reported as sent never went out: it is taken back, as much of it as is still there."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -185,7 +183,6 @@ Command: TypeAlias = (
     InputSent
     | InputWithdrawn
     | AudioSent
-    | AudioUnsent
     | AudioCleared
     | ToolReturned
     | ToolCallRefused
@@ -212,6 +209,8 @@ class _Response:
     open_part_item: str | None = None
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
+    closed_parts: dict[str, SpeechPart | TextPart] = field(default_factory=dict[str, SpeechPart | TextPart])
+    """The part each item of the output closed, for a transcript of the item that arrives after it closed."""
     item_details: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """What the provider said about each item of the output, for the part the item makes."""
     usage: RequestUsage = field(default_factory=RequestUsage)
@@ -344,9 +343,6 @@ class SessionCore:
         self._recorded_audio: deque[_Response | _UserTurn] = deque()
         """Recorded entities whose message still has audio, in the order they joined the conversation: what eviction
         takes audio from first, oldest first, without passing over anything that has none or isn't recorded yet."""
-        self._unsent_audio: tuple[_UserTurn | None, int] | None = None
-        """The latest input audio chunk, until the next: the turn it was cut for since (or `None` while it is in the
-        buffer), and its length, so `AudioUnsent` can take it back if its send fails."""
         self._placements = 0
         self._user_speaking = False
         self._speech_segmented = False
@@ -433,7 +429,7 @@ class SessionCore:
             self._input_sent(command)
         elif isinstance(command, InputWithdrawn):
             self._withdraw(command.input_ids)
-        elif isinstance(command, (AudioSent, AudioUnsent, AudioCleared)):
+        elif isinstance(command, (AudioSent, AudioCleared)):
             self._input_audio_command(command)
         elif isinstance(command, ToolReturned):
             self._returns[command.tool_call_id] = command.request
@@ -458,37 +454,16 @@ class SessionCore:
         else:
             assert_never(command)
 
-    def _input_audio_command(self, command: AudioSent | AudioUnsent | AudioCleared) -> None:
+    def _input_audio_command(self, command: AudioSent | AudioCleared) -> None:
         if isinstance(command, AudioSent):
             if self._retain_input:
                 self._input_audio.extend(command.data)
-                self._unsent_audio = (None, len(command.data))
                 self._bound_retained_audio()
-        elif isinstance(command, AudioUnsent):
-            self._take_back_audio()
         else:
-            self._unsent_audio = None
             self._input_audio.clear()
             # A turn the user was saying that hadn't joined the conversation never will now.
             for turn_id in [turn_id for turn_id, turn in self._turns.items() if not turn.ended]:
                 self._drop_turn(turn_id)
-
-    def _take_back_audio(self) -> None:
-        """Take back the latest input audio chunk, whose send failed: from the buffer, or the turn it was cut for.
-
-        By length, as the session takes it back from its own buffer: what of it the budget already trimmed, or
-        that went into history with its turn, is no longer there to take back.
-        """
-        if self._unsent_audio is None:
-            return
-        turn, length = self._unsent_audio
-        self._unsent_audio = None
-        if turn is None:
-            del self._input_audio[len(self._input_audio) - min(length, len(self._input_audio)) :]
-        elif turn.id in self._waiting_turn_audio and turn.audio:
-            length = min(length, len(turn.audio))
-            turn.audio = turn.audio[: len(turn.audio) - length]
-            self._waiting_turn_audio_bytes -= length
 
     def _input_sent(self, command: InputSent) -> None:
         if command.request is not None:
@@ -528,6 +503,8 @@ class SessionCore:
         response = self._open_response(event.response_id)
         if response is None or (event.item_id is not None and event.item_id in self._replayed_items):
             return
+        if isinstance(event, OutputTranscript) and self._update_closed_part(response, event):
+            return
         output_text = isinstance(event, OutputTranscript) and event.output_text
         part = self._open_part(response, output_text=output_text, item_id=event.item_id)
         if isinstance(event, AudioDelta):
@@ -563,6 +540,20 @@ class SessionCore:
             response.open_transcript = ''
         return part
 
+    def _update_closed_part(self, response: _Response, event: OutputTranscript) -> bool:
+        """Fold a transcript into the part its item already closed, rather than open a second part for the item.
+
+        A provider can finish an item after a later item's content arrived, so the item's transcript comes late.
+        """
+        if event.item_id is None or event.item_id == response.open_part_item:
+            return False
+        part = response.closed_parts.get(event.item_id)
+        if part is None or event.output_text != isinstance(part, TextPart):
+            return False
+        index = next(index for index, existing in enumerate(response.parts) if existing is part)
+        response.parts[index] = response.closed_parts[event.item_id] = fold_part_transcript(part, event.text)[0]
+        return True
+
     def _with_item_details(
         self, response: _Response, part: SpeechPart | TextPart, item_id: str | None
     ) -> SpeechPart | TextPart:
@@ -582,6 +573,8 @@ class SessionCore:
                 audio = BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE)
                 part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
         response.parts.append(part)
+        if response.open_part_item is not None:
+            response.closed_parts[response.open_part_item] = part
         response.open_part = None
         response.open_part_item = None
         response.open_transcript = ''
@@ -674,6 +667,7 @@ class SessionCore:
         response.message = message
         # The message holds the parts now: the core keeps no other reference to their audio.
         response.parts = []
+        response.closed_parts.clear()
         self._record_audio(response, message)
 
     def _open_response(self, response_id: str | None) -> _Response | None:
@@ -726,8 +720,6 @@ class SessionCore:
         self._input_audio.clear()
         self._waiting_turn_audio[turn.id] = turn
         self._waiting_turn_audio_bytes += len(turn.audio)
-        if self._unsent_audio is not None and self._unsent_audio[0] is None:
-            self._unsent_audio = (turn, self._unsent_audio[1])
 
     def _release_turn_audio(self, turn: _UserTurn) -> None:
         if self._waiting_turn_audio.pop(turn.id, None) is not None and turn.audio:

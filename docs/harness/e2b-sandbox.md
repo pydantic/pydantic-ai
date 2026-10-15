@@ -26,7 +26,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
@@ -41,7 +41,7 @@ E2B's default template does not include ripgrep (`rg`). `Coder` can search witho
 ```text
 from e2b import AsyncTemplate, Template
 await AsyncTemplate.build(Template().from_base_image().apt_install(['ripgrep']), 'my-rg-template')
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(template='my-rg-template'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(template='my-rg-template'), Coder()])
 ```
 
 The build snippet is illustrative and not part of the runnable agent examples below.
@@ -62,7 +62,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 
 followup = agent.run_sync(
@@ -83,7 +83,7 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -120,7 +120,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -146,7 +146,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 
 
 async def main() -> None:
@@ -211,7 +211,7 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
     raise error
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), hooks])
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hooks])
 ```
 
 ## Configuration
@@ -249,7 +249,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='e2b_coder',
     capabilities=[E2BSandbox(), Coder(), TemporalDurability()],
 )

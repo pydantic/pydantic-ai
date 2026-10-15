@@ -6,8 +6,8 @@ The built-in `grain` plugin: harness's `Grain` capability, with no secret in plu
 to the next prompt. The token comes from, in order: the `GRAIN_ACCESS_TOKEN` environment variable; a named key from
 `/keys` (only the key's name is saved, and it is resolved on every run, so replacing the key in `/keys` applies and
 deleting it fails closed); or a browser sign-in whose tokens go to the OS keyring the way `/mcp` OAuth servers keep
-theirs. A sign-in needs someone at the terminal: in headless mode (`clai2 -p`) with no saved sign-in, connecting
-fails with a message saying how to sign in.
+theirs. The browser sign-in runs only from `/grain login` or choosing it in the menu, never while loading or in a
+prompt; see `pydantic_clai2.plugins.sign_in`. Until it is done, Grain adds no tools.
 """
 
 import os
@@ -15,8 +15,6 @@ from collections.abc import Hashable, Sequence
 from functools import partial
 
 from anyio import to_thread
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -27,8 +25,9 @@ from pydantic_ai_harness.grain import Grain
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key, save_key_connection
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
-from pydantic_clai2.mcp import OAUTH_TIMEOUT, SignIn, http_client
+from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, warn_if_signed_out
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -76,78 +75,60 @@ class GrainSettings(BaseModel):
     """Pass Grain's own server instructions to the agent."""
 
 
-class GrainSignIn(SignIn):
-    """Say where the sign-in happens before FastMCP opens the browser, and refuse when no one can sign in."""
-
-    def __init__(self, host: PluginHost[None]) -> None:
-        """Tokens persist under `TOKEN_ACCOUNT`."""
-        # Grain's client registration rejects a `127.0.0.1` redirect URI with `invalid_redirect_uri`
-        # and accepts `localhost` (checked 2026-09-25).
-        super().__init__(TOKEN_ACCOUNT, callback_host='localhost')
-        self._host = host
-
-    async def redirect_handler(self, authorization_url: str) -> None:
-        """Print the URL too, for a browser that does not open (for example over SSH)."""
-        try:
-            async with self._host.full_screen():
-                self._host.console.print(
-                    f'Signing in to Grain in your browser. If it does not open, visit:\n{authorization_url}',
-                    style=theme.color(theme.INFO),
-                    markup=False,
-                )
-        except RuntimeError as exc:
-            # Headless mode binds a screen that refuses interaction, since no one is there to sign in.
-            raise UserError(
-                f'Grain needs a browser sign-in. Run clai2 interactively once to sign in, or set {KEY_NAME}.'
-            ) from exc
-        await super().redirect_handler(authorization_url)
-
-    async def forget(self) -> None:
-        """Sign out now: drop the saved sign-in and the tokens this session holds in memory."""
-        await to_thread.run_sync(self.tokens.forget)
-        self.context.clear_tokens()
+SIGN_IN = OAuthSignIn(
+    name=TOKEN_ACCOUNT,
+    service='Grain',
+    setup='/grain login',
+    url=GRAIN_MCP_URL,
+    # Grain's client registration rejects a `127.0.0.1` redirect URI with `invalid_redirect_uri`
+    # and accepts `localhost` (checked 2026-09-25).
+    callback_host='localhost',
+)
+"""The browser sign-in; its tokens are the keyring credential `mcp-plugin_grain`."""
 
 
 class GrainConnection:
     """What `/grain` changes mid-session: the settings, the chosen key, and the `Grain` built from them."""
 
     def __init__(self, host: PluginHost[None]) -> None:
-        """Read the saved settings and key choice; the browser sign-in client is ready but not connected."""
+        """Read the saved settings and key choice."""
         self.host = host
         self.settings = host.settings(GrainSettings)
         self.key = saved_key()
-        self.sign_in = GrainSignIn(host)
-        transport = StreamableHttpTransport(GRAIN_MCP_URL, auth=self.sign_in, httpx_client_factory=http_client)
-        # The default 5 second handshake timeout would end a browser sign-in before the user finishes it.
-        self._client = Client(transport, init_timeout=OAUTH_TIMEOUT)
         self._built: tuple[Hashable, Grain[None]] | None = None
 
     @property
-    def source(self) -> GrainSignIn | KeyReference | None:
+    def source(self) -> OAuthSignIn | KeyReference | None:
         """Where this run's token comes from; `None` means the environment variable."""
         if os.environ.get(KEY_NAME):
             return None
-        return self.key or self.sign_in
+        return self.key or SIGN_IN
 
     def save(self, settings: GrainSettings) -> None:
         """Keep new settings for the next prompt and save them to the plugin's declaration."""
         self.settings = settings
         self.host.save_settings(settings)
 
-    def capability(self, _ctx: RunContext[None]) -> Grain[None]:
-        """The `Grain` for this run, rebuilt only when the token source or a setting changed."""
+    async def capability(self, _ctx: RunContext[None]) -> Grain[None] | None:
+        """The `Grain` for this run, or nothing while the browser sign-in is not done.
+
+        A token source's `Grain` is rebuilt only when the source or a setting changed. The browser sign-in's is
+        new each run, since FastMCP keeps tokens in memory once connected and `/grain logout` must reach the next run.
+        """
         source = self.source
-        identity = (source.name if isinstance(source, KeyReference) else source is None, self.settings)
+        read_only, instructions = self.settings.read_only, self.settings.include_instructions
+        if isinstance(source, OAuthSignIn):
+            if not await to_thread.run_sync(source.signed_in, abandon_on_cancel=True):
+                return None
+            return Grain[None](client=source.client(), read_only=read_only, include_instructions=instructions)
+        identity = (source.name if isinstance(source, KeyReference) else None, self.settings)
         if self._built is None or self._built[0] != identity:
-            read_only, instructions = self.settings.read_only, self.settings.include_instructions
             if source is None:
                 built = Grain[None](read_only=read_only, include_instructions=instructions)
-            elif isinstance(source, KeyReference):
+            else:
                 built = Grain[None](
                     auth=partial(_resolve, source), read_only=read_only, include_instructions=instructions
                 )
-            else:
-                built = Grain[None](client=self._client, read_only=read_only, include_instructions=instructions)
             self._built = (identity, built)
         return self._built[1]
 
@@ -166,9 +147,9 @@ class GrainPlugin(Plugin[GrainSettings]):
         return (
             Command(
                 name='grain',
-                description='Configure Grain: token source and settings (/grain), or /grain status | key | logout.',
+                description='Configure Grain (/grain), or /grain status | key | login | logout.',
                 handler=partial(grain_command, connection=self.connection),
-                complete=lambda args: ('key', 'logout', 'status') if len(args) <= 1 else (),
+                complete=lambda args: ('key', *SUBCOMMANDS) if len(args) <= 1 else (),
                 during_turn=True,
             ),
         )
@@ -178,12 +159,15 @@ class GrainPlugin(Plugin[GrainSettings]):
 
     async def on_session_start(self, event: SessionStart) -> None:
         connection = self.connection
-        if not connection.settings.model_fields_set and connection.source is connection.sign_in:
+        if connection.source is not SIGN_IN:
+            return
+        if not connection.settings.model_fields_set:
             self.host.console.print(
                 'Grain uses its defaults (read-only, browser sign-in). /grain picks a /keys token and changes settings.',
                 style=theme.color(theme.INFO),
                 markup=False,
             )
+        await warn_if_signed_out(SIGN_IN, self.host.console)
 
 
 def _resolve(reference: KeyReference, _ctx: RunContext[None]) -> str:
@@ -192,41 +176,33 @@ def _resolve(reference: KeyReference, _ctx: RunContext[None]) -> str:
 
 
 async def grain_command(args: list[str], *, connection: GrainConnection) -> str:
-    """Open the settings menu, report the token source, choose a `/keys` token, or sign out."""
+    """Open the settings menu, report the token source, choose a `/keys` token, sign in, or sign out."""
     if not args:
         return await configure(connection)
     if args == ['key']:
         return await choose_key(connection)
+    source = connection.source
     if args == ['status']:
-        return await status(connection)
-    if args != ['logout']:
-        raise ValueError('Usage: /grain [status | key | logout]')
-    source = connection.source
-    if source is None:
-        return f'Grain uses {KEY_NAME}, which /grain logout cannot revoke. Unset it, then /plugins reload grain.'
-    if isinstance(source, KeyReference):
-        return f'Grain uses the /keys entry {source.name}. Choose "No API key" in /grain key to stop using it.'
-    await source.forget()
-    return 'Signed out of Grain. The next prompt that uses Grain opens the browser to sign in.'
+        if source is None:
+            return f'Grain uses the {KEY_NAME} environment variable.'
+        if isinstance(source, KeyReference):
+            return f'Grain uses the /keys entry {source.name}.'
+    elif args == ['logout']:
+        if source is None:
+            return f'Grain uses {KEY_NAME}, which /grain logout cannot revoke. Unset it, then /plugins reload grain.'
+        if isinstance(source, KeyReference):
+            return f'Grain uses the /keys entry {source.name}. Choose "No API key" in /grain key to stop using it.'
+    message = await run_subcommand(SIGN_IN, args)
+    if message is None:
+        raise ValueError('Usage: /grain [status | key | login | logout]')
+    return message
 
 
-async def status(connection: GrainConnection) -> str:
-    """Say where the token comes from, and whether a browser sign-in is saved."""
-    source = connection.source
-    if source is None:
-        return f'Grain uses the {KEY_NAME} environment variable.'
-    if isinstance(source, KeyReference):
-        return f'Grain uses the /keys entry {source.name}.'
-    signed_in = await to_thread.run_sync(source.tokens.signed_in)
-    return {
-        True: 'Signed in to Grain; the tokens are in the OS keyring. /grain logout signs out.',
-        False: 'Not signed in to Grain; the next prompt opens the browser to sign in.',
-        None: 'Unknown: the keyring could not be read.',
-    }[signed_in]
+async def choose_key(connection: GrainConnection, *, runners: Runners | None = None) -> str:
+    """Pick a `/keys` entry or type a token, saved to `/keys` as `GRAIN_ACCESS_TOKEN`; only the name is kept here.
 
-
-async def choose_key(connection: GrainConnection) -> str:
-    """Pick a `/keys` entry or type a token, saved to `/keys` as `GRAIN_ACCESS_TOKEN`; only the name is kept here."""
+    Choosing none means the browser sign-in, which starts now unless one is stored.
+    """
     prompt: PromptSession[str] = PromptSession()
     label = f'Grain access token (saved in /keys as {KEY_NAME}; Enter for none): '
     token = await prompt_api_key(prompt=prompt, label=label, optional=True)
@@ -236,7 +212,10 @@ async def choose_key(connection: GrainConnection) -> str:
         if not token.strip():
             await to_thread.run_sync(partial(delete_credentials, account=KEY_ACCOUNT))
             connection.key = None
-            return 'Grain uses no /keys entry; the next prompt signs in through the browser if needed.'
+            chosen = 'Grain uses no /keys entry, so it uses the browser sign-in.'
+            if await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
+                return chosen
+            return f'{chosen}\n{await sign_in_now(SIGN_IN, runners)}'
         await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token))
         token = KeyReference(name=KEY_NAME)
     choice = KeyChoice(token=token).model_dump_json()
@@ -338,7 +317,7 @@ async def configure(connection: GrainConnection, runners: Runners | None = None)
         try:
             await run_worker(lambda: run_flow(menu, runners, submenus={TOKEN_ROW: _pick_token}))
         except _PickToken:
-            form.messages.append(await choose_key(connection))
+            form.messages.append(await choose_key(connection, runners=runners))
             continue
         if not connection.settings.model_fields_set:
             # Saving the defaults once marks the plugin configured, which ends the startup hint.

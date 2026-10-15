@@ -223,7 +223,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Add a bounded memory snapshot to only the current user request."""
+        """Add a bounded memory snapshot beside the latest user prompt, for this request only."""
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
         # Scope-qualify the marker so several `Memory` capabilities on one agent
@@ -281,10 +281,11 @@ class Memory(AbstractCapability[AgentDepsT]):
                 )[:content_budget]
                 rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
-                latest = request_context.messages[-1]
-                if not isinstance(latest, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
+                index = _snapshot_index(ctx.messages, request_context.messages)
+                target = request_context.messages[index]
+                if not isinstance(target, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
                     raise RuntimeError('model request history must end with a ModelRequest')
-                request_context.messages[-1] = replace(latest, parts=[*latest.parts, part])
+                request_context.messages[index] = replace(target, parts=[*target.parts, part])
             if span.is_recording():
                 span.set_attributes(
                     {
@@ -404,6 +405,27 @@ class Memory(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Return the name used by custom capability specs."""
         return 'Memory'
+
+
+def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) -> int:
+    """Index of the request holding the latest user prompt, or of the last message when there is none.
+
+    A block after tool results reads as a new user turn, so the snapshot stays with the user's prompt.
+    The prompt is found in the persisted `history` because `wrap_model_request` hooks such as
+    `SystemReminders` add request-only user parts before this hook runs. Hooks that rewrite history,
+    such as compaction, rewrite the request list too, so both lists share indexes; when they don't,
+    the snapshot falls back to the last message.
+    """
+    for index in range(len(history) - 1, -1, -1):
+        if _has_user_prompt(history[index]):
+            if index < len(request) and _has_user_prompt(request[index]):
+                return index
+            break
+    return len(request) - 1
+
+
+def _has_user_prompt(message: ModelMessage) -> bool:
+    return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
 
 
 def _validate_positive(name: str, value: int) -> None:

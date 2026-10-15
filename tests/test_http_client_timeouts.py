@@ -184,7 +184,7 @@ async def test_model_settings_timeout_leaves_user_client_untouched(
     [
         pytest.param(
             {},
-            snapshot({'connect': 5, 'read': 600.0, 'write': 600.0, 'pool': 600}),
+            snapshot({'connect': 5, 'read': 1200.0, 'write': 1200.0, 'pool': 1200}),
             id='provider-default',
         ),
         pytest.param(
@@ -200,7 +200,7 @@ async def test_google_provider_client_keeps_connect_timeout(
     expected: dict[str, float | None],
     sent_timeouts: Callable[[dict[str, Any]], list[dict[str, float | None]]],
 ):
-    """google-genai sends the provider's pinned 600-second `HttpOptions.timeout` as a scalar on every request."""
+    """google-genai sends the provider's pinned 20-minute `HttpOptions.timeout` as a scalar on every request."""
     sent = sent_timeouts(_GOOGLE_RESPONSE)
     agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test')))
 

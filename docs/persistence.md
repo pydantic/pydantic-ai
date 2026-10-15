@@ -28,7 +28,7 @@ The thing to store is a [`Conversation`][pydantic_ai.conversation.Conversation].
 ```python {title="storing_a_conversation.py"}
 from pydantic_ai import Agent, ConversationTypeAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 stored = ConversationTypeAdapter.dump_json(result.conversation)  # (1)!

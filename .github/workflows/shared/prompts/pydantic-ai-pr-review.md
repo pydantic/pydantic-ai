@@ -47,13 +47,16 @@ severity bands or false-positive rules from your own priors.
 
 **Verdict mapping:** any HIGH or CRITICAL finding → `REQUEST_CHANGES`.
 MEDIUM-only or below → `APPROVE` (post the comments anyway).
-No findings → `APPROVE`. **Cap inline comments at 30 per run** — if
+No findings → `APPROVE`. If changed files went unreviewed because a
+sub-agent returned an error and you could not cover its files in time,
+submit `COMMENT` instead of `APPROVE` and name those files in the body.
+**Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run this check proactively on every model-touching PR:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -63,6 +66,13 @@ Beyond free-form review, run this check proactively on every model-touching PR:
   pair are in `.review-context/review-instructions.md` (Example 4).
   Cap this finding at **MEDIUM**: it is advisory and must never drive
   `REQUEST_CHANGES`.
+- **Test cost.** When the diff adds or changes tests, check every new
+  `@pytest.mark.subprocess(reason=...)` and `@pytest.mark.slow(reason=...)`:
+  the reason must name a property that needs the process boundary or the
+  duration, not just describe what the test does. Also flag new tests that wait
+  out real sleeps, timeouts or poll intervals instead of injecting them, or that
+  feed one huge input to prove a complexity bound. Calibration is Example 5 in
+  `.review-context/review-instructions.md`. Cap at **MEDIUM**.
 
 ## Review process
 
@@ -126,6 +136,10 @@ Keep sub-agent prompts focused: the assigned files + PR context + the
 pointer to `review-instructions.md`. **Wait for all sub-agents to
 return** before proceeding.
 
+A sub-agent that returns an `error:` result (it timed out, failed, or was
+refused because the run is short on time) is finished. **Do not dispatch it
+again.** Review its files yourself in Step 4 while time allows.
+
 **Merge findings:** keep findings flagged by multiple sub-agents with the
 strongest evidence; for a finding flagged by only one, scrutinize harder
 before keeping it. Then run Step 4 yourself as the quality gate.
@@ -162,7 +176,8 @@ For each surviving finding, call `mcp__safeoutputs__create_pull_request_review_c
 After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_review`** with:
 
 - **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived,
-  else `APPROVE`.
+  else `APPROVE` (or `COMMENT` when files went unreviewed, per the verdict
+  mapping).
 - **body:** Always opens with the `Reviewed at` line. If you are approving,
   that line is most often the whole body. For `REQUEST_CHANGES`,
   include only the verdict + any cross-cutting feedback that can't be
