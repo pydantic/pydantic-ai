@@ -3091,12 +3091,15 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
 
     started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
     ws = _BackendFinishingSocket([started], closed_seconds=1)
+    sessions: list[RealtimeSession] = []
+    readings: list[asyncio.Future[Any]] = []
     with _patched_connect(ws), pytest.raises(UsageLimitExceeded):
         async with Agent().realtime(model, usage_limits=limits).session() as session:
-            reading = asyncio.ensure_future(anext(aiter(session)))
+            sessions.append(session)
+            readings.append(asyncio.ensure_future(anext(aiter(session))))
             await asyncio.sleep(0.01)
-    reading.cancel()
-    assert (session.usage.requests, session.usage.input_tokens) == (1, 10)
+    readings[0].cancel()
+    assert (sessions[0].usage.requests, sessions[0].usage.input_tokens) == (1, 10)
 
 
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
