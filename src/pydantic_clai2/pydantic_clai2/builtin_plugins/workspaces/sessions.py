@@ -119,7 +119,18 @@ class Launcher:
         token_file, log = folder / 'token', folder / 'session.log'
         write_private(token_file, token + '\n')
         port = free_port()
-        argv = [self.python, '-m', 'pydantic_clai2', '--web', '--port', str(port), '--token-file', str(token_file)]
+        # `-P`: the checkout, the working directory, must not shadow `pydantic_clai2` with a module of its own.
+        argv = [
+            self.python,
+            '-P',
+            '-m',
+            'pydantic_clai2',
+            '--web',
+            '--port',
+            str(port),
+            '--token-file',
+            str(token_file),
+        ]
         if model:
             argv += ['--model', model]
         pid = self.processes.spawn(argv, cwd=cwd, env=env, log=log)
