@@ -255,7 +255,9 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences, shell command headers, and theme previews. The default theme's diff lines use Claude Code's
+streamed fences, shell command headers, and theme previews. Shell command headers
+add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette.
 
@@ -298,7 +300,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
-| `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()` |
+| `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
