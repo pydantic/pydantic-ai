@@ -22,11 +22,13 @@
   --muted: #ad99a5;
   --faint: #7c6673;
   --accent: var(--lithium);
-  --accent-hover: var(--lithium-bright);
+  --accent-hover: #c71cca;
   --accent-text: #ffffff;
+  --accent-strong: var(--lithium-deep);
+  --accent-strong-hover: #9a0e98;
   --brand: var(--lithium);
   --link: #f58cf7;
-  --focus: rgba(229, 32, 233, 0.55);
+  --focus: var(--lithium);
   --green: #77ffd8;
   --red: #ff6550;
   --amber: #f0b429;
@@ -58,13 +60,15 @@
   --border-strong: rgba(25, 23, 17, 0.17);
   --text: #191711;
   --text-soft: #403d36;
-  --muted: #716d64;
+  --muted: #67635a;
   --faint: #7f8174;
   --accent: var(--lithium);
   --accent-hover: var(--lithium-deep);
   --accent-text: #ffffff;
+  --accent-strong: var(--lithium-deep);
+  --accent-strong-hover: #9a0e98;
   --link: #bc0fbc;
-  --focus: rgba(188, 15, 188, 0.45);
+  --focus: #bc0fbc;
   --green: #047a58;
   --red: #d1232f;
   --amber: #996600;
@@ -79,7 +83,7 @@
   --hl-string: #047a58;
   --hl-title: #814edf;
   --hl-number: #b4532a;
-  --hl-comment: #97998b;
+  --hl-comment: #716d64;
   --hl-attr: #996600;
 }
 
@@ -1137,7 +1141,7 @@ pre {
   color: var(--accent-text);
 }
 
-.send:hover:not(:disabled) {
+.send:not(.stop):hover:not(:disabled) {
   background: var(--accent-hover);
   box-shadow: 0 0 18px color-mix(in srgb, var(--lithium) 45%, transparent);
 }
@@ -1149,6 +1153,10 @@ pre {
 .send.stop {
   background: var(--text);
   color: var(--bg);
+}
+
+.send.stop:hover {
+  background: var(--text-soft);
 }
 
 .suggestions {
@@ -1303,13 +1311,14 @@ pre {
   font-weight: 500;
 }
 
+/* Text on a button needs 4.5:1, so text buttons take the deeper Lithium; icon buttons keep the bright one. */
 .primary {
-  background: var(--accent);
+  background: var(--accent-strong);
   color: var(--accent-text);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--accent-strong-hover);
 }
 
 .ghost {
