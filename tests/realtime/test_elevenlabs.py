@@ -205,6 +205,9 @@ class RestRecorder:
             return canned
         if request.method == 'GET' and request.url.path == f'/v1/convai/agents/{AGENT_ID}':
             return httpx2.Response(200, json=self.agent)
+        if request.method == 'GET' and request.url.path.endswith('/dependent-agents'):
+            # By default, a tool is this agent's alone.
+            return httpx2.Response(200, json={'agents': [{'type': 'available', 'id': AGENT_ID}], 'has_more': False})
         if request.method == 'GET' and request.url.path == '/v1/convai/conversation/get-signed-url':
             return httpx2.Response(200, json={'signed_url': f'wss://api.elevenlabs.io/signed?agent_id={AGENT_ID}'})
         raise AssertionError(f'unexpected request: {request.method} {request.url}')  # pragma: no cover
@@ -885,6 +888,7 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools',
         'POST /v1/convai/tools',
+        'GET /v1/convai/tools/tool_1/dependent-agents',
         'PATCH /v1/convai/tools/tool_1',
         f'PATCH /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/conversation/get-signed-url',
@@ -901,7 +905,7 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
     }
     # The PATCHed tool config is converted to the server's parameters dialect: `additionalProperties`
     # stripped, only supported keys sent.
-    patched = json.loads(recorder.requests[3].content)
+    patched = json.loads(recorder.requests[4].content)
     assert patched == {
         'tool_config': {
             'type': 'client',
@@ -915,7 +919,7 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
             },
         }
     }
-    repointed = json.loads(recorder.requests[4].content)
+    repointed = json.loads(recorder.requests[5].content)
     assert repointed == {
         'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_9', 'tool_new', 'tool_1', 'tool_5']}}}
     }
@@ -940,6 +944,7 @@ async def test_tool_sync_patch_only_skips_the_repoint() -> None:
     assert recorder.request_summaries() == [
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools',
+        'GET /v1/convai/tools/tool_1/dependent-agents',
         'PATCH /v1/convai/tools/tool_1',
         'GET /v1/convai/conversation/get-signed-url',
     ]
@@ -1068,6 +1073,7 @@ async def test_tool_sync_follows_the_paginated_tool_listing() -> None:
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools',
         'GET /v1/convai/tools',
+        'GET /v1/convai/tools/tool_1/dependent-agents',
         'PATCH /v1/convai/tools/tool_1',
         'GET /v1/convai/conversation/get-signed-url',
     ]
@@ -1100,6 +1106,7 @@ async def test_tool_sync_stops_on_a_repeated_pagination_cursor() -> None:
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools',
         'GET /v1/convai/tools',
+        'GET /v1/convai/tools/tool_1/dependent-agents',
         'PATCH /v1/convai/tools/tool_1',
         'GET /v1/convai/conversation/get-signed-url',
     ]
@@ -2399,3 +2406,112 @@ async def test_a_failed_tool_result_is_flagged_as_an_error() -> None:
             'is_error': True,
         }
     ]
+
+
+async def test_tool_sync_gives_the_agent_its_own_copy_of_a_shared_tool() -> None:
+    # Updating a tool another agent also uses would change that agent's tool too: this agent gets a new one.
+    differing = dict(WEATHER_TOOL_REMOTE, description='Stale description.')
+    recorder = RestRecorder(
+        agent_json(tools=[differing], tool_ids=['tool_1']),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(200, json=tools_listing(('tool_1', 'client', 'get_weather'))),
+            ('GET', '/v1/convai/tools/tool_1/dependent-agents'): httpx2.Response(
+                200,
+                json={'agents': [{'type': 'available', 'id': AGENT_ID}, {'type': 'unknown', 'id': 'agent_other'}]},
+            ),
+            ('POST', '/v1/convai/tools'): httpx2.Response(200, json={'id': 'tool_own'}),
+            ('PATCH', f'/v1/convai/agents/{AGENT_ID}'): httpx2.Response(200, json={'agent_id': AGENT_ID}),
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert recorder.request_summaries() == [
+        f'GET /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/tools',
+        'GET /v1/convai/tools/tool_1/dependent-agents',
+        'POST /v1/convai/tools',
+        f'PATCH /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/conversation/get-signed-url',
+    ]
+    assert json.loads(recorder.requests[4].content) == {
+        'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_own']}}}
+    }
+
+
+async def test_tool_sync_adopts_the_first_unattached_tool_that_matches_and_is_unused() -> None:
+    stale: dict[str, Any] = {'id': 'tool_stale', 'tool_config': dict(WEATHER_TOOL_REMOTE, description='Stale.')}
+    used: dict[str, Any] = {'id': 'tool_used', 'tool_config': WEATHER_TOOL_REMOTE}
+    free: dict[str, Any] = {'id': 'tool_free', 'tool_config': WEATHER_TOOL_REMOTE}
+    recorder = RestRecorder(
+        agent_json(),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(200, json={'tools': [stale, used, free]}),
+            ('GET', '/v1/convai/tools/tool_used/dependent-agents'): httpx2.Response(
+                200, json={'agents': [], 'has_more': True}
+            ),
+            ('GET', '/v1/convai/tools/tool_free/dependent-agents'): httpx2.Response(200, json={'agents': []}),
+            ('PATCH', f'/v1/convai/agents/{AGENT_ID}'): httpx2.Response(200, json={'agent_id': AGENT_ID}),
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert recorder.request_summaries() == [
+        f'GET /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/tools',
+        'GET /v1/convai/tools/tool_used/dependent-agents',
+        'GET /v1/convai/tools/tool_free/dependent-agents',
+        f'PATCH /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/conversation/get-signed-url',
+    ]
+    assert json.loads(recorder.requests[4].content) == {
+        'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_free']}}}
+    }
+
+
+async def test_tool_choice_none_leaves_out_client_tools_the_run_does_not_define() -> None:
+    # With `'off'`, the agent can have client tools the run doesn't define; `'none'` leaves them out all the same.
+    recorder = RestRecorder(
+        agent_json(
+            overrides={'agent': {'prompt': {'tool_ids': True}}},
+            tools=[WEATHER_TOOL_REMOTE],
+            tool_ids=['tool_weather'],
+        ),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(
+                200, json=tools_listing(('tool_weather', 'client', 'get_weather'))
+            )
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(tool_choice='none', elevenlabs_tool_sync='off')
+    with patched_connect(ws):
+        async with _connect(model, model_settings=settings):
+            pass
+    assert ws.sent_frames()[0]['conversation_config_override'] == {'agent': {'prompt': {'tool_ids': []}}}
+
+
+async def test_an_allow_list_that_leaves_nothing_out_needs_no_override() -> None:
+    recorder = RestRecorder(
+        agent_json(tools=[WEATHER_TOOL_REMOTE], tool_ids=['tool_weather']),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(
+                200, json=tools_listing(('tool_weather', 'client', 'get_weather'))
+            )
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert 'conversation_config_override' not in ws.sent_frames()[0]

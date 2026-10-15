@@ -126,8 +126,9 @@ at connect time:
 - `'error'` (default): raise a [`UserError`][pydantic_ai.exceptions.UserError] describing every
   difference (missing, extra, or differing tools), so the two can never silently disagree.
 - `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
-  tools, update differing ones, and re-point the agent's `tool_ids`. This mutates workspace state
-  shared by every conversation with the agent, which is why it is opt-in. Treat it as a
+  tools, update differing ones, and re-point the agent's `tool_ids`. A differing tool that another
+  agent also uses isn't changed under it: this agent gets a copy of its own. This mutates workspace
+  state shared by every conversation with the agent, which is why it is opt-in. Treat it as a
   deploy-time step — a warm-up connect after a tool change — rather than something a customer's
   first call should pay for: the writes run sequentially at roughly half a second each, and two
   processes syncing the same agent concurrently race on the final `tool_ids` re-point, last

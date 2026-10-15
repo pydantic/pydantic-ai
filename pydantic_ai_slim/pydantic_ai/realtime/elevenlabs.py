@@ -317,15 +317,23 @@ class _WorkspaceToolsResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class _DependentAgent(BaseModel):
+    """One agent referencing a tool: an `available` one the key can see, or an `unknown` one it can't."""
+
+    model_config = ConfigDict(extra='allow')
+
+    id: str | None = None
+
+
 class _DependentAgentsResponse(BaseModel):
     """One page of `GET /v1/convai/tools/{tool_id}/dependent-agents` (verified live).
 
-    Only emptiness is read: any listed agent, or a further page, means the tool has dependents.
+    Only who is listed is read: any agent but this one, or a further page, means the tool is shared.
     """
 
     model_config = ConfigDict(extra='allow')
 
-    agents: list[Any] = []
+    agents: list[_DependentAgent] = []
     has_more: bool = False
 
 
@@ -949,13 +957,12 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             cursor = page.next_cursor
         return workspace_tools
 
-    async def _tool_has_dependents(self, tool_id: str) -> bool:
-        """Whether any agent in the workspace references the tool.
+    async def _tool_used_elsewhere(self, tool_id: str) -> bool:
+        """Whether an agent other than this one references the tool.
 
-        Gates adoption on true orphanhood: "not attached to this agent" alone would also match a
-        tool another agent uses, and a later sync's PATCH would then rewrite it under that agent. A
-        `has_more` page with no listed agents is treated as having dependents, erring toward a fresh
-        create over a shared mutation.
+        Workspace tools are shared: changing one changes every agent it is attached to. So an attached
+        tool is only updated in place, and an unattached one only adopted, when no other agent uses it.
+        A `has_more` page counts as shared, erring toward a fresh create over a shared mutation.
         """
         with _map_rest_errors(self.agent_id):
             response = await self._http_client.get(
@@ -964,7 +971,18 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             )
         _raise_for_status(response, self.agent_id)
         page = _DependentAgentsResponse.model_validate_json(response.content)
-        return bool(page.agents) or page.has_more
+        return page.has_more or any(agent.id != self.agent_id for agent in page.agents)
+
+    async def _create_tool(self, config: dict[str, Any]) -> str:
+        """Create a workspace client tool, returning its id."""
+        with _map_rest_errors(self.agent_id):
+            response = await self._http_client.post(
+                f'{self._provider.base_url}/v1/convai/tools',
+                headers={**self._rest_headers, 'Content-Type': 'application/json'},
+                content=to_json({'tool_config': config}).decode(),
+            )
+        _raise_for_status(response, self.agent_id)
+        return _CreatedToolResponse.model_validate_json(response.content).id
 
     async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> list[str]:
         """Make the agent's client tools match the session's tools over REST (`elevenlabs_tool_sync='sync'`).
@@ -1028,11 +1046,11 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         # sync's PATCH rewrite it under that agent. A tool that differs, or that anything depends on,
         # is left alone and a fresh one is created.
         attached_id_set = set(attached_ids)
-        adoptable_by_name: dict[str, _WorkspaceTool] = {}
+        adoptable_by_name: dict[str, list[_WorkspaceTool]] = {}
         for workspace_tool in workspace_tools.values():
             name = workspace_tool.tool_config.name
             if workspace_tool.id not in attached_id_set and workspace_tool.tool_config.type == 'client' and name:
-                adoptable_by_name.setdefault(name, workspace_tool)
+                adoptable_by_name.setdefault(name, []).append(workspace_tool)
 
         # The ids the agent is re-pointed at: preserved server-side ids first, then one id per local
         # tool (adopted, created, or existing) in the run's order.
@@ -1042,24 +1060,13 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             remote = remote_by_name.get(tool.name)
             existing_id = client_id_by_name.get(tool.name)
             if remote is None or existing_id is None:
-                orphan = adoptable_by_name.get(tool.name)
-                if (
-                    orphan is not None
-                    and not _tool_mismatches([tool], [orphan.tool_config])
-                    and not await self._tool_has_dependents(orphan.id)
-                ):
-                    target_tool_ids.append(orphan.id)
-                    continue
-                with _map_rest_errors(self.agent_id):
-                    response = await self._http_client.post(
-                        f'{self._provider.base_url}/v1/convai/tools',
-                        headers={**self._rest_headers, 'Content-Type': 'application/json'},
-                        content=to_json({'tool_config': config}).decode(),
-                    )
-                _raise_for_status(response, self.agent_id)
-                target_tool_ids.append(_CreatedToolResponse.model_validate_json(response.content).id)
+                target_tool_ids.append(await self._adopt_or_create_tool(tool, config, adoptable_by_name))
                 continue
             if _tool_mismatches([tool], [remote]):
+                if await self._tool_used_elsewhere(existing_id):
+                    # Updating it would change the other agents' tool too: this agent gets one of its own.
+                    target_tool_ids.append(await self._create_tool(config))
+                    continue
                 with _map_rest_errors(self.agent_id):
                     response = await self._http_client.patch(
                         f'{self._provider.base_url}/v1/convai/tools/{existing_id}',
@@ -1080,6 +1087,17 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 )
             _raise_for_status(response, self.agent_id)
         return target_tool_ids
+
+    async def _adopt_or_create_tool(
+        self, tool: ToolDefinition, config: dict[str, Any], adoptable_by_name: dict[str, list[_WorkspaceTool]]
+    ) -> str:
+        """The id of an unattached matching tool no other agent uses (left by a failed sync), or of a new one."""
+        for candidate in adoptable_by_name.get(tool.name, []):
+            if not _tool_mismatches([tool], [candidate.tool_config]) and not await self._tool_used_elsewhere(
+                candidate.id
+            ):
+                return candidate.id
+        return await self._create_tool(config)
 
     async def _restricted_tool_ids(self, attached_ids: list[str], allowed: set[str]) -> list[str]:
         """The attached tool ids a conversation restricted to the `allowed` function tools may use.
@@ -1239,10 +1257,12 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             assert_never(tool_sync)
 
         restricted_tool_ids: list[str] | None = None
-        if len(advertised_tools) < len(tools):
-            restricted_tool_ids = await self._restricted_tool_ids(
-                attached_ids, {tool.name for tool in advertised_tools}
-            )
+        if tool_choice == 'none' or isinstance(tool_choice, tuple):
+            # Judged against the agent's attached tools rather than the run's: with `'off'`, the agent can
+            # have client tools the run doesn't define, which the choice leaves out all the same.
+            allowed = await self._restricted_tool_ids(attached_ids, {tool.name for tool in advertised_tools})
+            if allowed != attached_ids:
+                restricted_tool_ids = allowed
         payload = self._initiation_payload(
             instructions=instructions, agent=agent, settings=settings, tool_ids=restricted_tool_ids
         )
