@@ -233,7 +233,7 @@ export function App() {
         togglePanel()
       } else if (mod && event.key === ',') {
         event.preventDefault()
-        setPlugins(true)
+        openPlugins()
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -249,7 +249,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.running, showError, togglePanel])
+  }, [state.running, showError, togglePanel, openPlugins])
 
   const status = state.status
   const title = preview ? preview.title : (state.session?.title ?? 'New session')

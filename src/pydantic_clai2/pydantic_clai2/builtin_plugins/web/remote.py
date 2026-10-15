@@ -537,9 +537,18 @@ async def _view(panel: SidePanel) -> PanelView:
     # Any plugin's bug: one broken panel must not take the others, or the page, down.
     except Exception as error:  # noqa: BLE001
         return PanelView(note=f'{panel.title} failed: {str(error) or type(error).__name__}')
-    if view.url is not None and urlsplit(view.url).scheme not in ('http', 'https'):
+    if view.url is not None and not _web_page(view.url):
         return PanelView(note=f'{panel.title} offered a page that is not on the web; only http and https open here.')
     return view
+
+
+def _web_page(url: str) -> bool:
+    """Whether `url` is a well-formed `http` or `https` address, which the browser can open."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # Such as an unclosed `[` in an IPv6 host.
+        return False
+    return parts.scheme in ('http', 'https') and bool(parts.hostname) and not any(char.isspace() for char in url)
 
 
 def _usage(usage: RunUsage) -> Usage:

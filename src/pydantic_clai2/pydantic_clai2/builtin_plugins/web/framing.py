@@ -10,9 +10,14 @@ from collections.abc import Awaitable, Callable
 from urllib.parse import SplitResult, urlsplit
 
 import httpx
+from anyio import fail_after
 
 FetchHeaders = Callable[[str], Awaitable[httpx.Headers]]
 """Reads the response headers of a page; raises `httpx.HTTPError` when it cannot."""
+FETCH_TIMEOUT = 5.0
+"""Seconds to read a page's headers, redirects included, before showing it in a window of its own instead."""
+FRAME_SOURCES = "'self' https: http://127.0.0.1:* http://localhost:*"
+"""The pages the web UI's own `Content-Security-Policy` lets it frame: on the web over https, or on this machine."""
 
 _DEFAULT_PORTS = {'http': 80, 'https': 443}
 _HOST_SOURCE = re.compile(
@@ -38,13 +43,18 @@ class FrameCheck:
     async def __call__(self, url: str, *, ancestor: str) -> bool:
         """Whether a page on the origin `ancestor`, such as `http://127.0.0.1:8000`, can show `url` in a frame.
 
-        A page that cannot be read now is not framed, which would show an error box, and is read again next time.
+        A page outside `FRAME_SOURCES`, or that cannot be read now, is not framed, which would show an error box;
+        one that could not be read is read again next time.
         """
-        key = urlsplit(url)._replace(query='', fragment='').geturl()
+        parts = urlsplit(url)
+        if not (parts.scheme == 'https' or (parts.scheme == 'http' and parts.hostname in ('127.0.0.1', 'localhost'))):
+            return False
+        key = parts._replace(query='', fragment='').geturl()
         if key not in self._headers:
             try:
-                self._headers[key] = await self._fetch(url)
-            except httpx.HTTPError:
+                with fail_after(FETCH_TIMEOUT):
+                    self._headers[key] = await self._fetch(url)
+            except (httpx.HTTPError, httpx.InvalidURL, TimeoutError):
                 return False
         return frameable(self._headers[key], page=url, ancestor=ancestor)
 

@@ -109,7 +109,8 @@ export function SidePanel({
   }
 
   const url = panel.url
-  const host = url ? new URL(url).host : ''
+  // The server sends only well-formed http and https addresses; a throw here would blank the page.
+  const host = url && URL.canParse(url) ? new URL(url).host : (url ?? '')
   return (
     <aside className={`side-panel ${resizing ? 'resizing' : ''}`} aria-label={panel.title}>
       <div

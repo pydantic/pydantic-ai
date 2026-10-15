@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, JsonValue, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
@@ -200,7 +201,7 @@ def _page(app: FastAPI, *, token: str, static: Path) -> None:
                 'Content-Security-Policy': (
                     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
                     # Side panels frame only pages whose own headers allow it, which the server checks first.
-                    "connect-src 'self'; frame-src 'self' https: http://127.0.0.1:* http://localhost:*; "
+                    f"connect-src 'self'; frame-src {FRAME_SOURCES}; "
                     "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
                 ),
                 'Referrer-Policy': 'no-referrer',
