@@ -5,11 +5,12 @@ import io
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 from termflow.themes import PALETTES
 
 from pydantic_ai import FunctionToolCallEvent
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
@@ -235,8 +236,12 @@ async def _highlighted_header(command: str, *, width: int = 100) -> tuple[Consol
     return console, Text.from_ansi(output.getvalue())
 
 
+def _style(console: Console, text: Text, fragment: str) -> Style:
+    return text.get_style_at_offset(console, text.plain.index(fragment))
+
+
 def _color(console: Console, text: Text, fragment: str) -> Color | None:
-    return text.get_style_at_offset(console, text.plain.index(fragment)).color
+    return _style(console, text, fragment).color
 
 
 KEYWORD = Color.parse('color(4)')
@@ -277,6 +282,30 @@ async def test_shell_header_mutes_a_heredoc_in_an_unknown_language() -> None:
     assert _color(console, text, 'import') == _color(console, text, '●'), 'muted, like the marker'
     assert _color(console, text, "'EOF'") == STRING
     assert _color(console, text, 'git') is None
+
+
+async def test_shell_header_dims_highlighted_code_without_underlines() -> None:
+    console, text = await _highlighted_header(
+        "cd /tmp && uv run python - <<'EOF'\nfrom pydantic_ai.messages import ModelRequest\nclass Probe: pass\nEOF\n"
+        "git commit -F - <<'EOF'\nnotes\nEOF"
+    )
+    for fragment in ('cd', "'EOF'", 'from', 'pydantic_ai.messages', 'ModelRequest', 'Probe'):
+        style = _style(console, text, fragment)
+        assert style.dim, fragment
+        assert not style.underline, fragment
+    assert _color(console, text, 'from') == KEYWORD, 'still highlighted'
+    for fragment in ('●', 'shell', 'notes'):
+        assert not _style(console, text, fragment).dim, 'the tool name and muted text are as before'
+    fence = io.StringIO()
+    renderer = StreamRenderer(
+        Console(file=fence, force_terminal=True, color_system='truecolor', width=100), stop_loading=lambda: None
+    )
+    source = '```python\nfrom pydantic_ai.messages import ModelRequest\n```\n'
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(source)))
+    await renderer.finish()
+    fenced = Text.from_ansi(fence.getvalue())
+    assert _style(console, fenced, 'pydantic_ai').underline, 'streamed code fences keep their style'
+    assert not _style(console, fenced, 'from').dim
 
 
 async def test_shell_header_escapes_controls_before_highlighting() -> None:
@@ -349,6 +378,9 @@ async def test_shell_header_uses_the_palette_syntax_colours(name: str) -> None:
     keyword = PALETTES[name].ansi[4] if name != 'default' else 'color(4)'
     assert _color(console, text, 'import') == Color.parse(keyword)
     assert _color(console, text, 'value') is None, 'names use the terminal foreground'
+    assert _style(console, text, 'import').dim
+    assert _style(console, text, 'value').dim
+    assert not _style(console, text, 'os').underline
 
 
 async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width() -> None:
@@ -371,6 +403,7 @@ async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width()
         selected[0] = 'default'
         # Rendered again, not recoloured: the palette's blue is also the slot of a brand colour.
         assert colour('import') == KEYWORD
+        assert Text.from_ansi(rows()[1]).get_style_at_offset(console, 8).dim, 'still dimmed'
         retained = rows()[:5]
         await _print_shell_call(console, command)
         assert rows()[-6:-1] == retained, 'the retained header matches one printed in the new theme'
