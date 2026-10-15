@@ -188,22 +188,26 @@ class Sessions(Generic[DepsT, OutputT]):
             raise ValueError('Session changed. Refresh and rename again.')
 
     async def delete(self, conversation_id: str) -> None:
-        """Delete a saved conversation other than the current one; one running elsewhere is refused."""
+        """Delete a saved conversation other than the current one, with its REPL; one running elsewhere is refused."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be deleted. Switch to another one first.')
         source = (await self.store.get(conversation_id=conversation_id)).summary
-        await self.store.delete(source=source)
+        await self._delete(source)
 
     async def fork(self, conversation_id: str) -> ConversationSummary:
         """Save a copy of a conversation under a new ID, as `--fork-session` does, without switching to it.
 
         A copy of an interrupted conversation keeps its unanswered tool calls closed, so none is replayed.
+        The copy gets its own copy of the `run_code` REPL, as `/fork` and `--fork-session` give theirs.
         """
         saved = await self.store.get(conversation_id=conversation_id)
         messages = saved.messages
         if saved.summary.outcome in ('running', 'failed', 'cancelled'):
             messages = interrupted_history(messages)
-        return await self.store.save(summary=fork_summary(saved.summary), messages=messages)
+        copy = await self.store.save(summary=fork_summary(saved.summary), messages=messages)
+        if self.session.repl_states is not None:
+            self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
+        return copy
 
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.
@@ -247,7 +251,7 @@ class Sessions(Generic[DepsT, OutputT]):
                 active_id=self.session.summary.id,
                 refresh=listing,
                 preview=lambda session_id: apply(self._preview(session_id, imports=imports)),
-                delete=lambda source: apply(self.store.delete(source=source)),
+                delete=lambda source: apply(self._delete(source)),
                 rename=lambda source, title: apply(rename(source, title)),
                 # Saved sessions have a revision; one that is not yet imported has none.
                 importing=lambda entry: not entry.revision,
@@ -265,6 +269,12 @@ class Sessions(Generic[DepsT, OutputT]):
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True)
+
+    async def _delete(self, source: ConversationSummary) -> None:
+        """Delete a saved session, then the `run_code` REPL code mode kept for it."""
+        await self.store.delete(source=source)
+        if self.session.repl_states is not None:
+            self.session.repl_states.delete(source.id)
 
     async def _preview(self, conversation_id: str, *, imports: ImportCatalog) -> str:
         try:
