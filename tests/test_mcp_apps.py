@@ -582,7 +582,7 @@ async def test_ag_ui_frontend_without_activity_events_receives_no_app(agent: Age
     assert 'ACTIVITY_SNAPSHOT' not in event_types
 
 
-def wrapped_text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
+def fastmcp_text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
     """The `CallToolResult` FastMCP returns for a tool that returns `text`, or raises `ToolError(text)`."""
     if is_error:
         return {
@@ -601,14 +601,14 @@ def wrapped_text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ('name', 'arguments', 'expected'),
     [
-        pytest.param('select_day', {'day': 'friday'}, wrapped_text_result('Selected friday'), id='app-only-tool'),
+        pytest.param('select_day', {'day': 'friday'}, fastmcp_text_result('Selected friday'), id='app-only-tool'),
         pytest.param(
             'select_day',
             {'day': 'sunday'},
-            wrapped_text_result('No forecast for sunday', is_error=True),
+            fastmcp_text_result('No forecast for sunday', is_error=True),
             id='error-result',
         ),
-        pytest.param('get_time', {'city': 'a'}, wrapped_text_result('a: 09:00'), id='tool-without-visibility'),
+        pytest.param('get_time', {'city': 'a'}, fastmcp_text_result('a: 09:00'), id='tool-without-visibility'),
     ],
 )
 async def test_call_tool_for_app(
@@ -643,7 +643,7 @@ async def test_call_tool_for_app_skips_process_tool_call():
         raise AssertionError("a page's tool call must not reach process_tool_call")
 
     hooked = MCPToolset(weather_server(), process_tool_call=hook)
-    assert await hooked.call_tool_for_app('select_day', {'day': 'friday'}) == wrapped_text_result('Selected friday')
+    assert await hooked.call_tool_for_app('select_day', {'day': 'friday'}) == fastmcp_text_result('Selected friday')
 
 
 async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any], monkeypatch: pytest.MonkeyPatch):
@@ -732,7 +732,7 @@ PROXIED_REQUEST_CASES = [
             'method': 'tools/call',
             'params': {'name': 'select_day', 'arguments': {'day': 'monday'}},
         },
-        result=wrapped_text_result('Selected monday'),
+        result=fastmcp_text_result('Selected monday'),
     ),
     ProxiedRequestCase(
         id='model-only-tool-refused',

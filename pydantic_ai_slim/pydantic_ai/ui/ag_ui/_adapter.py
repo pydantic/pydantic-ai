@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
-from ..._utils import is_str_dict, now_utc
+from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -88,7 +88,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import AGUIEventStream
+    from ._event_stream import AGUIEventStream, timestamp_ms
     from ._forward_compat import skip_unknown_tagged_items
     from ._interrupt import (
         HAS_INTERRUPTS,
@@ -194,11 +194,6 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 def _new_message_id() -> str:
     """Generate a new unique message ID."""
     return str(uuid.uuid4())
-
-
-def _timestamp() -> int:
-    """The current time in milliseconds, the unit of AG-UI event timestamps."""
-    return int(now_utc().timestamp() * 1_000)
 
 
 def _user_content_to_input(
@@ -384,45 +379,43 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     async def _answer_mcp_app_request(self, request: Any) -> AsyncIterator[BaseEvent]:
         """Answer a page's MCP request the way the AG-UI MCP Apps middleware does."""
         thread_id, run_id = self.run_input.thread_id, self.run_input.run_id
-        yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=_timestamp())
+        yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=timestamp_ms())
         try:
             result = await self._mcp_app_request_result(request)
         except Exception as e:
-            yield RunErrorEvent(message=str(e), timestamp=_timestamp())
+            yield RunErrorEvent(message=str(e), timestamp=timestamp_ms())
             return
-        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result, timestamp=_timestamp())
+        yield RunFinishedEvent(thread_id=thread_id, run_id=run_id, result=result, timestamp=timestamp_ms())
 
     async def _mcp_app_request_result(self, request: Any) -> dict[str, Any]:
         from ...mcp import MCPError
 
         if not is_str_dict(request):
             return {'error': 'Invalid MCP request'}
-        # Like the middleware, prefer `serverId` and fall back to `serverHash`; both carry the toolset ID.
+        # Like the middleware, look the server up by `serverId`, then by `serverHash`; both carry the toolset ID.
         toolset = next(
             (
                 toolset
-                for ref in (request.get('serverId'), request.get('serverHash'))
+                for server_id in (request.get('serverId'), request.get('serverHash'))
                 for toolset in self.mcp_app_toolsets
-                if ref is not None and toolset.id == ref
+                if server_id is not None and toolset.id == server_id
             ),
             None,
         )
         if toolset is None:
             return {'error': 'Unknown MCP server'}
-        method = request.get('method')
-        raw_params = request.get('params')
-        params: dict[str, Any] = raw_params if is_str_dict(raw_params) else {}
-        name, uri = params.get('name'), params.get('uri')
         try:
-            if method == 'tools/call' and isinstance(name, str):
-                return await toolset.call_tool_for_app(name, params.get('arguments'))
-            if method == 'resources/read' and isinstance(uri, str):
-                return await toolset.read_resource_for_app(uri)
+            match request.get('method'), request.get('params'):
+                case 'tools/call', {'name': str(name), **params}:
+                    return await toolset.call_tool_for_app(name, params.get('arguments'))
+                case 'resources/read', {'uri': str(uri)}:
+                    return await toolset.read_resource_for_app(uri)
+                case 'tools/call' | 'resources/read', _:
+                    return {'error': 'Invalid MCP params'}
+                case method, _:
+                    return {'error': f'MCP method not supported: {method}'}
         except MCPError as e:
             return {'error': e.message}
-        if method in ('tools/call', 'resources/read'):
-            return {'error': 'Invalid MCP params'}
-        return {'error': f'MCP method not supported: {method}'}
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
