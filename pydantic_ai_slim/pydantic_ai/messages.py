@@ -1833,26 +1833,32 @@ class NativeToolReturnPart(BaseToolReturnPart):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-_CLOSE_TAG_OPENERS = {
-    tag: re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]))', re.IGNORECASE) for tag in ('system', 'validation_errors')
+_TAG_ESCAPES = {
+    'system': re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE),
+    'validation_errors': re.compile(r'<(?=\s*/\s*validation_errors(?=[\s/>])|\s*/?\s*system(?=[\s/>]))', re.IGNORECASE),
 }
-"""Per-tag patterns matching only the `<` of a closing tag, in every spelling a model might reach for.
+"""Per-tag patterns matching only the `<` of a tag the wrapped text must not be able to write.
 
-Compiled once per tag `_wrap_in_tag` is asked for, since it runs over every mid-conversation system
-prompt of every request on a provider without inline system prompts.
+That is the wrapping tag's own closing tag, in every spelling a model might reach for, and inside
+the user-voice `<validation_errors>` fence also the `<system>` voice tag, opening or closing, so text
+quoted back from the model can't pass itself off as the framework speaking.
+
+Compiled once per tag, since `_wrap_in_tag` runs over every mid-conversation system prompt of every
+request on a provider without inline system prompts.
 """
 
 
 def _wrap_in_tag(content: str, *, tag: Literal['system', 'validation_errors']) -> str:
-    """Wrap text in `<tag>…</tag>`, neutralizing any closing tag the text carries itself.
+    """Wrap text in `<tag>…</tag>`, neutralizing any tag the text must not be able to write itself.
 
-    Only the `<` of a closing tag is escaped, so the rest of the text goes in exactly as written.
+    Only the `<` of such a tag is escaped, so the rest of the text goes in exactly as written.
     Without that, text the model had a hand in — a validation error's `loc` is a key it invented for a
     mapping output, and a `value_error`'s `msg` is whatever a validator raised, commonly with the
     offending value interpolated in — could end the statement early and let whatever follows read as
-    if it stood outside it.
+    if it stood outside it, or, inside the user-voice `<validation_errors>` fence, open a `<system>`
+    block of its own. See `_TAG_ESCAPES` for what each tag neutralizes.
     """
-    return f'<{tag}>{_CLOSE_TAG_OPENERS[tag].sub("&lt;", content)}</{tag}>'
+    return f'<{tag}>{_TAG_ESCAPES[tag].sub("&lt;", content)}</{tag}>'
 
 
 def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[str, Any]]:
