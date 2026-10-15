@@ -106,6 +106,7 @@ from ...model_lifecycle_utils import LifecycleTrackingModel
 from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
+from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
@@ -782,6 +783,7 @@ async def test_complex_agent_run_in_workflow(
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     assert root_span == snapshot(

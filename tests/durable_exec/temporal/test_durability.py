@@ -109,6 +109,7 @@ from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
@@ -2400,6 +2401,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     assert root_span == snapshot(
