@@ -88,8 +88,8 @@ class InferredLifecycle:
 
     - A response starts with its first output (audio, a transcript, a native tool part, a tool call), and ends at
       its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone]; a response that makes tool calls ends with them,
-      or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is made up, so it is recorded as no
-      provider's (`ResponseStarted.provider_id=False`).
+      or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is
+      made up, so it is recorded as no provider's (`ResponseStarted.provider_id=False`).
     - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
       answered when it started (`ResponseStarted.basis='inferred'`).
     - A spoken turn starts with its first input transcript, joins the conversation as the reply to it starts, and
@@ -127,11 +127,11 @@ class InferredLifecycle:
         self._open: str | None = None
         """The response under way."""
         self._open_named = False
+        """Whether the provider named the response under way, by the `response_id` of its content."""
         self._ended_by_usage: str | None = None
         """The response a usage report or its tool call just ended, whose terminal, if one follows, ends nothing more."""
         self._cut_off = False
         """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`), so more output is another."""
-        """Whether the provider named the response under way, by the `response_id` of its content."""
         self._deferred: ResponseDone | None = None
         """The terminal of a response the model said the exchange continues past (`interaction_status=IN_PROGRESS`):
         it stays open for the tool call it was stalling for, and ends at anything else."""
@@ -162,10 +162,10 @@ class InferredLifecycle:
         self._uncommit: _Uncommit | None = None
         """How to take back the latest commit, while its send may still fail."""
         self._identified: set[str] = set()
+        """The turns the provider named, by item id."""
         self._replayed_items: set[str] = set()
         self._replayed_calls: set[str] = set()
         """The items and tool calls a resumed conversation replays (`ConversationItemCreated.replayed`)."""
-        """The turns the provider named, by item id."""
 
     # --- what the connection sends ----------------------------------------------------------------
 
@@ -456,8 +456,9 @@ class InferredLifecycle:
         self._turn = None
         if not turn.joined:
             self._join(turn, events)
-        elif turn.replied:
-            # It waited for late words past its reply: no more are coming.
+        elif turn.replied or not turn.identified:
+            # No more words are coming: late words past its reply, or ones naming no turn, are the next turn's.
+            # (A turn the provider named still gets words naming it, until it says its transcript is final.)
             events.append(UserTurnClosed(turn_id=turn.id))
 
     def _join(self, turn: _Turn, events: list[LifecycleEvent]) -> None:

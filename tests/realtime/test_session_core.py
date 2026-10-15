@@ -1263,3 +1263,20 @@ def test_a_refused_response_that_made_tool_calls_stays_for_its_calls_to_be_refus
         ResponseRefused(response_id='r1'),
     )
     assert summary(session_core.all_messages()) == snapshot(['r1 [call:c1] complete stop'])
+
+
+def test_a_turn_still_transcribing_when_the_next_starts_holds_no_history_back() -> None:
+    """Words naming no turn are the latest one's, so a joined turn the next one replaces has all of its words."""
+    tracker = InferredLifecycle(transcribes=True)
+    session_core = core()
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechStartEvent())
+    lifecycle_message(tracker, session_core, InputTranscript('Hello'))
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechEndEvent())
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechStartEvent())
+    lifecycle_message(tracker, session_core, InputTranscript('again', is_final=True))
+    lifecycle_message(tracker, session_core, RealtimeInputSpeechEndEvent())
+    lifecycle_message(tracker, session_core, OutputTranscript('Hi.'), ResponseDone())
+    assert session_core.transcript_holding_history() is None
+    assert summary(session_core.all_messages()) == snapshot(
+        ['{user:Hello}', '{user:again}', 'None [assistant:Hi.] complete stop']
+    )

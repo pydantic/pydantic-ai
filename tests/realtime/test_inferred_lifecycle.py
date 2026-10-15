@@ -66,7 +66,7 @@ def test_speech_starting_after_a_joined_turn_ends_it() -> None:
     tracker = InferredLifecycle(transcribes=True)
     assert lifecycle(tracker.message([InputTranscript('Hi')])) == snapshot(['UserTurnStarted'])
     assert lifecycle(tracker.message([OutputTranscript('Hello.')])) == snapshot(['UserTurnEnded', 'ResponseStarted'])
-    assert lifecycle(tracker.message([RealtimeInputSpeechStartEvent()])) == snapshot([])
+    assert lifecycle(tracker.message([RealtimeInputSpeechStartEvent()])) == snapshot(['UserTurnClosed'])
 
 
 def test_a_speech_end_naming_no_turn_joins_the_one_being_transcribed() -> None:
