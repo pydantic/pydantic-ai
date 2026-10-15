@@ -404,15 +404,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         )
         if toolset is None:
             return {'error': 'Unknown MCP server'}
+        method = request.get('method')
         try:
-            match request.get('method'), request.get('params'):
+            match method, request.get('params'):
                 case 'tools/call', {'name': str(name), **params}:
                     return await toolset.call_tool_for_app(name, params.get('arguments'))
                 case 'resources/read', {'uri': str(uri)}:
                     return await toolset.read_resource_for_app(uri)
                 case 'tools/call' | 'resources/read', _:
                     return {'error': 'Invalid MCP params'}
-                case method, _:
+                case _:
                     return {'error': f'MCP method not supported: {method}'}
         except MCPError as e:
             return {'error': e.message}
