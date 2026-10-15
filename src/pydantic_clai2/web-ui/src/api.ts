@@ -10,6 +10,7 @@ import type {
   ServerMessage,
   Switch,
   Transcript,
+  WorkspacesInfo,
 } from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
@@ -88,6 +89,8 @@ export const api = {
   runAction: (name: string, key: string) =>
     call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}/action`),
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
+  workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
+  openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */

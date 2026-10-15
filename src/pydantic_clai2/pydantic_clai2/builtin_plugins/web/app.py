@@ -31,9 +31,12 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     PluginRow,
     Project,
     Transcript,
+    WorkspaceOpened,
+    WorkspacesInfo,
     dump,
 )
 from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch
+from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -177,6 +180,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _prompt(app, remote)
     _sessions(app, remote)
     _plugins(app, remote)
+    _workspaces(app, remote)
     _events(app, remote)
     if (static / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
@@ -321,6 +325,18 @@ def _plugins(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:
         await _wait(remote.plugin_action(name, action))
+
+
+def _workspaces(app: FastAPI, remote: Remote) -> None:
+    """The sidebar's Workspaces section: list them, and open one's own page."""
+
+    @app.get('/api/workspaces')
+    async def workspaces() -> WorkspacesInfo:
+        return await listing(remote.host.plugins)
+
+    @app.post('/api/workspaces/{workspace_id}/open')
+    async def open_one(workspace_id: str) -> WorkspaceOpened:
+        return await _wait(open_workspace(remote.host.plugins, workspace_id))
 
 
 def _events(app: FastAPI, remote: Remote) -> None:

@@ -1378,7 +1378,41 @@ from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`).
 `listing()`, `get(id)`, `create(kind=, repo=, ref=)`, `start(id)`, `stop(id)`, `destroy(id)`, each
 returning a `Workspace` record, and `token(id)`, the running CLAI's token, for a client that talks to
 it; never show it to the model. A new backend implements `backend.Backend`: `create`, `start`,
-`alive`, `stop`, and `destroy`.
+`alive`, `stop`, and `destroy`. `configured(host.plugins)` builds that `Workspaces` from the loaded
+plugin's settings, or returns `None` while it is off.
+
+**In the web UI.** While `workspaces` is on, the sidebar shows a **Workspaces** section above the
+projects: each workspace's ID, branch, and status, refreshed every ten seconds, and **Open**, which
+starts its CLAI if needed (`POST /api/workspaces/ID/open`) and opens its own page in a new tab. Only
+that response carries the workspace's token, to the page that already has its own; `GET
+/api/workspaces` never does.
+
+### `orchestrator`: the model runs workspaces
+
+The built-in `orchestrator` plugin (`pydantic_clai2.builtin_plugins.orchestrator`) starts disabled.
+It gives the model tools over the `workspaces` plugin's registry and kinds, so turn that on too; while
+it is off, every tool says so. Each workspace's CLAI is driven through its web UI with
+[`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace that
+the plugin keeps between tool calls and closes when it unloads; the CLAIs keep running.
+
+| Tool | Does |
+|---|---|
+| `workspace_list()` | every workspace, and the kinds the model may make |
+| `workspace_create(kind, repo='', ref='')` | a new workspace; nothing runs in it yet |
+| `workspace_destroy(workspace)` | stop its CLAI and remove it, only once the user confirmed (below) |
+| `session_start(workspace, prompt)` | start its CLAI unless it runs, and send `prompt` |
+| `session_send(workspace, text)` | another prompt or `/command`, queued behind a running turn |
+| `session_read(workspace, last=5)` | in short: whether a turn runs, how the last one ended, what is asked, and the last items, each cut to 600 characters |
+| `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
+| `session_interrupt(workspace)` | stop the running turn |
+| `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+
+**Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
+conversation picked the option `Destroy ID` for that workspace; the model is told to ask that way.
+The answer comes from you, through the terminal or the browser, so the model cannot give it itself.
+
+The model never sees a token: tools return addresses without one, and problems (an unknown
+workspace, a CLAI that stopped) come back as `Error: ...` lines rather than failing the run.
 
 ### `github`: tools from GitHub's hosted MCP server
 

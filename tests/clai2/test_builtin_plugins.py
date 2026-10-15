@@ -46,6 +46,7 @@ CURATED = {
     'linear',
     'web',
     'workspaces',
+    'orchestrator',
 }
 OPT_IN = {
     'herdr',
@@ -63,6 +64,7 @@ OPT_IN = {
     'slack',
     'web',
     'workspaces',
+    'orchestrator',
 }
 
 

@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
+import { WorkspacesSection } from './WorkspacesSection'
 import type { Project, SessionEntry, ThemeInfo, Worktree } from '../protocol'
 import {
   BranchIcon,
@@ -210,6 +211,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">
+        <WorkspacesSection version={version} onError={onError} />
         {projects.length === 0 && (
           <div className="empty-list">
             {unsaved ? 'This CLAI does not save sessions' : query ? 'No matching sessions' : 'No saved sessions yet'}

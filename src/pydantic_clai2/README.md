@@ -161,6 +161,17 @@ CLAI: they are kept in CLAI's state directory, and a workspace's CLAI keeps runn
 that started it quits. The kinds of workspace are the plugin's settings (`/plugins configure
 workspaces`, or the web UI's plugins panel); `local-worktree`, a Git worktree on this machine,
 is the one backend so far. See [the plugin guide](PLUGINS.md#workspaces-checkouts-with-their-own-clai).
+With `workspaces` on, the web UI's sidebar lists them in a **Workspaces** section, each with its
+CLAI's status and an **Open** button that starts it if needed and opens its page in a new tab.
+
+## Orchestrator
+
+The `orchestrator` plugin lets the model do that for you: "clone pydantic-ai off main and fix issue
+#123". Turn it on with `/plugins enable orchestrator` (and `workspaces`, whose kinds it may use). It
+gives the model tools to make workspaces, start each one's CLAI with a prompt, wait for and read its
+turns in short, steer it with more prompts, answer its questions, and interrupt it. It destroys a
+workspace only after you picked **Destroy ID** when it asked. See
+[the plugin guide](PLUGINS.md#orchestrator-the-model-runs-workspaces).
 
 ## Herdr integration
 

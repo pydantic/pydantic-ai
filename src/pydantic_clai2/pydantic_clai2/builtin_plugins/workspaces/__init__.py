@@ -28,7 +28,7 @@ from pydantic_clai2.builtin_plugins.workspaces.registry import (
     write_private,
 )
 from pydantic_clai2.commands import Command
-from pydantic_clai2.plugins import Plugin, PluginHost
+from pydantic_clai2.plugins import Plugin, PluginCatalog, PluginHost
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.ui.browser import open_browser
 
@@ -42,11 +42,24 @@ __all__ = (
     'WorkspacesPlugin',
     'WorkspacesSettings',
     'WorktreeKind',
+    'configured',
     'describe',
 )
 
+NAME = 'workspaces'
+"""The plugin's id, as `/plugins` lists it."""
 USAGE = 'Usage: /workspaces [list | create KIND [REPO [REF]] | open ID | stop ID | destroy ID]'
 _SUBCOMMANDS = ('list', 'create', 'open', 'stop', 'destroy')
+
+
+def configured(plugins: PluginCatalog | None) -> Workspaces | None:
+    """The registry with the kinds the `workspaces` plugin is configured with, for another plugin; `None` while it is off."""
+    rows = plugins.listing() if plugins is not None else []
+    row = next((row for row in rows if row.name == NAME and row.status == 'on'), None)
+    if row is None or row.settings is None:
+        return None
+    # Validated again rather than checked with `isinstance`: `/plugins reload` makes a new settings class.
+    return Workspaces(kinds=WorkspacesSettings.model_validate(row.settings.model_dump()).kinds)
 
 
 def describe(workspace: Workspace) -> str:
