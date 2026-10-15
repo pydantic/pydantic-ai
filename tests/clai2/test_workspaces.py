@@ -617,6 +617,17 @@ def test_git_helpers_report_failures(repository: Path, tmp_path: Path, monkeypat
         clone_or_fetch(url='x', path=tmp_path / 'clone')
 
 
+async def test_a_token_gone_meanwhile(rig: Rig, repository: Path) -> None:
+    """Another CLAI stopping the workspace between the status check and the read is a CLAI that does not run."""
+    workspaces = rig.workspaces()
+    workspace = await workspaces.create(kind='local-worktree', repo=str(repository))
+    started = await workspaces.start(workspace.id)
+    assert started.session is not None
+    started.session.token_file.unlink()
+    with pytest.raises(RuntimeError, match='has no CLAI running'):
+        await workspaces.token(workspace.id)
+
+
 async def test_one_process_at_a_time(rig: Rig, repository: Path) -> None:
     """Two CLAIs starting one workspace at once start one child: the second waits for the first's lock."""
     first, second = rig.workspaces(), rig.workspaces()
