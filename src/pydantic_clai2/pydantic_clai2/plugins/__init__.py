@@ -197,8 +197,8 @@ class CommandEnd:
     """A `/command` finished, typed at the prompt or entered with `PluginHost.send_input`.
 
     `output` is the text the command returned, which the shell printed, empty when it returned none
-    or a silent one-line no-op such as `API key unchanged.`; what the command printed itself, such as the history `/resume` replays, is not in it. `error` is
-    why it failed.
+    or a silent one-line no-op such as `API key unchanged.`; what the command printed itself, such as
+    the history `/resume` replays, is not in it. `error` is why it failed.
     """
 
     text: str

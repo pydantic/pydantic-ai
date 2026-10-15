@@ -1941,8 +1941,8 @@ command is running.
 `on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
 opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
 the text the command returned, which the shell printed (empty when it returned none, as for a
-menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the command printed itself, such as the history `/resume`
-replays, is not in it), and `error` the exception it failed with, which the shell showed
+menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
+command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
 instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
 with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
@@ -2123,8 +2123,8 @@ prompt the keyboard does:
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
-  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead. A headless `-p`
-  run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead.
+  A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
