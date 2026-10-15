@@ -390,9 +390,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     Set by `OpenAIProvider` for GPT-5.6 and later models, which accept it by name and in `allowed_tools`. Earlier
     models reject it with `Tool choice '<name>' not found in 'tools' parameter.`, so when a request's `tool_choice`
-    names a tool that an item in the request's own input reveals, `OpenAIResponsesModel` declares it in `tools` for
-    that request instead, which changes that request's cached prompt prefix. A tool whose reveal only server-side
-    state holds, through `openai_previous_response_id` or `openai_conversation_id`, is not redeclared.
+    names a tool revealed that way, `OpenAIResponsesModel` declares it in `tools` for that request instead, which
+    changes that request's cached prompt prefix. A request with `openai_previous_response_id` or
+    `openai_conversation_id` set goes out unchanged, since the stored response would keep the tool's reveal out of
+    every request that continues it.
     """
 
     openai_responses_supports_prompt_cache_diagnostics: bool

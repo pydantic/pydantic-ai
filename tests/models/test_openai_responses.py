@@ -369,23 +369,63 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     } == expected
 
 
+_REVEAL = ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])])
+_STORED_RESPONSE = ModelResponse(
+    parts=[TextPart(content='Ready.')], provider_name='openai', provider_response_id='resp_1'
+)
+_ASK = ModelRequest(parts=[UserPromptPart(content='Look up the refund policy.')])
+
+
 @pytest.mark.parametrize(
-    ('tool_choice', 'expected_tool_choice'),
+    ('messages', 'settings', 'expected'),
     [
-        pytest.param(['lookup_refund_policy'], _FORCE_REFUND, id='by-name'),
-        pytest.param(ToolOrOutput(function_tools=['lookup_refund_policy']), _ALLOW_REFUND, id='allowed-tools'),
+        pytest.param(
+            [_REVEAL, _STORED_RESPONSE, _ASK],
+            OpenAIResponsesModelSettings(tool_choice=['lookup_refund_policy'], openai_previous_response_id='auto'),
+            {'tool_choice': _FORCE_REFUND, 'tools': ['always_ready'], 'additional_tools': []},
+            id='stored-response-holds-reveal',
+        ),
+        pytest.param(
+            [_REVEAL, _STORED_RESPONSE, _ASK],
+            OpenAIResponsesModelSettings(
+                tool_choice=ToolOrOutput(function_tools=['lookup_refund_policy']), openai_previous_response_id='auto'
+            ),
+            {'tool_choice': _ALLOW_REFUND, 'tools': ['always_ready'], 'additional_tools': []},
+            id='stored-response-holds-reveal-allowed-tools',
+        ),
+        pytest.param(
+            [_ASK, _STORED_RESPONSE, _REVEAL],
+            OpenAIResponsesModelSettings(tool_choice=['lookup_refund_policy'], openai_previous_response_id='auto'),
+            {'tool_choice': _FORCE_REFUND, 'tools': ['always_ready'], 'additional_tools': [['lookup_refund_policy']]},
+            id='reveal-in-chained-input',
+        ),
+        pytest.param(
+            [_REVEAL],
+            OpenAIResponsesModelSettings(tool_choice=['lookup_refund_policy'], openai_previous_response_id='auto'),
+            {'tool_choice': _FORCE_REFUND, 'tools': ['always_ready'], 'additional_tools': [['lookup_refund_policy']]},
+            id='first-request-of-a-chain',
+        ),
+        pytest.param(
+            [_REVEAL],
+            OpenAIResponsesModelSettings(tool_choice=['lookup_refund_policy'], openai_conversation_id='conv_1'),
+            {'tool_choice': _FORCE_REFUND, 'tools': ['always_ready'], 'additional_tools': [['lookup_refund_policy']]},
+            id='conversation',
+        ),
     ],
 )
-async def test_tool_choice_naming_a_reveal_held_by_a_stored_response_is_not_redeclared(
+async def test_tool_choice_naming_a_revealed_tool_with_server_side_state_is_not_redeclared(
     allow_model_requests: None,
-    tool_choice: list[str] | ToolOrOutput,
-    expected_tool_choice: dict[str, object],
+    messages: list[ModelMessage],
+    settings: OpenAIResponsesModelSettings,
+    expected: dict[str, object],
 ) -> None:
-    """A request continuing a stored response that holds the reveal leaves the tool out of `tools`.
+    """With `openai_previous_response_id` or `openai_conversation_id` set, a revealed tool stays out of `tools`.
 
-    Redeclaring the tool next to the stored `additional_tools` item gets a 500 from models before GPT-5.6 for a
-    forced name, so the request goes out item-free with the name as is. A mocked client, because the API rejects the
-    request this test pins with a 400; the chained shapes were measured live with raw requests.
+    A stored response keeps its input, so one that left the `additional_tools` item out would hide the tool from
+    every request that continues it, and redeclaring a forced name next to an item it holds gets a 500 from models
+    before GPT-5.6. Whatever the setting resolves to, even on the first request of a chain, the request goes out
+    unchanged. A mocked client, because the API rejects these requests with a 400;
+    `test_force_a_tool_revealed_by_a_deferred_capability_in_a_chained_run` records that.
     """
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(openai_client=mock_client))
@@ -408,19 +448,10 @@ async def test_tool_choice_naming_a_reveal_held_by_a_stored_response_is_not_rede
             revealed_tool_names={tool.name},
         ),
     )
-    await model.request(
-        [
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
-            ModelResponse(parts=[TextPart(content='Ready.')], provider_name='openai', provider_response_id='resp_1'),
-            ModelRequest(parts=[UserPromptPart(content='Look up the refund policy.')]),
-        ],
-        OpenAIResponsesModelSettings(tool_choice=tool_choice, openai_previous_response_id='auto'),
-        parameters,
-    )
+    await model.request(messages, settings, parameters)
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert {
-        'previous_response_id': request_kwargs['previous_response_id'],
         'tool_choice': request_kwargs['tool_choice'],
         'tools': [entry['name'] for entry in request_kwargs['tools']],
         'additional_tools': [
@@ -428,12 +459,7 @@ async def test_tool_choice_naming_a_reveal_held_by_a_stored_response_is_not_rede
             for item in request_kwargs['input']
             if item.get('type') == 'additional_tools'
         ],
-    } == {
-        'previous_response_id': 'resp_1',
-        'tool_choice': expected_tool_choice,
-        'tools': ['always_ready'],
-        'additional_tools': [],
-    }
+    } == expected
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):

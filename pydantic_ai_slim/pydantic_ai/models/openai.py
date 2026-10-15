@@ -3009,22 +3009,24 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if visibility == 'via_history' and name not in post_trim_revealed
         }
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         # Before GPT-5.6, a `tool_choice` naming a tool that only an `additional_tools` item declares is
         # rejected ("Tool choice '<name>' not found in 'tools' parameter."), by name and in `allowed_tools`
         # alike, and so is declaring it in both places. A `'via_history'` tool the choice names is redeclared
         # in `tools` for this request instead, and the item leaves it out. Only such a request pays the cache miss.
-        # An item an earlier stored response holds can't be left out: redeclaring next to it gets a 500 for a
-        # forced name, so only a reveal in this request's own input is redeclared.
+        # A stored response keeps its input, so one that left the item out would hide the tool from every request
+        # that continues it, and redeclaring a forced name next to an item it holds gets a 500. Only requests that
+        # don't use server-side state redeclare, whatever the setting resolves to.
         chosen_reveals: set[str] = set()
-        if isinstance(resolved_tool_choice, tuple) and not profile.get(
-            'openai_responses_tool_choice_accepts_additional_tools', False
+        if (
+            isinstance(resolved_tool_choice, tuple)
+            and not profile.get('openai_responses_tool_choice_accepts_additional_tools', False)
+            and model_settings.get('openai_previous_response_id') is None
+            and model_settings.get('openai_conversation_id') is None
         ):
-            input_reveals = parse_discovered_tools(self._trim_before_compaction(messages))
             chosen_reveals = {
                 name
                 for name in resolved_tool_choice[1]
-                if model_request_parameters.visibility_of(name) == 'via_history' and name in input_reveals
+                if model_request_parameters.visibility_of(name) == 'via_history'
             }
         if redeclared := lost_reveals | chosen_reveals:
             tool_visibility: dict[str, ToolVisibility] = {
@@ -3046,6 +3048,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if not tools and not history_declared_tool_names:
             tool_choice = None
+
+        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
         instructions, openai_messages = await self._map_messages(
             messages,

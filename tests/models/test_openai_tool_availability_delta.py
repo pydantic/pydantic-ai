@@ -22,7 +22,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ToolSearchReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -380,6 +380,49 @@ async def test_openai_live_delta_preserves_the_warmed_cache_prefix(
     assert len(cast(Any, vcr).requests) == 2
 
 
+class Refunds(Capability[None]):
+    """A deferred capability whose model settings force its tool until it has been called."""
+
+    def __init__(self) -> None:
+        def refund_status(order_id: str) -> str:
+            """Look up the refund status for an order."""
+            return f'Order {order_id}: refund issued on 2026-05-01.'
+
+        super().__init__(
+            id='refunds',
+            description='Use for refund status.',
+            tools=[refund_status],
+            defer_loading=True,
+        )
+
+    def get_model_settings(self) -> Callable[[RunContext[None]], ModelSettings]:
+        def settings(ctx: RunContext[None]) -> ModelSettings:
+            called = any(
+                isinstance(part, ToolReturnPart) and part.tool_name == 'refund_status'
+                for message in ctx.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            return ModelSettings() if called else ModelSettings(tool_choice=['refund_status'])
+
+        return settings
+
+
+def _tool_declarations(request_capture: RequestCapture) -> list[dict[str, object]]:
+    return [
+        {
+            'tool_choice': body.get('tool_choice'),
+            'tools': [tool.get('name') for tool in json_objects(body.get('tools', []))],
+            'additional_tools': [
+                [tool.get('name') for tool in json_objects(item.get('tools'))]
+                for item in json_objects(body.get('input'))
+                if item.get('type') == 'additional_tools'
+            ],
+        }
+        for body in request_capture.bodies('/responses')
+    ]
+
+
 @pytest.mark.parametrize(
     'model_name',
     [
@@ -400,32 +443,6 @@ async def test_force_a_tool_revealed_by_a_deferred_capability(
     declared in both places. So on that model the forcing request declares the tool in `tools` and leaves it out of
     the item, and the next request carries the item again.
     """
-
-    class Refunds(Capability[None]):
-        def __init__(self) -> None:
-            def refund_status(order_id: str) -> str:
-                """Look up the refund status for an order."""
-                return f'Order {order_id}: refund issued on 2026-05-01.'
-
-            super().__init__(
-                id='refunds',
-                description='Use for refund status.',
-                tools=[refund_status],
-                defer_loading=True,
-            )
-
-        def get_model_settings(self) -> Callable[[RunContext[None]], ModelSettings]:
-            def settings(ctx: RunContext[None]) -> ModelSettings:
-                called = any(
-                    isinstance(part, ToolReturnPart) and part.tool_name == 'refund_status'
-                    for message in ctx.messages
-                    if isinstance(message, ModelRequest)
-                    for part in message.parts
-                )
-                return ModelSettings() if called else ModelSettings(tool_choice=['refund_status'])
-
-            return settings
-
     model = OpenAIResponsesModel(
         model_name, provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     )
@@ -440,36 +457,73 @@ async def test_force_a_tool_revealed_by_a_deferred_capability(
         for part in message.parts
         if isinstance(part, ToolCallPart)
     ] == snapshot(['load_capability', 'refund_status'])
-    assert [
-        {
-            'tool_choice': body.get('tool_choice'),
-            'tools': [tool.get('name') for tool in json_objects(body.get('tools', []))],
-            'additional_tools': [
-                [tool.get('name') for tool in json_objects(item.get('tools'))]
-                for item in json_objects(body.get('input'))
-                if item.get('type') == 'additional_tools'
-            ],
-        }
-        for body in request_capture.bodies('/responses')
-    ] == snapshot(
-        {
-            'gpt-5.4-mini': [
-                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
-                {
-                    'tool_choice': {'type': 'function', 'name': 'refund_status'},
-                    'tools': ['load_capability', 'refund_status'],
-                    'additional_tools': [],
-                },
-                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
-            ],
-            'gpt-5.6': [
-                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
-                {
-                    'tool_choice': {'type': 'function', 'name': 'refund_status'},
-                    'tools': ['load_capability'],
-                    'additional_tools': [['refund_status']],
-                },
-                {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
-            ],
-        }
-    )[model_name]
+    assert (
+        _tool_declarations(request_capture)
+        == snapshot(
+            {
+                'gpt-5.4-mini': [
+                    {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
+                    {
+                        'tool_choice': {'type': 'function', 'name': 'refund_status'},
+                        'tools': ['load_capability', 'refund_status'],
+                        'additional_tools': [],
+                    },
+                    {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
+                ],
+                'gpt-5.6': [
+                    {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
+                    {
+                        'tool_choice': {'type': 'function', 'name': 'refund_status'},
+                        'tools': ['load_capability'],
+                        'additional_tools': [['refund_status']],
+                    },
+                    {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': [['refund_status']]},
+                ],
+            }
+        )[model_name]
+    )
+
+
+async def test_force_a_tool_revealed_by_a_deferred_capability_in_a_chained_run(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """With `openai_previous_response_id` set, the forcing request goes out unchanged and `gpt-5.4-mini` rejects it.
+
+    Declaring the tool in `tools` would leave its `additional_tools` item out of the stored response, which hides the
+    tool from every request that continues it, so a chained run keeps the item-only shape and the API's 400.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, deps_type=type(None), capabilities=[Refunds()])
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(
+            'Load the refunds capability, then tell me the refund status for order 123.',
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        )
+
+    assert (exc_info.value.status_code, exc_info.value.body) == snapshot(
+        (
+            400,
+            {
+                'message': "Tool choice 'refund_status' not found in 'tools' parameter.",
+                'type': 'invalid_request_error',
+                'param': 'tool_choice',
+                'code': None,
+            },
+        )
+    )
+    assert [bool(body.get('previous_response_id')) for body in request_capture.bodies('/responses')] == snapshot(
+        [False, True]
+    )
+    assert _tool_declarations(request_capture) == snapshot(
+        [
+            {'tool_choice': 'auto', 'tools': ['load_capability'], 'additional_tools': []},
+            {
+                'tool_choice': {'type': 'function', 'name': 'refund_status'},
+                'tools': ['load_capability'],
+                'additional_tools': [['refund_status']],
+            },
+        ]
+    )
