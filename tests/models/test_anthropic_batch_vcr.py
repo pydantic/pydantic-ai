@@ -16,7 +16,7 @@ from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from tests.conftest import try_import
+from tests.conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -144,7 +144,7 @@ async def test_anthropic_batch_model_agent_run(
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert response.provider_details is not None and response.provider_details['processing'] == 'batch'
-    assert response.provider_details['batch']['batch']['request_count'] == 1
+    assert response.provider_details['batch'] == {'id': IsStr(), 'custom_id': IsStr()}
 
 
 @pytest.mark.vcr
@@ -153,8 +153,7 @@ async def test_anthropic_model_request_batch(allow_model_requests: None, anthrop
     responses = await model_request_batch(
         model,
         [_request('one'), _request('two', {'max_tokens': 8, 'stop_sequences': ['OK']})],
-        poll_interval=_poll_interval(vcr),
-        max_poll_interval=_poll_interval(vcr),
+        batch_settings={'poll_interval': _poll_interval(vcr), 'max_poll_interval': _poll_interval(vcr)},
     )
     # The second request stops at its stop sequence, before generating any text.
     assert [response.text if isinstance(response, ModelResponse) else response for response in responses] == [

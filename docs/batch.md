@@ -58,11 +58,13 @@ async def resume(agent: Agent, stored_messages: bytes) -> str:
 
 To get hold of that message history while the run is waiting, use [message history storage](message-history.md) or run the agent under [durable execution](#durable-execution).
 
-Cancelling a run that's waiting abandons its request. Pydantic AI cancels the provider batch once every request in it has been abandoned by the process that submitted it; requests the provider already completed may still be billed.
+Cancelling a run that's waiting abandons its request. Pydantic AI cancels the provider batch once every request in it has been abandoned in the same process; requests the provider already completed may still be billed.
 
 ### Durable execution
 
 Under [durable execution](durable_execution/overview.md) with Temporal, DBOS or Prefect, `BatchModel` needs no extra setup. Submitting a request and every check on its batch run as separate durable steps, so a run that's interrupted while its batch is processed, for example by a deployment, continues from the same batch when it's recovered. Under Temporal, the waits between checks are durable timers too. Requests are collected into batches per worker process.
+
+A request waits for its batch to be submitted inside its durable step, so keep `max_wait` well below the step's timeout (under Temporal, the model activity's `start_to_close_timeout`), or a slow submission can time out and be retried, submitting the request again. For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.models.batch.BatchModel.flush] can't be called from workflow code.
 
 ## Direct batch requests
 
@@ -96,7 +98,7 @@ async def main():
             #> italy: The capital of Italy is Rome.
 ```
 
-Requests are split into as many batches as the provider requires. Cancelling the call cancels the batches that haven't ended.
+Requests are split into as many batches as the provider requires, or as `batch_settings` limits them to; it also sets how often batches are checked on, as for `BatchModel`. Cancelling the call cancels the batches that haven't ended.
 
 ## Submit now, collect later
 

@@ -241,7 +241,7 @@ async def test_model_request_batch_returns_responses_and_errors_in_request_order
             BatchRequest(custom_id=name, messages=[ModelRequest(parts=[UserPromptPart(name)])])
             for name in ('one', 'fail', 'two')
         ],
-        poll_interval=timedelta(milliseconds=1),
+        batch_settings=FAST_BATCH_SETTINGS,
     )
 
     one, failed, two = responses
@@ -262,7 +262,7 @@ async def test_model_request_batch_splits_requests_by_the_provider_limit() -> No
     responses = await model_request_batch(
         model,
         [BatchRequest(custom_id=str(i), messages=[ModelRequest(parts=[UserPromptPart('Hello')])]) for i in range(5)],
-        poll_interval=timedelta(milliseconds=1),
+        batch_settings=FAST_BATCH_SETTINGS,
     )
 
     assert len(responses) == 5
@@ -275,7 +275,7 @@ async def test_model_request_batch_cancels_unfinished_batches_when_cancelled() -
         model_request_batch(
             model,
             [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
-            poll_interval=timedelta(milliseconds=1),
+            batch_settings=FAST_BATCH_SETTINGS,
         )
     )
     while model.status_checks == 0:
@@ -438,3 +438,25 @@ async def test_a_request_checked_after_the_results_arrived_reads_them_from_memor
         assert response.state == 'complete'
 
     assert wrapped.result_fetches == 1
+
+
+async def test_a_paused_turn_keeps_its_content_when_the_result_names_a_dated_model() -> None:
+    """Results often name a dated model, which must not make the graph drop what the turn accumulated before."""
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        state = 'suspended' if calls == 1 else 'complete'
+        return ModelResponse(
+            parts=[TextPart(f'segment {calls} ')],
+            model_name='model-2026-01-01',
+            state=state,
+            provider_response_id=str(calls),
+        )
+
+    result = await Agent(
+        BatchModel(FunctionModel(respond, model_name='model'), batch_settings=FAST_BATCH_SETTINGS)
+    ).run('Hello')
+
+    assert result.output == 'segment 1 segment 2 '

@@ -306,7 +306,8 @@ class BatchModel(WrapperModel):
         custom_id, batch = await self._enqueue(encoded)
         return ModelResponse(
             parts=[],
-            model_name=self.wrapped.model_name,
+            # No model name: the result may name a dated model, and differing names would make the graph treat the
+            # result as a different model's, dropping content this turn accumulated before it.
             provider_name=self.wrapped.system,
             provider_url=self.wrapped.base_url,
             provider_response_id=_response_id(batch.id, custom_id),
@@ -348,10 +349,8 @@ class BatchModel(WrapperModel):
 
     async def flush(self) -> None:
         """Submit every queued request now instead of waiting for a full batch or `max_wait`."""
-        submissions = [
-            self._submit(_take(queues, group)) for queues in list(self._queues.values()) for group in list(queues)
-        ]
-        await asyncio.gather(*submissions)
+        queues = self._queues.get(asyncio.get_running_loop(), {})
+        await asyncio.gather(*(self._submit(_take(queues, group)) for group in list(queues)))
 
     async def _enqueue(self, encoded: EncodedBatchRequest) -> tuple[str, Batch]:
         """Queue a request, and return the ID it was given in the batch it was submitted in."""
@@ -420,7 +419,13 @@ class BatchModel(WrapperModel):
                 },
             )
         result = results.get(ticket['custom_id']) or BatchResult(custom_id=ticket['custom_id'], status='expired')
-        return self.wrapped.batch_decode(result, request)
+        response = self.wrapped.batch_decode(result, request)
+        # Replaces the internal ticket that merging the pending response would otherwise carry into the final one.
+        response.provider_details = {
+            **(response.provider_details or {}),
+            _TICKET_KEY: {'id': batch.id, 'custom_id': ticket['custom_id']},
+        }
+        return response
 
     async def _poll(self, batch: Batch) -> tuple[Batch, dict[str, BatchResult] | None]:
         """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
