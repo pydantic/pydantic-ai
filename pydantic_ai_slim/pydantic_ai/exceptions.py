@@ -813,7 +813,14 @@ class ModelHTTPError(ModelAPIError):
 
     @staticmethod
     def for_category(
-        category: _HTTPErrorCategory | None,
+        category: type[
+            ModelRateLimitError
+            | ModelQuotaExceededError
+            | ModelUnavailableError
+            | ModelServerError
+            | ModelContextWindowExceededError
+        ]
+        | None,
         *,
         status_code: int,
         model_name: str,
