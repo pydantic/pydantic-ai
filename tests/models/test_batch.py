@@ -24,6 +24,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult, BatchSettings, EncodedBatchRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
@@ -469,3 +470,15 @@ async def test_a_paused_turn_keeps_its_content_when_the_result_names_a_dated_mod
     result = await Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
 
     assert result.output == 'segment 1 segment 2 '
+
+
+async def test_wrapper_models_forward_the_batch_api() -> None:
+    model = WrapperModel(TestModel())
+    request = BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])
+
+    assert model.batch_max_requests == 10_000
+    batch = await model.batch_create([await model.batch_encode(request)])
+    assert (await model.batch_status(batch)).status == 'ended'
+    assert (await model.batch_cancel(batch)).status == 'ended'
+    [result] = await model.batch_results(batch)
+    assert model.batch_decode(result, request).text == 'success (no tool calls)'

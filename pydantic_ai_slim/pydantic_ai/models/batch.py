@@ -188,10 +188,12 @@ def _pending_ticket(message: ModelMessage | None) -> _Ticket | None:
     if not (isinstance(message, ModelResponse) and message.state == 'suspended' and message.provider_details):
         return None
     ticket = message.provider_details.get(_TICKET_KEY)
-    if not (is_str_dict(ticket) and is_str_dict(batch := ticket.get('batch'))):
-        return None
-    # A merged response keeps the ticket of a batch request it no longer waits for, so the ID decides.
-    if message.provider_response_id != _response_id(str(batch.get('id')), str(ticket.get('custom_id'))):
+    # A merged response can keep the ticket of a batch request it no longer waits for, so the ID decides.
+    if not (
+        is_str_dict(ticket)
+        and is_str_dict(batch := ticket.get('batch'))
+        and message.provider_response_id == _response_id(str(batch.get('id')), str(ticket.get('custom_id')))
+    ):
         return None
     return _Ticket(custom_id=str(ticket['custom_id']), batch=batch, polls=int(ticket.get('polls', 0)))
 
