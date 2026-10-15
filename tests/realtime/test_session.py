@@ -2831,6 +2831,7 @@ async def test_idless_late_transcript_closes_before_the_next_audio_turn() -> Non
 
     class _LateIdlessTranscript(FakeRealtimeConnection):
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await self._input_sent.wait()  # the model answers the audio sent
             for event in [
                 OutputTranscript(text='answer one', is_final=True),
                 ResponseDone(),
@@ -2885,6 +2886,7 @@ async def test_idless_next_audio_turn_keeps_anchor_when_output_precedes_transcri
 
     class _OutputBeforeSecondTranscript(FakeRealtimeConnection):
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await self._input_sent.wait()  # the model answers the audio sent
             for event in [
                 OutputTranscript(text='answer one', is_final=True),
                 ResponseDone(),
@@ -2975,6 +2977,7 @@ async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> N
 
     class _LateTranscriptAfterNextAudio(FakeRealtimeConnection):
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await self._input_sent.wait()  # the model answers the audio sent
             for event in [OutputTranscript(text='answer one', is_final=True), ResponseDone()]:
                 yield event
             await second_audio_sent.wait()

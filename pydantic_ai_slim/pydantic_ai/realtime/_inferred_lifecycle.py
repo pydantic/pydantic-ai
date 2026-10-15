@@ -53,6 +53,10 @@ class _Turn:
     joined: bool = False
     final: bool = False
     """Its transcript is whole: marked finished, or no more will come."""
+    words: bool = False
+    """Some of its transcript came."""
+    replied: bool = False
+    """The reply to it is over, before any of its transcript came: what still comes is late, until the next turn."""
 
 
 class InferredLifecycle:
@@ -362,6 +366,9 @@ class InferredLifecycle:
         self._turn = None
         if not turn.joined:
             self._join(turn, events)
+        elif turn.replied and not turn.final:
+            # It waited for late words past its reply: no more are coming.
+            events.append(UserTurnDiscarded(turn_id=turn.id))
 
     def _join(self, turn: _Turn, events: list[LifecycleEvent]) -> None:
         """`turn` joins the conversation here, ahead of the reply to it."""
@@ -421,13 +428,19 @@ class InferredLifecycle:
                 if turn.joined:
                     self._turn = None
             return
-        if turn is not None and (turn.final or (event.item_id is not None and turn.id != event.item_id)):
+        if turn is not None and (
+            turn.final
+            or (event.item_id is not None and turn.id != event.item_id)
+            or (turn.replied and turn.words and self._audio_since_reply)
+        ):
             # The provider names a turn of its own, or the one before it said all it had: that one is over, and in
             # the conversation.
             self._end_turn(turn, before)
             turn = None
         if turn is None:
             turn = self._start_turn(event.item_id, before)
+        if isinstance(event, InputTranscript) and event.text:
+            turn.words = True
         if final:
             turn.final = True
             if turn.joined:
@@ -489,6 +502,10 @@ class InferredLifecycle:
         """The spoken turn the starting response replies to joins the conversation ahead of it."""
         audio, self._audio_since_reply = self._audio_since_reply, False
         turn = self._turn
+        if turn is not None and turn.replied:
+            # The turn a reply already answered: this reply is to something said since.
+            self._end_turn(turn, events)
+            turn = None
         if turn is not None and not (turn.joined and turn.final) and self._transcribes:
             if not turn.joined:
                 turn.joined = True
@@ -553,11 +570,16 @@ class InferredLifecycle:
         if turn is None or not turn.joined or (turn_id is not None and turn.id != turn_id):
             return
         # (A joined turn whose transcript was marked finished is done with already.)
-        self._turn = None
         self._turn_reply = None
-        if not turn.identified:
+        if turn.identified:
+            self._turn = None
+        elif turn.words:
             # The provider doesn't say when it has transcribed all of it: what it has is all there is.
+            self._turn = None
             events.append(UserTurnDiscarded(turn_id=turn.id))
+        else:
+            # None of its words came yet: what comes is late, and still this turn's, until the next turn starts.
+            turn.replied = True
 
     def _place_held(self, events: list[LifecycleEvent]) -> None:
         held, self._held = self._held, []
