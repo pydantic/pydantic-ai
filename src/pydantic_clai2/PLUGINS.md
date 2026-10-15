@@ -1901,8 +1901,9 @@ contributes nothing:
 | `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
-runtime: the console, the conversation, the status row, the full screen, and its
-saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
+runtime: the console, the conversation, the status row, the full screen, its
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
+saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
 ### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`
@@ -1940,7 +1941,7 @@ command is running.
 `on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
 opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
 the text the command returned, which the shell printed (empty when it returned none, as for a
-menu closed without changes; what the command printed itself, such as the history `/resume`
+menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the command printed itself, such as the history `/resume`
 replays, is not in it), and `error` the exception it failed with, which the shell showed
 instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
 with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
@@ -2122,12 +2123,13 @@ prompt the keyboard does:
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
-  where only the keyboard closes it; send `/model NAME` or `/resume ID` instead. A headless `-p`
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead. A headless `-p`
   run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
-  `False` when nothing was running. A menu stays open, and a headless `-p` run is not cancelled.
+  `False` when nothing was running. A menu open over the cancelled turn or command closes with
+  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer

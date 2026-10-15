@@ -196,8 +196,8 @@ class ConversationChanged:
 class CommandEnd:
     """A `/command` finished, typed at the prompt or entered with `PluginHost.send_input`.
 
-    `output` is the text the command returned, which the shell printed, empty when it returned none;
-    what the command printed itself, such as the history `/resume` replays, is not in it. `error` is
+    `output` is the text the command returned, which the shell printed, empty when it returned none
+    or a silent one-line no-op such as `API key unchanged.`; what the command printed itself, such as the history `/resume` replays, is not in it. `error` is
     why it failed.
     """
 
@@ -479,7 +479,7 @@ class PluginHost(Generic[DepsT]):
         what it is sent is never run. Raises `RuntimeError` on a host whose shell reads no such input:
         one built without `send_input=`, or a CLAI whose output is not a terminal, which reads its
         prompts line by line. A bare command that opens a menu, such as `/model`, opens it in the
-        terminal, where only the keyboard closes it.
+        terminal, where only the keyboard or `interrupt` closes it.
         """
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
@@ -488,7 +488,8 @@ class PluginHost(Generic[DepsT]):
     def interrupt(self) -> bool:
         """Cancel the running turn or command, as Esc does; `False` when nothing was running.
 
-        A menu stays open, as only the keyboard closes it, and a headless `-p` run is not cancelled.
+        A menu open over the cancelled turn or command closes with it, as it does for Ctrl-C; a
+        headless `-p` run is not cancelled.
         """
         return self._interrupt()
 
