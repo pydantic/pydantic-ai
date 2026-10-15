@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -110,6 +110,8 @@ class InferredLifecycle:
         self._open: str | None = None
         """The response under way."""
         self._open_named = False
+        self._ended_by_usage: str | None = None
+        """The response a usage report just ended, whose terminal, if one follows, ends nothing more."""
         self._cut_off = False
         """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`), so more output is another."""
         """Whether the provider named the response under way, by the `response_id` of its content."""
@@ -184,8 +186,10 @@ class InferredLifecycle:
             self._commit_unnamed(self._pending)
 
     def _commit_unnamed(self, events: list[LifecycleEvent]) -> None:
-        """A turn joined the conversation that has no name and no words yet: it's announced with its first transcript,
-        which may name it, or once anything else joins the conversation after it."""
+        """A turn joined the conversation that has no name and no words yet.
+
+        It's announced with its first transcript, which may name it, or once anything else joins the conversation.
+        """
         self._announce_committed(events)
         self._unnamed_committed = True
 
@@ -256,9 +260,14 @@ class InferredLifecycle:
 
         For a connection whose codec events are an async iterable of their own, and end with the connection.
         """
-        async for event in events:
-            yield self.message([event])
-        yield self.connection_lost()
+        iterator = aiter(events)
+        try:
+            async for event in iterator:
+                yield self.message([event])
+            yield self.connection_lost()
+        finally:
+            if isinstance(iterator, AsyncGenerator):
+                await iterator.aclose()
 
     def _event(
         self, event: RealtimeCodecEvent, *, takes_turn: bool = False
@@ -284,6 +293,7 @@ class InferredLifecycle:
                 self._deferred = None
             # Anything else (the user's transcript, usage) leaves it held: the exchange isn't over.
         if output:
+            self._ended_by_usage = None
             named = event.response_id if isinstance(event, (AudioDelta, OutputTranscript, ToolCall)) else None
             if self._open is not None and self._cut_off:
                 # More output after the response under way was cut off: a response of its own.
@@ -303,7 +313,9 @@ class InferredLifecycle:
             if event.response_scoped and self._calls_awaiting_usage:
                 # A tool-call frame's report: the calls' response is over, and the answer comes once every result
                 # is in.
+                ended = self._open
                 self._end(after, status='completed', finish_reason='tool_call')
+                self._ended_by_usage = ended
         elif isinstance(event, (InputTranscript, RealtimeInputTranscriptionErrorEvent)):
             self._input_transcript(event, before)
         elif isinstance(event, RealtimeResponseInterruptedEvent):
@@ -323,6 +335,10 @@ class InferredLifecycle:
         return before, after
 
     def _response_done(self, event: ResponseDone, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        if self._open is None and self._ended_by_usage is not None:
+            # The terminal of the response its usage report already ended (when it made tool calls).
+            self._ended_by_usage = None
+            return
         if self._open is None and not (
             event.interrupted or event.finish_reason or event.provider_details or self._unanswered
         ):

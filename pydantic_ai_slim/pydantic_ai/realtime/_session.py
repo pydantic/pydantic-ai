@@ -4337,29 +4337,35 @@ class RealtimeSession:
 
     async def _core_events(self, core: SessionCore) -> AsyncGenerator[RealtimeCodecEvent]:
         """The connection's codec events, feeding the core its frames on the way."""
-        async for frame in self._connection.frames():  # pragma: no branch
-            # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
-            # to one of its events (and reading the history, say) must find the core as far along as this one.
-            for event in frame:
-                if not isinstance(event, StaleEvent):
-                    core.apply(event)
-            self._core_advanced(core)
-            codec = [
-                event.event if isinstance(event, StaleEvent) else event
-                for event in frame
-                if not isinstance(event, LIFECYCLE_EVENT_TYPES)
-            ]
-            handled = 0
-            try:
-                for event in codec:
-                    handled += 1
-                    yield event
-            finally:
-                # Receiving stopped (a limit tripped, or the session closed) before this session got to the rest of
-                # the frame: a tool call in it never runs, so it is left out of history, as one refused is.
-                for event in codec[handled:]:
-                    if isinstance(event, ToolCall):
-                        self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
+        frames = self._connection.frames()
+        try:
+            async for frame in frames:  # pragma: no branch
+                # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
+                # to one of its events (and reading the history, say) must find the core as far along as this one.
+                for event in frame:
+                    if not isinstance(event, StaleEvent):
+                        core.apply(event)
+                self._core_advanced(core)
+                codec = [
+                    event.event if isinstance(event, StaleEvent) else event
+                    for event in frame
+                    if not isinstance(event, LIFECYCLE_EVENT_TYPES)
+                ]
+                handled = 0
+                try:
+                    for event in codec:
+                        handled += 1
+                        yield event
+                finally:
+                    # Receiving stopped (a limit tripped, or the session closed) before this session got to the rest of
+                    # the frame: a tool call in it never runs, so it is left out of history, as one refused is.
+                    for event in codec[handled:]:
+                        if isinstance(event, ToolCall):
+                            self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
+        finally:
+            # Closed with this, rather than whenever it is collected, so a connection lets go of what it holds now.
+            if isinstance(frames, AsyncGenerator):
+                await frames.aclose()
 
     def _ensure_streamable(self) -> None:
         if not self._entered:

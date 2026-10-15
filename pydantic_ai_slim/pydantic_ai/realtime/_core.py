@@ -665,7 +665,13 @@ class SessionCore:
             if response is None:
                 self._carried_usage.append(event)
                 return
-        elif (response := self._responses.get(event.provider_response_id)) is None or response.status is not None:
+        elif (response := self._responses.get(event.provider_response_id)) is None:
+            # Naming a response the lifecycle gave a made-up id (its content named none): the one under way.
+            response = self._open_response(None)
+            if response is None or response.provider_id:
+                return
+            response.reported_id = response.reported_id or event.provider_response_id
+        elif response.status is not None:
             # Usage for a response already recorded counts toward the session, never toward its message.
             return
         self._add_usage(response, event)

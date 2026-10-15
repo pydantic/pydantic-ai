@@ -3917,11 +3917,8 @@ class AwaitBetweenConnection(InferredConnection):
 
     async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
-        self._input_sent.set()
 
     async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
-        if self._after_input:
-            await self._input_sent.wait()
         for event in self._events:
             yield event
             await asyncio.sleep(0)
@@ -5571,7 +5568,9 @@ async def test_audio_retention_budget_skips_history_while_nothing_there_can_be_e
     strips = 0
     strip = RetainedAudioBudget.strip
 
-    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+    def counting_strip(
+        self: RetainedAudioBudget, message: ModelMessage, excess: int | None = None
+    ) -> tuple[ModelMessage, int]:
         nonlocal strips
         strips += 1
         return strip(self, message, excess)
@@ -5610,7 +5609,9 @@ async def test_audio_retention_budget_passes_over_history_once_across_many_turns
     strips = 0
     strip = RetainedAudioBudget.strip
 
-    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+    def counting_strip(
+        self: RetainedAudioBudget, message: ModelMessage, excess: int | None = None
+    ) -> tuple[ModelMessage, int]:
         nonlocal strips
         strips += 1
         return strip(self, message, excess)
