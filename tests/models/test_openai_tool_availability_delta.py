@@ -487,7 +487,7 @@ async def test_force_a_tool_revealed_by_a_deferred_capability(
 async def test_force_a_tool_revealed_by_a_deferred_capability_in_a_chained_run(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """With `openai_previous_response_id` set, the forcing request goes out unchanged and `gpt-5.4-mini` rejects it.
+    """With `openai_previous_response_id` set, the forcing request keeps the tool in the item and gets a 400.
 
     Declaring the tool in `tools` would leave its `additional_tools` item out of the stored response, which hides the
     tool from every request that continues it, so a chained run keeps the item-only shape and the API's 400.
