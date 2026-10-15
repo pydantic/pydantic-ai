@@ -28,6 +28,7 @@ from pydantic_clai2.config.credential_store import delete_credentials, load_code
 from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, warn_if_signed_out
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -215,7 +216,7 @@ async def choose_key(connection: GrainConnection, *, runners: Runners | None = N
             chosen = 'Grain uses no /keys entry, so it uses the browser sign-in.'
             if await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
                 return chosen
-            return f'{chosen}\n{await sign_in_now(SIGN_IN, runners)}'
+            return f'{chosen}\n{await sign_in_now(SIGN_IN, None if runners is None else TerminalDialogs(runners))}'
         await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token))
         token = KeyReference(name=KEY_NAME)
     choice = KeyChoice(token=token).model_dump_json()

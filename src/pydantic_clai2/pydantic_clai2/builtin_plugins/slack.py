@@ -30,6 +30,7 @@ from pydantic_clai2.pkce import PKCESignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.keys import browser_sign_in, choose_key, on_loop
 from pydantic_clai2.ui.browser import open_browser
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -327,7 +328,8 @@ async def configure_menu(source: SlackSource[DepsT]) -> str:
         label = f'Slack user token (xoxp-); a new one is saved in /keys as {name}'
         try:
             reference = on_loop(
-                lambda: choose_key(name=name, label=label, runners=RUNNERS, check=user_token_only), loop
+                lambda: choose_key(name=name, label=label, dialogs=TerminalDialogs(RUNNERS), check=user_token_only),
+                loop,
             )
             if reference is None:
                 return []
@@ -341,7 +343,7 @@ async def configure_menu(source: SlackSource[DepsT]) -> str:
         if session is None:
             return ['Set up the Slack app first (Slack app row).']
         try:
-            if not on_loop(lambda: browser_sign_in(session, RUNNERS), loop):
+            if not on_loop(lambda: browser_sign_in(session, TerminalDialogs(RUNNERS)), loop):
                 return ['Slack sign-in cancelled.']
         except UserError as exc:
             return [str(exc)]

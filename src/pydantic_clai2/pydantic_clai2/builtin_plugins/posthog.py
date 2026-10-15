@@ -58,6 +58,7 @@ from pydantic_clai2.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
     TERMINAL,
@@ -480,7 +481,7 @@ async def _configure(source: PostHogSource) -> str:
         messages = [menu.apply(_AUTH, str(pick.item.value))]
         method = browser(source.settings)
         if pick.item.value == 'browser' and not method.signed_in():
-            message = on_loop(lambda: sign_in_now(method, RUNNERS), loop)
+            message = on_loop(lambda: sign_in_now(method, TerminalDialogs(RUNNERS)), loop)
             messages += [] if message is None else [message]
         return messages
 

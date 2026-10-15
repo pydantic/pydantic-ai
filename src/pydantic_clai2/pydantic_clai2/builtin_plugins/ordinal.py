@@ -54,6 +54,7 @@ from pydantic_clai2.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -331,7 +332,7 @@ async def configure(source: OrdinalSource[DepsT]) -> str:
             return []
         messages = [menu.apply(METHOD, str(pick.item.value))]
         if pick.item.value == 'browser' and not SIGN_IN.signed_in():
-            message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
+            message = on_loop(lambda: sign_in_now(SIGN_IN, TerminalDialogs(RUNNERS)), loop)
             messages += [] if message is None else [message]
         return messages
 

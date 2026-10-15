@@ -37,6 +37,7 @@ from pydantic_clai2.plugins.sign_in import (
     sign_out_now,
     warn_if_signed_out,
 )
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.key_picker import pick_key
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -296,7 +297,7 @@ async def _configure(source: NotionSource[DepsT]) -> str:
         saved = menu.apply(_AUTH, str(pick.item.value))
         if pick.item.value != 'oauth' or SIGN_IN.signed_in():
             return [saved]
-        message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
+        message = on_loop(lambda: sign_in_now(SIGN_IN, TerminalDialogs(RUNNERS)), loop)
         return [saved] if message is None else [saved, message]
 
     messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'key': choose, 'auth': pick_auth}))
