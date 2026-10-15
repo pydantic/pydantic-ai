@@ -53,7 +53,7 @@ def _json(value: object, *, indent: int | None = None, fallback: Callable[[objec
 
     `to_json` renders `bytes` as the text they decode to, so binary such as a file read in binary
     mode or raw command output fails to serialize, and the exception would abort the run from the
-    after-hook. Base64 is the form pydantic-ai sends such a value to the model in.
+    after-hook. Base64 is how pydantic-ai encodes `bytes` in the tool returns it sends to the model.
     """
     try:
         return to_json(value, indent=indent, fallback=fallback)
