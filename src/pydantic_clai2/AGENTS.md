@@ -380,7 +380,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/web/app.py` | the FastAPI app and `Guard` (Host, token, and WebSocket Origin checks); every handler is `async`, so it runs on the shell's loop |
 | `builtin_plugins/web/server.py` | `WebServer`: uvicorn on CLAI's own loop, without its signal handlers or logs |
 | `builtin_plugins/web/static/` | the built browser UI, committed so installs need no Node; rebuild with `npm run build` in `web-ui/` |
-| `cli/web.py` | `clai2 --web`: a shell with no terminal prompt, `web` loaded for that launch, the transcript logged as plain text, and a `SessionWorkspace` attached |
+| `cli/web.py` | `clai2 --web`: a shell with no terminal prompt, `web` loaded for that launch, the transcript logged as plain text, and a `SessionWorkspace` attached; `--resume ID` starts in the session's directory (`_start_in`) |
 | `runtime/session_workspace.py` | `clai2 --web` only: `SessionWorkspace` moves the one live session's process into its own directory between turns (`os.chdir`, that directory's project settings, every plugin but `web` loaded again with `PluginLoader.restart`), for `/resume ID` (`Sessions.relocate`) and `/workspace DIRECTORY`; `workspace_directory` validates a path. The terminal never moves: keep it gated on `clai2 --web` |
 | `web-ui/` (beside the package) | the React and TypeScript source of the browser UI, built with Vite |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |

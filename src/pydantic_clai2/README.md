@@ -113,7 +113,8 @@ next turn, with that directory's `AGENTS.md`, skills, `.clai/settings.json`, and
 CLAI had started there. **New session** asks where the session runs: a project or worktree from
 the sidebar, by default the current one, or any directory by its absolute path
 (`/workspace DIRECTORY` in the composer does the same). The header shows where the session works.
-Nothing moves while a turn runs. The launch directory's `.env` stays loaded.
+`clai2 --web --resume ID` starts in that session's directory. Nothing moves while a turn, a
+background `/fork`, or a delegated task runs. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with

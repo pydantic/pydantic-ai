@@ -75,6 +75,7 @@ from pydantic_clai2.runtime.project_identity import git_checkout, project_identi
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
+from tests.clai2.test_tasks import task
 
 TOKEN = 'secret-token'
 HOSTS = frozenset({'testserver'})
@@ -1410,10 +1411,12 @@ def test_a_session_moves_only_between_turns(
     with pytest.raises(RuntimeError, match='Switch directories once it ends'):
         web_.portal.call(workspace.move, str(broken))
     shell.session._running = False  # pyright: ignore[reportPrivateUsage]
-    workspace.busy = lambda: True
+    workspace.busy = shell.background_running
+    record = task(conversation_id=shell.session.conversation_id)
+    shell.tasks.owner.records[record.id] = record
     with pytest.raises(RuntimeError, match='Switch directories once it ends'):
         web_.portal.call(workspace.move, str(broken))
-    workspace.busy = lambda: False
+    del shell.tasks.owner.records[record.id]
     with pytest.raises(ValueError, match=r'settings\.json'):
         web_.portal.call(workspace.move, str(broken))
     plugin = web_.plugin

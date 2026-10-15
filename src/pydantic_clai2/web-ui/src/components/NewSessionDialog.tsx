@@ -3,7 +3,7 @@ import { api } from '../api'
 import type { Project } from '../protocol'
 import { CheckIcon, FolderIcon } from './icons'
 
-export interface Place {
+interface Place {
   path: string
   label: string
   detail: string
@@ -13,12 +13,12 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function tilde(path: string): string {
+function tilde(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~')
 }
 
 /** The current directory, then each project's checkouts the sidebar lists, leaving out removed ones. */
-export function places(projects: Project[], current: string): Place[] {
+function places(projects: Project[], current: string): Place[] {
   const found = new Map<string, Place>()
   found.set(current, {
     path: current,
@@ -106,10 +106,18 @@ export function NewSessionDialog({ current, onClose }: { current: string; onClos
         <p className="dialog-description">
           Where should it run? Its tools, AGENTS.md, and project settings come from there.
         </p>
-        <div className="dialog-options" role="listbox" ref={list} tabIndex={0} onKeyDown={keys}>
+        <div
+          className="dialog-options"
+          role="listbox"
+          ref={list}
+          tabIndex={0}
+          aria-activedescendant={`place-${cursor}`}
+          onKeyDown={keys}
+        >
           {shown.map((place, index) => (
             <button
               key={place.path}
+              id={`place-${index}`}
               role="option"
               aria-selected={index === cursor}
               className={`dialog-option ${index === cursor ? 'active' : ''}`}

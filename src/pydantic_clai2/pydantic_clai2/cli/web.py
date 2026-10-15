@@ -66,10 +66,7 @@ async def run_web(
         status=shell.status,
         settings=settings_for,
         keep=WEB,
-        busy=lambda: (
-            any(record.status == 'running' for record in shell.forks.records)
-            or any(record.status == 'running' for record in shell.tasks.owner.records.values())
-        ),
+        busy=shell.background_running,
     ).attach(sessions=shell.sessions, commands=shell.commands)
     reason: SessionEndReason = 'error'
     async with agent, create_task_group() as workers:
@@ -108,7 +105,12 @@ async def _start_in(*, store: SettingsStore, conversation_id: str) -> ProjectSet
         return None  # Restoring it reports the unknown ID.
     if workspace == str(Path.cwd().resolve()):
         return None
-    directory = workspace_directory(workspace)
+    try:
+        directory = workspace_directory(workspace)
+    except ValueError as exc:
+        raise ValueError(
+            f'{exc} Session {conversation_id} was saved there; start without --resume to read it in the sidebar.'
+        ) from exc
     project = load_project_settings(directory)
     os.chdir(directory)
     return project

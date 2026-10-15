@@ -1204,11 +1204,11 @@ to the one the session was saved in, reads that directory's `.clai/settings.json
 plugin but `web` again, so the coding tools, `repo_context`, skills, MCP project files, and a
 plugin's relative paths refer to it, as after `--worktree`. Each of those plugins gets
 `on_session_end` and then `on_session_start`, as on `/plugins reload`. `clai2 --web --resume ID`
-starts in that session's directory. A new session from the browser runs
-where the user picks, sent as `/workspace DIRECTORY` (an existing absolute path), which only
-`clai2 --web` has. Nothing moves while a turn, a background `/fork`, or a delegated task runs. A session whose
-directory is gone opens read-only, and so does, with `/web` from a terminal, a session saved in
-another directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
+starts in that session's directory. A new session from the browser runs where the user picks,
+sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
+moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
+gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
+directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 

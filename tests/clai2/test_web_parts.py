@@ -505,6 +505,21 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
     assert Path.cwd() == launch.resolve()
 
 
+async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+        summary=ConversationSummary(workspace=str(tmp_path / 'gone'), title='Gone'), messages=[]
+    )
+    with pytest.raises(ValueError, match=re.escape(f'does not exist. Session {saved.id} was saved there;')):
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=store,
+            project=ProjectSettings(),
+            console=Console(file=io.StringIO()),
+            resume=saved.id,
+        )
+
+
 async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
     with pytest.raises(BaseExceptionGroup) as raised:
         await run_web(
