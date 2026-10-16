@@ -319,7 +319,10 @@ warnings.filterwarnings('error', category=CacheBustWarning)  # fail CI on busts
 Gotchas: reuse one instance across runs (marks are per `conversation_id`, held in process memory);
 it only fires when the provider reports cache tokens; route to Logfire with
 `logging.captureWarnings(True)`. On a provider with no published retention window (`unknown`)
-it can't tell a moved prefix from an expired cache.
+it can't tell a moved prefix from an expired cache. To silence one intentional bust, wrap that run
+in `with ignore_cache_busts():` (from `pydantic_ai_harness.warn_on_cache_busts`), not
+`warnings.catch_warnings()`: on runtimes without context-aware warnings, `catch_warnings()` changes
+process-global filters and can also silence unrelated concurrent runs.
 
 ## Media externalization (not a capability)
 
