@@ -686,7 +686,10 @@ async def test_older_socket_response_replays_history(allow_model_requests: None,
     ]
 
 
-async def test_per_step_selection_switches_websocket_and_http(allow_model_requests: None, sockets: SocketHarness):
+@pytest.mark.parametrize('previous_response_id', ['auto', 'resp_seed'])
+async def test_per_step_selection_switches_websocket_and_http(
+    allow_model_requests: None, sockets: SocketHarness, previous_response_id: str
+):
     """A selector can change transport inside one run without crossing cache-only IDs."""
     socket = sockets.pending[0]
     socket.responses = deque([tool_call_events('resp_socket', 'call_socket'), text_events('done', 'resp_final')])
@@ -708,7 +711,10 @@ async def test_per_step_selection_switches_websocket_and_http(allow_model_reques
         ]
         return httpx2.Response(200, json=response)
 
-    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+    settings: OpenAIResponsesModelSettings = {
+        'openai_previous_response_id': previous_response_id,
+        'openai_store': False,
+    }
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
         source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
         async with source.connect() as connected:
@@ -736,6 +742,7 @@ async def test_per_step_selection_switches_websocket_and_http(allow_model_reques
     assert all(frame['type'] == 'response.create' and frame['model'] == 'gpt-4o' for frame in socket.sent)
     assert all(frame['store'] is False for frame in socket.sent)
     assert socket.sent[0]['input'] == [{'role': 'user', 'content': 'start'}]
+    assert socket.sent[0].get('previous_response_id') == (None if previous_response_id == 'auto' else 'resp_seed')
     assert http_requests[0].url.path == '/v1/responses'
     http_body = FRAME_ADAPTER.validate_json(http_requests[0].content)
     assert http_body['model'] == 'gpt-4o'
@@ -760,14 +767,20 @@ async def test_per_step_selection_switches_websocket_and_http(allow_model_reques
     assert socket.close_count == 1
 
 
-async def test_per_step_selection_switches_distinct_sockets(allow_model_requests: None, sockets: SocketHarness):
+@pytest.mark.parametrize('previous_response_id', ['auto', 'resp_seed'])
+async def test_per_step_selection_switches_distinct_sockets(
+    allow_model_requests: None, sockets: SocketHarness, previous_response_id: str
+):
     """A second same-name socket cannot inherit the first one's cache-only parent ID."""
     first_socket = sockets.pending[0]
     first_socket.responses = deque([tool_call_events('resp_first', 'call_first')])
     second_socket = ScriptedSocket(responses=deque([text_events('done', 'resp_second')]))
     sockets.pending.append(second_socket)
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
-    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+    settings: OpenAIResponsesModelSettings = {
+        'openai_previous_response_id': previous_response_id,
+        'openai_store': False,
+    }
 
     async with AsyncExitStack() as stack:
         first = await stack.enter_async_context(source.connect())
@@ -793,6 +806,7 @@ async def test_per_step_selection_switches_distinct_sockets(allow_model_requests
     assert tool_models == [first]
     assert len(first_socket.sent) == len(second_socket.sent) == 1
     assert first_socket.sent[0]['input'] == [{'role': 'user', 'content': 'start'}]
+    assert first_socket.sent[0].get('previous_response_id') == (None if previous_response_id == 'auto' else 'resp_seed')
     assert second_socket.sent[0]['input'] == [
         {'role': 'user', 'content': 'start'},
         {'type': 'function_call', 'name': 'step', 'arguments': '{}', 'call_id': 'call_first'},

@@ -1010,7 +1010,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
       (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
       tool-call continuations), the most recent `provider_response_id` from the message
       history takes precedence so the chain extends correctly without re-sending messages
-      that are already server-side.
+      that are already server-side. After switching from a WebSocket to HTTP or another
+      socket, retained history is sent in full without reapplying this seed.
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state.
@@ -3839,9 +3840,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # from the message history takes precedence, so we chain to the latest stored
         # response instead of re-sending messages that are already server-side.
         #
-        # A compaction response in the tail is a hard chain boundary even with a
-        # concrete seed: crossing it would re-inject the context that compaction was
-        # meant to replace.
+        # A compaction or incompatible transport in the tail is a hard chain boundary
+        # even with a concrete seed: replaying full history alongside the seed could
+        # duplicate context or reference a response unavailable on this connection.
         if setting is None:
             return None, messages
         auto_id, trimmed = self._get_previous_response_id_and_new_messages(
@@ -3849,7 +3850,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if auto_id is not None:
             return auto_id, trimmed
-        if setting == 'auto' or self._is_at_compaction_boundary(messages):
+        if setting == 'auto' or self._is_at_history_boundary(messages):
             return None, messages
         return setting, messages
 
@@ -3879,10 +3880,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
-    def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
+    def _is_at_history_boundary(self, messages: list[ModelMessage]) -> bool:
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                return bool(m.provider_details and m.provider_details.get('compaction'))
+                if m.provider_details and m.provider_details.get('compaction'):
+                    return True
+                if (m.provider_details or {}).get('transport') == 'websocket':
+                    return self._websocket is None or m.provider_response_id != self._websocket.latest_response_id
+                return self._websocket is not None
         return False
 
     def _get_previous_response_id_and_new_messages(
