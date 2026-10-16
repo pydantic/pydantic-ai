@@ -75,6 +75,8 @@ _MongoDocument = dict[str, object]
 _logger = logging.getLogger(__name__)
 
 _DUPLICATE_KEY = 11000
+# Message keys per `$in` lookup, keeping each query far below MongoDB's 16 MiB command limit.
+_KEYS_PER_LOOKUP = 10_000
 
 
 class MongoStepStore:
@@ -275,7 +277,7 @@ class MongoStepStore:
         storing the same message makes its insert a duplicate, which is fine.
         """
         collection = self._db['snapshot_messages']
-        stored = {doc['_id'] async for doc in collection.find({'_id': {'$in': sorted(messages)}}, {'_id': 1})}
+        stored = await self._find_messages(set(messages), {'_id': 1})
         missing: list[_MongoDocument] = [
             {'_id': sha256, 'message': message} for sha256, message in messages.items() if sha256 not in stored
         ]
@@ -284,8 +286,20 @@ class MongoStepStore:
         try:
             await collection.insert_many(missing, ordered=False)
         except BulkWriteError as exc:
-            if any(error['code'] != _DUPLICATE_KEY for error in exc.details['writeErrors']):
+            if exc.details.get('writeConcernErrors') or any(
+                error['code'] != _DUPLICATE_KEY for error in exc.details['writeErrors']
+            ):
                 raise
+
+    async def _find_messages(self, keys: set[str], projection: _MongoDocument | None = None) -> dict[str, str]:
+        """The stored messages with these keys, looked up in batches."""
+        found: dict[str, str] = {}
+        ordered = sorted(keys)
+        for start in range(0, len(ordered), _KEYS_PER_LOOKUP):
+            batch = ordered[start : start + _KEYS_PER_LOOKUP]
+            async for doc in self._db['snapshot_messages'].find({'_id': {'$in': batch}}, projection):
+                found[str(doc['_id'])] = str(doc.get('message'))
+        return found
 
     async def _load_messages(self, docs: list[_MongoDocument]) -> dict[str, str]:
         """The stored messages the snapshot documents reference, by key."""
@@ -295,12 +309,7 @@ class MongoStepStore:
             if isinstance(messages_text := doc.get('messages'), str)
             for ref in (message_refs(messages_text) or ())
         }
-        if not refs:
-            return {}
-        stored: dict[str, str] = {}
-        async for found in self._db['snapshot_messages'].find({'_id': {'$in': sorted(refs)}}):
-            stored[str(found['_id'])] = str(found['message'])
-        return stored
+        return await self._find_messages(refs)
 
     async def _prune_snapshots(self, run_id: str) -> None:
         """Delete this run's snapshot documents outside the retain set when bounded.

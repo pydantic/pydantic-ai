@@ -20,6 +20,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import BulkWriteError
 
 import pydantic_ai_harness.step_persistence as sp
+import pydantic_ai_harness.step_persistence._mongo as mongo_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -618,15 +619,34 @@ class TestMongoStepStoreStoresEachMessageOnce:
         assert snap is not None
         assert snap.messages == history
 
-    async def test_a_failed_message_insert_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize(
+        'details',
+        [
+            {'writeErrors': [{'code': 2, 'errmsg': 'rejected'}]},
+            {'writeErrors': [{'code': 11000, 'errmsg': 'duplicate'}], 'writeConcernErrors': [{'code': 64}]},
+        ],
+        ids=['write-error', 'write-concern-error'],
+    )
+    async def test_a_failed_message_insert_raises(
+        self, monkeypatch: pytest.MonkeyPatch, details: dict[str, object]
+    ) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)
         collection_type = type(client['t']['snapshot_messages'])
 
         async def reject(self: object, documents: object, *args: object, **kwargs: object) -> None:
-            raise BulkWriteError({'writeErrors': [{'code': 2, 'errmsg': 'rejected'}]})
+            raise BulkWriteError(details)
 
         monkeypatch.setattr(collection_type, 'insert_many', reject)
         with pytest.raises(BulkWriteError):
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
         assert await client['t']['snapshots'].count_documents({}) == 0
+
+    async def test_messages_are_looked_up_in_batches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mongo_module, '_KEYS_PER_LOOKUP', 3)
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        histories = _growing_histories(4)
+        for step, history in enumerate(histories):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=history))
+
+        assert [s.messages for s in await store.list_snapshots(run_id='r1')] == histories
