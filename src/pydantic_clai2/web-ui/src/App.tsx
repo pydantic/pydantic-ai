@@ -288,6 +288,11 @@ export function App() {
   const showNew = useCallback(
     (id: string) => {
       if (id !== newFrom.current) show(id)
+      else {
+        // The shown session itself switches, so `show` does not run to close what covers it.
+        setWorker(null)
+        setPreview(null)
+      }
     },
     [show],
   )
@@ -345,6 +350,7 @@ export function App() {
         if (request !== picked.current) return
         // With `/web` from a terminal, the shown session itself switches to it, and its new snapshot follows.
         if (id !== shown) show(id)
+        else setPreview(null)
       } catch (error) {
         if (request !== picked.current) return
         setOpening(null)
