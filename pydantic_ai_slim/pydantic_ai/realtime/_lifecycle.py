@@ -13,7 +13,9 @@ states them outright, with an id on every entity:
 - a spoken user turn is bracketed by `UserTurnStarted` and `UserTurnEnded` (or `UserTurnDiscarded`);
 - `InputAdded` marks where an input joined the provider's conversation, so history can follow the
   provider's order;
-- `InputLost` and `ResponseRequestRefused` settle the inputs no response will ever answer.
+- `InputLost` and `ResponseRequestRefused` settle the inputs no response will ever answer;
+- `OutputItemDetails` carries what the provider says about an item of a response's output, for the part it
+  makes.
 
 An input is identified the way `InputRejected.input_index` identifies it: by its position among every
 `send()` call made on the connection.
@@ -60,6 +62,12 @@ class ResponseStarted:
     from the requests it had outstanding (`'inferred'`)."""
     user_turn_id: str | None = None
     """The spoken user turn a response the provider started on its own is replying to, when known."""
+    continues: str | None = None
+    """The response this one carries on from: one the provider ended while saying the exchange isn't over (Gemini's
+    `interaction_status=IN_PROGRESS`), so whatever waits for that one's reply waits for this one too."""
+    provider_id: bool = True
+    """Whether `response_id` is the provider's own id, which history records, rather than one the connection made up
+    for a protocol that gives its responses none."""
 
 
 ResponseStatus = Literal['completed', 'cancelled', 'failed', 'incomplete', 'lost']
@@ -91,6 +99,12 @@ class UserTurnEnded:
     """A spoken turn joined the provider's conversation, at this point in its order."""
 
     turn_id: str
+    still_speaking: bool = False
+    """Whether it joined while the user is still saying it (xAI adds its item at speech start): its audio, and with
+    it the turn, then ends with the speech."""
+    before_response: str | None = None
+    """The response it joined ahead of, when the connection learned of the turn only after that response, its reply,
+    had started (Gemini transcribes the user's words after the model starts answering them)."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -128,6 +142,19 @@ class ResponseRequestRefused:
     input_ids: tuple[InputId, ...]
 
 
+@dataclass(frozen=True, kw_only=True)
+class OutputItemDetails:
+    """What the provider says about one item of a response's output, to keep on the part that item makes.
+
+    Like OpenAI's `phase`, which tells an assistant message the model meant as commentary on its way to a tool
+    call apart from its final answer.
+    """
+
+    response_id: str
+    item_id: str
+    provider_details: dict[str, Any]
+
+
 LifecycleEvent = TypeAliasType(
     'LifecycleEvent',
     ResponseStarted
@@ -137,7 +164,8 @@ LifecycleEvent = TypeAliasType(
     | UserTurnDiscarded
     | InputAdded
     | InputLost
-    | ResponseRequestRefused,
+    | ResponseRequestRefused
+    | OutputItemDetails,
 )
 """The events a connection on the second version of the lifecycle contract yields besides the codec events."""
 
@@ -150,6 +178,7 @@ LIFECYCLE_EVENT_TYPES = (
     InputAdded,
     InputLost,
     ResponseRequestRefused,
+    OutputItemDetails,
 )
 """The `LifecycleEvent` variants, for `isinstance` checks."""
 

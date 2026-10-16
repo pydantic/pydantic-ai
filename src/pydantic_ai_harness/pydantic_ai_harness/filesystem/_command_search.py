@@ -124,7 +124,8 @@ async def run_posix_search(
     results: list[_T] = []
     records, incomplete = _parse_records(output, listing=pattern is None)
     cut |= incomplete
-    if prepare is not None:
+    # Every caller passes `prepare`.
+    if prepare is not None:  # pragma: no branch
         await prepare(records)
     for record in records:
         kept = await accept(record)

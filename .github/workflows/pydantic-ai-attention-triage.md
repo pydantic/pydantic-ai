@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   workflow_call:
     secrets:
-      MINIMAX_API_KEY:
+      ZAI_API_KEY:
         required: true
 if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') }}
 permissions:
@@ -24,7 +24,7 @@ network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.z.ai
 tools:
   bash: []
   cli-proxy: false
@@ -36,9 +36,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-attention-decision:
       description: "Classify one bounded candidate for deterministic host-side policy."
@@ -136,7 +139,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
 ---

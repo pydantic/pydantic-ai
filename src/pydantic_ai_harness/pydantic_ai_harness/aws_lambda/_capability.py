@@ -14,7 +14,7 @@ from __future__ import annotations
 
 try:
     import aws_durable_execution_sdk_python  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `aws-durable-execution-sdk-python` package to use the AWS Lambda durability '
         'capability, you can use the `aws-lambda` optional group -- '

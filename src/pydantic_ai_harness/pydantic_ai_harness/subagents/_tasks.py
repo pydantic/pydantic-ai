@@ -73,6 +73,10 @@ class DelegationTaskEvent:
 
     task: DelegationTask
     event: AgentStreamEvent | None = None
+    model_name: str | None = None
+    """The model the child run is using, for events from the child's own stream; `None` otherwise."""
+    context_window: int | None = None
+    """That model's context window, when its profile knows one, so a UI can show the child's context usage."""
 
 
 Observer = Callable[[DelegationTaskEvent], Awaitable[None]]
@@ -116,6 +120,8 @@ class DelegationTasks:
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
         self._receivers: dict[tuple[str, str | None], Callable[[SystemPromptPart], str | None]] = {}
+        self._steering: dict[str, Callable[[str], str | None]] = {}
+        self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._open = False
@@ -197,10 +203,19 @@ class DelegationTasks:
         """Capture child steps using the application's existing persistence store."""
         return [StepPersistence(store=self.step_store, capture_frontier=True)] if self.step_store is not None else []
 
-    async def notify(self, record: DelegationTask, event: AgentStreamEvent | None = None) -> None:
-        """Send correlated activity to the application's observer."""
+    async def notify(
+        self,
+        record: DelegationTask,
+        event: AgentStreamEvent | None = None,
+        *,
+        model_name: str | None = None,
+        context_window: int | None = None,
+    ) -> None:
+        """Send correlated activity, and the child's model when known, to the application's observer."""
         if self.observer is not None:
-            await self.observer(DelegationTaskEvent(task=record, event=event))
+            await self.observer(
+                DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
+            )
 
     async def save(self, record: DelegationTask) -> None:
         """Atomically replace one child's persisted history."""
@@ -248,6 +263,7 @@ class DelegationTasks:
             record.outcome, record.output, record.finished_at = None, '', None
             record.started_at, record.delivered = time.time(), False
             self._stopping.discard(record.id)
+            self._unsteered.pop(record.id, None)
             record.generation += 1
             record.run_id = uuid4().hex
             record.parent_id = parent_id
@@ -314,6 +330,7 @@ class DelegationTasks:
             record.output = f'{type(exc).__name__}: {exc}'
         finally:
             _CHILD.reset(token)
+            self._unsteered.pop(record.id, None)
             record.status, record.finished_at = 'finished', time.time()
             # A cancelled/failed parent cannot leave descendants without an observer.
             if record.outcome != 'ok':
@@ -361,6 +378,8 @@ class DelegationTasks:
             if worker is not None:
                 await asyncio.gather(worker, return_exceptions=True)
             if record.status == 'running':
+                # Its run never started to read steering sent meanwhile.
+                self._unsteered.pop(task_id, None)
                 record.status, record.outcome = 'finished', 'cancelled'
                 record.output = 'Task stopped before execution.'
                 record.finished_at = time.time()
@@ -380,6 +399,25 @@ class DelegationTasks:
             and r.status == 'finished'
             and not r.delivered
         ]
+
+    def steer(self, task_id: str, text: str) -> bool:
+        """Send a running child a user message, which its run reads at its next model request.
+
+        Returns `False` when the child is not running, so a caller can offer to resume it instead.
+        A message sent before the child's run starts waits for it, and is dropped if the child is stopped
+        first; one sent as its final response settles may arrive too late for it to read. Raises `ValueError` for blank text and `KeyError`
+        for an unknown task.
+        """
+        if not text.strip():
+            raise ValueError('Steering text must not be empty')
+        if self.records[task_id].status != 'running':
+            return False
+        enqueue = self._steering.get(task_id)
+        if enqueue is None:
+            self._unsteered.setdefault(task_id, []).append(text)
+        else:
+            enqueue(text)
+        return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
         """Independent replay history; callers cannot mutate the saved child through it."""
@@ -417,15 +455,25 @@ class DelegationTasks:
         conversation_id: str,
         parent_id: str | None,
         enqueue: Callable[[SystemPromptPart], str | None],
+        steer: Callable[[str], str | None] | None = None,
     ) -> Generator[None]:
-        """Keep a queue attached only for the lifetime of its owning run."""
+        """Keep a queue attached only for the lifetime of its owning run.
+
+        `steer` queues a user message on a child's own run, for `DelegationTasks.steer`.
+        """
         key = (conversation_id, parent_id)
         self._receivers[key] = enqueue
+        if steer is not None and parent_id is not None:
+            self._steering[parent_id] = steer
+            for text in self._unsteered.pop(parent_id, ()):
+                steer(text)
         self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
         try:
             yield
         finally:
             self._receivers.pop(key, None)
+            if parent_id is not None:
+                self._steering.pop(parent_id, None)
             self._queued = {
                 enqueue_id: identity
                 for enqueue_id, identity in self._queued.items()
@@ -474,6 +522,7 @@ class DelegationReports(AbstractCapability[object]):
             conversation_id=self.conversation_id,
             parent_id=self.task_id,
             enqueue=lambda part: ctx.enqueue(part, priority=self.priority),
+            steer=lambda text: ctx.enqueue(text, priority='asap'),
         ):
             return await handler()
 

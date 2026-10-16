@@ -10,7 +10,7 @@ import sys
 import textwrap
 import time
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
 from termflow.ansi.utils import visible_length
@@ -19,12 +19,9 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
-
-MISSING = '\0missing'
-"""The project key grouping deleted checkouts; a NUL byte cannot occur in a real path."""
 
 
 def plain(text: str, *, multiline: bool = False) -> str:
@@ -37,7 +34,7 @@ def plain(text: str, *, multiline: bool = False) -> str:
 def date_label(moment: datetime, *, now: datetime | None = None) -> str:
     """Local calendar buckets, with a year on older sessions."""
     day = moment.astimezone().date()
-    today = (now or datetime.now(timezone.utc)).astimezone().date()
+    today = (now or datetime.now(UTC)).astimezone().date()
     if day == today:
         return 'TODAY'
     if day == today - timedelta(days=1):
@@ -67,6 +64,7 @@ class SessionBrowser:
         preview: Callable[[str], str],
         delete: Callable[[ConversationSummary], None],
         rename: Callable[[ConversationSummary, str], None],
+        importing: Callable[[ConversationSummary], bool] = lambda entry: False,
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
@@ -79,9 +77,13 @@ class SessionBrowser:
         self.preview = preview
         self.delete = delete
         self.rename = rename
+        self.importing = importing
+        """Whether an entry is a Claude Code or Codex session that resuming copies into the store."""
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
+        self.found: dict[str, ProjectIdentity] = {}
+        """What Git says of each workspace, read once per opening."""
         self.identities: dict[str, ProjectIdentity] = {}
         self._resolve_projects()
         current = self.identity(workspace).key
@@ -104,13 +106,14 @@ class SessionBrowser:
 
     def _resolve_projects(self) -> None:
         for workspace in dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)]):
-            if workspace not in self.identities:
-                self.identities[workspace] = project_identity(workspace)
+            if workspace not in self.found:
+                self.found[workspace] = project_identity(workspace)
+        self.identities = placements(self.entries, identities=self.found)
 
     def place(self, workspace: str) -> tuple[str, str]:
-        """The sidebar project and checkout root a workspace belongs to; deleted folders share one project."""
+        """The sidebar project and checkout root a workspace belongs to; unclaimed deleted folders share one project."""
         identity = self.identity(workspace)
-        return (MISSING if identity.missing else identity.key), identity.root
+        return identity.key, identity.root
 
     def checkout_label(self, project: str, root: str) -> str:
         """A checkout's branch or a deleted folder's name, or its path when that is ambiguous."""
@@ -118,7 +121,8 @@ class SessionBrowser:
         for entry in self.entries:
             identity = self.identity(entry.workspace)
             if self.place(entry.workspace)[0] == project:
-                labels[identity.root] = identity.name if identity.missing else identity.checkout
+                removed = identity.missing and project != MISSING
+                labels[identity.root] = f'{identity.checkout} (removed)' if removed else identity.checkout
         label = labels[root]
         return label if list(labels.values()).count(label) == 1 else root
 
@@ -127,7 +131,7 @@ class SessionBrowser:
         if project == MISSING:
             return 'missing folders'
         identities = [self.identity(e.workspace) for e in self.entries]
-        names = {i.key: i.name for i in identities if not i.missing}
+        names = {i.key: i.name for i in identities}
         name = names[project]
         return name if list(names.values()).count(name) == 1 else project
 
@@ -262,6 +266,8 @@ class SessionBrowser:
             counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
             if len(counts) > width // 2:
                 counts = f'{entry.message_count} msgs'
+            if self.importing(entry):
+                counts = 'to import'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
@@ -355,6 +361,8 @@ class SessionBrowser:
             elif key in (Key.RIGHT, 'e'):
                 self.preview_text = self.preview(entry.id)
                 self.preview_offset, self.mode = 0, 'preview'
+            elif key in ('d', 'r') and self.importing(entry):
+                self.notice = 'Not imported yet. Enter imports and resumes it; then it can be renamed or deleted.'
             elif key == 'd':
                 if entry.id == self.active_id:
                     self.notice = 'Cannot delete the active session. Use /new first.'

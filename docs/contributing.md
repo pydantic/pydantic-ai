@@ -193,7 +193,7 @@ All routes in `docs/navigation.yml` are relative to the Pydantic AI documentatio
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-To validate navigation changes, ask a maintainer to add the `trigger:docs` label to the pull request.
+To validate navigation changes, ask a maintainer to add the `trigger:docs-preview` label to the pull request.
 This checks the navigation manifest, referenced Markdown files, routes, aliases, and redirects in
 `pydantic/unified-docs` and posts the result on the PR. It does not build a rendered preview.
 

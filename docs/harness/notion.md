@@ -20,7 +20,7 @@ Set `NOTION_ACCESS_TOKEN` to a Notion OAuth access token, or pass `auth=` a toke
 from pydantic_ai import Agent
 from pydantic_ai_harness.notion import Notion
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Notion()])
+agent = Agent('{{ openai:medium }}', capabilities=[Notion()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -56,7 +56,7 @@ def notion_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.notion_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Notion(auth=notion_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Notion(auth=notion_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only` applies to every user.
@@ -82,7 +82,7 @@ from pydantic_ai_harness.notion import Notion
 
 capability = Notion()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )

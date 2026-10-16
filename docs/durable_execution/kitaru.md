@@ -44,7 +44,7 @@ Here is the smallest durable Pydantic AI agent using Kitaru:
 from pydantic_ai import Agent
 from kitaru.adapters.pydantic_ai import KitaruAgent
 
-agent = Agent('openai:gpt-5-nano', name='researcher')
+agent = Agent('{{ openai:small }}', name='researcher')
 durable_agent = KitaruAgent(agent)
 
 result = durable_agent.run_sync('Summarize quantum error correction.')
@@ -71,7 +71,7 @@ import kitaru
 from pydantic_ai import Agent
 from kitaru.adapters.pydantic_ai import KitaruAgent
 
-agent = Agent('openai:gpt-5-nano', name='researcher')
+agent = Agent('{{ openai:small }}', name='researcher')
 durable_agent = KitaruAgent(agent)
 
 
@@ -124,7 +124,7 @@ If you use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`ite
 
 When using Kitaru with Pydantic AI:
 
-* Define the agent with a concrete model at construction time, such as `Agent('openai:gpt-5-nano', ...)`.
+* Define the agent with a concrete model at construction time, such as `Agent('{{ openai:small }}', ...)`.
 * Give each durable agent a stable `name`; Kitaru uses it to identify persisted work across runs.
 * Do not override the model per run with `model=` when using `KitaruAgent`.
 * Use an explicit `@kitaru.flow` for remote stacks and production services; automatic flow creation is local-only.

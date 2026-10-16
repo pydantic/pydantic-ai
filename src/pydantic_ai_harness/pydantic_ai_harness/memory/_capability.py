@@ -15,13 +15,19 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, T
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
+    MemoryDeleteResult,
+    MemorySearchResponse,
+    MemoryToolOperations,
     MemoryToolset,
+    MemoryWriteResult,
     injection_listing_limit,
     list_subfiles,
     render_memory_prompt,
+    run_as_operation,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -155,9 +161,40 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the stable `memory` toolset, shared with every per-run copy."""
+        return self._memory_toolset
+
+    @property
+    def _memory_toolset(self) -> MemoryToolset[AgentDepsT]:
         if self._toolset is None:
-            self._toolset = MemoryToolset(self)
+            operations = MemoryToolOperations[AgentDepsT](
+                write_memory=self._write_memory,
+                read_memory=self._read_memory,
+                delete_memory=self._delete_memory,
+                search_memory=self._search_memory,
+            )
+            self._toolset = MemoryToolset(self, operations=operations)
         return self._toolset
+
+    # Each memory tool call is a durable operation, so durable execution records its result instead of
+    # repeating it on recovery. DBOS runs function tools in workflow code, where a forked workflow's new
+    # run id would otherwise give a repeated write a new idempotency key.
+    @durable_operation('write_memory')
+    async def _write_memory(
+        self, ctx: RunContext[AgentDepsT], content: str, file: str, old_text: str | None
+    ) -> MemoryWriteResult | RetryRequest:
+        return await run_as_operation(self._memory_toolset.write_memory(ctx, content, file, old_text))
+
+    @durable_operation('read_memory')
+    async def _read_memory(self, ctx: RunContext[AgentDepsT], file: str) -> str | RetryRequest:
+        return await run_as_operation(self._memory_toolset.read_memory(ctx, file))
+
+    @durable_operation('delete_memory')
+    async def _delete_memory(self, ctx: RunContext[AgentDepsT], file: str) -> MemoryDeleteResult | RetryRequest:
+        return await run_as_operation(self._memory_toolset.delete_memory(ctx, file))
+
+    @durable_operation('search_memory')
+    async def _search_memory(self, ctx: RunContext[AgentDepsT], query: str) -> MemorySearchResponse | RetryRequest:
+        return await run_as_operation(self._memory_toolset.search_memory(ctx, query))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide trusted static guidance about using memory.
@@ -186,7 +223,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Add a bounded memory snapshot to only the current user request."""
+        """Add a bounded memory snapshot beside the latest user prompt, for this request only."""
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
         # Scope-qualify the marker so several `Memory` capabilities on one agent
@@ -244,10 +281,11 @@ class Memory(AbstractCapability[AgentDepsT]):
                 )[:content_budget]
                 rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
-                latest = request_context.messages[-1]
-                if not isinstance(latest, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
+                index = _snapshot_index(ctx.messages, request_context.messages)
+                target = request_context.messages[index]
+                if not isinstance(target, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
                     raise RuntimeError('model request history must end with a ModelRequest')
-                request_context.messages[-1] = replace(latest, parts=[*latest.parts, part])
+                request_context.messages[index] = replace(target, parts=[*target.parts, part])
             if span.is_recording():
                 span.set_attributes(
                     {
@@ -367,6 +405,27 @@ class Memory(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Return the name used by custom capability specs."""
         return 'Memory'
+
+
+def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) -> int:
+    """Index of the request holding the latest user prompt, or of the last message when there is none.
+
+    A block after tool results reads as a new user turn, so the snapshot stays with the user's prompt.
+    The prompt is found in the persisted `history` because `wrap_model_request` hooks such as
+    `SystemReminders` add request-only user parts before this hook runs. Hooks that rewrite history,
+    such as compaction, rewrite the request list too, so both lists share indexes; when they don't,
+    the snapshot falls back to the last message.
+    """
+    for index in range(len(history) - 1, -1, -1):
+        if _has_user_prompt(history[index]):
+            if index < len(request) and _has_user_prompt(request[index]):
+                return index
+            break
+    return len(request) - 1
+
+
+def _has_user_prompt(message: ModelMessage) -> bool:
+    return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
 
 
 def _validate_positive(name: str, value: int) -> None:
