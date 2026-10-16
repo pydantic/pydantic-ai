@@ -153,7 +153,7 @@ class TestConcurrencyLimiter:
             # Registering as waiting takes each waiter a few turns of the event loop, not any time: yield turns, so a
             # runner too loaded to schedule this process for a while can't time the test out.
             for _ in range(100):  # pragma: no branch
-                if limiter.waiting_count == 3:
+                if limiter.waiting_count >= 3:
                     break
                 await anyio.lowlevel.checkpoint()
             assert limiter.waiting_count == 3
