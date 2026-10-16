@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -287,7 +287,7 @@ class InferredLifecycle:
             self._pending.append(InputLost(input_ids=(input_id,)))
 
     @contextmanager
-    def sending(self, content: RealtimeInput) -> Iterator[InputId]:
+    def sending(self, content: RealtimeInput) -> Generator[InputId]:
         """Report an input a connection's `send()` is sending, around the sending itself: yields the input's id.
 
         It is [`input_sent`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_sent] going in, and
