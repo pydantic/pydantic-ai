@@ -533,7 +533,7 @@ class Session(Generic[DepsT, OutputT]):
             self._record_resumed()
 
     async def _restore(
-        self, conversation_id: str, *, allow_other_workspace: bool, record: bool, unarchive: bool = True
+        self, conversation_id: str, *, allow_other_workspace: bool, record: bool, unarchive: bool
     ) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')

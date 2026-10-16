@@ -82,17 +82,20 @@ class Sessions(Generic[DepsT, OutputT]):
         """Whether `/resume ID` moves CLAI into the session's own directory rather than refusing another one."""
         return self.relocate is not None
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, unarchive: bool = True) -> str:
         """Restore a saved session, then show its history.
 
         With `relocate`, CLAI first moves into the directory the session was saved in, unless the
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
+        `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         """
         if self.relocate is not None and not allow_other_workspace:
             workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
             if workspace != self.session.workspace:
                 await self.relocate(workspace)
-        notice = await self.session.resume(conversation_id, allow_other_workspace=allow_other_workspace)
+        notice = await self.session.resume(
+            conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
+        )
         await self.show_resumed()
         return notice
 
@@ -155,8 +158,10 @@ class Sessions(Generic[DepsT, OutputT]):
                 resume = await self.import_session(resume_from, resume)
             # A fork continues in the copy, so an archived original stays archived.
             notice = await self.session.resume(resume, record=False, unarchive=not fork)
+        elif resume is not None:
+            notice = await self.command([resume_from] if resume_from else [], unarchive=not fork)
         else:
-            notice = await self.command([resume_from] if resume_from else []) if resume is not None else ''
+            notice = ''
         if fork and notice:
             # Keep the resume notice: it warns about an interrupted session, which the copy no longer records.
             notice = f'{notice}\n{await self.session._fork(session_id)}'  # pyright: ignore[reportPrivateUsage]
@@ -244,10 +249,11 @@ class Sessions(Generic[DepsT, OutputT]):
         """List an archived conversation again."""
         return await self.store.set_archived(conversation_id=conversation_id, archived=False)
 
-    async def command(self, args: list[str]) -> str:
+    async def command(self, args: list[str], *, unarchive: bool = True) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.
 
         `claude` or `codex` first imports that agent's session, or browses only its sessions.
+        `unarchive=False` leaves the chosen session archived, as `--fork-session` does.
         """
         source = import_source(args[0]) if args else None
         if source is not None:
@@ -255,10 +261,11 @@ class Sessions(Generic[DepsT, OutputT]):
         if len(args) > 1:
             raise ValueError('Usage: /resume [claude|codex] [SESSION-ID]')
         if args:
-            return await self.resume(await self.import_session(source, args[0]) if source else args[0])
-        return await self.browse(source)
+            conversation_id = await self.import_session(source, args[0]) if source else args[0]
+            return await self.resume(conversation_id, unarchive=unarchive)
+        return await self.browse(source, unarchive=unarchive)
 
-    async def browse(self, source: ImportSource | None) -> str:
+    async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None])
@@ -314,7 +321,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if self.session.running:
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
-        return await self.resume(selected, allow_other_workspace=True)
+        return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
 
     async def _delete(self, source: ConversationSummary) -> None:
         """Delete a saved session, then the `run_code` REPL code mode kept for it."""

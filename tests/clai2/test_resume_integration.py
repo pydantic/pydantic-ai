@@ -347,6 +347,10 @@ async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
     await service.start(resume=old, fork=True)
     assert (await store.get(conversation_id=old)).summary.archived_at is not None, 'the original stays archived'
     assert session.summary.archived_at is None
+    # Picked in the browser, as `--resume --fork-session` does, it stays archived too.
+    assert (await service.start(resume='', fork=True)).startswith('Resumed')
+    assert (await store.get(conversation_id=old)).summary.archived_at is not None
+    assert session.conversation_id != old
     await service.resume(old)
     # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
     await store.set_archived(conversation_id=old, archived=True)
