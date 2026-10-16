@@ -21,7 +21,7 @@ The [`Embedder`][pydantic_ai.embeddings.Embedder] class is the high-level interf
 ```python {title="embeddings_quickstart.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -57,7 +57,7 @@ For convenience, you can access embeddings either by index (`result[0]`) or by t
 ```python {title="embedding_result.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -88,7 +88,7 @@ The best embedding model depends on your language, domain, latency, deployment, 
 
 | If you want…                         | For example                                                                                                                                                                                                                                      |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| A managed API                        | `openai:text-embedding-3-small` (cheap default), `openai:text-embedding-3-large`, `voyageai:voyage-3.5`, or `cohere:embed-v4.0`                                                                                                                  |
+| A managed API                        | `{{ openai:embedding }}`, `google:gemini-embedding-2`, `voyageai:voyage-4`, or `cohere:embed-v4.0`                                                                                                                                            |
 | No API key, private, free            | `sentence-transformers:google/embeddinggemma-300m`, `sentence-transformers:lightonai/DenseOn`, `sentence-transformers:Qwen/Qwen3-Embedding-0.6B`, or any other [Hugging Face model](https://huggingface.co/models?library=sentence-transformers) |
 | Multilingual                         | `cohere:embed-multilingual-v3.0`, `sentence-transformers:jinaai/jina-embeddings-v5-text-small-retrieval`, or `sentence-transformers:Snowflake/snowflake-arctic-embed-l-v2.0`                                                                     |
 | Specialized domain                   | `voyageai:voyage-code-3`, `voyageai:voyage-law-2`, `voyageai:voyage-finance-2`, `sentence-transformers:nomic-ai/CodeRankEmbed`, or `sentence-transformers:TechWolf/JobBERT-v3`                                                                   |
@@ -180,7 +180,7 @@ You can then use the model:
 ```python {title="openai_embeddings.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -202,7 +202,7 @@ from pydantic_ai import Embedder
 from pydantic_ai.embeddings import EmbeddingSettings
 
 embedder = Embedder(
-    'openai:text-embedding-3-small',
+    '{{ openai:embedding }}',
     settings=EmbeddingSettings(dimensions=256),
 )
 
@@ -233,7 +233,7 @@ azure_client = AsyncAzureOpenAI(
     api_key='your-azure-key',
 )
 model = OpenAIEmbeddingModel(
-    'text-embedding-3-small',
+    '{{ openai:embedding.name }}',
     provider=OpenAIProvider(openai_client=azure_client),
 )
 embedder = Embedder(model)
@@ -787,7 +787,7 @@ from pydantic_ai.embeddings import EmbeddingSettings
 
 # Default settings for all calls
 embedder = Embedder(
-    'openai:text-embedding-3-small',
+    '{{ openai:embedding }}',
     settings=EmbeddingSettings(dimensions=512),
 )
 
@@ -811,7 +811,7 @@ You can check token counts before embedding to avoid exceeding model limits:
 ```python {title="token_counting.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -840,7 +840,7 @@ from pydantic_ai.embeddings import TestEmbeddingModel
 
 
 async def test_my_rag_system():
-    embedder = Embedder('openai:text-embedding-3-small')
+    embedder = Embedder('{{ openai:embedding }}')
     test_model = TestEmbeddingModel()
 
     with embedder.override(model=test_model):
@@ -869,7 +869,7 @@ from pydantic_ai import Embedder
 logfire.configure()
 
 # Instrument a specific embedder
-embedder = Embedder('openai:text-embedding-3-small', instrument=True)
+embedder = Embedder('{{ openai:embedding }}', instrument=True)
 
 # Or instrument all embedders globally
 Embedder.instrument_all()

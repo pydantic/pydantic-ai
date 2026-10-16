@@ -62,7 +62,7 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         audio_task = asyncio.create_task(play_audio(session.stream_audio()))
         transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:

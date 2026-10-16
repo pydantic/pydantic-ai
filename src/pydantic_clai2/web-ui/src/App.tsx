@@ -28,6 +28,7 @@ export function App() {
   const [sidebar, setSidebar] = useState(true)
   const [preview, setPreview] = useState<Saved | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
 
@@ -77,22 +78,33 @@ export function App() {
     document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
   }, [state.session?.title])
 
-  // A switch of the live session ends any read-only preview.
-  useEffect(() => setPreview(null), [state.session?.id])
 
   const showError = useCallback((message: string) => {
     setToast(message)
     window.setTimeout(() => setToast((current) => (current === message ? null : current)), 5000)
   }, [])
 
+  const viewing = useRef(0)
+  // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
+  const closePreview = useCallback(() => {
+    viewing.current++
+    setPreview(null)
+  }, [])
+
+  // A switch of the live session ends any read-only preview.
+  useEffect(closePreview, [state.session?.id, closePreview])
+
   const view = useCallback(
     async (session: SessionEntry) => {
       if (session.current) {
-        setPreview(null)
+        closePreview()
         return
       }
+      // Clicks can overlap; only the latest one's transcript is shown.
+      const id = ++viewing.current
       try {
         const saved = await api.transcript(session.id)
+        if (id !== viewing.current) return
         if (saved.openable && !state.running) {
           await api.open(session.id)
         } else {
@@ -102,7 +114,7 @@ export function App() {
         showError(error instanceof Error ? error.message : String(error))
       }
     },
-    [state.running, showError],
+    [state.running, showError, closePreview],
   )
 
   useEffect(() => {
@@ -147,6 +159,8 @@ export function App() {
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      draft={draft}
+      onDraft={setDraft}
       onError={showError}
     />
   )
@@ -199,11 +213,18 @@ export function App() {
               ? 'A turn is running. You can switch to this session once it ends.'
               : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
             {preview.openable && !state.running && (
-              <button className="primary small" onClick={() => void api.open(preview.id)}>
+              <button
+                className="primary small"
+                onClick={() =>
+                  void api
+                    .open(preview.id)
+                    .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+                }
+              >
                 Continue here
               </button>
             )}
-            <button className="ghost small" onClick={() => setPreview(null)}>
+            <button className="ghost small" onClick={closePreview}>
               Back to current
             </button>
           </div>
