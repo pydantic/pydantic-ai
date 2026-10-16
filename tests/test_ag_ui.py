@@ -7040,14 +7040,19 @@ The page the user is on.
             json.dumps({'pydantic_ai': {'structured_content': {'x': {}, '²': {}, '1' * 5000: {}, '5': {'value': 1}}}}),
             id='no-such-item',
         ),
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
     ],
 )
-def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(encrypted_value: str) -> None:
-    """A client-sent payload that doesn't validate, or names no text item, is noise: the text loads as plain text."""
-    messages = AGUIAdapter.load_messages(
-        [UserMessage(id='u1', content=[TextInputContent(type='text', text='Hi')], encrypted_value=encrypted_value)]
-    )
-    [request] = messages
+@pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
+def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(
+    encrypted_value: str, content: str
+) -> None:
+    """A client-sent payload that doesn't parse or validate, or names no text item, is noise: the text loads as text.
+
+    None of it may raise out of `load_messages`, which would fail the whole request.
+    """
+    user_content = 'Hi' if content == 'Hi' else [TextInputContent(type='text', text='Hi')]
+    [request] = AGUIAdapter.load_messages([UserMessage(id='u1', content=user_content, encrypted_value=encrypted_value)])
     assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
 
 
