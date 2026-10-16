@@ -87,13 +87,12 @@ export function sessionApi(id: string | null) {
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>
       call<void>('POST', `${base}/questions/${request}`, { answers }),
-    answerDialog: (dialog: string, value: string | null) => call<void>('POST', `${base}/dialogs/${dialog}`, { value }),
   }
 }
 
 export type SessionApi = ReturnType<typeof sessionApi>
 
-/** The routes of the session the main pane shows, for the composer, questions, and dialogs. */
+/** The routes of the session the main pane shows, for the composer, its questions, and Monty. */
 export const SessionContext = createContext<SessionApi>(sessionApi(null))
 
 export const api = {
@@ -114,6 +113,8 @@ export const api = {
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
+  /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */
+  answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
   plugins: () => call<PluginRow[]>('GET', '/api/plugins'),
   plugin: (name: string, action: PluginAction) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/${action}`),
   pluginSettings: (name: string, changes: Record<string, JsonValue>, reset: string[] = []) =>

@@ -42,8 +42,6 @@ export interface Chat {
   running: boolean
   status: StatusInfo | null
   questions: Questions[]
-  /** What open settings menus ask, oldest first. */
-  dialogs: Dialog[]
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
   /** The conversation's delegated tasks, each parent before its children. */
@@ -58,7 +56,6 @@ export const initialChat: Chat = {
   running: false,
   status: null,
   questions: [],
-  dialogs: [],
   turnStartedAt: null,
   tasks: [],
   taskItems: {},
@@ -77,6 +74,8 @@ export interface State {
   chats: Record<string, Chat>
   /** The sessions live in this CLAI, by conversation ID, with what each is doing. */
   live: Record<string, LiveEntry>
+  /** What open settings menus ask, oldest first; they belong to the page, not to one session. */
+  dialogs: Dialog[]
   sessionsVersion: number
   /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
   pluginsVersion: number
@@ -97,6 +96,7 @@ export const initial: State = {
   stray: null,
   chats: {},
   live: {},
+  dialogs: [],
   sessionsVersion: 0,
   pluginsVersion: 0,
   settingsVersion: 0,
@@ -230,12 +230,6 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
       return { ...chat, questions: [...chat.questions.filter((q) => q.id !== message.questions.id), message.questions] }
     case 'question_closed':
       return { ...chat, questions: chat.questions.filter((q) => q.id !== message.id) }
-    case 'dialog':
-      return { ...chat, dialogs: [...chat.dialogs.filter((d) => d.id !== message.dialog.id), message.dialog] }
-    case 'dialog_shown':
-      return { ...chat, dialogs: chat.dialogs.map((d) => (d.id === message.id ? { ...d, shown: message.text } : d)) }
-    case 'dialog_closed':
-      return { ...chat, dialogs: chat.dialogs.filter((d) => d.id !== message.id) }
     case 'notice': {
       const notice: NoticeEntry = {
         id: nextId('notice'),
@@ -270,7 +264,6 @@ function applySnapshot(state: State, message: Snapshot): State {
     running: message.running,
     status: message.status,
     questions: message.questions,
-    dialogs: message.dialogs,
     turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
     tasks: message.tasks,
     taskItems: message.task_items,
@@ -281,6 +274,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     awaiting: null,
     stray: null,
     chats: { ...state.chats, [id]: chat },
+    dialogs: message.dialogs,
     theme: message.theme,
     followsWorkspace: message.follows_workspace,
     version: message.version,
@@ -309,6 +303,12 @@ export function reduce(state: State, action: Action): State {
       if (state.awaiting === null || state.awaiting in live) return next
       return state.stray ? applySnapshot(next, state.stray) : { ...next, awaiting: null }
     }
+    case 'dialog':
+      return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== action.dialog.id), action.dialog] }
+    case 'dialog_shown':
+      return { ...state, dialogs: state.dialogs.map((d) => (d.id === action.id ? { ...d, shown: action.text } : d)) }
+    case 'dialog_closed':
+      return { ...state, dialogs: state.dialogs.filter((d) => d.id !== action.id) }
     case 'update':
       return { ...state, update: action.update }
     case 'theme':

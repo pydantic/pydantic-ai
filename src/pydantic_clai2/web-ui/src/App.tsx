@@ -628,7 +628,7 @@ export function App() {
       {choosing && chat.session && (
         <NewSessionDialog current={chat.session.workspace} onOpened={show} onClose={() => setChoosing(false)} />
       )}
-      <DialogLayer dialogs={chat.dialogs} onError={showError} />
+      <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>
   )
   // The composer, questions, dialogs, and Monty all talk to the shown session.
