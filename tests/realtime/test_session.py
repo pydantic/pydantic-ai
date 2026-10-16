@@ -5187,7 +5187,7 @@ async def test_send_respond_controls_text_and_image_turns() -> None:
             CreateResponse(),
         ]
     )
-    assert session._pending_response_requests == 3  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 3  # pyright: ignore[reportPrivateUsage]
     # Each is in the provider's conversation; history holds what was sent while a reply is owed until it comes.
     assert len(session._core.replayable_messages()) == 6  # pyright: ignore[reportPrivateUsage]
 
@@ -5200,7 +5200,7 @@ async def test_send_respond_sequence_contextualizes_all_but_last() -> None:
     await session.send(['first', image, 'last'], respond=True)
 
     assert conn.sent == [TextContext('first'), image, 'last']
-    assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 1  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_send_respond_rejects_audio_and_unsupported_image_response() -> None:
@@ -5268,7 +5268,7 @@ async def test_respond_send_failures_roll_back_history_and_reservations() -> Non
         await session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
 
     assert session.new_messages() == []
-    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_image_history_retention_samples_and_round_trips() -> None:
@@ -6257,7 +6257,7 @@ async def test_failed_create_response_releases_its_reservation() -> None:
     session = RealtimeSession(_BuggyConnection([]), profile=_profile(supports_manual_turn_control=True))
     with pytest.raises(ValueError, match='bug in the connection'):
         await session.create_response()
-    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 def test_remove_sent_request_ignores_unknown_request() -> None:
@@ -8677,7 +8677,8 @@ async def test_replayed_item_tracking_accepts_each_identifier_independently() ->
     )
 
     assert not session._accept_item('item-only')  # pyright: ignore[reportPrivateUsage]
-    assert not session._accept_item(None, 'call-only')  # pyright: ignore[reportPrivateUsage]
+    # (A replayed tool call is the core's to refuse: see `test_replayed_tool_call_is_not_run`.)
+    assert session._accept_item(None)  # pyright: ignore[reportPrivateUsage]
 
     # A normal (non-replayed) conversation item is not resumption traffic, so it records nothing and
     # every later event for it is accepted. Pinned directly rather than relying on incidental coverage
@@ -8686,7 +8687,6 @@ async def test_replayed_item_tracking_accepts_each_identifier_independently() ->
         ConversationItemCreated(item_id='live-item', tool_call_id='live-call', replayed=False)
     )
     assert session._accept_item('live-item')  # pyright: ignore[reportPrivateUsage]
-    assert session._accept_item(None, 'live-call')  # pyright: ignore[reportPrivateUsage]
 
 
 def test_asap_notifications_without_live_loop_and_after_close_are_ignored() -> None:
@@ -10020,7 +10020,7 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
     model = FakeRealtimeModel(conn)
     agent: Agent[None, str] = Agent()
     async with agent.realtime(model, usage_limits=UsageLimits(total_tokens_limit=50)).session() as session:
-        with pytest.raises(UsageLimitExceeded, match='exceed the total_tokens_limit of 50'):
+        with pytest.raises(UsageLimitExceeded, match='total_tokens_limit of 50'):
             _ = [e async for e in session]
     # The usage report the session stopped reading at counts toward the session; the response it was for never
     # started, so there's none in history.
@@ -10034,7 +10034,7 @@ async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:
     async with agent.realtime(
         FakeRealtimeModel(conn), usage_limits=UsageLimits(cost_limit=Decimal('0.50'))
     ).session() as session:
-        with pytest.raises(UsageLimitExceeded, match=r'exceed the `cost_limit` of 0.50'):
+        with pytest.raises(UsageLimitExceeded, match=r'`cost_limit` of 0.50'):
             _ = [e async for e in session]
 
 
@@ -10187,6 +10187,17 @@ async def test_agent_realtime_session_request_limit_blocks_create_response() -> 
             await session.create_response()
 
     assert conn.sent == []
+
+
+async def test_concurrent_sends_cannot_both_take_the_last_request() -> None:
+    """Each send is checked against `request_limit` as it goes out, counting what the sends ahead of it asked for."""
+    conn = SlowSendConnection([])
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(conn), usage_limits=UsageLimits(request_limit=1)).session() as session:
+        results = await asyncio.gather(session.send('One?'), session.send('Two?'), return_exceptions=True)
+
+    assert [type(result).__name__ for result in results] == ['NoneType', 'UsageLimitExceeded']
+    assert conn.sent == ['One?']
 
 
 async def test_agent_realtime_session_request_limit_blocks_tool_result_response() -> None:
@@ -11504,6 +11515,11 @@ class _ToolBatchConnection(FakeRealtimeConnection):
         await asyncio.Event().wait()  # pragma: no cover
 
 
+def _requests_counted(session: RealtimeSession) -> int:
+    """The requests counted against `request_limit`: those made, and those under way or asked for."""
+    return session.usage.requests + session._core.requests_ahead()  # pyright: ignore[reportPrivateUsage]
+
+
 async def _until(condition: Callable[[], bool]) -> None:
     """Yield to the event loop until `condition()` holds, failing if it never does."""
     with anyio.fail_after(_LIVENESS_TIMEOUT):
@@ -11572,7 +11588,7 @@ async def test_parallel_tool_calls_answer_is_waited_for_while_a_call_still_runs(
         release_slow.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             await waiting
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
@@ -11591,8 +11607,9 @@ async def test_connection_answering_each_result_keeps_a_reply_per_result() -> No
     async with session:
         events = asyncio.create_task(drain_events(session))
         await _until(lambda: bool(conn.results()))
-        await _until(lambda: session._pending_response_requests == 1)  # pyright: ignore[reportPrivateUsage]
-        assert not session._tool_call_batches  # pyright: ignore[reportPrivateUsage]
+        # `c1`'s result asked for a reply, and `c2`'s will ask for another.
+        await _until(lambda: _requests_counted(session) == 2)
+        assert session._core.result_asks_reply('c2')  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
@@ -11608,7 +11625,7 @@ async def test_provider_cancelled_call_leaves_no_reply_owed() -> None:
         await _until(lambda: bool(conn.results()) and 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
         for _ in range(10):
             await asyncio.sleep(0)
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
@@ -11632,15 +11649,16 @@ async def test_result_after_a_sibling_was_cancelled_is_sent_without_counting_a_r
     session = RealtimeSession(conn, runner)
     async with session:
         events = asyncio.create_task(drain_events(session))
-        batches = session._tool_call_batches  # pyright: ignore[reportPrivateUsage]
-        await _until(lambda: (batch := batches.get('c1')) is not None and batch.abandoned)
+        # Once the provider cancelled `c2`, `c1`'s result asks for no reply.
+        await _until(lambda: not session._core.result_asks_reply('c1'))  # pyright: ignore[reportPrivateUsage]
         assert 'c1' in session._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
         release_slow.set()
         await _until(lambda: bool(conn.results()))
         for _ in range(10):
             await asyncio.sleep(0)
         assert conn.results() == [ToolResult(tool_call_id='c1', output='slow result')]
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        # Only the calling response is a request.
+        assert _requests_counted(session) == 1
         await session.close()
         events.cancel()
 
@@ -11665,8 +11683,8 @@ async def test_lost_conversation_leaves_no_tool_batch_reply_owed() -> None:
         await _until(lambda: not session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-        await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
+        assert not session._core.result_asks_reply('c2')  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
@@ -11700,7 +11718,7 @@ async def test_tool_batch_reply_is_not_counted_when_the_calling_response_trips_a
             await _until(lambda: bool(conn.results()))
             conn.close_response.set()
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('failing_call', ['c1', 'c2'])
@@ -11727,7 +11745,8 @@ async def test_tool_result_that_fails_to_send_leaves_no_reply_owed(failing_call:
                 await _until(lambda: bool(conn.results()))
             release_slow.set()
             await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
-            assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+            # Only the calling response is a request.
+            assert _requests_counted(session) == 1
             with anyio.fail_after(_LIVENESS_TIMEOUT):
                 await session.wait_for_reply()
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
@@ -11741,7 +11760,7 @@ async def test_tool_result_outside_any_batch_is_a_reply_of_its_own() -> None:
         ToolCallPart(tool_name='noop', args={}, tool_call_id='c1'), 'done', []
     )
     assert conn.sent == [ToolResult(tool_call_id='c1', output='done')]
-    assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 1  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_result_outside_any_batch_that_fails_to_send_counts_no_reply() -> None:
@@ -11754,7 +11773,7 @@ async def test_tool_result_outside_any_batch_that_fails_to_send_counts_no_reply(
         await session._send_tool_result(  # pyright: ignore[reportPrivateUsage]
             ToolCallPart(tool_name='noop', args={}, tool_call_id='c1'), 'done', []
         )
-    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+    assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
@@ -11762,19 +11781,12 @@ async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
     answer = asyncio.Event()
 
     class _MergesTwoTurns(FakeRealtimeConnection):
-        merged = 0
-
-        def _take_merged_response_requests(self) -> int:
-            merged, self.merged = self.merged, 0
-            return merged
-
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='Paris', is_final=True)
             await answer.wait()
             yield ResponseDone()
             # The second and third turns were sent while the first reply was in flight: one deferred
             # `response.create` answers both.
-            self.merged = 1
             yield OutputTranscript(text='Madrid. Rome.', is_final=True)
             yield ResponseDone()
 
@@ -11787,7 +11799,7 @@ async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
         answer.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_wait_for_reply_returns_when_a_tool_fails_while_the_session_is_iterated() -> None:
@@ -11950,8 +11962,8 @@ async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None
             await events
 
 
-async def test_reconnect_with_tools_running_leaves_no_tool_batch_behind() -> None:
-    """A batch whose response a reconnect settles is closed then, so it retires once its calls are cancelled."""
+async def test_reconnect_with_tools_running_leaves_no_reply_to_count() -> None:
+    """A call a reconnect cancels settles without a result, so its response's results get no reply."""
 
     class _DropsWhileRunning(_ToolBatchConnection):
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -11964,13 +11976,13 @@ async def test_reconnect_with_tools_running_leaves_no_tool_batch_behind() -> Non
     async with session:
         events = asyncio.create_task(drain_events(session))
         await _until(lambda: not session._pending_tool_calls and session._history != [])  # pyright: ignore[reportPrivateUsage]
-        await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+        assert not session._core.result_asks_reply('c1')  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
 
-async def test_failed_tool_leaves_no_tool_batch_behind() -> None:
-    """A tool that raised takes its call out of the batch, which then can't be answered and retires."""
+async def test_failed_tool_leaves_no_reply_to_count() -> None:
+    """A tool that raised settles its call without a result, so its response's results can't be answered."""
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise ValueError('tool exploded')
@@ -11982,7 +11994,7 @@ async def test_failed_tool_leaves_no_tool_batch_behind() -> None:
         async with session:
             events = asyncio.create_task(drain_events(session))
             await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
-            await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+            assert not session._core.result_asks_reply('c1')  # pyright: ignore[reportPrivateUsage]
             assert conn.results() == []
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
@@ -12042,7 +12054,8 @@ async def test_wait_for_reply_returns_when_a_tool_result_trips_the_request_limit
             [
                 ToolCall(tool_call_id='c1', tool_name='noop', args='{}', response_usage_follows=True),
                 SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call'),
-            ]
+            ],
+            after_input=True,
         ),
         runner,
         usage_limits=UsageLimits(request_limit=1),
@@ -12378,6 +12391,28 @@ async def test_a_response_over_the_request_limit_within_one_frame_is_neither_rec
                 pass
     assert session.usage.requests == 0
     assert session.all_messages() == []
+
+
+async def test_a_response_whose_first_frame_trips_a_token_limit_is_recorded() -> None:
+    """A token limit its own usage tripped stops the session, but the response was made: it is recorded and counted."""
+
+    class _OneFrame(FakeRealtimeConnection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [
+                ResponseStarted(response_id='r1'),
+                SessionUsage(usage=RequestUsage(input_tokens=100)),
+                OutputTranscript(text='Hi.', is_final=True),
+            ]
+            await asyncio.Event().wait()  # pragma: lax no cover
+
+    model = FakeRealtimeModel(_OneFrame([]))
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model, usage_limits=UsageLimits(input_tokens_limit=50)).session() as session:
+        with pytest.raises(UsageLimitExceeded, match='next request would exceed the input_tokens_limit of 50'):
+            async for _ in session:
+                pass
+    assert session.usage.requests == 1
+    assert [type(message).__name__ for message in session.all_messages()] == ['ModelResponse']
 
 
 @pytest.mark.parametrize(
