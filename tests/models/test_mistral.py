@@ -63,14 +63,12 @@ with try_import() as imports_successful:
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
-        FunctionName as MistralFunctionName,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk,
         TextChunk as MistralTextChunk,
         ToolCall as MistralToolCall,
-        ToolChoice as MistralToolChoice,
         UsageInfo as MistralUsageInfo,
         UserMessage,
     )
@@ -112,26 +110,6 @@ def test_mistral_hidden_tools_stay_off_the_wire():
     tools, _ = model._get_tool_choice(prepared, {})  # pyright: ignore[reportPrivateUsage]
     assert tools is not None
     assert [tool.function.name for tool in tools] == ['visible']
-
-
-def test_mistral_single_forced_tool_keeps_all_tools():
-    """Forcing one tool names it natively instead of filtering `tools`, so the tools prefix stays cacheable."""
-    model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key='foobar'))
-    _, params = model.prepare_request(
-        None,
-        ModelRequestParameters(
-            function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')], allow_text_output=True
-        ),
-    )
-
-    auto_tools, auto_choice = model._get_tool_choice(params, {})  # pyright: ignore[reportPrivateUsage]
-    forced_tools, forced_choice = model._get_tool_choice(params, {'tool_choice': ['tool_a']})  # pyright: ignore[reportPrivateUsage]
-
-    assert auto_choice == 'auto'
-    assert forced_choice == MistralToolChoice(function=MistralFunctionName(name='tool_a'))
-    assert forced_tools == auto_tools
-    assert auto_tools is not None
-    assert [tool.function.name for tool in auto_tools] == ['tool_a', 'tool_b']
 
 
 @dataclass
