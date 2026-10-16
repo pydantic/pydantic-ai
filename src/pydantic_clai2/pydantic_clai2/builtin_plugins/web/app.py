@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, JsonValue, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.chat_commands import orchestrator_completions
 from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
@@ -136,6 +137,12 @@ class ModelChoice(BaseModel):
     """A saved model or chain to select, as `/model NAME` does."""
 
     name: str = Field(min_length=1, max_length=200)
+
+
+class OrchestratorModelChoice(BaseModel):
+    """The orchestrator's model, as its `/model NAME` picks it; `None` follows the session's model again."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class SwitchChoice(BaseModel):
@@ -389,7 +396,7 @@ def _workspaces(app: FastAPI, remote: Remote) -> None:
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
-    """The orchestrator chat: its own conversation with its own agent, streamed on the same WebSocket."""
+    """The orchestrator chat: its own conversation, agent, model, and commands, streamed on the same WebSocket."""
 
     @app.get('/api/orchestrator/state')
     async def state() -> OrchestratorState:
@@ -402,6 +409,14 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
     @app.post('/api/orchestrator/interrupt')
     async def interrupt() -> Interrupted:
         return Interrupted(interrupted=orchestrator.interrupt())
+
+    @app.get('/api/orchestrator/complete')
+    async def complete(text: str) -> list[CompletionInfo]:
+        return await orchestrator_completions(orchestrator.host, text)
+
+    @app.post('/api/orchestrator/model', status_code=204)
+    async def model(body: OrchestratorModelChoice) -> None:
+        await _wait(orchestrator.select_model(body.name))
 
     @app.post('/api/orchestrator/answer', status_code=204)
     async def answer(body: RequestAnswers) -> None:

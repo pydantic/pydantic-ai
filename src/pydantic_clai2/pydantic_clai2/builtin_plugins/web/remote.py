@@ -24,6 +24,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.builtin_plugins.web.chat_commands import completions, result_notice, saved_models
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
@@ -38,7 +39,6 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     MenuEdited,
     MenuField,
     MenuInfo,
-    Notice,
     Palette,
     PanelInfo,
     PluginForm,
@@ -265,10 +265,9 @@ class Remote:
         if (name := self._theme_name()) != self._theme:
             self._theme = name
             self.hub.publish(ThemeChanged(theme=self.theme()))
-        if event.error is not None:
-            self.hub.publish(Notice(text=str(event.error), level='error', command=event.text))
-        elif event.output:
-            self.hub.publish(Notice(text=event.output, command=event.text))
+        # One the orchestrator chat entered shows there instead.
+        if not self.orchestrator.command_ended(event) and (notice := result_notice(event)) is not None:
+            self.hub.publish(notice)
         self.publish_status()
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
@@ -285,19 +284,11 @@ class Remote:
         self.host.send_input(text)
 
     async def complete(self, text: str) -> list[CompletionInfo]:
-        return [
-            CompletionInfo(
-                text=completion.text,
-                start=-completion.start_position,
-                display=completion.display or completion.text,
-                meta=completion.display_meta,
-            )
-            for completion in await self.host.complete(text)
-        ]
+        return await completions(self.host, text)
 
     async def models(self) -> list[str]:
         """The saved models and chains `/model` offers, as `PROVIDER:NAME`."""
-        return [completion.text for completion in await self.host.complete('/model ') if ':' in completion.text]
+        return await saved_models(self.host)
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
         """Answer an open question, or decline it with `None`; `ValueError` when the answers do not fit it."""

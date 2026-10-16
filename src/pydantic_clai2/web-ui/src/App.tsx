@@ -375,7 +375,8 @@ export function App() {
         {orchestrating ? (
           <OrchestratorPane
             view={orchestration}
-            model={status?.model ?? '…'}
+            sessionModel={status?.model ?? '…'}
+            local={local}
             connected={connection === 'open'}
             onShowSidebar={sidebar ? null : () => setSidebar(true)}
             onError={showError}

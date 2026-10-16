@@ -3,26 +3,34 @@ import { api, openWorkspacePage, orchestrator } from '../api'
 import { MOD } from '../platform'
 import type { OrchestratorView } from '../state'
 import { WorkspaceLinkContext } from '../workspaceLink'
-import { Composer } from './Composer'
+import { Composer, type Chat } from './Composer'
 import { ComposeIcon, OrchestratorIcon, SidebarIcon } from './icons'
 import { QuestionCard } from './QuestionCard'
 import { Transcript } from './Transcript'
 
 interface Props {
   view: OrchestratorView
-  /** The session's model, which the orchestrator uses too. */
-  model: string
+  /** The session's model, which the orchestrator uses until it has one of its own. */
+  sessionModel: string
+  /** Commands the page handles itself, as in the session's composer. */
+  local: Readonly<Record<string, () => void>>
   connected: boolean
   /** Shows the sidebar again when it is hidden. */
   onShowSidebar: (() => void) | null
   onError: (message: string) => void
 }
 
-const CHAT = { send: orchestrator.send, interrupt: orchestrator.interrupt }
+const CHAT: Chat = {
+  send: orchestrator.send,
+  interrupt: orchestrator.interrupt,
+  complete: orchestrator.complete,
+  selectModel: orchestrator.selectModel,
+}
+const followSession = () => orchestrator.selectModel(null)
 
-/** The orchestrator chat: its own agent and conversation, which makes workspaces and runs their CLAIs for you. */
-export function OrchestratorPane({ view, model, connected, onShowSidebar, onError }: Props) {
-  const { chat, enabled } = view
+/** The orchestrator chat: its own agent, conversation, and model, which makes workspaces and runs their CLAIs for you. */
+export function OrchestratorPane({ view, sessionModel, local, connected, onShowSidebar, onError }: Props) {
+  const { chat, enabled, model } = view
   const [enabling, setEnabling] = useState(false)
   // `Composer` leaves its draft to its owner.
   const [draft, setDraft] = useState('')
@@ -52,13 +60,14 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
   const composer = (
     <Composer
       running={chat.running}
-      model={model}
+      model={model ?? sessionModel}
       disabled={!connected}
       placeholder={
         chat.running ? 'The orchestrator is working…' : fresh ? 'Describe the work for your workspaces' : 'Ask for more, or steer it'
       }
       chat={CHAT}
-      commands={false}
+      follow={{ label: `Same as session (${sessionModel})`, active: model === null, select: followSession }}
+      local={local}
       label="Message the orchestrator"
       draft={draft}
       onDraft={setDraft}

@@ -3070,13 +3070,6 @@ textarea.setting-input {
   flex: none;
 }
 
-.pill.static,
-.pill.static:hover {
-  background: transparent;
-  color: var(--muted);
-  cursor: default;
-}
-
 .orchestrator-off {
   align-items: center;
 }

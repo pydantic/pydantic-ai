@@ -1441,8 +1441,7 @@ mode, or other CLAI tools, and the session's agent, in the terminal or the brows
 these.
 
 It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
-off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
-in its composer; choose another for the session to change it. One turn runs at a time, with a small
+off, the chat says so and **Enable workspaces** turns it on. One turn runs at a time, with a small
 dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
 chat** starts over; the workspaces stay. Each workspace's CLAI is driven through its web UI with
 [`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace kept
@@ -1460,6 +1459,33 @@ workspace has an **Open** link to its page, as the sidebar's Workspaces section 
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+
+**Its model.** It runs on the session's model until you pick one for it alone, in its composer's
+model picker (the same saved models the session's offers) or with `/model NAME`; **Same as
+session** in the picker, or `/model session` (or `default`), follows the session's again. A pick
+applies from the next turn, is checked as the session's `/model NAME` checks a name, and is built
+the same way (`chain:NAME`, `PROVIDER@PROFILE:NAME`, a plugin's prefix). Picking one for either
+chat never changes the other's. It is saved in
+`$XDG_STATE_HOME/pydantic-clai2/orchestrator-settings.json`, beside the conversation, so a reload, a
+restart, another CLAI, and **New chat** keep it.
+
+**Its commands.** Its composer completes `/` commands as the session's does, with the ones that
+work there:
+
+| Command | Does |
+|---|---|
+| `/model [NAME]` | no name shows its model and the saved ones; a name picks one; `session` or `default` follows the session's |
+| `/new`, `/clear` | start a new orchestrator chat, as **New chat** does |
+| `/stop` | stop its running turn |
+| `/help` | list these, and CLAI's commands it runs too |
+
+CLAI's own commands that change CLAI rather than the session's conversation (`/workspaces`,
+`/plugins`, `/set`, `/settings`, `/config`, `/keys`, `/login`, `/accounts`, `/mcp`, `/theme`,
+`/spinner`, `/web`) run at the prompt exactly as from the session's composer, queued behind a
+running session turn as there, and their results show in the orchestrator chat instead of the
+session's. The terminal, under `/web`, still echoes them. Any other command, such as `/fork`,
+`/resume`, `/compact`, a skill, or a plugin's own, says it works in a session. `/plugins` alone opens
+the plugins panel. Text starting with `/` that is not a command, such as a path, is a prompt.
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
 orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
@@ -1484,11 +1510,14 @@ in which case the turns not saved are dropped in favour of the file.
 `/web stop` stops a running turn, since no page is left to watch it or answer it.
 
 **From another program.** `GET /api/orchestrator/state` returns the chat (`enabled`, `running`,
-`items`, `questions`); `POST /api/orchestrator/input` (`{"text": ...}`) starts a turn,
-`/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
-question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
-API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
-"message": ...}`, the state first after the session's snapshot.
+`items`, `questions`, and `model`, `null` while it follows the session's); `POST
+/api/orchestrator/input` (`{"text": ...}`) starts a turn or runs a command, `/interrupt` stops it,
+`/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its question, `/clear`
+starts over, `/model` (`{"name": ...}`, or `null` to follow the session) picks its model, and `GET
+/api/orchestrator/complete?text=...` completes as its composer does. They take the same token and
+`Host` checks as the rest of the API. Its messages come on the page's WebSocket, each wrapped as
+`{"type": "orchestrator", "message": ...}`, the state first after the session's snapshot; command
+results are `notice` messages there, and a model change is `orchestrator_model`.
 
 ### `github`: tools from GitHub's hosted MCP server
 
@@ -2985,7 +3014,8 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model CLAI or the user selected for the next prompt. A capability that selects a model, such as
+model CLAI or the user selected for the next prompt; `resolved_model(NAME)` builds the model
+`NAME` selects instead, as CLAI builds the selected one. A capability that selects a model, such as
 Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
 status row still name the selected one, and `/compact` and session naming (without a
 `sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and

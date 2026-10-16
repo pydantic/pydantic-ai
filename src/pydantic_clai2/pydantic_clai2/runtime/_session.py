@@ -606,14 +606,15 @@ class Session(Generic[DepsT, OutputT]):
             summary=replace(self.summary, outcome=outcome, model=self.model, owner_pid=None), messages=self._messages
         )
 
-    async def resolved_model(self) -> Model | str | None:
-        """The selected model after `resolve_model`, else the agent's own (CLAI's default).
+    async def resolved_model(self, name: str | None = None) -> Model | str | None:
+        """The selected model, or `name`, after `resolve_model`; else the agent's own (CLAI's default).
 
         A capability that selects a model can replace that default per request, so a run may use another.
         """
-        if self.model is None:
+        name = self.model if name is None else name
+        if name is None:
             return self.agent.model
-        model = self.resolve_model(self.model)
+        model = self.resolve_model(name)
         return await model if isinstance(model, Awaitable) else model
 
     def _run_settings(self) -> AgentModelSettings[DepsT] | None:

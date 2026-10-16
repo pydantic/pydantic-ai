@@ -203,6 +203,9 @@ separate agent with its own conversation, and the only one with these tools: it 
 starts each one's CLAI with a prompt, waits for and reads its turns, steers it with more prompts,
 answers its questions, and reports back. It destroys a workspace only after you picked **Destroy
 ID** when it asked, in its chat. It needs `workspaces` on, which the chat offers to do in one
-click, and uses the session's model. Its conversation is kept across reloads and restarts. The
-session's own agent gets none of this. See
+click. It uses the session's model until you pick its own in its composer or with `/model NAME`,
+and its composer has `/` commands too: `/model`, `/new`, `/stop`, `/help`, and CLAI's commands
+that do not touch the session, such as `/workspaces` and `/plugins`, whose results show in its
+chat. Its conversation and model are kept across reloads and restarts. The session's own agent gets
+none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).

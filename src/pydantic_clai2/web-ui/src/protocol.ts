@@ -178,9 +178,23 @@ export interface OrchestratorState {
   running: boolean
   items: Item[]
   questions: Questions[]
+  /** The model it runs on; `null` follows the session's. */
+  model: string | null
 }
 
-export type OrchestratorEvent = ChatMessage | OrchestratorState
+/** A `/command`'s result, or another line a chat shows once. */
+export interface NoticeMessage {
+  type: 'notice'
+  text: string
+  level: 'info' | 'error'
+  command: string | null
+}
+
+export type OrchestratorEvent =
+  | ChatMessage
+  | NoticeMessage
+  | OrchestratorState
+  | { type: 'orchestrator_model'; model: string | null }
 
 export type ServerMessage =
   | {
@@ -204,7 +218,7 @@ export type ServerMessage =
   | { type: 'dialog'; dialog: Dialog }
   | { type: 'dialog_shown'; id: string; text: string }
   | { type: 'dialog_closed'; id: string }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null }
+  | NoticeMessage
   | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
