@@ -63,7 +63,7 @@ clai2
 
 You get the CLAI banner, a prompt at the bottom, and a status row under it with the
 model, the folder, and how much context the conversation uses. Type what you want and
-press Enter.
+press <kbd>Enter</kbd>.
 
 The default model is `openai-codex:gpt-6-astra`, which runs on a ChatGPT subscription. Run
 `/login openai-codex` to sign in, or pick another model with `/model`
@@ -73,13 +73,13 @@ A few keys to know:
 
 | Key | What it does |
 |---|---|
-| Enter | Send. While CLAI works, Enter queues your message for after the current turn. |
-| Alt+Enter (Option+Enter) | Steer: send your message to the turn that is running now. |
-| Esc or Ctrl-C | Stop the current turn. Your draft stays. |
-| Esc Esc | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
-| Ctrl-V | Paste an image from the clipboard. |
-| `@` then Tab | Complete a file path. |
-| Ctrl-D or `/exit` | Quit. |
+| <kbd>Enter</kbd> | Send. While CLAI works, <kbd>Enter</kbd> queues your message for after the current turn. |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>) | Steer: send your message to the turn that is running now. |
+| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
+| <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
+| <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
+| <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
+| <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
 
 Type `/` to see every command, or `/help` for the full list.
 
@@ -94,7 +94,7 @@ Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, 
 - `config.db`: settings, saved models, and plugin choices
 - `sessions.db`: saved conversations
 - `plugins/`: plugins you drop in
-- `input-history`: what you typed, for the Up arrow
+- `input-history`: what you typed, for the <kbd>↑</kbd> arrow
 
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
@@ -135,17 +135,17 @@ in the reference for the details.
 ### Pick a model: `/model`
 
 `/model` lists the models you have added, with details for the highlighted one. Press
-Enter to switch. The next prompt uses the new model, and the conversation carries on.
+<kbd>Enter</kbd> to switch. The next prompt uses the new model, and the conversation carries on.
 
 ![The /model picker listing saved models](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/model.png)
 
 You can also type a model name directly, such as `/model anthropic:claude-sonnet-4-6`.
-Tab completes names. Highlight a model and press Ctrl+D to remove it from the list.
+<kbd>Tab</kbd> completes names. Highlight a model and press <kbd>Ctrl</kbd>+<kbd>D</kbd> to remove it from the list.
 
 ### Find a new one: `/model add`
 
 `/model add` lists every provider, then that provider's models, with the context size and
-price of each. Type to filter. Press Enter to use a model, or Ctrl+S to change its
+price of each. Type to filter. Press <kbd>Enter</kbd> to use a model, or <kbd>Ctrl</kbd>+<kbd>S</kbd> to change its
 settings first, such as reasoning effort or thinking.
 
 ![/model add showing Anthropic models with context size and prices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/model-add.png)
@@ -196,8 +196,8 @@ Shell commands the agent runs do not see your provider API keys.
 `/keys` keeps named API keys in an encrypted store. vLLM and OpenRouter connections,
 `/login PROVIDER@PROFILE`, and plugins such as Linear and Notion can use a saved key by
 name, so you change it in one place. The names are labels: CLAI does not set them as
-environment variables. Press `a` to add a key, Enter to replace one, `r` to rename, and
-`d` to delete. Values are never shown.
+environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
+<kbd>d</kbd> to delete. Values are never shown.
 
 ![/keys listing saved API key names](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/keys.png)
 
@@ -219,8 +219,8 @@ a row instead, such as `● shell 4, grep 2`.
 ### Questions from the model
 
 When a task could go more than one way, the model can ask you instead of guessing. Pick
-an answer with the arrow keys and Enter, or press its number. **Other** lets you type
-your own answer. Esc declines; the model is told, and carries on with a choice it states.
+an answer with the arrow keys and <kbd>Enter</kbd>, or press its number. **Other** lets you type
+your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with a choice it states.
 
 ![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/ask-user.png)
 
@@ -238,7 +238,7 @@ Code mode is on by default. The model writes one short Python snippet that calls
 tools, and CLAI runs each statement as soon as it arrives, so a slow test run starts
 before the model has finished writing.
 
-Press **Ctrl+X Ctrl+S** to turn on speculative execution as well. CLAI then starts file
+Press <kbd>Ctrl</kbd>+<kbd>X</kbd> <kbd>Ctrl</kbd>+<kbd>S</kbd> to turn on speculative execution as well. CLAI then starts file
 reads and searches the moment their line appears. A row above the status line counts how
 many early starts paid off, and the time they saved.
 
@@ -246,8 +246,8 @@ many early starts paid off, and the time they saved.
 
 ### Rewind a conversation
 
-Between turns, press Esc twice to open **Rewind conversation**. Pick an earlier prompt
-and press Enter. CLAI removes it and everything after it from the conversation, and puts
+Between turns, press <kbd>Esc</kbd> twice to open **Rewind conversation**. Pick an earlier prompt
+and press <kbd>Enter</kbd>. CLAI removes it and everything after it from the conversation, and puts
 it back in the editor so you can change it. Rewinding does not undo changes to files.
 
 ![The rewind picker listing earlier prompts](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/rewind.png)
@@ -256,7 +256,7 @@ it back in the editor so you can change it. Rewinding does not undo changes to f
 
 Every conversation is saved. `/resume` opens a browser with your projects on the left
 and their sessions on the right. CLAI names sessions in the background so you can find
-them, using your current model. Press `/` to search, Right to read a transcript, and Enter to resume.
+them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)
 
@@ -321,7 +321,7 @@ starter file.
 ## Plugins
 
 The coding tools are a plugin, and so are the integrations. `/plugins` lists them all:
-press Space to turn one on or off, `c` to configure it, `r` to reload it, and `d` to
+press <kbd>Space</kbd> to turn one on or off, <kbd>c</kbd> to configure it, <kbd>r</kbd> to reload it, and <kbd>d</kbd> to
 remove it. Changes apply from your next prompt, with no restart.
 
 ![The /plugins menu listing built-in plugins](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/plugins.png)
