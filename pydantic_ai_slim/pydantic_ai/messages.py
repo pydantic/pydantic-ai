@@ -3608,10 +3608,6 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
     return clean_messages
 
 
-def _is_turn_scoped(part: ModelRequestPart) -> bool:
-    return isinstance(part, SystemPromptPart) and part.scope == 'turn'
-
-
 def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:
     """Make the message history provider-valid and normalize its shape, out of the box.
 
