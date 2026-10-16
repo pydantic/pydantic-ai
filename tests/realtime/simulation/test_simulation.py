@@ -2228,14 +2228,35 @@ def test_elevenlabs_agents_barge_in_keeps_the_truncated_reply_with_the_reply_it_
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-def test_elevenlabs_agents_barge_in_on_a_delivered_reply_corrects_nothing_recorded() -> None:
+@pytest.mark.parametrize('voiced', [False, True], ids=['being-voiced', 'voiced-in-full'])
+def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
+    """Cut in on while its audio still comes, the reply ends with what was heard; voiced in full, nothing changes."""
+
     def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.speak()
         sim.finish()
+        if voiced:
+            sim.report_usage()
         sim.barge_in()
         sim.user_says()
         sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_elevenlabs_agents_tool_calls_end_after_a_quiet_stretch() -> None:
+    """With nothing after them, a reply's calls are over once no more come for a moment."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.call_tool(count=2)
+        sim.advance_time(0.1)
+        sim.finish_tool(call=0)
+        sim.finish_tool(call=0)
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
 
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
