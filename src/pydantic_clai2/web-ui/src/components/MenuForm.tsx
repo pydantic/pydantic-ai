@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, type MenuTarget } from '../api'
 import type { MenuEdited, MenuField, MenuInfo } from '../protocol'
 import { Draft } from './SettingsForm'
 import { CheckIcon } from './icons'
@@ -11,16 +11,37 @@ function message(error: unknown): string {
 const NOT_SET = '(not set)'
 const OTHER = '\u0000other'
 
-/** A plugin's declared settings menu: the rows its terminal menu lists, each saved as it changes. */
+/** `/set`'s keys read `group.name`; a key without a dot is a group of its own. */
+function groups(fields: MenuField[]): [string, MenuField[]][] {
+  const found = new Map<string, MenuField[]>()
+  for (const field of fields) {
+    const [group = field.key] = field.key.split('.')
+    found.set(group, [...(found.get(group) ?? []), field])
+  }
+  return [...found]
+}
+
+const sentence = (text: string) => {
+  const words = text.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** A declared settings menu, a plugin's or a command's: the rows its terminal menu lists, each saved as it changes. */
 export function MenuForm({
-  plugin,
+  target,
   version,
+  grouped = false,
+  titled = false,
   onError,
   onNotice,
 }: {
-  plugin: string
-  /** Bumped when a command may have changed the plugin; the rows are read again. */
+  target: MenuTarget
+  /** Bumped when a command may have changed what the menu edits; the rows are read again. */
   version: number
+  /** Rows keyed `group.name` show under a heading per group, labelled by name, as cards. */
+  grouped?: boolean
+  /** Show the menu's title above its rows, and label each row by the last part of its key. */
+  titled?: boolean
   onError: (message: string) => void
   onNotice: (text: string) => void
 }) {
@@ -33,12 +54,13 @@ export function MenuForm({
   const load = useCallback(async () => {
     const id = ++request.current
     try {
-      const found = await api.menu(plugin)
+      const found = await api.menu(target)
       if (id === request.current) setMenu(found)
     } catch (error) {
       onError(message(error))
     }
-  }, [plugin, onError])
+    // A fresh target each render names the same menu.
+  }, [target.kind, target.name, onError])
 
   useEffect(() => {
     void load()
@@ -71,31 +93,47 @@ export function MenuForm({
 
   if (menu === null) return <p className="plugin-empty">Loading its settings…</p>
   if (menu.fields.length === 0) return <p className="plugin-empty">It takes no settings.</p>
+  const row = (field: MenuField, named = false) => (
+    <MenuRow
+      key={field.key}
+      field={field}
+      named={named}
+      error={errors[field.key]}
+      state={busy === field.key ? 'saving' : saved === field.key ? 'saved' : null}
+      disabled={busy !== null}
+      onSet={(value) => void run(field.key, () => api.setField(target, field.key, value), true)}
+      onAction={() => void run(field.key, () => api.runAction(target, field.key), false)}
+    />
+  )
+  if (!grouped)
+    return (
+      <div className="settings-form">
+        {titled && <h2 className="menu-title">{menu.title}</h2>}
+        {menu.fields.map((field) => row(field, titled))}
+      </div>
+    )
   return (
-    <div className="settings-form">
-      {menu.fields.map((field) => (
-        <MenuRow
-          key={field.key}
-          field={field}
-          error={errors[field.key]}
-          state={busy === field.key ? 'saving' : saved === field.key ? 'saved' : null}
-          disabled={busy !== null}
-          onSet={(value) => void run(field.key, () => api.setField(plugin, field.key, value), true)}
-          onAction={() => void run(field.key, () => api.runAction(plugin, field.key), false)}
-        />
+    <div className="settings-groups">
+      {groups(menu.fields).map(([group, fields]) => (
+        <section key={group} className="settings-group">
+          <h3 className="settings-group-title">{sentence(group)}</h3>
+          <div className="settings-card">{fields.map((field) => row(field, true))}</div>
+        </section>
       ))}
     </div>
   )
 }
 
-/** Whether a row's choices are a yes/no switch, as a boolean setting's are. */
-const isSwitch = (field: MenuField) =>
-  !field.allow_custom &&
+/** Whether a row's choices are a yes/no switch, as a boolean setting's are. A `named` row, one of `/set`'s, takes no other
+text even where its menu offers typing one; a plugin's row with typed values allowed keeps its list. */
+const isSwitch = (field: MenuField, named: boolean) =>
+  (named || !field.allow_custom) &&
   field.choices.length === 2 &&
   field.choices.every((choice) => choice.value === 'true' || choice.value === 'false')
 
 function MenuRow({
   field,
+  named,
   error,
   state,
   disabled,
@@ -103,6 +141,8 @@ function MenuRow({
   onAction,
 }: {
   field: MenuField
+  /** Label the row by the last part of its key, with the whole key beside it, as a grouped menu does. */
+  named: boolean
   error: string | undefined
   state: 'saving' | 'saved' | null
   disabled: boolean
@@ -113,15 +153,17 @@ function MenuRow({
   const id = useId()
   const label = (value: string) => field.choices.find((choice) => choice.value === value)?.label ?? value
   const resettable = field.value !== field.default
-  const inline = isSwitch(field) || field.action || (field.choices.length > 0 && !field.allow_custom)
+  const inline = named || isSwitch(field, named) || field.action || (field.choices.length > 0 && !field.allow_custom)
+  const titled = named && field.label === field.key
   return (
     <div className={`setting ${inline ? 'inline' : ''} ${error ? 'invalid' : ''}`}>
       <div className="setting-info">
         <div className="setting-head">
           {/* An action's button says what it does, rather than taking the row's label as its name. */}
           <label className="setting-label" htmlFor={field.action ? undefined : id}>
-            {field.label}
+            {titled ? sentence(field.key.split('.').pop() ?? field.key) : field.label}
           </label>
+          {titled && <code className="setting-key">{field.key}</code>}
           {state === 'saving' && <span className="setting-state">{field.action ? 'In progress…' : 'Saving…'}</span>}
           {state === 'saved' && (
             <span className="setting-state saved">
@@ -143,7 +185,15 @@ function MenuRow({
         {field.note && <p className="setting-note">{field.note}</p>}
       </div>
       <div className="setting-control">
-        <Control id={id} field={field} label={label} disabled={disabled} onSet={onSet} onAction={onAction} />
+        <Control
+          id={id}
+          field={field}
+          named={named}
+          label={label}
+          disabled={disabled}
+          onSet={onSet}
+          onAction={onAction}
+        />
       </div>
       {error && (
         <p className="setting-error" role="alert">
@@ -157,6 +207,7 @@ function MenuRow({
 function Control({
   id,
   field,
+  named,
   label,
   disabled,
   onSet,
@@ -164,6 +215,7 @@ function Control({
 }: {
   id: string
   field: MenuField
+  named: boolean
   label: (value: string) => string
   disabled: boolean
   onSet: (value: string | null) => void
@@ -180,7 +232,7 @@ function Control({
       </div>
     )
   }
-  if (isSwitch(field)) {
+  if (isSwitch(field, named)) {
     const on = field.value === 'true'
     return (
       <button
