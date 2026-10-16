@@ -310,19 +310,21 @@ class Remote:
 
     # What the browser does.
 
-    def send(self, text: str) -> str | None:
-        """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
+    def send(self, text: str) -> None:
+        """Enter a prompt or `/command` as if typed at the prompt."""
+        self.host.send_input(_typed(text))
+
+    async def enter(self, text: str) -> str | None:
+        """`send` what the page's composer entered, unless it is a bare command that declares a menu.
 
         That menu opens in the page instead of the terminal: the name of its command is returned, and
-        nothing is entered. Otherwise the result is `None`.
+        nothing is entered. Otherwise the result is `None`. Finding the menu builds it, which may read
+        settings, so that runs off the loop, as the terminal's menus do.
         """
-        text = text.strip()
-        if not text:
-            raise ValueError('Type a prompt or a /command.')
-        if text.startswith('!'):
-            raise ValueError('Shell lines (!) run only in the terminal.')
-        if is_command_input(text) and len(text.split()) == 1 and self.host.command_menu(text[1:]) is not None:
-            return text[1:]
+        text = _typed(text)
+        if is_command_input(text) and len(text.split()) == 1:
+            if await to_thread.run_sync(self.host.command_menu, text[1:]) is not None:
+                return text[1:]
         self.host.send_input(text)
         return None
 
@@ -682,6 +684,16 @@ class Remote:
         catalog = self.catalog
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
+
+
+def _typed(text: str) -> str:
+    """The input to enter, trimmed; `ValueError` for blank text and for a shell line, which only the terminal runs."""
+    text = text.strip()
+    if not text:
+        raise ValueError('Type a prompt or a /command.')
+    if text.startswith('!'):
+        raise ValueError('Shell lines (!) run only in the terminal.')
+    return text
 
 
 async def _view(panel: SidePanel) -> PanelView:

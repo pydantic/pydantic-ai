@@ -254,7 +254,7 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
 
     @app.post('/api/input')
     async def send(body: Input) -> Entered:
-        return Entered(menu=_run(lambda: remote.send(body.text)))
+        return Entered(menu=await _wait(remote.enter(body.text)))
 
     @app.post('/api/interrupt')
     async def interrupt() -> Interrupted:
