@@ -70,9 +70,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 export interface MenuTarget {
   kind: 'plugins' | 'commands'
   name: string
+  /** The rows chosen in turn to reach a menu one of them opens, such as a saved model's settings from `/model`'s. */
+  path?: readonly string[]
 }
 
 const fieldsPath = (target: MenuTarget) => `/api/${target.kind}/${encodeURIComponent(target.name)}/fields`
+const menuQuery = (target: MenuTarget) =>
+  target.path?.length ? `?${target.path.map((key) => `menu=${encodeURIComponent(key)}`).join('&')}` : ''
 
 export const api = {
   /** `images` are base64 data, for a prompt. */
@@ -104,11 +108,11 @@ export const api = {
   task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
   taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
   steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
-  menu: (target: MenuTarget) => call<MenuInfo>('GET', fieldsPath(target)),
+  menu: (target: MenuTarget) => call<MenuInfo>('GET', `${fieldsPath(target)}${menuQuery(target)}`),
   setField: (target: MenuTarget, key: string, value: string | null) =>
-    call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}`, { value }),
+    call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}${menuQuery(target)}`, { value }),
   runAction: (target: MenuTarget, key: string) =>
-    call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}/action`),
+    call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}/action${menuQuery(target)}`),
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
   workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
