@@ -2862,11 +2862,6 @@ class TestUsedAsAToolset:
 
 
 class TestReadFileInARun:
-    @pytest.fixture
-    def anyio_backend(self) -> str:
-        # Agent.run needs asyncio.
-        return 'asyncio'
-
     async def test_an_image_reaches_the_model_in_the_tool_result(self, tmp_path: Path) -> None:
         png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
         (tmp_path / 'chart.png').write_bytes(png)

@@ -258,8 +258,9 @@ applies the same rule to absolute symlink targets.
   Pydantic AI sends
   [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
   depending on the model. Images and PDFs are recognized by their leading bytes,
-  other formats by extension. Whether the model can read that kind of file is up
-  to the model: one that does not accept it rejects the request
+  other formats by extension. If the model can't take that kind of file (audio on
+  Anthropic, say, or a PDF on Groq), Pydantic AI raises when it builds the next
+  request, which ends the run
   ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)). A file over 5 MB, the strictest
   mainstream per-image limit, is described instead, as is a binary file in a
   format `BinaryContent` does not know.
