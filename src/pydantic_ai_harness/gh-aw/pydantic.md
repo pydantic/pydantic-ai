@@ -474,7 +474,7 @@ engine:
         try {
           if (safeOutputs) safeOutputLines = readFileSync(safeOutputs, "utf8").split("\n");
         } catch {
-          // Nothing has been written yet.
+          // A missing or unreadable file holds no noop.
         }
         const hasNoop = safeOutputLines.some(line => {
           try {
