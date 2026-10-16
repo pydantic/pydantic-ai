@@ -1001,7 +1001,7 @@ pre {
   background: var(--add-bg);
 }
 
-.diff-add .code,
+/* The tint marks the row and its sign; the code keeps its syntax colours. */
 .diff-add .sign {
   color: var(--add-text);
 }
@@ -1010,7 +1010,6 @@ pre {
   background: var(--del-bg);
 }
 
-.diff-del .code,
 .diff-del .sign {
   color: var(--del-text);
 }

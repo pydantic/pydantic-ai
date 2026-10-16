@@ -38,6 +38,29 @@ export function highlight(code: string, language?: string): string {
   return escape(code)
 }
 
+/** The highlight.js language for a file, from its extension (`py`, `tsx`, `rs`, `yml`, …), if one is loaded. */
+export function languageOf(path: string): string | undefined {
+  const extension = /\.([^./]+)$/.exec(path)?.[1]?.toLowerCase()
+  return extension && hljs.getLanguage(extension) ? extension : undefined
+}
+
+/** Lines of code highlighted as one text, so a string or comment spanning lines is coloured right,
+ * then split back into lines, each closing the spans it leaves open and reopening them on the next. */
+export function highlightLines(lines: string[], language: string | undefined): string[] {
+  let open: string[] = []
+  return highlight(lines.join('\n'), language)
+    .split('\n')
+    .map((line) => {
+      const start = open.join('')
+      for (const [tag] of line.matchAll(/<span[^>]*>|<\/span>/g)) {
+        if (tag === '</span>') open.pop()
+        else open.push(tag)
+      }
+      open = [...open]
+      return start + line + '</span>'.repeat(open.length)
+    })
+}
+
 const marked = new Marked({
   gfm: true,
   breaks: false,
