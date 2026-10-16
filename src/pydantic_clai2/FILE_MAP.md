@@ -31,7 +31,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
-| `plugins/menus.py` | a declared settings menu: `FieldRow`, `FieldSource`, `SettingsMenu`, `Option`, and the `Dialogs` protocol its actions ask through |
+| `plugins/menus.py` | a declared settings menu: `FieldRow`, `FieldSource`, `SettingsMenu` (rows, actions, and the menus rows open), `Option`, and the `Dialogs` protocol its actions ask through |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
 | `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
@@ -41,12 +41,12 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/prompt/line_input.py` | `read_line`: one line pinned under the transcript through the live panel (`run_worker(inline=True)`), for a prompt after printed output such as a sign-in URL; `CodexAuth` and `OpenRouterAuth` default to it |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldMenu`, `Runners`, `run_flow`) |
-| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets, and `run_settings_menu`, which shows a `SettingsMenu` under one hold |
+| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets, and `run_settings_menu`, which shows a `SettingsMenu`, and the menus its rows open, under one hold |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext`, and `settings_menu`, the `SettingsMenu` `/set`, `/theme`, and `/spinner` declare as their `Command.menu` |
 | `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
 | `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
-| `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
-| `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
+| `ui/menus/model_menu.py` | `/model add`: provider discovery, `run_model_flow`, and `add_model` through `Dialogs`; `ModelSettingsSource` and `model_settings_menu`, one model's settings menu for `/model settings`, `Ctrl+S`, `/effort`'s web menu, and `/model`'s |
+| `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default; `models_menu` (`ModelsSource`, `remove_model`), the menu bare `/model` declares for the web UI |
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
@@ -58,7 +58,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `models/chains.py` | `chain:NAME` fallback chains over core `FallbackModel`; a chain takes its first model's settings. Made in the `/model` picker (`/chain` is an alias of `/model chains`) |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
-| `ui/menus/custom_params.py` | the editor for custom model parameters |
+| `ui/menus/custom_params.py` | `edit_custom_params`, the editor for custom model parameters, asking through `Dialogs` |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation` and pointing `Agent.instrument_all` at it while loaded (restored on unload); `token` picks a `/keys` write token, `variables_key` a `/keys` API key for managed variables, `ui_events` subscribes it to UI telemetry; its declared `settings_menu` has a project row whose action runs `logfire_setup` |
 | `builtin_plugins/logfire_live.py` | the `observability` plugin's web UI side panel: the project's page from Logfire's `/v1/info`, and the live view URL filtered to the conversation's root trace, opened at the latest run that `SessionTracing.before_run` remembers |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
