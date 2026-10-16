@@ -1255,22 +1255,21 @@ class TestBackgroundTools:
 
     async def test_late_model_retry_consumes_background_tool_retry_budget(self) -> None:
         attempts: list[tuple[int, bool]] = []
-        calls = 0
-        release = asyncio.Event()
+        call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal calls
-            if any(
-                isinstance(part, RetryPromptPart)
-                and part.tool_name == 'flaky'
+            nonlocal call_count
+            has_retry = any(
+                isinstance(part, RetryPromptPart) and part.tool_name == 'flaky'
                 for message in messages
                 if isinstance(message, ModelRequest)
                 for part in message.parts
-            ):
+            )
+            if has_retry:
                 return ModelResponse(parts=[ToolCallPart(tool_name='flaky', args='{}')])
-            calls += 1
-            if calls > 3:
-                return ModelResponse(parts=[TextPart(content='done')])
+            if _ack_seen(messages):
+                return ModelResponse(parts=[TextPart(content='waiting')])
+            call_count += 1
             return ModelResponse(parts=[ToolCallPart(tool_name='flaky', args='{}')])
 
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
@@ -1278,15 +1277,11 @@ class TestBackgroundTools:
         @agent.tool_plain(metadata={'background': True}, retries=2)
         async def flaky(ctx: RunContext[None]) -> str:
             attempts.append((ctx.retry, ctx.last_attempt))
-            await release.wait()
-            release.clear()
+            await asyncio.sleep(0.05)
             raise ModelRetry('try again')
 
-        run = asyncio.create_task(agent.run('go'))
-        await asyncio.sleep(0)
-        release.set()
-
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'flaky' exceeded max retries count of 2"):
-            await asyncio.wait_for(run, timeout=5)
+            await asyncio.wait_for(agent.run('go'), timeout=5)
 
-        assert attempts[:3] == [(0, False), (1, False), (2, True)]
+        assert attempts == [(0, False), (1, False), (2, True)]
+
