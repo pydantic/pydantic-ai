@@ -33,7 +33,7 @@ View the complete documentation at [pydantic.dev/docs/ai](https://pydantic.dev/d
 
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered. Shipping one? [Going to Production](https://pydantic.dev/docs/ai/guides/production/) answers what teams ask first, from crash recovery and human approval to cost limits, tracing and deployment.
 
 ### Coding agent
 

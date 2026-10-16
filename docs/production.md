@@ -6,7 +6,7 @@ description: "Take a Pydantic AI agent to production: crash recovery, human appr
 
 Everything on this page is open source and runs on your infrastructure. [Pydantic AI](index.md), [Pydantic Evals](evals.md) and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) are MIT-licensed Python packages that run in your own process, and durable execution runs on an engine you operate (or that engine's own cloud). There is no Pydantic-hosted agent runtime. Two hosted products are optional: [Pydantic Logfire](logfire.md) for observability, where any OpenTelemetry backend works instead, and the [Pydantic AI Gateway](gateway.md) for one key across providers, where calling providers directly works instead.
 
-The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full.
+The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full, and puts the answers together in [one runnable service](#end-to-end).
 
 | Before you ship, you want to know... | Short answer | Where it lives |
 |---|---|---|
@@ -29,43 +29,100 @@ Start with the smallest set that does the job, and add the rest as you need it:
 | Job | Install | Start with | Add for production |
 |---|---|---|---|
 | A typed agent behind an API | `pydantic-ai`, or `pydantic-ai-slim` with your [provider's extra](install.md#slim-install) | [Agents](agent.md), [Output](output.md), [Dependencies](dependencies.md) | [Usage limits](agent.md#usage-limits), a [fallback model](models/overview.md#fallback-model), [instrumentation](logfire.md), [tests](testing.md), a [UI adapter](ui/overview.md) |
-| A durable workflow | `pydantic-ai-slim` with one engine's extra, such as `[dbos]`, `[temporal]` or `[prefect]` | [Durable execution](durable_execution/overview.md) and one engine's page | [Deferred tools](deferred-tools.md) for approval, [Persistence](persistence.md) for state between runs |
-| A coding or long-running agent | `pydantic-ai-harness` | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) and [Coder](https://pydantic.dev/docs/ai/harness/coder/) | A [sandbox](https://pydantic.dev/docs/ai/harness/#execution-environments), [`SpendLimits`](https://pydantic.dev/docs/ai/harness/spend/), [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/), [Harness durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) |
+| A durable workflow | `pydantic-ai-slim` with one engine's extra, such as `[dbos]`, `[temporal]` or `[prefect]`; `pydantic-ai-harness` with `[absurd]` or `[pgtask]` | [Durable execution](durable_execution/overview.md) and one engine's page | [Deferred tools](deferred-tools.md) for approval, [Persistence](persistence.md) for state between runs |
+| A coding or long-running agent | `pydantic-ai-harness` | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) and [Coder](https://pydantic.dev/docs/ai/harness/coder/) | A [sandbox](https://pydantic.dev/docs/ai/harness/#execution-environments), [`SpendLimits`](https://pydantic.dev/docs/ai/harness/spend/), [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/), [workspace capabilities under an engine](https://pydantic.dev/docs/ai/harness/durable-execution/) |
 | An eval suite | `pydantic-evals` (included in `pydantic-ai`) | [Evals quick start](evals/quick-start.md) | [Trajectory evaluators](evals/evaluators/agentic.md), [online evaluation](evals/online-evaluation.md) |
+
+## A complete service {#end-to-end}
+
+One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to Logfire only when `LOGFIRE_TOKEN` is set, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
+```bash
+pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
+```
+
+```python {title="production_service.py" test="skip"}
+from typing import Any
+
+import logfire
+from dbos import DBOS
+from fastapi import FastAPI
+
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
+
+app = FastAPI()
+DBOS(fastapi=app, config={'name': 'support', 'system_database_url': 'sqlite:///support.sqlite'})
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    name='support',
+    instructions='Help customers with their orders.',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[DBOSDurability()],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+@DBOS.step()
+def issue_refund(order_id: str, amount: float) -> str:
+    return f'Refunded {amount} on order {order_id}'  # call your payments API here
+
+
+@DBOS.workflow()
+async def support_run(prompt: str) -> str:
+    result = await agent.run(prompt)
+    while isinstance(output := result.output, DeferredToolRequests):
+        pending = {call.tool_call_id: call.args_as_dict() for call in output.approvals}
+        await DBOS.set_event_async('state', {'pending': pending})
+        approvals: dict[str, bool] | None = await DBOS.recv_async('approvals', timeout_seconds=7 * 24 * 3600)
+        if approvals is None:  # nobody answered within a week
+            approvals = {call_id: False for call_id in pending}
+        result = await agent.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=output.build_results(approvals=approvals),
+        )
+    await DBOS.set_event_async('state', {'output': output})
+    return output
+
+
+@app.post('/runs')
+async def start_run(prompt: str) -> dict[str, str]:
+    handle = await DBOS.start_workflow_async(support_run, prompt)
+    return {'run_id': handle.get_workflow_id()}
+
+
+@app.get('/runs/{run_id}')
+async def get_run(run_id: str) -> dict[str, Any] | None:
+    return await DBOS.get_event_async(run_id, 'state', timeout_seconds=0)  # None while it works
+
+
+@app.post('/runs/{run_id}/approvals')
+async def approve(run_id: str, approvals: dict[str, bool]) -> None:
+    await DBOS.send_async(run_id, approvals, topic='approvals')
+```
+
+Run it with `uvicorn production_service:app`, start a run with `POST /runs?prompt=...`, and approve or deny the pending refund with `POST /runs/{run_id}/approvals` and a body like `{"<tool_call_id>": true}`. Kill the server at any point and start it again: DBOS recovers the workflow, replays the model requests and tool calls that already finished from its database, and goes back to waiting for the approval if that is where it was. The HTTP requests only start, read and signal the workflow, so the run does not depend on any of them staying open. The sections below explain each piece and the alternatives.
 
 ## What happens when the process crashes mid-run? {#crash}
 
 Without durable execution, a run in flight dies with the process: you start it again, or continue it from the last snapshot [`StepPersistence`](#checkpointer) saved. With it, each model request and tool call runs as a durable step on an engine that journals the result, so a restarted run replays completed steps from the journal and continues from the one that was in flight, without paying for completed model requests again or re-running completed tool calls.
 
-You attach durability to an ordinary agent as a [capability](capabilities/overview.md), and the run is durable when it executes inside the engine's workflow:
-
-```python {title="production_durable.py" test="skip"}
-from dbos import DBOS, DBOSConfig
-
-from pydantic_ai import Agent
-from pydantic_ai.durable_exec.dbos import DBOSDurability
-
-DBOS(config=DBOSConfig(name='support', system_database_url='postgresql://...'))
-
-agent = Agent('anthropic:claude-fable-5-1', name='support', capabilities=[DBOSDurability()])
-
-
-@DBOS.workflow()
-async def answer(question: str) -> str:
-    result = await agent.run(question)  # resumes from its last completed step after a crash
-    return result.output
-```
+You attach durability to an ordinary agent as a [capability](capabilities/overview.md), and the run is durable when it executes inside the engine's workflow, as `support_run` does in the [service above](#end-to-end).
 
 A step that was in flight when the process died runs again from its start, so a tool with side effects should be safe to repeat, for example by passing an idempotency key to the API it calls.
 
-Pydantic AI integrates with [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), [Prefect](durable_execution/prefect.md), [Restate](durable_execution/restate.md), [AWS Lambda durable functions](https://pydantic.dev/docs/ai/harness/aws-lambda/), [Kitaru](durable_execution/kitaru.md), [Apache Airflow](durable_execution/airflow.md) and [Absurd](https://pydantic.dev/docs/ai/harness/absurd/), and the [backend builder](durable_execution/backends.md) integrates any other engine. DBOS runs in your process against Postgres or SQLite; Temporal and Restate run a server that your workers or services connect to; Prefect and Airflow fit when you already orchestrate with them. Each engine's page says which calls it wraps for you and which you mark yourself, and an agent takes [one engine at a time](durable_execution/overview.md).
+Pydantic AI supports [nine engines](durable_execution/overview.md): [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), [Prefect](durable_execution/prefect.md), [Restate](durable_execution/restate.md), [Kitaru](durable_execution/kitaru.md) and [Apache Airflow](durable_execution/airflow.md) in core, and [AWS Lambda durable functions](https://pydantic.dev/docs/ai/harness/aws-lambda/), [Absurd](https://pydantic.dev/docs/ai/harness/absurd/) and [pgtask](https://pydantic.dev/docs/ai/harness/pgtask/) in Pydantic AI Harness; the [backend builder](durable_execution/backends.md) integrates any other engine. DBOS runs in your process against Postgres or SQLite, and Absurd and pgtask need only Postgres; Temporal and Restate run a server that your workers or services connect to; Prefect and Airflow fit when you already orchestrate with them. Each engine's page says which calls it wraps for you and which you mark yourself, and an agent takes [one engine at a time](durable_execution/overview.md).
 
 ### What you get compared to a checkpointer {#checkpointer}
 
 In frameworks built around a checkpointer, one mechanism saves state after each step and covers crash recovery, pausing for a human and resuming a thread. Pydantic AI splits those jobs between pieces that compose on one agent:
 
 - **Crash recovery inside a run** comes from durable execution, at the granularity of a single model request or tool call. A crash in the middle of a long tool loop resumes at the model request or tool call that was running, with everything before it replayed from the journal.
-- **Saving and continuing between runs** comes from [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) (Harness): it saves a continuable snapshot after every completed tool cycle and when a run fails, so you can continue a run from its latest snapshot or fork it from any saved one, later and in another process if you like, with in-memory, file, SQLite or MongoDB stores, or your own.
+- **Saving and continuing between runs** comes from [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) (Harness): it saves a continuable snapshot at every settled step and when a run fails, so you can continue a run from its latest snapshot or fork it from any saved one, later and in another process if you like, with in-memory, file, SQLite, MongoDB or PostgreSQL stores, or your own.
 - **Knowing whether a side effect happened** comes from the `StepPersistence` tool-effect ledger, which records when each tool call started and finished, so after a crash you can tell a call that completed from one whose effect is unknown, before deciding to run it again.
 - **Pausing for a human** needs no live process at all: [deferred tools](#approval) end the run cleanly and a later run picks it up.
 
@@ -78,7 +135,7 @@ Mark the tool as needing approval. When the model calls it, the run ends with a 
 ```python {title="production_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ModelMessagesTypeAdapter
 
-agent = Agent('anthropic:claude-fable-5-1', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ anthropic:medium }}', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -101,7 +158,7 @@ async def resume(stored: bytes, tool_call_id: str, approved: bool) -> str | Defe
     return result.output
 ```
 
-The same mechanism hands a call to a frontend or a background worker to execute, and an approval can come back with edited arguments or a denial message the model sees. The [UI adapters](ui/overview.md) carry approvals to and from the browser, and the [CLI](cli.md) prompts for them. When the approver is in the same process, a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves calls inline without ending the run. All of it is on [Deferred Tools](deferred-tools.md).
+The same mechanism hands a call to a frontend or a background worker to execute, and an approval can come back with edited arguments or a denial message the model sees. The [UI adapters](ui/overview.md) carry approvals to and from the browser, and the [CLI](cli.md) prompts for them. Under a durable engine, the workflow can instead wait for the decision itself, as `support_run` does in the [service above](#end-to-end) with DBOS messages; the engine keeps the wait in its database, so a restart picks it back up. When the approver is in the same process, a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves calls inline without ending the run. All of it is on [Deferred Tools](deferred-tools.md).
 
 For an agent with nobody watching, [`ToolCallJudge`](https://pydantic.dev/docs/ai/harness/tool-call-judge/) (Harness) asks a second model whether a call may run, and can escalate the calls it is unsure about to a person.
 
@@ -123,7 +180,7 @@ from decimal import Decimal
 
 from pydantic_ai import Agent, UsageLimits
 
-agent = Agent('openai:gpt-6-sol', tool_timeout=30)
+agent = Agent('{{ openai:medium }}', tool_timeout=30)
 
 limits = UsageLimits(request_limit=25, tool_calls_limit=50, cost_limit=Decimal('0.50'))
 
@@ -143,7 +200,7 @@ For budgets longer than one run, such as a daily ceiling, a monthly one or a per
 from pydantic_ai import Agent
 from pydantic_ai.models.fallback import FallbackModel
 
-agent = Agent(FallbackModel('anthropic:claude-fable-5-1', 'openai:gpt-6-sol'))
+agent = Agent(FallbackModel('{{ anthropic:medium }}', '{{ openai:medium }}'))
 ```
 
 Underneath that, [transport retries](retries.md#transport-retries) retry rate limits and 5xx responses with backoff that respects `Retry-After`; [Retries](retries.md) explains how those layers multiply. The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
@@ -177,7 +234,7 @@ from pydantic_ai.models.test import TestModel
 
 models.ALLOW_MODEL_REQUESTS = False
 
-agent = Agent('anthropic:claude-fable-5-1', instructions='Answer support questions.')
+agent = Agent('{{ anthropic:medium }}', instructions='Answer support questions.')
 
 
 def test_support_agent():
@@ -210,7 +267,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('anthropic:claude-fable-5-1')
+agent = Agent('{{ anthropic:medium }}')
 app = FastAPI()
 
 
