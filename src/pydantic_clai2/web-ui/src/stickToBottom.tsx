@@ -23,42 +23,59 @@ export function useStickToBottom<T extends HTMLElement>(content: unknown, restar
     setBehind(false)
   }, [])
 
+  /** Takes in a scroll made since the last look: one up stops following, one down to the bottom follows again. */
+  const settle = useCallback(
+    (element: T) => {
+      const moved = element.scrollTop - top.current
+      top.current = element.scrollTop
+      const gap = element.scrollHeight - element.scrollTop - element.clientHeight
+      // Upwards, unless content shrank and the browser clamped the scroller to its new bottom.
+      if (moved < 0 && gap > 1) following.current = false
+      else if (moved > 0 && gap <= NEAR) follow()
+    },
+    [follow],
+  )
+
   useEffect(() => {
     const element = scroller.current
     if (!element) return
     const gap = () => element.scrollHeight - element.scrollTop - element.clientHeight
-    const leave = () => {
+    /** Stops following for input that scrolls this scroller up, not a scroller inside it or one already at its top. */
+    const leave = (target: EventTarget | null) => {
+      if (element.scrollTop <= 0) return
+      let node = target instanceof Element && element.contains(target) ? target : null
+      for (; node && node !== element; node = node.parentElement) {
+        if (node.scrollTop > 0 && node.scrollHeight > node.clientHeight) return
+      }
       following.current = false
     }
     let touchY = 0
     // Whether the reader last clicked in this scroller, so the keys they press with nothing focused scroll it.
     let clicked = false
-    const onScroll = () => {
-      const moved = element.scrollTop - top.current
-      top.current = element.scrollTop
-      // Upwards, unless content shrank and the browser clamped the scroller to its new bottom.
-      if (moved < 0 && gap() > 1) leave()
-      else if (moved > 0 && gap() <= NEAR) follow()
-    }
+    const onScroll = () => settle(element)
     const onWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0) leave()
+      // Pinch-zoom and sideways swipes are not scrolls up.
+      if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+      if (event.deltaY < 0) leave(event.target)
       else if (event.deltaY > 0 && gap() <= NEAR) follow()
     }
     const onTouchStart = (event: TouchEvent) => {
       touchY = event.touches[0]?.clientY ?? 0
     }
     const onTouchMove = (event: TouchEvent) => {
-      // A finger moving down drags the content down, scrolling up.
-      if ((event.touches[0]?.clientY ?? 0) > touchY) leave()
+      // A finger moving down from the highest point it reached drags the content down, scrolling up.
+      const y = event.touches[0]?.clientY ?? 0
+      if (y > touchY + NEAR) leave(event.target)
+      touchY = Math.min(touchY, y)
     }
     const onPointerDown = (event: PointerEvent) => {
       clicked = element.contains(event.target as Node)
       // Grabbing the scrollbar, which lies outside the client area.
-      if (event.target === element && event.offsetX >= element.clientWidth) leave()
+      if (event.target === element && event.offsetX >= element.clientWidth) leave(element)
     }
     const onKeyDown = (event: KeyboardEvent) => {
       const ours = element.contains(event.target as Node) || (event.target === document.body && clicked)
-      if (ours && (UP_KEYS.has(event.key) || (event.key === ' ' && event.shiftKey))) leave()
+      if (ours && (UP_KEYS.has(event.key) || (event.key === ' ' && event.shiftKey))) leave(event.target)
     }
     element.addEventListener('scroll', onScroll, { passive: true })
     element.addEventListener('wheel', onWheel, { passive: true })
@@ -74,18 +91,20 @@ export function useStickToBottom<T extends HTMLElement>(content: unknown, restar
       document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('keydown', onKeyDown, true)
     }
-  }, [follow])
+  }, [follow, settle])
 
   useLayoutEffect(follow, [restart, follow])
 
   useLayoutEffect(() => {
     const element = scroller.current
     if (!element) return
+    // A scroll up the browser has not reported yet, such as a find-in-page jump, must not be overwritten.
+    settle(element)
     if (following.current) {
       element.scrollTop = element.scrollHeight
       top.current = element.scrollTop
     } else if (element.scrollHeight - element.scrollTop - element.clientHeight > NEAR) setBehind(true)
-  }, [content, restart])
+  }, [content, restart, settle])
 
   const jump = useCallback(() => {
     const element = scroller.current
