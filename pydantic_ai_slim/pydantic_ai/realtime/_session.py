@@ -59,6 +59,7 @@ from ..messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -629,7 +630,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
     )
 
 
-def _native_tool_approval(call: ToolCallPart, decision: DeferredToolResult | None) -> NativeToolApproval:
+def _native_tool_approval(call: NativeToolCallPart, decision: DeferredToolResult | None) -> NativeToolApproval:
     """The answer to a provider's request to run `call`, from what the approval handler decided (if anything)."""
     if isinstance(decision, ToolApproved):
         if decision.override_args is None:
@@ -3783,9 +3784,15 @@ class RealtimeSession:
             self._exchange_progress.set()
 
     async def _decide_native_tool_approval(self, request: NativeToolApprovalRequest) -> None:
-        call = ToolCallPart(tool_name=request.tool_name, args=request.args, tool_call_id=request.tool_call_id)
+        call = NativeToolCallPart(
+            tool_name=request.tool_name,
+            args=request.args,
+            tool_call_id=request.tool_call_id,
+            provider_name=self._provider_name,
+        )
+        # Apart from the function tools that require approval, so no policy for those decides it by mistake.
         requests = DeferredToolRequests(
-            approvals=[call], metadata={call.tool_call_id: request.metadata} if request.metadata else {}
+            native_approvals=[call], metadata={call.tool_call_id: request.metadata} if request.metadata else {}
         )
         await self._announce_deferred_requests(requests)
         async with self._tool_manager_lock:

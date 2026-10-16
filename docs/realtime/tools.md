@@ -227,14 +227,35 @@ run.
 The same handler decides on calls the provider runs itself, when its connection asks first with a
 [`NativeToolApprovalRequest`][pydantic_ai.realtime.codec.NativeToolApprovalRequest]: a tool on an MCP
 server configured on the provider's side to require approval, say. None of the built-in providers asks
-yet. The call reaches the handler in
-`requests.approvals` like a function tool's, with what the provider says about it in `requests.metadata`.
-Approving it lets the provider run it, and denying it, or approving it with
+yet. These calls come in
+[`requests.native_approvals`][pydantic_ai.tools.DeferredToolRequests.native_approvals], as
+[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s, apart from the function tools in
+`requests.approvals`. So a policy written for your own tools never decides one of the provider's by mistake,
+even if they share a name, and `build_results(approve_all=True)` leaves them out. Answer one by its id in
+`approvals`, as for a function tool, with what the provider says about it in `requests.metadata`.
+Approving it lets the provider run it. Denying it, or approving it with
 [`override_args`][pydantic_ai.tools.ToolApproved.override_args] (which the provider can't use), tells the
-provider no. With no handler, or one that doesn't decide, the call is denied. The call and its outcome
-are recorded as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
+provider no. A call nothing decides is denied. The call and its outcome are recorded as a
+[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
 [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], like any other call the provider
-runs.
+runs:
+
+```python
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.tools import RunContext
+
+
+async def approve_crm_lookups(
+    ctx: RunContext, requests: DeferredToolRequests
+) -> DeferredToolResults:
+    results = DeferredToolResults()
+    for call in requests.native_approvals:
+        if call.tool_name == 'lookup_customer':
+            results.approvals[call.tool_call_id] = True
+        else:
+            results.approvals[call.tool_call_id] = ToolDenied('Only customer lookups are allowed.')
+    return results
+```
 
 Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
 see [Deferred capability loading](capabilities.md#deferred-capability-loading).
