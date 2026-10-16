@@ -92,6 +92,20 @@ edits, or removes it, as `/mcp`'s subcommands do; the terminal prints each resul
 made there shows here too. A repository's MCP files show as a banner whose **Review** shows their
 contents before you trust them.
 
+<!-- From #10461 -->
+**System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the
+composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens your instructions in
+a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
+**Append…** adds a paragraph, and **View…** shows the full system prompt the model last received,
+read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running CLAI's
+version and the `updates.channel` setting; its **Update…** button asks before it runs `/update`.
+`/usage` and `/cost` show their figures as a card in the chat: the retained history's cost,
+tokens, and requests, and for `/usage` a row per turn. Cmd/Ctrl+Shift+P, or `/help` in the
+composer, opens the command palette: every command this CLAI offers, plugins' and skills'
+included, with what it does and the arguments it takes. Type to filter; Enter runs one as typing it
+bare would, and a command that needs arguments (or Tab) goes into the composer to finish. `/tasks`
+in the composer moves to the sidebar's Workers tree, and `/resume` to its session search.
+
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
 footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and
@@ -217,7 +231,8 @@ takes the launch's token from a file only you can read, instead of making one, f
 starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
 leaves the token out, and no browser opens.
 
-`/update` works from the page as it does in the terminal: the page shows uv's progress, then
+`/update` works from the page too (typed in the composer, it opens Settings › About, whose
+**Update…** asks first): the page shows uv's progress, then
 "Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
 same session, and says which version it updated to. A failed install, or nothing to install,
 says so and nothing restarts. A terminal session with `/web` running comes back with it running.
