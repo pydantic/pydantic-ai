@@ -278,7 +278,8 @@ Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
 `/plugins disable herdr` to release the pane and stop reporting. No herdr-side
 integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
-Outside herdr, or on Windows, it contributes nothing and starts no worker.
+Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
+it contributes nothing and starts no worker.
 
 It reports `working` while agent runs are in flight, `blocked` while `AskUser`
 waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
@@ -1165,7 +1166,8 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-`/plugins disable ask_user` takes the tool away. While the [`web` plugin](#web-this-session-in-your-browser)
+`/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
+`clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.

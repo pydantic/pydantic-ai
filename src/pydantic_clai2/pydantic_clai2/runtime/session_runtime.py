@@ -57,8 +57,9 @@ from pydantic_clai2.plugins import (
     UpdateProgress,
     bare_screen,
 )
-from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.plugins.process_plugins import handling
 from pydantic_clai2.runtime._session import (
     Session,
     StockAgent,
@@ -107,11 +108,15 @@ _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unch
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
 
 
-def _process(*, process: ClaiProcess | None, store: SettingsStore | None) -> ClaiProcess:
-    """The process a session joins: `process`, else a new one over `store`."""
+def _process(
+    *, process: ClaiProcess[DepsT] | None, store: SettingsStore | None, builtin_plugins: Sequence[PluginSettings]
+) -> ClaiProcess[DepsT]:
+    """The process a session joins: `process`, else a new one over `store` with `builtin_plugins`."""
     if process is not None and store is not None:
         raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
-    return process or ClaiProcess.open(store)
+    return process or ClaiProcess[DepsT].open(
+        store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
+    )
 
 
 def create_shell(
@@ -132,13 +137,14 @@ def create_shell(
     headless: bool = False,
     load_plugins: bool = True,
     workspace: Path | None = None,
-    process: ClaiProcess | None = None,
+    process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
-    what the session shares with the others in this CLAI; without one, it gets its own over `store`.
+    what the session shares with the others in this CLAI, its built-in plugins included; without one,
+    it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
     """
     settings = (
@@ -146,7 +152,7 @@ def create_shell(
         if settings is not None
         else Settings(model=None)
     )
-    process = _process(process=process, store=store)
+    process = _process(process=process, store=store, builtin_plugins=builtin_plugins)
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
     session = Session(
@@ -387,12 +393,11 @@ def create_shell(
     )
     screen = Screen()
     status = Status()
-    loader: PluginLoader[DepsT] = PluginLoader(
-        store=store,
+    loader = SessionPlugins[DepsT](
+        process=process.plugins,
         console=console,
         commands=commands,
         session_start=lambda: SessionStart(agent=agent, settings=context.settings, conversation_chosen=sessions.chosen),
-        builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
@@ -406,6 +411,7 @@ def create_shell(
         setting=context.setting,
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
+        running=lambda: session.running,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
@@ -526,7 +532,7 @@ def create_shell(
     return shell
 
 
-def web_serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+def web_serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
     """The port and token of the web UI the `web` plugin serves now; `None` while it serves none."""
     from pydantic_clai2.cli.web import serving
 
@@ -556,11 +562,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     It reads input from the terminal's editor when its console is one, and otherwise from `send_input`.
     """
 
-    process: ClaiProcess
+    process: ClaiProcess[DepsT]
     agent: AbstractAgent[DepsT, OutputT]
     session: Session[DepsT, OutputT]
     plugins: tuple[AgentCapability[DepsT], ...]
-    loader: PluginLoader[DepsT]
+    loader: SessionPlugins[DepsT]
     commands: Commands
     console: Console
     context: CommandContext
@@ -742,10 +748,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def run(self) -> SessionEndReason:
         try:
-            async with self.process.tasks.opened(view=self.tasks) as owner:
-                if isinstance(self.agent, StockAgent):
-                    self.session.delegations = owner
-                return await self._run()
+            # Commands and turns run here: a process-scoped plugin's host follows this session meanwhile.
+            with handling(self.loader.live_session):
+                async with self.process.tasks.opened(view=self.tasks) as owner:
+                    if isinstance(self.agent, StockAgent):
+                        self.session.delegations = owner
+                    return await self._run()
         finally:
             self.session.delegations = None
             await self.forks.close()
