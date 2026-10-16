@@ -20,7 +20,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.describe import describe
-from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginLoader
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 
@@ -103,15 +103,14 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     (tmp_path / 'clai_namespace').mkdir()
     monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
 
-    def text(factory: str, *, project: bool = False, path: Path | None = None) -> str:
-        declaration = PluginSettings(id='x', factory=factory)
-        return describe(PluginEntry[None](declaration=declaration, path=path, project=project))
+    def text(factory: str, *, path: Path | None = None) -> str:
+        return describe(factory, path)
 
     assert text('clai_described:Tool') == 'The tool.'
     assert text('clai_described:Plain') == 'The module.'
     assert text('clai_described:missing') == 'The module.'
-    assert text('clai_described', project=True) == 'The module.'
-    assert text('x', project=True, path=tmp_path / 'clai_described.py') == 'The module.'
+    assert text('clai_described') == 'The module.'
+    assert text('x', path=tmp_path / 'clai_described.py') == 'The module.'
     assert text('clai_broken_source') == ''
     assert text('clai_missing_package.plugin') == ''
     assert text('pydantic_clai2.no_such_module') == ''
@@ -123,7 +122,6 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     (package / '__init__.py').write_text('raise RuntimeError("parent imported")')
     (package / 'tools.py').write_text('class Tool:\n    """A safe description."""\n')
     assert text('clai_parent_must_not_run.tools:Tool') == 'A safe description.'
-    assert text('clai_parent_must_not_run.tools:Tool', project=True) == 'A safe description.'
     assert 'clai_parent_must_not_run' not in sys.modules
     injected = tmp_path / 'injected.py'
     injected.write_text('"""Before\\x1b]52;c;payload\\x07 after."""')

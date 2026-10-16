@@ -66,7 +66,7 @@ def test_command_boundaries(tmp_path: Path) -> None:
 
 
 def test_plugins_command_toggles_never_saved_builtins(tmp_path: Path) -> None:
-    """`clai2 plugins enable aoe`, as the README says to run, saves the built-in declaration turned on."""
+    """`clai2 plugins enable aoe`, as the reference says to run, saves the built-in declaration turned on."""
     store = SettingsStore(tmp_path / 'config.db')
     plugins_command(store, ['enable', 'aoe'])
     plugins_command(store, ['disable', 'notifications'])
