@@ -87,7 +87,8 @@ def test_the_models_menu_selects_and_edits_models_from_the_page(make_web: MakeWe
             assert action.result(timeout=10).json()['messages'] == []
     # A row that opens a menu, or an action, takes no value; a menu that is not there is not found.
     assert web_.post('/api/commands/model/fields/' + 'chain:pair', {'value': 'x'}).status_code == 404
-    assert web_.post('/api/commands/model/fields/add', {'value': 'x'}).status_code == 404
+    refused = web_.post('/api/commands/model/fields/add', {'value': 'x'})
+    assert refused.json()['detail'] == 'Add a model takes no value; choose it instead.'
     assert web_.post('/api/commands/model/fields/add', {'value': ''}).json()['messages'] == [
         'Add a model has nothing to reset.'
     ]

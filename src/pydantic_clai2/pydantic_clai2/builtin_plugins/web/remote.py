@@ -762,11 +762,10 @@ def _row(menu: SettingsMenu, key: str) -> FieldRow:
 async def _set_row(menu: SettingsMenu, *, path: Sequence[str], key: str, value: str | None) -> list[str]:
     """Set a row as its menu does: empty text resets it, and a value the row rejects raises `ValueError`."""
     menu = await to_thread.run_sync(_submenu, menu, path)
-    text = (value or '').strip()
-    # An action's row may still reset, as `r` does in the terminal; a row that opens a menu has no value at all.
-    if key in menu.menus or (text and key in menu.actions):
-        raise LookupError(f'{menu.source.title}: {key} takes no value; choose it instead.')
+    if key in menu.menus:
+        raise LookupError(f'{menu.source.title}: {key} opens a menu; it takes no value.')
     row = await to_thread.run_sync(_row, menu, key)
+    text = (value or '').strip()
     if not text:
         return [await to_thread.run_sync(menu.source.reset, row)]
     if (problem := await to_thread.run_sync(menu.source.problem, row, text)) is not None:

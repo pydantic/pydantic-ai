@@ -317,7 +317,9 @@ class ModelsSource:
         return ', '.join(setting_label(key) for key in overrides) or 'Defaults'
 
     def problem(self, row: FieldRow, text: str) -> str | None:
-        """Why `/model TEXT` would be refused, or `None`."""
+        """Why `/model TEXT` would be refused, or `None`; the add and remove rows take no text."""
+        if row.key != _MODEL:
+            return f'{row.label} takes no value; choose it instead.'
         try:
             self._context.validate(_MODEL, text)
         except ValueError as exc:
