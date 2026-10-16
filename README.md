@@ -358,7 +358,7 @@ Everything you need to ship production-grade AI agents:
 - [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/): the official capability library and harness, from single capabilities to complete agents
 - [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): AI-first, full-stack observability
 - [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): one key for every model, with cost monitoring and spending limits
-- [Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/): evaluate any Python function, agents included, from final outputs to [tool-call trajectories](https://pydantic.dev/docs/ai/evals/evaluators/agentic/), on datasets or [live traffic](https://pydantic.dev/docs/ai/evals/online-evaluation/), with [production evals on Logfire](https://pydantic.dev/logfire/evals?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai)
+- [Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/): evaluate any Python function, agents included, from final outputs to [tool-call trajectories](https://pydantic.dev/docs/ai/evals/evaluators/agentic/), on datasets or [live traffic](https://pydantic.dev/docs/ai/evals/online-evaluation/) (with [production evals on Logfire](https://pydantic.dev/logfire/evals?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai))
 - [Pydantic Graph](https://pydantic.dev/docs/ai/graph/graph/): typed graph control flow
 - [genai-prices](https://github.com/pydantic/genai-prices): model pricing data, kept current
 - [Monty](https://github.com/pydantic/monty): a sandboxed Python interpreter for model-written code
