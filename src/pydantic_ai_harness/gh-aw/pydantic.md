@@ -59,8 +59,9 @@ engine:
       model-env-var: PAI_MODEL
       write-timestamp: true
       provider-env-mode: universal-llm-consumer
+      protected-session-capture: true
     harness-script: |
-      const { spawnSync } = require("child_process");
+      const { spawn } = require("child_process");
       const { randomBytes } = require("crypto");
       const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } = require("fs");
       const { homedir, tmpdir } = require("os");
@@ -125,7 +126,8 @@ engine:
       from pydantic_ai_harness import Coder
       from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
-      _stdout = sys.__stdout__
+      _capture_fd = os.environ.pop('GH_AW_SESSION_CAPTURE_FD', None)
+      _stdout = sys.__stdout__ if _capture_fd is None else os.fdopen(int(_capture_fd), 'w', encoding='utf-8', closefd=False)
       # Remove the transient key before agent code can start child processes.
       _frame_key = os.environ.pop('GH_AW_SESSION_FRAME_KEY')
       _run_id: str | None = None
@@ -379,6 +381,12 @@ engine:
       from pathlib import Path
 
       target, prompt_file, *cli_args = sys.argv[1:]
+      capture_fd = os.environ.pop('GH_AW_SESSION_CAPTURE_FD', None)
+      recorder_output = (
+          sys.stdout
+          if capture_fd is None
+          else os.fdopen(int(capture_fd), 'w', encoding='utf-8', closefd=False)
+      )
       frame_key = sys.stdin.readline().rstrip('\\n')
       module, separator, attribute = target.rpartition(':')
       original_stdout = sys.stdout
@@ -453,7 +461,7 @@ engine:
                   try:
                       print(
                           '\\x1eGH-AW-SESSION/' + frame_key + ' ' + json.dumps(event),
-                          file=original_stdout,
+                          file=recorder_output,
                           flush=True,
                       )
                   except Exception as exc:
@@ -492,6 +500,12 @@ engine:
         if (!workspace) throw new Error("GITHUB_WORKSPACE is required");
         const promptFile = process.env.GH_AW_PROMPT;
         if (!promptFile) throw new Error("GH_AW_PROMPT is required");
+        if (process.env.GH_AW_PROTECTED_SESSION_CAPTURE !== "1") {
+          throw new Error(
+            "This Pydantic AI engine requires a gh-aw runtime with protected session capture; " +
+              "upgrade gh-aw and recompile the workflow lockfile."
+          );
+        }
 
         // Neither the generated module nor the gateway's MCP config is written into
         // the checkout. A file committed at a path the engine reads is
@@ -517,6 +531,7 @@ engine:
         // Linux retains exec environment bytes in /proc even after unsetenv.
         // Deliver the key through stdin so tool subprocesses cannot recover it there.
         delete env.GH_AW_SESSION_FRAME_KEY;
+        env.GH_AW_SESSION_CAPTURE_FD = "3";
         // `pip install --user` puts `clai2` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
         // sandbox exposes read-only, but the home directory is where the CLI and
@@ -692,14 +707,24 @@ engine:
         // and hands the CLI a module already in sys.modules, and once as the `-a`
         // the CLI parses for itself.
         process.stdout.write(`\x1eGH-AW-SESSION-KEY:${frameKey}\x1e\n`);
-        const result = spawnSync(python, ["-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], {
-          cwd: workspace, env, input: `${frameKey}\n`, stdio: ["pipe", "inherit", "inherit"],
+        const child = spawn(python, ["-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], {
+          cwd: workspace,
+          env,
+          stdio: ["pipe", "inherit", "inherit", "pipe"],
         });
-        if (result.error) throw result.error;
-        if (result.status !== 0) {
-          const error = new Error(`Pydantic AI execution failed with exit code ${result.status ?? "unknown"}`);
+        child.stdin.end(`${frameKey}\n`);
+        child.stdio[3].pipe(process.stdout, { end: false });
+        const status = await new Promise((resolve, reject) => {
+          child.once("error", reject);
+          child.once("close", (code, signal) => {
+            if (signal) reject(new Error(`Pydantic AI execution terminated by signal ${signal}`));
+            else resolve(code);
+          });
+        });
+        if (status !== 0) {
+          const error = new Error(`Pydantic AI execution failed with exit code ${status ?? "unknown"}`);
           // Surface the child's own status so the step fails with the same code.
-          error.exitCode = typeof result.status === "number" && result.status !== 0 ? result.status : 1;
+          error.exitCode = typeof status === "number" && status !== 0 ? status : 1;
           throw error;
         }
       };
