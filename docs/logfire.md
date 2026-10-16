@@ -241,6 +241,10 @@ Because Pydantic AI uses OpenTelemetry for observability, you can easily configu
 
 ## Advanced usage
 
+### OpenAI Responses transport
+
+[OpenAI Responses models](models/openai.md#responses-websockets) add `pydantic_ai.transport` to instrumented model request spans. Its value is `http` or `websocket`, so a deliberate HTTP selection can be distinguished from a failed WebSocket request. The attribute is set before the transport request, so network failures retain it.
+
 ### Prompt-cache health
 
 Instrumented agent runs report prompt-cache health without additional configuration:

@@ -23,14 +23,13 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Never, Self, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from opentelemetry.trace import get_current_span
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
-from .._instrumentation import get_instructions
+from .._instrumentation import current_model_request_span, get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -632,6 +631,35 @@ class _ResponsesRequestParams:
     text: responses.ResponseTextConfigParam | Omit
     truncation: Literal['auto', 'disabled'] | Omit
     context_management: list[ContextManagement] | Omit
+
+
+class _ResponsesCreateCommonParams(TypedDict):
+    """Fields sent in both HTTP Responses requests and WebSocket `response.create` frames."""
+
+    model: OpenAIModelName
+    input: list[responses.ResponseInputItemParam]
+    instructions: str | Omit
+    parallel_tool_calls: bool | Omit
+    tools: list[responses.ToolParam] | Omit
+    tool_choice: ResponsesToolChoice | Omit
+    previous_response_id: str | Omit
+    reasoning: Reasoning | Omit
+    text: responses.ResponseTextConfigParam | Omit
+    truncation: Literal['auto', 'disabled'] | Omit
+    context_management: list[ContextManagement] | Omit
+    max_output_tokens: int | Omit
+    temperature: float | Omit
+    top_p: float | Omit
+    service_tier: Literal['auto', 'default', 'flex', 'priority'] | Omit
+    conversation: str | Omit
+    top_logprobs: int | Omit
+    store: bool | None | Omit
+    user: str | Omit
+    include: list[responses.ResponseIncludable] | Omit
+    prompt_cache_key: str | Omit
+    prompt_cache_retention: Literal['in_memory', '24h'] | Omit
+    prompt_cache_options: ResponsesPromptCacheOptions | Omit
+    moderation: Moderation | Omit
 
 
 class OpenAIPromptCacheOptions(TypedDict, total=False):
@@ -3375,8 +3403,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
         profile = self.profile
-        span = get_current_span()
-        if span.is_recording() and getattr(span, 'attributes', {}).get('gen_ai.operation.name') == 'chat':
+        span = current_model_request_span()
+        if span is not None:
             span.set_attribute('pydantic_ai.transport', 'websocket' if self._websocket else 'http')
 
         include = self._build_include(model_settings)
@@ -3408,6 +3436,32 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if comparison_response_id is not None:
                 prompt_cache_options['comparison_response_id'] = comparison_response_id
 
+        common_params: _ResponsesCreateCommonParams = {
+            'model': request_params.model,
+            'input': request_params.input,
+            'instructions': request_params.instructions,
+            'parallel_tool_calls': request_params.parallel_tool_calls,
+            'tools': request_params.tools,
+            'tool_choice': request_params.tool_choice,
+            'previous_response_id': request_params.previous_response_id,
+            'reasoning': request_params.reasoning,
+            'text': request_params.text,
+            'truncation': request_params.truncation,
+            'context_management': request_params.context_management,
+            'max_output_tokens': model_settings.get('max_tokens', OMIT),
+            'temperature': model_settings.get('temperature', OMIT),
+            'top_p': model_settings.get('top_p', OMIT),
+            'service_tier': _resolve_openai_service_tier(model_settings),
+            'conversation': request_params.conversation,
+            'top_logprobs': model_settings.get('openai_top_logprobs', OMIT),
+            'store': store,
+            'user': model_settings.get('openai_user', OMIT),
+            'include': include or OMIT,
+            'prompt_cache_key': model_settings.get('openai_prompt_cache_key', OMIT),
+            'prompt_cache_retention': model_settings.get('openai_prompt_cache_retention', OMIT),
+            'prompt_cache_options': prompt_cache_options,
+            'moderation': model_settings.get('openai_moderation', OMIT),
+        }
         if websocket := self._websocket:
             if model_settings.get('openai_background'):
                 raise UserError('Background responses are not supported over a Responses WebSocket.')
@@ -3424,32 +3478,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     f'Differing headers: {differing_headers}. '
                     'Configure them on the model or `model.connect(extra_headers=...)`.'
                 )
-            body: dict[str, object] = {
-                'model': request_params.model,
-                'input': request_params.input,
-                'instructions': request_params.instructions,
-                'parallel_tool_calls': request_params.parallel_tool_calls,
-                'tools': request_params.tools,
-                'tool_choice': request_params.tool_choice,
-                'previous_response_id': request_params.previous_response_id,
-                'reasoning': request_params.reasoning,
-                'text': request_params.text,
-                'truncation': request_params.truncation,
-                'context_management': request_params.context_management,
-                'max_output_tokens': model_settings.get('max_tokens', OMIT),
-                'temperature': model_settings.get('temperature', OMIT),
-                'top_p': model_settings.get('top_p', OMIT),
-                'service_tier': _resolve_openai_service_tier(model_settings),
-                'conversation': request_params.conversation,
-                'top_logprobs': model_settings.get('openai_top_logprobs', OMIT),
-                'store': store,
-                'user': model_settings.get('openai_user', OMIT),
-                'include': include or OMIT,
-                'prompt_cache_key': model_settings.get('openai_prompt_cache_key', OMIT),
-                'prompt_cache_retention': model_settings.get('openai_prompt_cache_retention', OMIT),
-                'prompt_cache_options': prompt_cache_options,
-                'moderation': model_settings.get('openai_moderation', OMIT),
-            }
+            body: dict[str, object] = dict(common_params)
             if (extra_body := model_settings.get('extra_body')) is not None:
                 if not _is_str_dict(extra_body):
                     raise UserError('Responses WebSocket `extra_body` must have string keys.')
@@ -3466,32 +3495,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await self.client.responses.create(
-                    model=request_params.model,
-                    input=request_params.input,
-                    instructions=request_params.instructions,
-                    parallel_tool_calls=request_params.parallel_tool_calls,
-                    tools=request_params.tools,
-                    tool_choice=request_params.tool_choice,
-                    previous_response_id=request_params.previous_response_id,
-                    reasoning=request_params.reasoning,
-                    text=request_params.text,
-                    truncation=request_params.truncation,
-                    context_management=request_params.context_management,
-                    max_output_tokens=model_settings.get('max_tokens', OMIT),
+                    **common_params,
                     stream=stream,
-                    temperature=model_settings.get('temperature', OMIT),
-                    top_p=model_settings.get('top_p', OMIT),
-                    service_tier=_resolve_openai_service_tier(model_settings),
-                    conversation=request_params.conversation,
-                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=store,
-                    user=model_settings.get('openai_user', OMIT),
-                    include=include or OMIT,
-                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                    prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-                    prompt_cache_options=prompt_cache_options,
                     background=model_settings.get('openai_background', OMIT),
-                    moderation=model_settings.get('openai_moderation', OMIT),
                     timeout=timeout,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
@@ -3913,23 +3919,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if message.provider_details and message.provider_details.get('compaction'):
                     return None
                 response_id = message.provider_response_id
-                if (message.provider_details or {}).get('transport') == 'websocket':
-                    if self._websocket is None or response_id != self._websocket.latest_response_id:
-                        return None
-                elif self._websocket is not None:
+                if not self._is_response_id_reachable(message):
                     return None
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
+
+    def _is_response_id_reachable(self, response: ModelResponse) -> bool:
+        """A WebSocket ID is usable only while it is the latest response on its owning socket."""
+        if (response.provider_details or {}).get('transport') == 'websocket':
+            return self._websocket is not None and response.provider_response_id == self._websocket.latest_response_id
+        return self._websocket is None
 
     def _history_boundary(self, messages: list[ModelMessage]) -> Literal['compaction', 'transport'] | None:
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 if m.provider_details and m.provider_details.get('compaction'):
                     return 'compaction'
-                if (m.provider_details or {}).get('transport') == 'websocket':
-                    if self._websocket is None or m.provider_response_id != self._websocket.latest_response_id:
-                        return 'transport'
-                elif self._websocket is not None:
+                if not self._is_response_id_reachable(m):
                     return 'transport'
                 return None
         return None
@@ -3953,10 +3959,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     return None, messages
                 # A WebSocket response may exist only in its connection cache (store=false or
                 # zero data retention). A different socket or HTTP request must replay history.
-                if (m.provider_details or {}).get('transport') == 'websocket':
-                    if self._websocket is None or m.provider_response_id != self._websocket.latest_response_id:
-                        return None, messages
-                elif self._websocket is not None:
+                if not self._is_response_id_reachable(m):
                     return None, messages
                 previous_response_id = m.provider_response_id
                 break

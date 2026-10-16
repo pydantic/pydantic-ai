@@ -974,7 +974,8 @@ async def test_model_selection_uses_connected_model_at_the_selected_precedence(
         # A run with no default model can supply the connected model explicitly.
         explicit_agent = Agent(None)
         async with source.connect() as connected:
-            explicit_result = await explicit_agent.run('explicit', model=connected)
+            with logfire.span('caller span'):
+                explicit_result = await explicit_agent.run('explicit', model=connected)
 
         # A static capability can select the connected handle when the agent has no default.
         static_contexts: list[ModelSelectionContext[object]] = []
@@ -1036,6 +1037,30 @@ async def test_model_selection_uses_connected_model_at_the_selected_precedence(
         and span['attributes'].get('gen_ai.request.model') == 'gpt-4o'
     ]
     assert chat_transports == ['websocket', 'websocket', 'websocket', 'http']
+    caller_spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'caller span']
+    assert len(caller_spans) == 1
+    assert 'pydantic_ai.transport' not in caller_spans[0]['attributes']
+
+
+async def test_streaming_transport_is_recorded_on_model_span(
+    allow_model_requests: None, sockets: SocketHarness, capfire: CaptureLogfire
+):
+    logfire.instrument_pydantic_ai()
+    sockets.pending[0].responses = deque([text_events('streamed')])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    async with source.connect() as connected:
+        async with Agent(connected).run_stream('hello') as result:
+            assert await result.get_output() == 'streamed'
+
+    logfire.force_flush()
+    chat_transports = [
+        span['attributes'].get('pydantic_ai.transport')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'chat'
+        and span['attributes'].get('gen_ai.request.model') == 'gpt-4o'
+    ]
+    assert chat_transports == ['websocket']
 
 
 @pytest.mark.parametrize('wrap', ['none', 'wrapper', 'fallback'])
@@ -1052,7 +1077,7 @@ async def test_connected_model_is_rejected_before_durable_request(
             else connected
         )
         agent = Agent(model, name='responses', capabilities=[JournalDurability()])
-        with pytest.raises(UserError, match='connected Responses WebSocket model'):
+        with pytest.raises(UserError, match='model with a live connection'):
             await agent.run('hello')
         assert sockets.opened[0].sent == []
     assert sockets.opened[0].close_count == 1

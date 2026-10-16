@@ -1634,9 +1634,9 @@ async def test_temporal_model_rejects_connected_model_in_workflow(placement: str
         temporal_model.using_model(selected),
         patch('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', return_value=True),
     ):
-        with pytest.raises(UserError, match='A connected Responses WebSocket model cannot be used'):
+        with pytest.raises(UserError, match='A model with a live connection cannot be used'):
             await temporal_model.request(messages, None, parameters)
-        with pytest.raises(UserError, match='A connected Responses WebSocket model cannot be used'):
+        with pytest.raises(UserError, match='A model with a live connection cannot be used'):
             async with temporal_model.request_stream(messages, None, parameters):
                 pass
 

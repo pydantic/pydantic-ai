@@ -84,6 +84,7 @@ _model_request_span_captures: ContextVar[
 _model_response_span_captures: ContextVar[
     tuple[tuple[ModelRequestContext, Callable[[ModelResponse, float | None], None]], ...]
 ] = ContextVar('model_response_span_captures', default=())
+model_request_span_ctx: ContextVar[Span | None] = ContextVar('model_request_span', default=None)
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,14 @@ def open_request_policy() -> ContentPolicy | None:
     if get_current_span().get_span_context().trace_id != policy.span.get_span_context().trace_id:
         return None
     return policy
+
+
+def current_model_request_span() -> Span | None:
+    """Return the active model request span only while it is the caller's current span."""
+    span = model_request_span_ctx.get()
+    if span is None or not span.is_recording():
+        return None
+    return span if get_current_span().get_span_context() == span.get_span_context() else None
 
 
 @contextmanager
@@ -769,6 +778,7 @@ def open_model_request_span(
 
     record_metrics: Callable[[], None] | None = None
     previous_include_content = include_content_ctx.get()
+    previous_model_request_span = model_request_span_ctx.get()
     try:
         with (
             settings.tracer.start_as_current_span(
@@ -782,6 +792,7 @@ def open_model_request_span(
         ):
             # Set inside the `with`, because the policy names the span it speaks for.
             include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+            model_request_span_ctx.set(span)
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
@@ -869,6 +880,7 @@ def open_model_request_span(
                 yield finish, prepared_request_context
     finally:
         include_content_ctx.set(previous_include_content)
+        model_request_span_ctx.set(previous_model_request_span)
         if record_metrics:
             record_metrics()
 
@@ -891,6 +903,8 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
     # `open_model_request_span`, so without this a `FallbackModel` refresh there would fall back to
     # the default and re-export instruction content the span was opened without.
     captured_include_content = include_content_ctx.get()
+    # Provider transport attributes must also reach the chat span when a segment runs in the consumer task.
+    captured_model_request_span = model_request_span_ctx.get()
 
     @contextmanager
     def attach_captured_context() -> Generator[None]:
@@ -903,16 +917,19 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
         # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
         previous = otel_context.get_current()
         previous_include_content = include_content_ctx.get()
+        previous_model_request_span = model_request_span_ctx.get()
         otel_context.attach(captured)
         # Restored with `set` rather than `reset` for the same reason as `previous` above: this CM is
         # held across the `yield`, so an interrupted streamed run finalizes it in a different
         # `Context`, where `ContextVar.reset` raises `ValueError: ... created in a different Context`.
         include_content_ctx.set(captured_include_content)
+        model_request_span_ctx.set(captured_model_request_span)
         try:
             yield
         finally:
             otel_context.attach(previous)
             include_content_ctx.set(previous_include_content)
+            model_request_span_ctx.set(previous_model_request_span)
 
     return attach_captured_context
 

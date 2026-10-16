@@ -30,7 +30,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .._utils import managed_model_scope
+from .._utils import managed_model_scope, reject_live_connection
 from ._activity_execution import execute_activity
 from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
@@ -196,11 +196,8 @@ class TemporalModel(WrapperModel):
             return await super().request(messages, model_settings, model_request_parameters)
 
         current_model = self._current_model()
-        if isinstance(current_model, Model) and current_model._contains_live_connection:
-            raise UserError(
-                'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
-                'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
-            )
+        if isinstance(current_model, Model):
+            reject_live_connection(current_model)
         self._validate_model_request_parameters(model_request_parameters)
 
         model_id = self._current_model_id()
@@ -246,11 +243,8 @@ class TemporalModel(WrapperModel):
                 return
 
         current_model = self._current_model()
-        if isinstance(current_model, Model) and current_model._contains_live_connection:
-            raise UserError(
-                'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
-                'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
-            )
+        if isinstance(current_model, Model):
+            reject_live_connection(current_model)
         if run_context is None:
             raise UserError(
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
