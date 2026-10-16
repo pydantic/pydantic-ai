@@ -15,6 +15,7 @@ import {
   MoreIcon,
   OrchestratorIcon,
   PaletteIcon,
+  GearIcon,
   PuzzleIcon,
   SearchIcon,
   SidebarIcon,
@@ -44,6 +45,7 @@ interface Props {
   onOrchestrator: () => void
   onCollapse: () => void
   onPlugins: () => void
+  onSettings: () => void
   onError: (message: string) => void
   /** The current session's delegated tasks, shown under it. */
   tasks: TaskEntry[]
@@ -84,6 +86,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     onOrchestrator,
     onCollapse,
     onPlugins,
+    onSettings,
     onError,
     tasks,
     worker,
@@ -375,7 +378,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           </label>
         )}
         <div className="foot-actions">
-          <button className="icon-button" onClick={onPlugins} title={`Plugins (${MOD},)`} aria-label="Plugins">
+          <button className="icon-button" onClick={onSettings} title={`Settings (${MOD},)`} aria-label="Settings">
+            <GearIcon size={16} />
+          </button>
+          <button className="icon-button" onClick={onPlugins} title="Plugins" aria-label="Plugins">
             <PuzzleIcon size={16} />
           </button>
           {!themeInfo?.palette && (
