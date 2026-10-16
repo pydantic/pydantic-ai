@@ -272,6 +272,15 @@ and the session to resume if you want to continue it.
 
 ![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/fork.png)
 
+### Several sessions at once: `clai2 --web`
+
+`clai2 --web` drives CLAI from your browser. Click any session in the sidebar and it
+opens live, even while others run: each works in its own folder, with its own queued
+prompts and running turn, and a dot shows which ones are running or waiting for you.
+Esc stops only the session you are looking at. A session left idle for an hour
+closes; it stays saved, so click it to pick it up again. See
+[Several sessions in the web UI](docs/reference.md#several-sessions-in-the-web-ui).
+
 ### Usage, cost, and `/compact`
 
 `/usage` shows the tokens and cost of each turn, and `/cost` the total. Costs come from

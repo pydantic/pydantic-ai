@@ -10,7 +10,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 - [The prompt](#the-prompt): [Prompt area](#prompt-area), [Pasting images](#pasting-images), [Input history](#input-history), [Word deletion](#word-deletion), [Undo and redo](#undo-and-redo), [Option keys on macOS](#option-keys-on-macos), [Interrupting a turn](#interrupting-a-turn), [Rewinding a conversation](#rewinding-a-conversation), [Shell commands with !](#shell-commands-with-)
 - [Output](#output): [How tool calls look](#how-tool-calls-look), [Streaming](#streaming), [Code highlighting](#code-highlighting), [Grep previews](#grep-previews), [Shell preview limit](#shell-preview-limit), [Tool details](#tool-details), [Status line](#status-line), [Themes](#themes), [Spinners](#spinners)
 - [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI to customize itself](#ask-clai-to-customize-itself)
-- [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees)
+- [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees), [Several sessions in the web UI](#several-sessions-in-the-web-ui)
 - [Plugins and integrations](#plugins-and-integrations): [Plugins](#plugins), [Built-in plugins at a glance](#built-in-plugins-at-a-glance), [MCP servers: /mcp](#mcp-servers-mcp), [Desktop notifications](#desktop-notifications), [Herdr integration](#herdr-integration), [Agent of Empires integration](#agent-of-empires-integration), [Telemetry and references](#telemetry-and-references)
 - [Using CLAI from code](#using-clai-from-code): [Your own agent](#your-own-agent), [Headless mode](#headless-mode), [The stock agent in your own code](#the-stock-agent-in-your-own-code), [Bring an agent](#bring-an-agent)
 - [Working on CLAI](#working-on-clai): [Source layout](#source-layout), [Reload CLAI during development](#reload-clai-during-development), [CI coverage](#ci-coverage)
@@ -2243,6 +2243,36 @@ git branch -d clai-my-task
 A worktree separates working files, not permissions. CLAI's default tools can
 still access files outside it. Creation runs before the agent starts and emits
 no agent telemetry spans.
+
+### Several sessions in the web UI
+
+```bash
+clai2 --web
+```
+
+The [web UI](../PLUGINS.md#web-this-session-in-your-browser) keeps several sessions
+live in one CLAI. Click any session in the sidebar and it opens live, even while
+others run turns. Each live session has its own conversation, folder, plugins,
+queued prompts, and running turn, and keeps working while you look at another.
+It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
+`.clai/settings.json`, and MCP project files. **New session** asks which folder.
+CLAI never changes its own working directory to do this. There is no limit on how
+many sessions run at once.
+
+- **Status dots.** A dot beside a live session in the sidebar shows that it runs a
+  turn, that input waits behind its turn, or that it asks you a question.
+- **Esc** and the stop button interrupt the session you are looking at, and only it.
+- **Idle closing.** A session closes after an hour with no turn, no queued input,
+  no background fork or delegated task, and no browser or terminal showing it. Its
+  conversation stays saved: click it to resume it. The session CLAI started with
+  never closes this way.
+- **Settings.** `/set` in one session applies to every live session, except `model`
+  and the `run.*` settings, which stay with the session that set them, and settings
+  a session's `.clai/settings.json` fixes.
+- **Read-only.** Only a session whose folder is gone, such as a removed worktree,
+  opens read-only.
+- **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
+  every session.
 
 ## Plugins and integrations
 
