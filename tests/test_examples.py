@@ -1201,7 +1201,7 @@ async def model_logic(  # noqa: C901
         elif (
             isinstance(m.content, list)
             and isinstance(m.content[0], StructuredContent)
-            and m.content[0].value.get('expected_answer') == '4'
+            and '"expected_answer":"4"' in m.content[0].content
         ):
             # docs/models/decision.md: a decision model judges a structured value
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])

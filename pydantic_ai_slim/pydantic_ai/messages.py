@@ -632,7 +632,8 @@ class StructuredContent(TextContent):
 
     Rendered by [`render`][pydantic_ai.messages.StructuredContent.render] when the item is created, unless given.
     Rendering to empty text raises a `ValueError`. It isn't rendered again when `value`, `tag` or `description`
-    change: to change one, create a new item, or use `dataclasses.replace(item, value=..., content='')`.
+    change: to change one, create a new item, or use `dataclasses.replace(item, value=..., content='')`, passing
+    `format` again if the item was created with one.
     """
 
     format: InitVar[StructuredContentFormat | Callable[[Any], str] | None] = None

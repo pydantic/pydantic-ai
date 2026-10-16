@@ -251,6 +251,9 @@ def test_structured_content_renders_again_when_replaced_without_content():
     item = StructuredContent({'a': 1}, tag='t')
     assert replace(item, value={'a': 2}).content == '<t>{"a":1}</t>'
     assert replace(item, value={'a': 2}, content='').content == '<t>{"a":2}</t>'
+    # `format` isn't stored, so a non-default one has to be passed again.
+    xml = StructuredContent({'a': 1}, tag='t', format='xml')
+    assert replace(xml, value={'a': 2}, content='', format='xml').content == '<t>\n  <a>2</a>\n</t>'
 
 
 def test_structured_content_rejects_an_invalid_tag():

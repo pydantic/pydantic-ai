@@ -41,7 +41,7 @@ result = agent.run_sync(
 ```
 
 - `format='xml'` renders with `format_as_xml`; a function `value -> str` renders custom text; or subclass `StructuredContent` and override `render()`.
-- The rendered text is stored in `content`, so a reloaded history is sent byte-for-byte as before. It is not re-rendered when `value` changes: build a new item, or `dataclasses.replace(item, value=..., content='')`. After loading from JSON, `value` is JSON-compatible data (a dict, not the original Pydantic model), and a subclass comes back as `StructuredContent`.
+- The rendered text is stored in `content`, so a reloaded history is sent byte-for-byte as before. It is not re-rendered when `value` changes: build a new item, or `dataclasses.replace(item, value=..., content='')` (pass `format=` again if it was created with one). After loading from JSON, `value` is JSON-compatible data (a dict, not the original Pydantic model), and a subclass comes back as `StructuredContent`.
 - It is a `TextContent` subclass, so text readers handle it unchanged. Decision models (`DecisionModel`, e.g. TypeSafe) are sent `value` natively when the prompt is a single `StructuredContent`. When rewriting a prompt's text (redaction, truncation), replace the item with a plain `TextContent`.
 - Vercel AI round-trips it as a `data-structured-content` part, AG-UI as a `pydantic_ai_structured_content` activity message.
 
