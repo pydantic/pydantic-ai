@@ -46,6 +46,7 @@ from pydantic_clai2.cli.self_update import (
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from tests.clai2.menu_script import make_context
@@ -497,7 +498,7 @@ async def _relaunch_after(
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, [*prompts, '/update', '/exit'])
     with pytest.raises(Relaunch) as raised:
         await chat(
@@ -591,7 +592,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
         channels.append(channel())
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, ['/update', '/exit'])
     output = StringIO()
     await chat(

@@ -22,7 +22,6 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
@@ -32,6 +31,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session, current_session_id
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from tests.clai2.test_forks import Model

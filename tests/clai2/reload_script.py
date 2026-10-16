@@ -164,7 +164,7 @@ async def main(root: Path, mode: str) -> None:
         agent.override(model=TestModel(call_tools=[], custom_output_text='hello')),
     ):
         patch.setattr(prompt_toolkit, 'PromptSession', Prompt)
-        patch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        patch.setattr('pydantic_clai2.runtime.session_runtime.PromptSession', Prompt)
         await chat(
             agent,
             deps=deps,

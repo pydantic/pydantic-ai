@@ -9,7 +9,10 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
-| `_app.py` | the prompt loop, built-in `/commands`, and `open_stock_agent`, the stock agent for code outside the terminal |
+| `_app.py` | `chat`, the terminal app around one session (startup resume, `/reload`, `/update` restarts), and `open_stock_agent`, the stock agent for code outside the terminal |
+| `runtime/process.py` | `ClaiProcess`: what every session in one CLAI process shares, the settings and conversation stores |
+| `runtime/session_runtime.py` | `SessionRuntime`, one live session: its prompt loop, built-in `/commands`, plugin loader, input queue, and turns; `create_shell` builds one over a `ClaiProcess` |
+| `models/resolver.py` | `ModelResolver`: model names to models, loading provider integrations on demand, with accounts, profiles, and `chain:` fallbacks |
 | `runtime/_session.py` | conversation state, revision-checked saves (each recording the Git checkout of the session's directory), restore-only resume (a session busy in another process resumes as a saved fork), plugin snapshots and stock-agent rebuilding |
 | `runtime/project_identity.py` | the repository and checkout of a session's directory, for `/resume` and the web sidebar: `project_identity` reads Git, `placements` places removed folders by the saved checkout, a known checkout, or a worktree layout, else under `MISSING` |
 | `runtime/sessions.py` | resume command and background namer ownership; the `SessionCatalog` plugins reach as `host.sessions` (list, read, rename, fork, delete saved sessions); built-in step capture |

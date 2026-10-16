@@ -33,7 +33,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins.web import WebPlugin, workspace_tools as tools_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WaitOutcome
@@ -56,6 +55,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
 pytestmark = pytest.mark.anyio
 
@@ -129,7 +129,7 @@ def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
 class Child:
     """The workspace's CLAI, served in this process when the launcher starts it."""
 
-    shell: _Shell[None, str]
+    shell: SessionRuntime[None, str]
     web: WebPlugin
     blocked: anyio.Event = field(default_factory=anyio.Event)
 
@@ -210,7 +210,7 @@ async def child_serving(tmp_path: Path) -> AsyncGenerator[Child]:
 
 @dataclass
 class Parent:
-    shell: _Shell[None, str]
+    shell: SessionRuntime[None, str]
     web: WebPlugin
     tools: WorkspaceTools
     processes: InProcess

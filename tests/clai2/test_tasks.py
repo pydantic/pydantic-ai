@@ -582,9 +582,9 @@ async def test_background_completion_continues_parent_without_user_input(
 
     from pydantic_ai.messages import SystemPromptPart
     from pydantic_ai_harness.subagents import DelegationTaskEvent
-    from pydantic_clai2._app import create_shell
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_clai2.runtime.session_runtime import create_shell
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 
     child_started, release, idle, continued, finished = (asyncio.Event() for _ in range(5))

@@ -34,7 +34,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins import web
 from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, live, remote as remote_module
 from pydantic_clai2.builtin_plugins.web.app import (
@@ -73,6 +72,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
@@ -95,7 +95,7 @@ class QuestionModel(TestModel):
 
 @dataclass
 class Web:
-    shell: _Shell[None, str]
+    shell: SessionRuntime[None, str]
     plugin: WebPlugin
     client: TestClient
     portal: BlockingPortal
@@ -1082,7 +1082,7 @@ async def test_lifespan_passes_through() -> None:
 
 def web_shell(
     tmp_path: Path, settings: dict[str, JsonValue] | None = None, *, terminal: bool = True
-) -> '_Shell[None, str]':
+) -> 'SessionRuntime[None, str]':
     return create_shell(
         Agent(TestModel()),
         deps=None,
