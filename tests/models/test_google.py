@@ -2141,8 +2141,9 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
 
 
 async def test_google_model_thinking_part_from_other_model(
-    allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
+    allow_model_requests: None, gemini_api_key: str, openai_api_key: str, request_capture: RequestCapture
 ):
+    google_provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
@@ -2276,6 +2277,24 @@ async def test_google_model_thinking_part_from_other_model(
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+    # The recording predates the fix, and replay doesn't match on body, so pin what is sent now:
+    # OpenAI's reasoning goes to Gemini as tagged text, not as Gemini's own `thought` parts.
+    thought_text = IsStr(regex=r'<think>\n.+\n</think>', regex_flags=re.DOTALL)
+    contents = cast(list[dict[str, Any]], request_capture.body(':generateContent')['contents'])
+    assert contents[1] == snapshot(
+        {
+            'parts': [
+                {'text': thought_text},
+                {'text': thought_text},
+                {'text': thought_text},
+                {'text': thought_text},
+                {'text': thought_text},
+                {'text': IsStr()},
+            ],
+            'role': 'model',
+        }
     )
 
 
@@ -5668,8 +5687,9 @@ def test_google_thought_signature_on_thinking_part():
 async def test_google_foreign_thinking_part_not_sent_as_thought(google_provider: GoogleProvider):
     """Another provider's reasoning is replayed as tagged text, not as Gemini's own `thought` part.
 
-    Pinned as a unit test because the cross-provider cassette tests don't match on request body,
-    so their stale recordings wouldn't catch a regression.
+    The wire path is covered by `test_google_model_thinking_part_from_other_model`. This unit case pins
+    ownership falling back to `ModelResponse.provider_name` for a part without one, which needs a
+    hand-built history rather than a recording.
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     messages: list[ModelMessage] = [
@@ -5725,7 +5745,10 @@ Claude reasoning
 
 
 def test_google_thinking_part_from_other_google_api_sent_as_thought():
-    """Gemini API thinking replayed on Google Cloud (e.g. by a `FallbackModel`) stays a native thought."""
+    """Gemini API thinking replayed on Google Cloud (e.g. by a `FallbackModel`) stays a native thought.
+
+    A unit test because a real Gemini API to Google Cloud fallback needs credentials for both and a forced first-leg failure.
+    """
     response = _content_model_response(
         ModelResponse(
             parts=[ThinkingPart(content='Gemini reasoning'), TextPart(content='answer')], provider_name='google'
