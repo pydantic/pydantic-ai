@@ -215,7 +215,7 @@ in the configured keyring backend, not plugin settings. Plugins that need an API
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
 backend exists, credentials go to a per-account `0600` file under the user's CLAI config
 directory instead. None of this changes plugin APIs. See
-[Codex authentication](README.md#codex-authentication) for storage and security
+[Codex authentication](docs/reference.md#codex-authentication) for storage and security
 details.
 
 ### GitHub Copilot subscriptions
@@ -540,7 +540,7 @@ helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
 wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
-to stock built-ins. See [telemetry](README.md#telemetry-and-references).
+to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 ## Linear: issues and projects
 
@@ -913,7 +913,7 @@ to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use. Plugins do not own worktree cleanup.
-See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
+See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
 
@@ -1018,20 +1018,29 @@ are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 upgrade never loads new definitions without your say. Old
 `pydantic_ai_harness.coder:Coder` declarations load through this module and are
 not rewritten. `/plugins configure coder` edits this list; see
-[Agent folders](README.md#agent-folders).
+[Agent folders](docs/reference.md#agent-folders).
 
-`skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
+`skill_folders` is a JSON list of [Agent Skills](docs/reference.md#agent-skills) folders,
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
 "~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
 declarations that omit it; `~/` means your home directory, a relative path is in
-the project, and `[]` turns skills off. `coder` binds harness `Skills` with
+the project, and `[]` turns skills off. Each relative folder is followed by the
+same folder in each directory above the launch directory, up to the git root,
+nearest first (`CoderSettings.skill_libraries(parents=...)`); outside a git
+repository only the launch directory is used. `coder` binds harness `Skills` with
 `missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
-folder is skipped and the earlier of two skills with one name wins. It reads the
+folder is skipped, a folder that is a file or a single skill package is skipped
+with a notice, and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. A folder setting that fails, such as a path to one skill
-instead of its parent folder, prints `Skills are off: ...` and leaves skills
-out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
+model's catalog. A `/skill-name` command reads them again when it runs, so it
+sends the current `SKILL.md`, and fails with a message when the skill is gone.
+Only skills with `user_invocable` (no `user-invocable: false`) get a command;
+harness leaves skills with `disable-model-invocation: true` out of the model's
+catalog. Since CLAI hides library warnings, `coder` prints the skills whose
+frontmatter fields harness ignores as a startup notice. A folder that cannot be
+read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
+setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
@@ -1043,7 +1052,7 @@ update the task inspector rather than entering the parent's transcript. Core hoo
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 
-See [managed tasks](README.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
+See [managed tasks](docs/reference.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
 Ctrl+B, independent histories, explicit resume, completion-report provenance, and
 workspace restrictions. Supplied agents and headless calls are unchanged. Do not
 hold a parent's `RunContext` or call its event emitter after that run has ended;
@@ -1070,7 +1079,7 @@ A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
 repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
-[Project settings](README.md#project-settings).
+[Project settings](docs/reference.md#project-settings).
 
 Some plugins already include others. `coder` includes task delegation, so while
 `coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
@@ -1093,7 +1102,7 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn. A
+`summarization_model`; see the [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 
 ```text
@@ -1918,7 +1927,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+`/update`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
@@ -1994,8 +2003,9 @@ contributes nothing:
 | `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
-runtime: the console, the conversation, the status row, the full screen, and its
-saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
+runtime: the console, the conversation, the status row, the full screen, its
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
+saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
 ### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`
@@ -2033,8 +2043,8 @@ command is running.
 `on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
 opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
 the text the command returned, which the shell printed (empty when it returned none, as for a
-menu closed without changes; what the command printed itself, such as the history `/resume`
-replays, is not in it), and `error` the exception it failed with, which the shell showed
+menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
+command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
 instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
 with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
@@ -2215,8 +2225,8 @@ prompt the keyboard does:
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
-  where only the keyboard closes it; send `/model NAME` or `/resume ID` instead. A headless `-p`
-  run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead.
+  A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
@@ -2224,7 +2234,8 @@ prompt the keyboard does:
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
   CLAI's settings, such as one built in a test without `setting=`.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
-  `False` when nothing was running. A menu stays open, and a headless `-p` run is not cancelled.
+  `False` when nothing was running. A menu open over the cancelled turn or command closes with
+  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
@@ -3022,7 +3033,7 @@ The connection is saved in the configured Python keyring backend after selection
 
 ## Saved API keys
 
-Startup [`.env` loading](README.md#environment-variables) makes values available to
+Startup [`.env` loading](docs/reference.md#environment-variables) makes values available to
 providers and plugins that read the environment. It does not import credentials
 into `/keys` or replace a plugin's saved-key picker.
 
@@ -3296,7 +3307,7 @@ The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
 saved workspace paths are unchanged. Selecting a session resumes immediately in
 the current directory, without confirmation. See
-[Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
+[Saved sessions](docs/reference.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
@@ -3306,7 +3317,7 @@ case-insensitive and includes text instructions in multimodal prompts.
 
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
 API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
-paths attaches local files. See [Pasting images](README.md#pasting-images) for
+paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
 platform requirements and limits.
 
 `turn_start.text` and `turn_end.text` contain the text caption with attachment
@@ -3337,4 +3348,4 @@ with `plugin_settings` merged over their stock settings. Saved, drop-in, and pro
 plugins never load. Each plugin gets `session_start` when the context opens and
 `session_end` when it closes, with reason `error` if the block raised. No turn hooks
 fire, no `/commands` run, and nothing renders: the host runs the agent. See
-[The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).
+[The stock agent in your own code](docs/reference.md#the-stock-agent-in-your-own-code).

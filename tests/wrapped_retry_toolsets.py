@@ -13,7 +13,7 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 DepsT = TypeVar('DepsT')
 
@@ -41,13 +41,15 @@ def failing_toolset(
 
 def snapshot_probe_toolset(
     record: Callable[[str, RunContext[DepsT]], None],
-) -> Callable[[RunContext[DepsT]], FunctionToolset[DepsT]]:
+) -> Callable[[RunContext[DepsT]], AbstractToolset[DepsT]]:
     """A dynamic toolset factory that calls `record` from each site a durable unit hands a context to.
 
-    The sites are the factory, the toolset's instructions, the `probe` tool's argument validator and its body.
+    The sites are the factory, the toolset's instructions, and the `probe` tool's `prepare`, argument validator and
+    body. The factory prefixes and then renames the toolset so `probe` keeps its name, which makes each wrapper copy
+    the context inside the durable unit before the tool runs.
     """
 
-    def factory(ctx: RunContext[DepsT]) -> FunctionToolset[DepsT]:
+    def factory(ctx: RunContext[DepsT]) -> AbstractToolset[DepsT]:
         record('factory', ctx)
         toolset = FunctionToolset[DepsT](id='snapshot_inner')
 
@@ -56,15 +58,19 @@ def snapshot_probe_toolset(
             record('instructions', ctx)
             return 'Call the probe once.'
 
+        async def prepare(ctx: RunContext[DepsT], tool_def: ToolDefinition) -> ToolDefinition:
+            record('prepare', ctx)
+            return tool_def
+
         def validate(ctx: RunContext[DepsT]) -> None:
             record('validator', ctx)
 
-        @toolset.tool(args_validator=validate)
+        @toolset.tool(prepare=prepare, args_validator=validate)
         async def probe(ctx: RunContext[DepsT]) -> str:
             record('body', ctx)
             return 'Probed.'
 
-        return toolset
+        return toolset.prefixed('inner').renamed({'probe': 'inner_probe'})
 
     return factory
 

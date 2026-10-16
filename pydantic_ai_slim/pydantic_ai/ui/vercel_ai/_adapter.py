@@ -1053,27 +1053,23 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 # Metadata only goes on the trailing UIMessage of a split request so reload
                 # applies it once to the merged ModelRequest.
-                request_metadata = dump_message_metadata(msg) or None
+                request_metadata = dump_message_metadata(msg)
                 if system_ui_parts:
-                    result.append(
-                        UIMessage(
-                            id=id_generator(msg, 'system', message_index),
-                            role='system',
-                            metadata=None if user_ui_parts else request_metadata,
-                            parts=system_ui_parts,
-                        )
+                    system_message = UIMessage(
+                        id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts
                     )
+                    if request_metadata and not user_ui_parts:
+                        system_message.metadata = request_metadata
+                    result.append(system_message)
                     message_index += 1
 
                 if user_ui_parts:
-                    result.append(
-                        UIMessage(
-                            id=id_generator(msg, 'user', message_index),
-                            role='user',
-                            metadata=request_metadata,
-                            parts=user_ui_parts,
-                        )
+                    user_message = UIMessage(
+                        id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts
                     )
+                    if request_metadata:
+                        user_message.metadata = request_metadata
+                    result.append(user_message)
                     message_index += 1
 
             elif isinstance(  # pragma: no branch
