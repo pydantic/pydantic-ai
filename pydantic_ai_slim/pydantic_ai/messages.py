@@ -3612,23 +3612,6 @@ def _is_turn_scoped(part: ModelRequestPart) -> bool:
     return isinstance(part, SystemPromptPart) and part.scope == 'turn'
 
 
-def _current_turn_start(messages: Sequence[ModelMessage]) -> int:  # pyright: ignore[reportUnusedFunction]
-    """The index of the first message of the history's current turn.
-
-    The current turn is the trailing run of `ModelRequest`s no response has answered yet, together with
-    any `ModelResponse`s after them that continue it (a suspended response being resumed). A
-    [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] part in one of those requests is still
-    current; one in any earlier request has been superseded. Adjacent requests are one turn because
-    they're sent as one: `_clean_message_history` merges them.
-    """
-    index = len(messages)
-    while index and isinstance(messages[index - 1], ModelResponse):
-        index -= 1
-    while index and isinstance(messages[index - 1], ModelRequest):
-        index -= 1
-    return index
-
-
 def _drop_unanswered_turn_scoped_prompts(messages: list[ModelMessage]) -> None:  # pyright: ignore[reportUnusedFunction]
     """Remove the turn-scoped `SystemPromptPart`s that no response will answer, in place.
 

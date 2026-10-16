@@ -29,6 +29,7 @@ from ..settings import CacheSetting, ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import (
     ModelRequestParameters,
+    _turn_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
@@ -1143,13 +1144,7 @@ class OpenRouterModel(OpenAIChatModel):
                 self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
             # A turn-scoped prompt ends the request as its own user message (see `_turn_scoped_tail_texts`),
             # and the next request won't send it, so the breakpoint goes on the message before it.
-            # Matched from the end, in order, so a lasting message with the same text as a reminder stays.
-            turn_scoped_texts = _turn_scoped_tail_texts(messages)
-            end = len(openai_messages)
-            remaining = len(turn_scoped_texts)
-            while end and remaining and _is_text_message(openai_messages[end - 1], turn_scoped_texts[remaining - 1]):
-                end -= 1
-                remaining -= 1
+            end, _ = _turn_scoped_suffix_start(openai_messages, _turn_scoped_tail_texts(messages), _user_message_text)
             if end:
                 self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
 
@@ -1463,6 +1458,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
 
-def _is_text_message(message: chat.ChatCompletionMessageParam, text: str) -> bool:
-    """Whether `message` is a user message whose content is `text`, as a turn-scoped prompt renders."""
-    return message['role'] == 'user' and message.get('content') == text
+def _user_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
+    """A user message's text content, which is how a turn-scoped prompt renders."""
+    content = message.get('content')
+    return content if message['role'] == 'user' and isinstance(content, str) else None

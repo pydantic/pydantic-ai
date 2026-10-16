@@ -78,6 +78,7 @@ from pydantic_ai.models import (
     ModelRequestParameters,
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _turn_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
@@ -1619,15 +1620,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     # A turn-scoped prompt ends the request when it's rendered as text (see
                     # `_turn_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
                     # before it. One with nothing ahead of it in the message gets no breakpoint.
-                    turn_scoped_texts = _turn_scoped_tail_texts(messages)
-                    end = len(last_user_content)
-                    remaining = len(turn_scoped_texts)
-                    # Matched from the end, in order, so lasting text equal to a reminder ahead of it stays.
-                    while (
-                        end and remaining and last_user_content[end - 1].get('text') == turn_scoped_texts[remaining - 1]
-                    ):
-                        end -= 1
-                        remaining -= 1
+                    end, _ = _turn_scoped_suffix_start(
+                        last_user_content, _turn_scoped_tail_texts(messages), lambda block: block.get('text')
+                    )
                     lasting_content = last_user_content[:end]
                     if lasting_content and 'cachePoint' not in lasting_content[-1]:
                         _insert_cache_point_before_trailing_documents(

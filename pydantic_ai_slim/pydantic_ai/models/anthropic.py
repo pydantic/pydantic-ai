@@ -92,6 +92,7 @@ from . import (
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _turn_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
@@ -4111,29 +4112,18 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
 def _blocks_before_turn_scoped_text(
     message: BetaMessageParam, texts: tuple[str, ...]
 ) -> tuple[list[BetaContentBlockParam], tuple[str, ...]]:
-    """`message`'s content blocks up to the trailing text blocks rendering the last of `texts`, and the texts left over.
+    """`message`'s content blocks before the trailing text blocks rendering the last of `texts`, and the texts left over.
 
-    `texts` are the turn-scoped prompts ending the request, in order, so they're matched from the end: a lasting
-    block with the same text as a reminder, ahead of it, stays. The blocks are the message's own, so
-    `cache_control` added to one lands on the wire. A `str` content body is turned into a single text block first,
-    so it can carry one.
+    The blocks are the message's own, so `cache_control` added to one lands on the wire. Every message
+    `_map_message` builds has a list body.
     """
-    content = message['content']
-    if isinstance(content, str):  # pragma: no cover
-        content = message['content'] = [BetaTextBlockParam(type='text', text=content)]
-    blocks = cast(list[BetaContentBlockParam], content)
-    end = len(blocks)
-    remaining = len(texts)
-    while (
-        end
-        and remaining
-        and is_str_dict(block := blocks[end - 1])
-        and block.get('type') == 'text'
-        and block.get('text') == texts[remaining - 1]
-    ):
-        end -= 1
-        remaining -= 1
-    return blocks[:end], texts[:remaining]
+    blocks = cast(list[BetaContentBlockParam], message['content'])
+    end, remaining = _turn_scoped_suffix_start(blocks, texts, _text_block_text)
+    return blocks[:end], remaining
+
+
+def _text_block_text(block: BetaContentBlockParam) -> str | None:
+    return block.get('text') if is_str_dict(block) and block.get('type') == 'text' else None
 
 
 def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901

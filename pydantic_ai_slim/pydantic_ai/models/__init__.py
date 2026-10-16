@@ -79,7 +79,6 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
-    _current_turn_start,  # pyright: ignore[reportPrivateUsage]
     _is_turn_scoped,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
@@ -2582,13 +2581,16 @@ def _move_turn_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[Mode
 
     Returns the original list when there's nothing to move.
     """
-    request_indices = [index for index, message in enumerate(messages) if isinstance(message, ModelRequest)]
     turn_scoped = [
-        part for index in request_indices for part in cast(ModelRequest, messages[index]).parts if _is_turn_scoped(part)
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if _is_turn_scoped(part)
     ]
     if not turn_scoped:
         return messages
-    last_index = request_indices[-1]
+    last_index = max(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
     moved: list[ModelMessage] = []
     for index, message in enumerate(messages):
         if not isinstance(message, ModelRequest):
@@ -2611,6 +2613,43 @@ def _move_turn_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[Mode
         }
         moved.append(replace(message, parts=[*parts, *turn_scoped], metadata=metadata))
     return moved
+
+
+def _current_turn_start(messages: Sequence[ModelMessage]) -> int:
+    """The index of the first message of the history's current turn.
+
+    The current turn is the trailing run of `ModelRequest`s no response has answered yet, together with
+    any `ModelResponse`s after them that continue it (a suspended response being resumed). A
+    [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] part in one of those requests is still
+    current; one in any earlier request has been superseded. Adjacent requests are one turn because
+    they're sent as one: `_clean_message_history` merges them.
+    """
+    index = len(messages)
+    while index and isinstance(messages[index - 1], ModelResponse):
+        index -= 1
+    while index and isinstance(messages[index - 1], ModelRequest):
+        index -= 1
+    return index
+
+
+_SuffixItemT = TypeVar('_SuffixItemT')
+
+
+def _turn_scoped_suffix_start(  # pyright: ignore[reportUnusedFunction]
+    items: Sequence[_SuffixItemT], texts: tuple[str, ...], text_of: Callable[[_SuffixItemT], str | None]
+) -> tuple[int, tuple[str, ...]]:
+    """Where the wire items rendering the turn-scoped `texts` start at the end of `items`, and the texts left unmatched.
+
+    `texts` come from `_turn_scoped_tail_texts`, in order, and end the request, so they're matched from the end,
+    each once: a lasting item with the same text as a reminder, ahead of it, stays before the returned index.
+    `text_of` reads an item's text the way the adapter renders a turn-scoped prompt, or `None` if it can't be one.
+    """
+    end = len(items)
+    remaining = len(texts)
+    while end and remaining and text_of(items[end - 1]) == texts[remaining - 1]:
+        end -= 1
+        remaining -= 1
+    return end, texts[:remaining]
 
 
 def _turn_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, ...]:  # pyright: ignore[reportUnusedFunction]
