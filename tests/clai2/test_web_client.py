@@ -109,6 +109,16 @@ async def test_commands_and_their_notices(tmp_path: Path) -> None:
         assert served.web.token not in repr(view.items)
 
 
+async def test_a_bare_command_with_a_menu_is_refused(tmp_path: Path) -> None:
+    """`/set` alone would open its menu in a page, which a client has not got: it says so, and nothing runs."""
+    async with serving(Agent(TestModel()), tmp_path) as served:
+        with pytest.raises(ValueError, match=r'/set opens a menu in the page; send it with arguments instead\.'):
+            await served.client.send('/set')
+        await served.view.send('/set display.thinking false')
+        assert await served.view.wait(timeout=10) == 'idle'
+        assert served.shell.context.settings.thinking is False
+
+
 @pytest.mark.parametrize(
     ('answers', 'expected'),
     [

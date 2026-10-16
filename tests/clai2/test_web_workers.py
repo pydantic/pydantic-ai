@@ -94,7 +94,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert isinstance(snapshot, Snapshot) and snapshot.tasks == [] and snapshot.task_items == {}
         assert web_.get('/api/tasks/nope').status_code == 404, 'no task owner runs before the prompt opens'
         web_.run()
-        assert web_.post('/api/input', {'text': 'go'}).status_code == 204
+        assert web_.post('/api/input', {'text': 'go'}).json() == {'menu': None}
         messages, items = receive_until(socket, TaskItems)
         [started] = task_changes(messages)
         task_id = started.task.id
@@ -144,7 +144,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert web_.post(f'/api/tasks/{task_id}/resume').status_code == 204
         receive_until(socket, TurnEnded)
 
-        assert web_.post('/api/input', {'text': 'stop me'}).status_code == 204
+        assert web_.post('/api/input', {'text': 'stop me'}).json() == {'menu': None}
         messages, _ = receive_until(socket, TaskItems)
         blocker = task_changes(messages)[-1].task
         assert blocker.prompt == 'blocker'
@@ -156,7 +156,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert web_.post('/api/sessions/new').status_code == 204
         _, fresh = receive_until(socket, Snapshot)
         assert fresh.tasks == [] and fresh.task_items == {}
-        assert web_.post('/api/input', {'text': '/exit'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}
 
 
 def test_without_a_task_owner(make_web: MakeWeb) -> None:
