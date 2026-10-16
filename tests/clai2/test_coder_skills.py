@@ -2,7 +2,7 @@
 
 import io
 import os
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -11,21 +11,35 @@ import pytest
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import (
+    AgentCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
-from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
+from pydantic_clai2 import Session, chat
+from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, collect, load_plugin
+from pydantic_clai2.plugins import (
+    LoadedPlugin,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionStart,
+    collect,
+    load_plugin,
+)
 from pydantic_clai2.plugins.loader import PluginLoader
 
 PromptT = TypeVar('PromptT')
@@ -96,8 +110,20 @@ async def run_once(loaded: LoadedPlugin[None], workspace: Path) -> FirstRequest:
     return seen
 
 
+def bound_types(loaded: LoadedPlugin[None]) -> list[type[object]]:
+    """The capability classes `loaded` binds, with the `Skills` `coder` wraps in a group shown as `Skills`."""
+    types: list[type[object]] = []
+    for capability in loaded.capabilities:
+        match capability:
+            case WrapperCapability(wrapped=CombinedCapability(capabilities=[Skills()])):
+                types.append(Skills)
+            case _:
+                types.append(type(capability))
+    return types
+
+
 def has_skills(loaded: LoadedPlugin[None]) -> bool:
-    return any(isinstance(capability, Skills) for capability in loaded.capabilities)
+    return Skills in bound_types(loaded)
 
 
 class TestSkillFolders:
@@ -172,7 +198,7 @@ class TestSkillCatalog:
         seen = await run_once(loaded, project)
 
         # A `Skills` that found nothing stays bound, so a skill added mid-session reaches the next turn's catalog.
-        assert [type(capability) for capability in loaded.capabilities] == ([Coder] if settings else [Coder, Skills])
+        assert bound_types(loaded) == ([Coder] if settings else [Coder, Skills])
         assert list(loaded.commands) == []
         assert 'load_capability' not in seen.tools
         assert 'deferred' not in seen.instructions
@@ -222,7 +248,7 @@ class TestSkillCatalog:
         finally:
             library.chmod(0o755)
 
-        assert [type(capability) for capability in loaded.capabilities] == [Coder]
+        assert bound_types(loaded) == [Coder]
         assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')
 
     async def test_skills_are_off_where_clai_has_no_local_workspace(
@@ -233,8 +259,66 @@ class TestSkillCatalog:
 
         loaded, output = await load_coder()
 
-        assert [type(capability) for capability in loaded.capabilities] == [Coder]
+        assert bound_types(loaded) == [Coder]
         assert (list(loaded.commands), output.getvalue()) == ([], '')
+
+    @pytest.mark.parametrize('supplies_workspace', [False, True], ids=['no-workspace', 'sandbox'])
+    async def test_skills_load_beside_a_plugin_capability_function(
+        self, tmp_path: Path, project: Path, supplies_workspace: bool
+    ) -> None:
+        # Such a plugin may supply a sandbox, so CLAI attaches the project directory only once the run's
+        # capability functions resolve: after `Skills` reads its catalog.
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        sandbox = tmp_path / 'sandbox'
+        sandbox.mkdir()
+
+        class PerRun(Plugin[NoSettings, None]):
+            def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+                return (self.for_run,)
+
+            def for_run(self, ctx: RunContext[None]) -> LocalWorkspace[None] | None:
+                return LocalWorkspace[None](sandbox) if supplies_workspace else None
+
+        per_run = load_plugin(
+            PerRun, PluginHost[None](name='per_run', console=Console(file=io.StringIO()), settings={})
+        )
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run.capabilities],
+        )
+        result = await session.prompt('go')
+
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        assert '- review: Project review.' in (request.instructions or '')
+        # A sandbox the capability function supplies still wins over the project directory.
+        expected = (sandbox if supplies_workspace else project).resolve()
+        assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected))
+
+    @pytest.mark.parametrize('first', ['coder', 'own'])
+    async def test_another_skills_on_the_agent_combines_with_coders(self, project: Path, first: str) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        write_skill(project / 'team', 'deploy', description='Team deploy.')
+        coder, _ = await load_coder()
+        # It names `.agents/skills` too; combined with `coder`'s, that `review` is listed once.
+        own = Skills[None](['team', '.agents/skills'])
+        plugins = [*coder.capabilities, own] if first == 'coder' else [own, *coder.capabilities]
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=plugins,
+        )
+        result = await session.prompt('go')
+
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        instructions = request.instructions or ''
+        assert instructions.count('- review: Project review.') == 1
+        assert '- deploy: Team deploy.' in instructions
 
     async def test_a_misconfigured_folder_turns_skills_off_with_a_notice(self, project: Path) -> None:
         write_skill(project / 'skills', 'review')

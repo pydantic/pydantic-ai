@@ -1868,7 +1868,11 @@ notice, until the next `/reload`; the coding tools still load.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the
-two can differ.
+two can differ. A plugin that adds a per-run capability function, such as
+`posthog` with browser sign-in, could supply a sandbox only after the catalog is
+read, so with one loaded the catalog is read from the project directory. If that
+plugin does run the agent in a sandbox, the skills' directories are paths on this
+machine that the sandbox may not reach.
 
 ## Bring an agent
 

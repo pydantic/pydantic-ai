@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import Generic, Self
@@ -21,9 +22,10 @@ from pydantic import (
     model_serializer,
 )
 
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.tools import RunContext
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import SkillDefinition, Skills
 from pydantic_clai2.builtin_plugins.coder_folders import is_folder_name, run_coder_flow
@@ -206,6 +208,29 @@ class CoderSource(Generic[DepsT]):
         return f'Reset {row.label}.'
 
 
+@dataclass
+class _ProjectSkills(WrapperCapability[DepsT]):
+    """Harness `Skills` that read the project directory while the run's workspace is not chosen yet.
+
+    When a plugin adds a capability function, CLAI attaches the project directory only once the run's
+    capability functions resolve, so a sandbox one supplies wins (see `local_workspace`). `Skills` reads
+    its catalog in `for_run`, before then, and would find no workspace. It reads the project directory
+    instead, where the run works unless a capability function supplies a workspace of its own.
+
+    The `Skills` sits in a group, so core still sees it and another `Skills` on the agent combines with it.
+    Core keeps the combined one where the last of them was, so one combined outside this wrapper reads
+    the run's workspace as before.
+    """
+
+    project: LocalWorkspaceBackend = field(kw_only=True)
+    """The directory CLAI started in, where the commands' skills were read."""
+
+    async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
+        if not ctx.workspace.attached:
+            ctx = replace(ctx, workspace=Workspace(self.project))
+        return await super().for_run(ctx)
+
+
 class CoderPlugin(Plugin[CoderSettings, DepsT]):
     """Harness `Coder` and `Skills`, a `/command` per skill, and a field editor for the preferences."""
 
@@ -216,7 +241,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
 
     def __init__(self, host: PluginHost[DepsT], settings: CoderSettings) -> None:
         super().__init__(host, settings)
-        self._skills: Skills[DepsT] | None = None
+        self._skills: _ProjectSkills[DepsT] | None = None
         self._skill_definitions: tuple[SkillDefinition, ...] = ()
         self._skill_notices: tuple[str, ...] = ()
 
@@ -232,13 +257,14 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             return
         skills = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
         try:
-            catalog = await skills.load(LocalWorkspaceBackend(Path(await anyio.Path.cwd())))
+            project = LocalWorkspaceBackend(Path(await anyio.Path.cwd()))
+            catalog = await skills.load(project)
         except (UserError, ValueError, OSError) as exc:
             # A misconfigured or unreadable folder would otherwise fail every turn, or the whole plugin, so
             # skills are left out and the file and shell tools still load.
             self._skill_notices = (f'Skills are off: {exc}',)
             return
-        self._skills = skills
+        self._skills = _ProjectSkills[DepsT](CombinedCapability([skills]), project=project)
         self._skill_definitions = catalog.skills
         self._skill_notices = catalog.skipped
 

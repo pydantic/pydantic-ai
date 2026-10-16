@@ -1029,10 +1029,12 @@ the project, and `[]` turns skills off. `coder` binds harness `Skills` with
 folder is skipped and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. A folder setting that fails, such as a path to one skill
-instead of its parent folder, prints `Skills are off: ...` and leaves skills
-out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
-ignores a saved value instead of failing to load `coder`.
+model's catalog. With a plugin's capability function in the run, the run's
+workspace is chosen after `Skills` reads its catalog, so `coder` reads the
+catalog from the project directory. A folder setting that fails, such as a path
+to one skill instead of its parent folder, prints `Skills are off: ...` and
+leaves skills out. The setting is tagged `coder-skill-folders`, so a CLAI build
+without it ignores a saved value instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
