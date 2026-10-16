@@ -51,6 +51,9 @@ async def orchestrating(messages: list[ModelMessage], info: AgentInfo) -> AsyncI
         await anyio.sleep_forever()
     if 'fail' in prompt:
         raise RuntimeError('the model broke')
+    if 'hello' in prompt:
+        yield 'Hello.'
+        return
     step = sum(isinstance(message, ModelResponse) for message in messages)
     if step == 0:
         yield {0: DeltaToolCall(name='workspace_list', json_args='{}')}
@@ -93,6 +96,9 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
         seen, asked = orchestrator_until(socket, QuestionAsked)
         [started] = [event for event in seen if isinstance(event, TurnStarted)]
         assert started.item is not None and started.item.text == 'What is there?'
+        # With it, the history the turn starts from, as another CLAI may have changed it since the page loaded.
+        [starting] = [event for event in seen if isinstance(event, OrchestratorState)]
+        assert starting.running and starting.items == [started.item]
         tools = [event.item for event in seen if isinstance(event, ItemAdded) and event.item.kind == 'tool']
         assert [tool.name for tool in tools] == ['workspace_list', 'ask_user_question']
         [listed] = [event for event in seen if isinstance(event, ToolDone)]
@@ -126,17 +132,23 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
 
 
 def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
-    """The turn reports the failed save, and leaves no temporary file behind."""
+    """The turn reports the failed save and leaves no temporary file; the chat keeps it until a save succeeds."""
     web_ = orchestrated(make_web)
     path = web_.plugin.remote.orchestrator.path
     path.mkdir(parents=True)  # A folder where the file goes: it reads as no conversation, and cannot be replaced.
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         opened(socket)
-        web_.post('/api/orchestrator/input', {'text': 'Now fail'})
+        web_.post('/api/orchestrator/input', {'text': 'Say hello'})
         ended = orchestrator_until(socket, TurnEnded)[1]
-    assert ended.outcome == 'failed' and ended.error is not None
-    assert ended.error.startswith('The orchestrator chat could not be saved: ')
-    assert list(path.parent.iterdir()) == [path]
+        assert ended.outcome == 'failed' and ended.error is not None
+        assert ended.error.startswith('The orchestrator chat could not be saved: ')
+        assert list(path.parent.iterdir()) == [path]
+        kept = web_.get('/api/orchestrator/state').json()['items']
+        assert [item['kind'] for item in kept] == ['user', 'assistant']
+        path.rmdir()
+        web_.post('/api/orchestrator/input', {'text': 'Say hello again'})
+        assert orchestrator_until(socket, TurnEnded)[1].outcome == 'completed'
+    assert len(Orchestrator(host=web_.plugin.host, publish=lambda message: None).state().items) == 4
 
 
 def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -> None:
@@ -167,9 +179,9 @@ def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -
         assert orchestrator_until(socket, OrchestratorState)[1].items == []
     assert not (tmp_path / 'state' / 'pydantic-clai2' / 'orchestrator.json').exists()
 
-    # Unloading the web UI stops a running turn.
+    # `/web stop` stops a running turn: no page is left to watch or answer it.
     web_.post('/api/orchestrator/input', {'text': 'Work until I stop you'})
-    web_.portal.call(orchestrator.close)
+    web_.portal.call(web_.plugin.stop)
     assert not orchestrator.running
 
 

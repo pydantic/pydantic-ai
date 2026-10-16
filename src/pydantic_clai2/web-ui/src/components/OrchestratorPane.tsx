@@ -112,7 +112,7 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
           <Transcript entries={chat.entries} running={chat.running} empty={null} />
           <footer className="bottom">
             {questions}
-            {enabled ? (
+            {enabled || chat.running ? (
               composer
             ) : (
               <div className="orchestrator-off-bar">

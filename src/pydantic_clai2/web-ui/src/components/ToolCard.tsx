@@ -100,9 +100,9 @@ function workspaceSummary(item: Item, args: Args): Summary {
   return { icon: <BranchIcon size={14} />, verb: running ? doing : kept ? 'Kept workspace' : done, subject, mono: true }
 }
 
-function summarize(item: Item, args: Args, orchestrating: boolean): Summary {
+function summarize(item: Item, args: Args, inOrchestrator: boolean): Summary {
   const running = item.state === 'running'
-  if (orchestrating && isWorkspaceTool(item.name)) return workspaceSummary(item, args)
+  if (inOrchestrator && isWorkspaceTool(item.name)) return workspaceSummary(item, args)
   switch (item.name) {
     case 'shell':
       return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: str(args.command), mono: true }
@@ -126,7 +126,7 @@ function summarize(item: Item, args: Args, orchestrating: boolean): Summary {
       if (calls.length === 1 && only?.argument) {
         // A script around one call reads as that call.
         const key = only.name === 'shell' ? 'command' : only.name === 'grep' ? 'pattern' : 'path'
-        return summarize({ ...item, name: only.name }, { [key]: only.argument }, orchestrating)
+        return summarize({ ...item, name: only.name }, { [key]: only.argument }, inOrchestrator)
       }
       const names = item.calls.length ? item.calls.map((call) => call.name) : calls.map((call) => call.name)
       if (names.length > 1) {

@@ -69,6 +69,8 @@ class Orchestrator:
         self._turn = ItemLog()
         self._history: list[ModelMessage] = []
         """The conversation as the running turn started from it."""
+        self._unsaved: list[ModelMessage] | None = None
+        """A turn's conversation its file could not take, kept here until a later save succeeds."""
         self._task: asyncio.Task[None] | None = None
         self._tools: WorkspaceTools | None = None
         self._agent: Agent[None, str] | None = None
@@ -87,11 +89,15 @@ class Orchestrator:
 
         Empty when there is none or it cannot be read.
         """
-        if not self.running:
-            try:
-                self._history = ModelMessagesTypeAdapter.validate_json(self.path.read_bytes())
-            except (OSError, ValidationError):
-                self._history = []
+        if self.running:
+            return self._history
+        if self._unsaved is not None:
+            self._history = self._unsaved
+            return self._history
+        try:
+            self._history = ModelMessagesTypeAdapter.validate_json(self.path.read_bytes())
+        except (OSError, ValidationError):
+            self._history = []
         return self._history
 
     def _save(self, messages: list[ModelMessage]) -> None:
@@ -106,6 +112,7 @@ class Orchestrator:
         except BaseException:
             os.unlink(name)
             raise
+        self._unsaved = None
 
     def enabled(self) -> bool:
         """Whether the `workspaces` plugin is on, which the orchestrator's tools work over."""
@@ -166,6 +173,8 @@ class Orchestrator:
         self._turn.clear()
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
+        # The history this turn starts from, which another CLAI may have changed since the page loaded.
+        self._send(self.state())
         outcome: TurnOutcome = 'failed'
         error: str | None = None
         usage: RunUsage | None = None
@@ -195,6 +204,7 @@ class Orchestrator:
             try:
                 self._save(messages)
             except OSError as exc:
+                self._unsaved = messages
                 outcome, error = 'failed', f'The orchestrator chat could not be saved: {exc}'
             used = None
             if usage is not None:
@@ -219,6 +229,7 @@ class Orchestrator:
         if self.running:
             raise RuntimeError('Stop the orchestrator before starting a new chat.')
         self.path.unlink(missing_ok=True)
+        self._unsaved = None
         self._send(self.state())
 
     async def close(self) -> None:
