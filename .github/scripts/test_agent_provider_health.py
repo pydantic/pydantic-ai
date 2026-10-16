@@ -36,6 +36,12 @@ from agent_provider_health import (
 from pydantic_ai_gh_aw_shim import cli as shim
 
 
+@pytest.fixture(autouse=True)
+def _fake_github_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the synthetic workflow run ID unless a test sets its own."""
+    monkeypatch.setenv('GITHUB_RUN_ID', '43')
+
+
 def _quota_response(
     *,
     interval_percentage: object = 1,
