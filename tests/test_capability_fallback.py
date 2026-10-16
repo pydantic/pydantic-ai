@@ -10,7 +10,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -1135,3 +1135,54 @@ async def test_each_candidate_gets_its_own_max_retries():
     seen.clear()
     assert (await agent.run('x', model_settings={'max_retries': 1})).output == 'hello'
     assert seen == [('first', 1), ('last', 1)]
+
+
+async def test_settings_a_hook_sets_reach_every_candidate():
+    """A setting a `before_model_request` hook sets or removes applies to every candidate.
+
+    Set in place, it does even when it equals the step model's own value. In settings a hook replaces, a value
+    equal to the one the step resolved to can't be told apart from one carried over, so it's left to each
+    candidate's own `settings`.
+    """
+    seen: list[tuple[str, int | None, float | None]] = []
+
+    def respond(name: str, fail: bool, settings: ModelSettings) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            model_settings = info.model_settings or {}
+            seen.append((name, model_settings.get('max_retries'), model_settings.get('temperature')))
+            if fail:
+                raise ModelAPIError(model_name=name, message='boom')
+            return ModelResponse(parts=[TextPart('hello')])
+
+        return FunctionModel(fn, model_name=name, settings=settings)
+
+    @dataclass
+    class SetRetriesAndDropTemperature(AbstractCapability[Any]):
+        replace_settings: bool
+
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if self.replace_settings:
+                settings = dict(request_context.model_settings or {})
+                settings['max_retries'] = 3
+                settings.pop('temperature', None)
+                return replace(request_context, model_settings=cast(ModelSettings, settings))
+            assert request_context.model_settings is not None
+            request_context.model_settings['max_retries'] = 2
+            del request_context.model_settings['temperature']
+            return request_context
+
+    for replace_settings, max_retries in ((False, 2), (True, 3)):
+        seen.clear()
+        agent = Agent(
+            respond('first', True, {'max_retries': 2, 'temperature': 0.5}),
+            model_settings={'temperature': 0.1},
+            capabilities=[
+                SetRetriesAndDropTemperature(replace_settings),
+                Fallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
+            ],
+        )
+        assert (await agent.run('x')).output == 'hello'
+        # Dropping the agent's `temperature` leaves each candidate's own.
+        assert seen == [('first', max_retries, 0.5), ('last', max_retries, 0.9)]

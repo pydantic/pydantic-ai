@@ -1937,10 +1937,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
         # base for a graph run). Resolved per model-request step here; once at connect in a session.
-        # The keys the latest resolution took from a layer rather than from the step model's own settings, so
-        # an attempt the step moves to another model (see `RetryModelRequest`) can leave the rest behind.
-        model_settings_layer_keys: set[str] = set()
-
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
             # A capability can select a different model per step, so the base is the step's live
             # `run_context.model` settings, not a captured initial model. A graph run always uses a
@@ -1948,13 +1944,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
             # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
             step_model = run_context.model
-            model_settings_layer_keys.clear()
             return _layer_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
                 base=step_model.settings if isinstance(step_model, models.Model) else None,
-                layer_keys=model_settings_layer_keys,
             )
+
+        def get_layered_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+            # The same layers without the step model's own settings, for an attempt the step moves to another
+            # model (a `Fallback` candidate), which merges in its own. Resolved only when that happens, so a
+            # callable layer then runs again for the step, and sees no model settings beneath the layers.
+            return _layer_model_settings(run_context, (agent_model_settings, cap_model_settings, run_model_settings))
 
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
@@ -2075,7 +2075,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             evaluate_model_selector=evaluate_model_selector,
             enter_model=model_resources.enter_selected_model,
             get_model_settings=get_model_settings,
-            model_settings_layer_keys=model_settings_layer_keys,
+            get_layered_model_settings=get_layered_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
             end_strategy=self.end_strategy,
@@ -5001,7 +5001,6 @@ def _layer_model_settings(
     layers: Sequence[AgentModelSettings[AgentDepsT] | None],
     *,
     base: ModelSettings | None = None,
-    layer_keys: set[str] | None = None,
 ) -> ModelSettings | None:
     """Merge model-settings layers left-to-right, stamping `run_context.model_settings` before each.
 
@@ -5009,15 +5008,12 @@ def _layer_model_settings(
     Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
     observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
     step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
-    graph run; a realtime model has none, so it defaults to `None`. `layer_keys`, if given, collects the
-    keys the layers set, as opposed to those only `base` did.
+    graph run; a realtime model has none, so it defaults to `None`.
     """
     merged = base
     run_context.model_settings = merged
     for layer in layers:
         resolved = layer(run_context) if callable(layer) else layer
-        if layer_keys is not None and resolved:
-            layer_keys.update(resolved)
         merged = merge_model_settings(merged, resolved)
         run_context.model_settings = merged
     return merged
