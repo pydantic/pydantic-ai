@@ -36,6 +36,19 @@ Before editing, identify which contracts can change:
 - When changing tool/output execution, check ordering, retry semantics, deferred calls, output finalization, streaming events, and durable wrappers together.
 - When removing deprecated APIs, distinguish public surface cleanup from persisted-data compatibility. Old constructors/imports may be removed in a major version; old serialized histories may still need to deserialize.
 
+## Capability Lifecycle Internals
+
+`capabilities/_lifecycle.py` owns the order in which lifecycle hooks run. `LifecycleStack` is phase-agnostic: the caller picks the algorithm (forward or reverse transform, notification, middleware chain, recovery, stream wrapping, or deferred-result settlement), and the stack applies it. Route a new lifecycle hook in a capability container or registration API through `LifecycleStack`. Do not write the loop again.
+
+`CombinedCapability` and `Hooks` adapt their entries to the stack and keep their own concerns:
+
+- `CombinedCapability` decides whether a capability takes part: deferred loading (`_ctx_for_active_cap`), the `_has_*` hook gates, and `listens_to`. It runs `before_*` forward, `after_*` and recovery in reverse, and nests `wrap_*` with the first capability outermost.
+- `Hooks` keeps timeouts and tool-name filters, and runs every transform and recovery in registration order.
+
+Keep each adapter typed per operation. A single `Callable[..., Any]` registry would centralize the code and weaken the contract. `Hooks.on_event` keeps its own loop: routing it through the stack would move the frame its deprecated replacement-event warning points at.
+
+Capability construction has two stages. Agent binding (`for_agent`, via `bind_capabilities_tier`) runs in `Agent.__init__` and binds the `innermost` (durability) tier only after the other capabilities' toolsets are visible. Run preparation (`for_run`, via `_resolve_run_capabilities`) runs once per run, after the bootstrap model is resolved. V3 may replace the public `for_agent()` / `for_run()` and capability-tree APIs. It must keep both stages, stable capability and toolset identities, model-selection provenance, and durable registration.
+
 ## Run Event Stream Internals
 
 `GraphAgentState.event_stream_buffer` is the internal, run-scoped queue for framework events emitted outside the direct model/tool event generators. It's shared by reference into every `RunContext` this run as the private `_event_stream_buffer` field; framework code appends via `RunContext._emit_event(event)`.
