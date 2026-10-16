@@ -16,7 +16,7 @@ from pathlib import Path
 import anyio
 from anyio import to_thread
 
-from pydantic_clai2.builtin_plugins.workspaces.backend import Backend, LocalWorktrees, repo_slug
+from pydantic_clai2.builtin_plugins.workspaces.backend import Backend, LocalWorktrees, is_url, repo_slug
 from pydantic_clai2.builtin_plugins.workspaces.kinds import WorktreeKind
 from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, Workspace, workspaces_dir
 from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher, read_token
@@ -70,8 +70,10 @@ class Workspaces:
         await to_thread.run_sync(self.registry.save, workspace)
         return workspace
 
-    async def create(self, *, kind: str, repo: str = '', ref: str = '') -> Workspace:
+    async def create(self, *, kind: str, repo: str = '', ref: str = '', base: Path | None = None) -> Workspace:
         """Check out `repo` at `ref` as a new workspace of `kind`; the kind's own repository and ref fill in blanks.
+
+        A relative local `repo` is in `base`, the asking session's directory, by default the current one.
 
         Raises `LookupError` for an unknown kind and `ValueError` when the checkout cannot be made.
         """
@@ -81,6 +83,8 @@ class Workspaces:
         repo, ref = repo or options.repo, ref or options.ref
         if not repo:
             raise ValueError(f'Name a repository: kind {kind!r} has none of its own.')
+        if base is not None and not is_url(repo):
+            repo = str(base / Path(repo).expanduser())
         workspace_id = new_id(repo)
         checkout = await self.backend.create(workspace_id=workspace_id, kind=options, repo=repo, ref=ref)
         workspace = Workspace(
