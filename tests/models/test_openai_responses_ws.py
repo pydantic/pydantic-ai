@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_type_hints
 from unittest.mock import Mock
 
 import anyio
@@ -178,6 +178,13 @@ def recorded_responses(
 
 class Weather(BaseModel):
     temperature: int
+
+
+def test_connect_type_hints_are_resolvable():
+    assert (
+        get_type_hints(OpenAIResponsesModel.connect)['websocket_connection_options']
+        == WebSocketConnectionOptions | None
+    )
 
 
 async def test_tool_continuation(allow_model_requests: None, recorded_responses: RecordedResponses):

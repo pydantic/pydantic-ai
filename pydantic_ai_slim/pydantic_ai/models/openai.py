@@ -138,8 +138,6 @@ from ._tool_choice import (
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
 if TYPE_CHECKING:
-    from openai.types.websocket_connection_options import WebSocketConnectionOptions
-
     from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketStream
 
 try:
@@ -213,6 +211,7 @@ try:
     from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+    from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     OMIT = omit
 except ImportError as _import_error:
