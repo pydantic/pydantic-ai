@@ -145,7 +145,7 @@ class RunCancellation:
         if task is None:
             try:
                 task = asyncio.current_task()
-            except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+            except RuntimeError:  # No running asyncio loop (e.g. a Trio-backed run)
                 return
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
