@@ -761,7 +761,7 @@ def _menu_info(menu: SettingsMenu, path: Sequence[str]) -> MenuInfo:
 def _row(menu: SettingsMenu, key: str) -> FieldRow:
     row = next((row for row in menu.source.rows() if row.key == key), None)
     if row is None:
-        raise LookupError(f'{menu.source.title} has no setting {key}.')
+        raise LookupError(f'{menu.source.title} has no setting {key!r}.')
     return row
 
 
