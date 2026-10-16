@@ -78,14 +78,8 @@ laid out for, so a reworded line or a wider logo can't quietly cost a link.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
 _UPDATE_PREFIX = 'update available: '
-_VERSION_CHECK_LINE = 'checks for new versions daily from the next run: https://pydantic.dev/docs/ai/requests/'
-_VERSION_CHECK_OPT_OUT_LINE = 'turn it off with PYDANTIC_AI_NO_VERSION_CHECK=1'
-"""Announces the check on the one banner before it starts, with where to read what it sends.
-
-Shown once rather than on every banner, so it can afford a second line naming how to turn it off.
-The URL is an alias kept no longer than `_OTEL_LINE`'s, so that adding this line can't raise
-`_MIN_TEXT_WIDTH` and change the layout of every other banner.
-"""
+_VERSION_CHECK_LINE = 'checks for updates daily from the next run — or PYDANTIC_AI_NO_VERSION_CHECK=1'
+"""Announces the check on the one banner before it starts, worded like `_HIDE_LINE` that it follows."""
 
 _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
     len(word)
@@ -95,7 +89,6 @@ _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
         _OTEL_LINE,
         _HIDE_LINE,
         _VERSION_CHECK_LINE,
-        _VERSION_CHECK_OPT_OUT_LINE,
     )
     for word in line.split()
 )
@@ -318,7 +311,8 @@ def render_banner(
         # Only what the block above doesn't already say: it opens by telling them to set it up.
         lines += ['', *_wrapped(_HIDE_LINE, text_width)]
     if announce_version_check:
-        lines += ['', *_wrapped(_VERSION_CHECK_LINE, text_width), *_wrapped(_VERSION_CHECK_OPT_OUT_LINE, text_width)]
+        # Directly under the line it's worded after, as the second of two ways to quiet the banner.
+        lines += [*([] if observability else ['']), *_wrapped(_VERSION_CHECK_LINE, text_width)]
 
     banner = _beside_logo(lines) if beside_logo else '\n'.join(line.rstrip() for line in lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -526,7 +520,8 @@ def _observability_lines(text_width: int) -> list[str]:
 def _update_lines(updates: Sequence[tuple[str, str]], text_width: int) -> list[str]:
     """Lay out an update notice, highlighting versions without counting ANSI codes as width."""
     items = [f'{distribution} v{version}' for distribution, version in updates]
-    lines = _wrapped(_UPDATE_PREFIX + _INFO_SEPARATOR.join(items), text_width)
+    # Indented under the versions line, as the part of it that's out of date.
+    lines = _wrapped(_UPDATE_PREFIX + _INFO_SEPARATOR.join(items), text_width, indented=True)
     for item in items:
         lines = [line.replace(item, _colored(item, _HIGHLIGHT_COLOR)) for line in lines]
     return lines

@@ -41,8 +41,6 @@ navigation:
         slug: "overview/network-requests"
         aliases:
           - "network-requests"
-          # What the banner links to: short enough not to widen it.
-          - "requests"
   - section: "Core Concepts"
     slug: ""
     contents:

@@ -274,27 +274,15 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
 
 def test_the_observability_links_each_survive_on_one_line(render: Callable[..., str]):
     """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
-    lines = [
-        *_display._observability_lines(_MIN_TEXT_WIDTH),  # pyright: ignore[reportPrivateUsage]
-        *_display._wrapped(  # pyright: ignore[reportPrivateUsage]
-            _display._VERSION_CHECK_LINE,  # pyright: ignore[reportPrivateUsage]
-            _MIN_TEXT_WIDTH,
-        ),
-    ]
+    lines = _display._observability_lines(_MIN_TEXT_WIDTH)  # pyright: ignore[reportPrivateUsage]
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
 
-    assert urls == snapshot(
-        [
-            'https://pydantic.dev/ai-setup.md',
-            'https://pydantic.dev/docs/ai/logfire/#otel',
-            'https://pydantic.dev/docs/ai/requests/',
-        ]
-    )
+    assert urls == snapshot(['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'])
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
     # a floor under the text column measured from the copy rather than written down beside it.
     for width in range(_MIN_TEXT_WIDTH, 121):
-        rendered = render(width=width, announce_version_check=True).splitlines()
+        rendered = render(width=width).splitlines()
         for url in urls:
             assert sum(url in line for line in rendered) == 1, f'{url} was broken at {width} columns'
 
@@ -387,7 +375,7 @@ def test_render_banner_with_one_update(render: Callable[..., str]):
     assert render(updates=[('pydantic-ai', '2.46.0')], observability=False) == snapshot("""\
       / \\
      /   \\       HEADING
-   /___.___\\     update available: pydantic-ai v2.46.0
+   /___.___\\       update available: pydantic-ai v2.46.0
   /    |    \\
 /      |      \\  agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
 `---.._|_..---'\
@@ -401,9 +389,8 @@ def test_render_banner_announcing_the_version_check(render: Callable[..., str]):
      /   \\
    /___.___\\     agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
   /    |    \\
-/      |      \\  checks for new versions daily from the next run:
-`---.._|_..---'    https://pydantic.dev/docs/ai/requests/
-                 turn it off with PYDANTIC_AI_NO_VERSION_CHECK=1\
+/      |      \\  checks for updates daily from the next run — or PYDANTIC_AI_NO_VERSION_CHECK=1
+`---.._|_..---'\
 """)
 
 
@@ -427,7 +414,7 @@ def test_render_banner_with_updates_at_a_narrow_width(render: Callable[..., str]
 
     assert banner == snapshot("""\
 HEADING
-update available: pydantic-ai v2.46.0 •
+  update available: pydantic-ai v2.46.0 •
   pydantic-ai-harness v0.8.0
 
 agent: support_agent
