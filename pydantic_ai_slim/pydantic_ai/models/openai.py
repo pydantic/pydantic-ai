@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import hashlib
 import itertools
 import json
 import warnings
@@ -55,6 +56,7 @@ from ..messages import (
     ImageUrl,
     InstructionPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -1006,7 +1008,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
       that are already server-side.
 
     In both cases, messages that precede the chosen response in the history are omitted
-    from the input, since OpenAI reconstructs them from server-side state.
+    from the input, since OpenAI reconstructs them from server-side state. A response is only
+    chosen while those messages are unchanged: each response created with this setting records a
+    SHA-256 of the history it was created from as `provider_details['history_sha256']`, and if a
+    history processor or compaction has changed them since, the full history is sent instead.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -2357,6 +2362,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
+_HISTORY_SHA256 = 'history_sha256'
+"""The `provider_details` key for the SHA-256 of the history a Responses API response was created from.
+
+Recorded when `openai_previous_response_id` is set, so a later request continues from the response only
+while the messages before it are unchanged.
+"""
+
+
+def _history_sha256(history: Sequence[ModelMessage]) -> str:
+    return hashlib.sha256(ModelMessagesTypeAdapter.dump_json(list(history))).hexdigest()
+
+
+def _history_changed(response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+    """Whether `history`, the messages before `response`, differs from the history it was created from.
+
+    A response without a recorded history, from before it was recorded or from a request that didn't
+    continue server-side state, is trusted as before.
+    """
+    recorded = (response.provider_details or {}).get(_HISTORY_SHA256)
+    return recorded is not None and recorded != _history_sha256(history)
+
+
+def _with_history_sha256(response: ModelResponse, history_sha256: str | None) -> ModelResponse:
+    if history_sha256 is not None:
+        response.provider_details = {**(response.provider_details or {}), _HISTORY_SHA256: history_sha256}
+    return response
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -2651,7 +2684,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # response, not a stream; same guard as `request_stream` below.
                 return stream
             async with stream:
-                streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
+                streamed_response = await self._process_streamed_response(
+                    stream,
+                    settings,
+                    model_request_parameters,
+                    history_sha256=self._history_sha256_to_record(messages, settings),
+                )
                 async for _ in streamed_response:
                     pass
             return streamed_response.get()
@@ -2659,11 +2697,25 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             response = await self._responses_create(
                 messages, stream=False, model_settings=settings, model_request_parameters=model_request_parameters
             )
+            if isinstance(response, ModelResponse):
+                return response
+            return _with_history_sha256(
+                self._process_response(response, settings, model_request_parameters),
+                self._history_sha256_to_record(messages, settings),
+            )
 
         if isinstance(response, ModelResponse):
             return response
 
         return self._process_response(response, settings, model_request_parameters)
+
+    def _history_sha256_to_record(
+        self, messages: list[ModelRequest | ModelResponse] | list[ModelMessage], settings: OpenAIResponsesModelSettings
+    ) -> str | None:
+        """The SHA-256 of the history a new response is created from, when a later request may continue from it."""
+        if settings.get('openai_previous_response_id') is None:
+            return None
+        return _history_sha256(messages)
 
     async def count_tokens(
         self,
@@ -2773,6 +2825,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 model_request_parameters,
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
+                history_sha256=None if expected_response_id else self._history_sha256_to_record(messages, settings),
             )
             yield sr
 
@@ -2963,6 +3016,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         expected_model_name: OpenAIModelName | None = None,
         expected_response_id: str | None = None,
+        history_sha256: str | None = None,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -3020,6 +3074,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else expected_response_id
             )
         streamed_response.state = initial_state
+        streamed_response._history_sha256 = history_sha256  # pyright: ignore[reportPrivateUsage]
         if background:
             # Stamp the background marker up front so the retry-delay gate (and `cancel_suspended_response`)
             # can tell a resumable background job from a foreground stream before any event is consumed;
@@ -3721,9 +3776,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return None
 
     def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
-        for m in reversed(messages):
+        for index in range(len(messages) - 1, -1, -1):
+            m = messages[index]
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                return bool(m.provider_details and m.provider_details.get('compaction'))
+                return bool(m.provider_details and m.provider_details.get('compaction')) or _history_changed(
+                    m, messages[:index]
+                )
         return False
 
     def _get_previous_response_id_and_new_messages(
@@ -3735,13 +3793,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `(None, messages)` with the full list unchanged.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
-        for m in reversed(messages):
+        for index in range(len(messages) - 1, -1, -1):
+            m = messages[index]
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 # Responses from the stateless `/compact` endpoint can't be used as
                 # `previous_response_id`, so the compaction acts as a hard chain boundary:
                 # the next request must pass the `CompactionPart` via the `input` array
                 # (handled by `_map_messages`) without a `previous_response_id`.
                 if m.provider_details and m.provider_details.get('compaction'):
+                    return None, messages
+                # The server continues from the history this response was created with, so if the
+                # messages before it have changed since (a history processor redacted or trimmed
+                # them, say), continuing would silently drop the change: resend everything instead.
+                if _history_changed(m, messages[:index]):
                     return None, messages
                 previous_response_id = m.provider_response_id
                 break
@@ -4813,6 +4877,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
+    _history_sha256: str | None = field(default=None, init=False)
+    """The SHA-256 of the history this response was created from, recorded on it as `provider_details['history_sha256']`."""
+
+    def get(self) -> ModelResponse:
+        # Added here rather than to `provider_details` up front, which the stream rebuilds as it arrives.
+        return _with_history_sha256(super().get(), self._history_sha256)
 
     def _set_state(self, status: ResponseStatus | None) -> None:
         # `_track_background` stamps the `background` marker from `response.background` on every status

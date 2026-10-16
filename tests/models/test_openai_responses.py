@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import re
 import warnings
@@ -54,7 +55,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -65,6 +66,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
+    ModelMessagesTypeAdapter,
     ModelResponseStreamEvent,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -4742,6 +4744,129 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
     assert messages is history
 
 
+def _text_reply(response_id: str, text: str) -> resp.Response:
+    message = ResponseOutputMessage(
+        id=f'msg_{response_id}',
+        content=[ResponseOutputText(text=text, type='output_text', annotations=[])],
+        role='assistant',
+        status='completed',
+        type='message',
+    )
+    return response_message([message]).model_copy(update={'id': response_id})
+
+
+def _redact_secret(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [
+        replace(
+            message,
+            parts=[
+                replace(part, content='[redacted]')
+                if isinstance(part, UserPromptPart) and part.content == 'secret'
+                else part
+                for part in message.parts
+            ],
+        )
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
+async def test_openai_previous_response_id_auto_resends_a_history_changed_before_the_response(
+    allow_model_requests: None,
+):
+    """Continuing would let the server keep the original messages, so a changed history is resent whole."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, model_settings=settings).run('secret')
+
+    redacting = Agent(model, model_settings=settings, capabilities=[ProcessHistory(_redact_secret)])
+    await redacting.run('What did I say?', message_history=first.all_messages())
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_request
+    assert [item.get('content') for item in second_request['input']] == snapshot(
+        ['[redacted]', [{'text': 'one', 'type': 'output_text', 'annotations': []}], 'What did I say?']
+    )
+
+
+async def test_openai_previous_response_id_auto_continues_an_unchanged_history_after_a_round_trip(
+    allow_model_requests: None,
+):
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+    first = await agent.run('Hello')
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first.all_messages()))
+
+    await agent.run('Again', message_history=stored)
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == 'resp_1'
+    assert [item.get('content') for item in second_request['input']] == ['Again']
+
+
+async def test_openai_previous_response_id_concrete_seed_is_not_used_past_a_changed_history(openai_api_key: str):
+    """A stale chain in the history also rules out the seed, which only applies before the first response."""
+    response = ModelResponse(
+        parts=[TextPart(content='A1')],
+        provider_name='openai',
+        provider_response_id='resp_1',
+        provider_details={'history_sha256': 'from a different history'},
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        response,
+        ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed', history)  # pyright: ignore[reportPrivateUsage]
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_records_the_history_on_a_streamed_response(allow_model_requests: None):
+    base_response = _text_reply('resp_1', 'streamed').model_copy(update={'output': [], 'status': 'in_progress'})
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_resp_1', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='streamed',
+            item_id='msg_resp_1',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=_text_reply('resp_1', 'streamed'), type='response.completed', sequence_number=3
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+
+    async with agent.run_stream('Hello') as result:
+        await result.get_output()
+
+    request, response = result.all_messages()
+    assert isinstance(response, ModelResponse) and response.provider_details is not None
+    assert (
+        response.provider_details['history_sha256']
+        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
+    )
+
+
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
     """No opt-in means no auto-chaining, even when the history contains a chainable response."""
     history = [
@@ -4851,7 +4976,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_details={
+                    'finish_reason': IsStr(),
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'default',
+                    'history_sha256': IsStr(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4885,7 +5015,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_details={
+                    'finish_reason': IsStr(),
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'default',
+                    'history_sha256': IsStr(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4911,7 +5046,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_details={
+                    'finish_reason': IsStr(),
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'default',
+                    'history_sha256': IsStr(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
