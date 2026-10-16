@@ -3860,8 +3860,14 @@ class RealtimeSession:
     def _check_request_limit(self, *, extra: int) -> None:
         """Check `request_limit` against `extra` more requests than those counted, under way and asked for."""
         if self._usage_limits is not None and self._responses_are_requests:
-            requests = self.usage.requests + self._core.requests_ahead() + extra - 1
-            self._usage_limits.check_before_request(dataclasses.replace(self.usage, requests=requests))
+            self._usage_limits.check_before_request(self._usage_ahead(extra))
+
+    def _usage_ahead(self, extra: int) -> RunUsage:
+        """`usage` with the requests under way and asked for, and `extra` more, counted, as `check_before_request` takes it.
+
+        That check counts the request it is made for on top of `usage.requests`, so the last of them is left to it.
+        """
+        return dataclasses.replace(self.usage, requests=self.usage.requests + self._core.requests_ahead() + extra - 1)
 
     def _check_unasked_response(self, response_id: str) -> None:
         """Check `request_limit` for a response that started unasked, before this session handles any of it.
@@ -3876,12 +3882,12 @@ class RealtimeSession:
             or not self._core.response_unasked(response_id)
         ):
             return
-        # The core counts it already: as under way, or as a request if it ended in the frame that started it.
-        usage = dataclasses.replace(self.usage, requests=self.usage.requests + self._core.requests_ahead() - 1)
         try:
-            self._usage_limits.check_before_request(usage)
+            # The core counts it already: as under way, or as a request if it ended in the frame that started it.
+            self._check_request_limit(extra=0)
         except UsageLimitExceeded:
-            if (request_limit := self._usage_limits.request_limit) is not None and usage.requests >= request_limit:
+            request_limit = self._usage_limits.request_limit
+            if request_limit is not None and self._usage_ahead(0).requests >= request_limit:
                 # The request it is would exceed `request_limit`: not one this session records, or counts.
                 self._apply_core(ResponseRefused(response_id=response_id))
             raise
