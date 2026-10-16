@@ -95,6 +95,10 @@ async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> En
     settings = cast('OpenAIResponsesModelSettings', prepared_settings or {})
     if 'timeout' in settings:
         raise UserError('The OpenAI Batch API does not support per-request `timeout`; configure the client timeout.')
+    if 'max_retries' in settings:
+        raise UserError(
+            'The OpenAI Batch API does not support per-request `max_retries`: OpenAI runs batched requests.'
+        )
     if settings.get('openai_background'):
         raise UserError('The OpenAI Batch API does not support `openai_background`.')
     create_params, settings = await model._prepare_responses_create(  # pyright: ignore[reportPrivateUsage]

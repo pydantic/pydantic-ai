@@ -78,7 +78,11 @@ async def test_gemini_batch_request_is_the_generate_content_request_without_secr
 
 @pytest.mark.parametrize(
     'settings, setting',
-    [({'timeout': 10}, 'timeout'), ({'extra_headers': {'x-custom': '1'}}, 'extra_headers')],
+    [
+        ({'timeout': 10}, 'timeout'),
+        ({'max_retries': 0}, 'max_retries'),
+        ({'extra_headers': {'x-custom': '1'}}, 'extra_headers'),
+    ],
 )
 async def test_gemini_batch_rejects_per_request_http_options(settings: ModelSettings, setting: str) -> None:
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))

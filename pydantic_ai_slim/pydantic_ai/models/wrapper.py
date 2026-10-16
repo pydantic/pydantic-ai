@@ -56,6 +56,9 @@ class WrapperModel(Model):
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
+    def _refresh_http_client(self) -> None:
+        self.wrapped._refresh_http_client()
+
     async def request(
         self,
         messages: list[ModelMessage],

@@ -124,6 +124,7 @@ async def test_anthropic_batch_refuses_a_different_registered_client(allow_model
         {'anthropic_speed': 'fast'},
         {'max_tokens': 0},
         {'timeout': 10},
+        {'max_retries': 0},
         {'extra_body': {'speed': 'standard'}},
         {'extra_body': {'stream': True}},
     ],

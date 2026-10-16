@@ -85,7 +85,7 @@ class SpinnerPicker:
         slower, faster = self.nudge(MIN_INTERVAL), self.nudge(-MIN_INTERVAL)
         return slash_search(
             builder,
-            footer='-/+ speed · enter apply · esc close',
+            footer='-/+ speed - Enter apply - Esc close',
             key_source=lambda: menu_key() or _TICK,
             hotkeys={'-': slower, 'left': slower, '+': faster, '=': faster, 'right': faster},
         )

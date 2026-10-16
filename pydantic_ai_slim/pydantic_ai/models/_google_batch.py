@@ -110,6 +110,8 @@ async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatc
     # A batch is created with one set of HTTP options, and its requests run long after, so neither can be honored.
     if 'timeout' in settings:
         raise UserError('Gemini batch requests do not support per-request `timeout`; configure the client instead.')
+    if 'max_retries' in settings:
+        raise UserError('Gemini batch requests do not support per-request `max_retries`: Google runs batched requests.')
     if 'extra_headers' in settings:
         raise UserError('Gemini batch requests do not support per-request `extra_headers`; set them on the client.')
     client = _batch_client(model)

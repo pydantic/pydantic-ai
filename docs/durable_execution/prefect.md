@@ -256,6 +256,12 @@ Because the model stream is consumed inside the task, cancelling it from the flo
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for flow code: it requires no running event loop and wraps `run_stream()`. Under [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a flow, an agent with `PrefectDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `PrefectAgent` forbids `run_stream` inside flows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a flow. The run's start time is recorded by a cached `{name}__run_start_time` task, so a flow retry keeps the deadline the run started with, and may find it has already passed. When the deadline passes, the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in flow code, where you can catch it. The deprecated `PrefectAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the flow. To bound the whole flow as well, set Prefect's own `timeout_seconds` on the flow.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again.
@@ -338,7 +344,7 @@ Prefect 3.0 provides built-in caching and transactional semantics. Tasks with id
 
 * **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); the prefixes and renames a dynamic toolset is listed under (so one dynamic toolset under two prefixes keeps a result per prefix); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
-Per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, are deliberately left out, so an otherwise identical run replays recorded results instead of re-executing them.
+Per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, are deliberately left out, so an otherwise identical run replays recorded results instead of re-executing them. A run with a [`timeout=`](#run-timeouts) is the exception: its tool tasks key on the run's [`deadline`][pydantic_ai.tools.RunContext.deadline], so a tool that sizes its work to the time left doesn't replay a result computed under a different budget. A flow retry keeps the deadline, so its tool results still replay.
 
 **Note**: For user dependencies, `metadata` and `validation_context` to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable values are automatically excluded from cache computation.
 

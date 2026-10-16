@@ -221,6 +221,7 @@ async def test_batch_create_refuses_a_different_client_or_model(allow_model_requ
     'settings,match',
     [
         ({'timeout': 10}, 'per-request `timeout`'),
+        ({'max_retries': 0}, 'per-request `max_retries`'),
         ({'extra_headers': {'X-Tenant': 'a'}}, 'per-request `extra_headers`'),
         ({'openai_background': True}, '`openai_background`'),
         ({'extra_body': {'stream': True}}, '`stream` or `background`'),

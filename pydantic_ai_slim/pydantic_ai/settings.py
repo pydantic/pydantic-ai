@@ -287,6 +287,40 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI Decisions
     """
 
+    max_retries: int
+    """Override how many times the provider SDK's client retries a failed request, for one request.
+
+    `0` makes a single attempt. The SDK still decides which failures to retry and how long to wait
+    between attempts; this setting changes only how many retries it makes, so a request is sent at most
+    `1 + max_retries` times. Without it, the client's own configuration applies: `2` retries for the
+    OpenAI, Anthropic, Groq and Cohere clients Pydantic AI builds, and none for Google's.
+
+    Set it to `0` when something else owns retrying, such as a retrying HTTP transport, a durable
+    execution engine's retry policy, or a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+    that should move to its next model as soon as one fails. See
+    [Provider SDK retries](../retries.md#provider-sdk-retries).
+
+    Supported by:
+
+    * OpenAI
+    * OpenAI Codex
+    * Anthropic
+    * Google (keeps the delays and status codes of the provider's `retry_options`)
+    * Groq
+    * Mistral (`0` only, which turns off a `retry_config` set on the client)
+    * Cohere
+    * Cerebras
+    * Crusoe
+    * GitHub Copilot
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
+    * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
+    * OpenAI Decisions
+    """
+
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 

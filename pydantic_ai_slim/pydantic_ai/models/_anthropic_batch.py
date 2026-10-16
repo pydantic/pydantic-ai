@@ -66,6 +66,10 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
         raise UserError(
             'Anthropic Message Batches do not support per-request `timeout`; configure the client timeout instead.'
         )
+    if 'max_retries' in settings:
+        raise UserError(
+            'Anthropic Message Batches do not support per-request `max_retries`: the provider runs batched requests.'
+        )
     if settings.get('anthropic_speed') is not None:
         raise UserError('Anthropic Message Batches do not support `anthropic_speed`.')
     prepared = await model._prepare_messages_create(request.messages, settings, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
