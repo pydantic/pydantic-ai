@@ -98,7 +98,7 @@ model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 | `elevenlabs_agents_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
 | `elevenlabs_agents_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
 
-Each `elevenlabs_*` override setting requires its toggle on the agent, as described above.
+Each `elevenlabs_agents_*` override setting requires its toggle on the agent, as described above.
 `elevenlabs_agents_config_override` is the one setting deliberately not checked against the permission
 allowlist — being raw is its point — so a field the agent does not permit there surfaces as the
 server closing the socket (code 1008, naming the field) after the handshake, not as a local

@@ -119,6 +119,14 @@ __all__ = (
 _PROVIDER_LABEL = 'ElevenLabs Agents'
 
 _AUDIO_TAIL_GRACE = 1.0
+"""How long a reply whose text is complete can go without audio before it counts as spoken in full.
+
+`agent_response` arrives when the LLM finishes writing, while TTS can still be voicing it for seconds (verified live,
+with tool rounds and long replies alike). The reply ends with its last audio, which only an agent sending
+`context_usage` marks (that report arrives with it): otherwise a gap this long, where TTS streams its frames
+a tenth of a second apart, is taken to be the end.
+"""
+
 _TOOL_CALL_BATCH_WINDOW = 0.05
 """How long a reply's tool calls wait for a sibling before their response ends, in seconds.
 
@@ -127,13 +135,6 @@ follows until their results are in, so there is no frame to end their response a
 they come (their tools run at once, and their results aren't held back); only their response ends after this quiet
 stretch, or at the next frame of any other kind (verified live: each result the agent gets is acknowledged with an
 `agent_tool_response`, so the next reply's calls never follow these directly).
-"""
-"""How long a reply whose text is complete can go without audio before it counts as spoken in full.
-
-`agent_response` arrives when the LLM finishes writing, while TTS can still be voicing it for seconds (verified live,
-with tool rounds and long replies alike). The reply ends with its last audio, which only an agent sending
-`context_usage` marks (that report arrives with it): otherwise a gap this long, where TTS streams its frames
-a tenth of a second apart, is taken to be the end.
 """
 
 _MCP_APPROVAL_DENIED = (
@@ -182,7 +183,7 @@ class ElevenLabsAgentsTTSSettings(TypedDict, total=False):
 class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to ElevenLabs Agents realtime sessions.
 
-    Every `elevenlabs_*` field below that maps to a `conversation_config_override` entry requires the
+    Every `elevenlabs_agents_*` field below that maps to a `conversation_config_override` entry requires the
     matching override toggle to be enabled in the agent's Security tab; the connect-time preflight
     raises [`UserError`][pydantic_ai.exceptions.UserError] naming the toggle otherwise.
 
@@ -1462,8 +1463,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     def model_name(self) -> str | None:
         """Always `None`: ElevenLabs reports no realtime model id, so responses carry the agent id.
 
-        The LLM behind the agent only surfaces in the opt-in `context_usage` event, which arrives
-        after the turn boundary, so it cannot be attributed to the response it served. The session
+        The LLM behind the agent only surfaces in the `context_usage` report, which an agent sends only with it in
+        its `client_events`, so it would name the model of some responses and not others, and the session
         falls back to [`ElevenLabsAgentsRealtimeModel.model_name`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel.model_name].
         """
         return None
