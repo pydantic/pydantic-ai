@@ -14464,6 +14464,9 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
 
 
 @pytest.mark.vcr()
