@@ -32,13 +32,13 @@ capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 `get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
 chat); `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, and `on_plugin_load_failed` for CLAI's own moments;
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, and `on_task_event` for CLAI's own moments;
 `prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
 (console, conversation, `session_id`, status, full screen, saved settings, the
-prompt through `send_input`/`interrupt`/`complete`, the saved `sessions`, and
-read-only `setting(KEY)`); it
+prompt through `send_input`/`interrupt`/`complete`, the saved `sessions`, the
+delegated `tasks`, and read-only `setting(KEY)`); it
 registers nothing. `docs/declarative-plugins.md` records the design.
 `PLUGINS.md` is the user contract. If code and `PLUGINS.md` disagree, fix one so
 they agree in the same PR.
@@ -73,7 +73,7 @@ they agree in the same PR.
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
 - **Only shell-owned moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`.
+  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`.
   Startup load failures happen before an agent run, so core's `before_run` cannot
   observe them. The loader reports them after trying every enabled plugin so
   observability can receive failures that preceded its own load. Which conversation
@@ -82,7 +82,9 @@ they agree in the same PR.
   place `ConversationChanged` is fired from. `/commands` never reach the agent, so no core
   hook sees them; the shell fires `CommandEnd` around `_execute_command`, outside the scope
   Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
-  fires nothing. Additional moments need the same
+  fires nothing. A delegated task's own events never enter the parent run's stream, and a
+  background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
+  the harness owner's one observer, fires `TaskEvent`. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
@@ -313,7 +315,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
-| `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses, and the `SessionCatalog` and `PluginCatalog` protocols behind `host.sessions` and `host.plugins` |
+| `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses, and the `SessionCatalog`, `PluginCatalog`, and `TaskCatalog` protocols behind `host.sessions`, `host.plugins`, and `host.tasks` |
+| `runtime/tasks.py` | `Tasks`, the harness `DelegationTasks` owner's one observer: the `/tasks` panel rows, the specialists (`Explore`, `Plan`), `TaskEvent`s for plugins, and the `TaskCatalog` plugins reach as `host.tasks` while the shell's owner runs |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands; `PluginEntry` status and origin; the `PluginCatalog` hosts get as `host.plugins` (`listing`, `save_settings`) |
 | `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |

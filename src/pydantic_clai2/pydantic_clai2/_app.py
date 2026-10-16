@@ -61,6 +61,7 @@ from pydantic_clai2.plugins import (
     Renderer,
     SessionEndReason,
     SessionStart,
+    TaskEvent,
     TurnEnd,
     TurnStart,
     bare_screen,
@@ -84,7 +85,7 @@ from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
@@ -769,6 +770,7 @@ def create_shell(
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
+        tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -958,6 +960,9 @@ class _Shell(Generic[DepsT, OutputT]):
             if str(self.sessions.store.database) == ':memory:'
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
+            fire=self.loader.fire,
+            listening=lambda: self.loader.handles(TaskEvent),
+            send_input=self.send_input,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -1019,19 +1024,15 @@ class _Shell(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /tasks [stop|background|resume ID]')
         record = self.tasks.resolve(args[1])
         if args[0] == 'stop':
-            await self.tasks.owner.cancel(record.id)
-            await self.tasks.owner.save(record)
+            await self.tasks.stop(record.id)
             return f'Stopping task {record.id[:8]} and its descendants.'
         if args[0] == 'background':
-            self.tasks.owner.background(record.id)
+            self.tasks.background(record.id)
             return f'Task {record.id[:8]} moved to background.'
         await self.tasks.owner.allow_resume(record.id)
         if self.editor is None:
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
-        self.editor.submit(
-            f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
-            f'resume={record.id!r}. Continue from its saved history and report the result.'
-        )
+        self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
 
     def submit_prompt(self, text: str) -> None:
