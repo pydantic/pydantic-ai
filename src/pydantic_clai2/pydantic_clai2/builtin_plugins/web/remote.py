@@ -138,7 +138,7 @@ class Remote:
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self._command_edits = Lock()
-        """One edit through a command's menu at a time, as one terminal menu makes them."""
+        """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
 
     # What the browser sees.
 
@@ -417,7 +417,7 @@ class Remote:
 
     async def run_menu_action(self, name: str, key: str, *, path: Sequence[str] = ()) -> MenuEdited:
         """Run what a row of a plugin's declared menu does when chosen, asking through this page's dialogs."""
-        return await self._edit(name, partial(_run_action, path=path, key=key, dialogs=self.dialogs), path)
+        return await self._edit(name, partial(_run_action, path=path, key=key, dialogs=self.dialogs, owner=name), path)
 
     async def _edit(
         self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
@@ -465,7 +465,9 @@ class Remote:
 
     async def run_command_menu_action(self, name: str, key: str, *, path: Sequence[str] = ()) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
-        return await self._edit_command(name, partial(_run_action, path=path, key=key, dialogs=self.dialogs), path)
+        return await self._edit_command(
+            name, partial(_run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}'), path
+        )
 
     async def _edit_command(
         self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
@@ -777,11 +779,12 @@ async def _set_row(menu: SettingsMenu, *, path: Sequence[str], key: str, value: 
     return [await to_thread.run_sync(menu.source.apply, row, text)]
 
 
-async def _run_action(menu: SettingsMenu, *, path: Sequence[str], key: str, dialogs: Dialogs) -> list[str]:
+async def _run_action(menu: SettingsMenu, *, path: Sequence[str], key: str, dialogs: Dialogs, owner: str) -> list[str]:
+    """Run a row's action, asking through `dialogs`; `owner`, the plugin or `/command`, names the menu in errors."""
     menu = await to_thread.run_sync(_submenu, menu, path)
     action = menu.actions.get(key)
     if action is None:
-        raise LookupError(f'{menu.source.title} has no action {key}.')
+        raise LookupError(f'{owner} has no action {key}.')
     return list(await action(dialogs))
 
 
