@@ -1634,6 +1634,9 @@ class BaseToolReturnPart:
     def model_response_str(self, *, wrap_if_error: bool = True) -> str:
         """Return a string representation of the data content for the model.
 
+        A `str` is returned as-is and any other value as its JSON text; a value whose JSON form is a
+        string (e.g. a `datetime`) is returned as that string, unquoted.
+
         This excludes multimodal files - use `.files` to get those separately.
 
         Args:

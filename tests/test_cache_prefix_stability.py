@@ -1,11 +1,12 @@
-"""Prompt-cache prefix stability across the UI-adapter round-trip seam.
+"""Prompt-cache prefix stability across the history round-trip seams: UI adapters and persisted JSON.
 
 A UI-driven app (Vercel AI / AG-UI) holds conversation history in the protocol's own
 message shape and re-submits it every turn. The server turns it back into Pydantic AI
 messages with `load_messages` and sends those to the provider. If that round-trip
 (`ModelMessages -> dump_messages -> load_messages`) changes the provider request, the
 cacheable prefix moves and the provider's prompt cache silently misses — no error, just a
-bigger bill and higher latency (the PR #4338 class of bug).
+bigger bill and higher latency (the PR #4338 class of bug). An app that persists history with
+`ModelMessagesTypeAdapter` and reloads it to continue the conversation crosses the same kind of seam.
 
 Each test records a real conversation, round-trips the resulting history through an adapter,
 then sends the same follow-up prompt twice — once with the original history, once with the
@@ -377,28 +378,6 @@ async def test_openai_spaced_tool_call_args_roundtrip_wire_stable(
     assert '"arguments": "{\\"city\\":\\"Paris\\",\\"days\\":2}"' in original_body
 
 
-class Citation(BaseModel):
-    title: str
-
-    @model_serializer
-    def as_text(self) -> str:
-        return f'<cite>{self.title}</cite>'
-
-
-STRING_ENCODED_TOOL_RETURNS: dict[str, object] = {
-    'datetime': datetime(2026, 1, 1, 9, 30, tzinfo=UTC),
-    'date': date(2026, 1, 1),
-    'uuid': UUID('12345678-1234-5678-1234-567812345678'),
-    'decimal': Decimal('1.50'),
-    'path': Path('report.txt'),
-    'bytes': b'abc',
-    'url': AnyUrl('https://example.com/docs'),
-    'serializer': Citation(title='Q3 report'),
-    'list': [date(2026, 1, 1), UUID('12345678-1234-5678-1234-567812345678')],
-}
-"""Tool return values whose JSON form is a string, each of which reloads from JSON as that plain `str`."""
-
-
 def _json_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
     return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
 
@@ -430,21 +409,37 @@ async def test_string_encoded_tool_returns_roundtrip_wire_stable(
     cassette replays its recording whatever body is sent.
     """
 
+    class Citation(BaseModel):
+        title: str
+
+        @model_serializer
+        def as_text(self) -> str:
+            return f'<cite>{self.title}</cite>'
+
+    returns: dict[str, object] = {
+        'datetime': datetime(2026, 1, 1, 9, 30, tzinfo=UTC),
+        'date': date(2026, 1, 1),
+        'uuid': UUID('12345678-1234-5678-1234-567812345678'),
+        'decimal': Decimal('1.50'),
+        'path': Path('report.txt'),
+        'bytes': b'abc',
+        'url': AnyUrl('https://example.com/docs'),
+        'serializer': Citation(title='Q3 report'),
+        'list': [date(2026, 1, 1), UUID('12345678-1234-5678-1234-567812345678')],
+    }
+
     def call_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if isinstance(messages[-1].parts[-1], ToolReturnPart):
             return ModelResponse(parts=[TextPart('Done.')])
         return ModelResponse(
-            parts=[
-                ToolCallPart('get_value', {'kind': kind}, tool_call_id=f'call_{kind}')
-                for kind in STRING_ENCODED_TOOL_RETURNS
-            ]
+            parts=[ToolCallPart('get_value', {'kind': kind}, tool_call_id=f'call_{kind}') for kind in returns]
         )
 
     generator = Agent(FunctionModel(call_tools))
 
     @generator.tool_plain
     def get_value(kind: str) -> object:
-        return STRING_ENCODED_TOOL_RETURNS[kind]
+        return returns[kind]
 
     history = (await generator.run('Look up every value.')).all_messages()
     restored = roundtrip(history)

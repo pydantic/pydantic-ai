@@ -432,9 +432,9 @@ _(This example is complete, it can be run "as is")_
 
     A tool return value with no JSON-native form does not survive as its own type:
     `ToolReturnPart.content` is typed `Any`, so a `datetime`, `UUID`, `Decimal` or `Path` reloads as
-    its string form, and raw `bytes` are written as a base64 string and reload as that `str`. A model
-    sees the same text before and after, because a value whose JSON form is a string is sent to it as
-    that string from the first run. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent]
+    its string form, and raw `bytes` are written as a base64 string and reload as that `str`. For these
+    values a model sees the same text before and after, because a value whose JSON form is a string is
+    sent to it as that string from the first run. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent]
     for binary data and it round-trips exactly, in this adapter and in any model of your own.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
