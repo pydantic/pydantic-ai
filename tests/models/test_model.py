@@ -14,8 +14,11 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -639,6 +642,52 @@ def test_prepare_messages_system_prompt_wrapping(
 ):
     model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
     assert _request_parts(model.prepare_messages(messages)) == expected
+
+
+def test_prepare_messages_orders_tool_results_by_call():
+    """Results answering the preceding response's calls go out in call order; every other part keeps its slot."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('a', {}, tool_call_id='ca'),
+                ToolCallPart('b', {}, tool_call_id='cb'),
+                ToolCallPart('c', {}, tool_call_id='cc'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('c', 'C', tool_call_id='cc'),
+                RetryPromptPart('output invalid'),
+                RetryPromptPart('bad args', tool_name='b', tool_call_id='cb'),
+                ToolReturnPart('z', 'Z', tool_call_id='not-a-call'),
+                ToolReturnPart('a', 'A', tool_call_id='ca'),
+                UserPromptPart(content='file from c'),
+            ]
+        ),
+    ]
+
+    prepared = TestModel().prepare_messages(messages)
+
+    assert _request_parts(prepared)[1] == [
+        ('ToolReturnPart', 'A'),
+        ('RetryPromptPart', 'output invalid'),
+        ('RetryPromptPart', 'bad args'),
+        ('ToolReturnPart', 'Z'),
+        ('ToolReturnPart', 'C'),
+        ('UserPromptPart', 'file from c'),
+    ]
+    # Only the outgoing copy is reordered; the history keeps the order it was stored in.
+    assert _request_parts(messages)[1][0] == ('ToolReturnPart', 'C')
+
+
+def test_prepare_messages_keeps_history_identity_when_tool_results_are_in_call_order():
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id='ca'), ToolCallPart('b', {}, tool_call_id='cb')]),
+        ModelRequest(parts=[ToolReturnPart('a', 'A', tool_call_id='ca'), ToolReturnPart('b', 'B', tool_call_id='cb')]),
+    ]
+
+    assert TestModel().prepare_messages(messages) is messages
 
 
 async def test_model_default_async_context_returns_model() -> None:

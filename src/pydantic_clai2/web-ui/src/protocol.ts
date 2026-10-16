@@ -115,6 +115,16 @@ export interface Palette {
   ansi: string[]
 }
 
+/** `/update` installing a newer CLAI, until the install ends or CLAI is back. */
+export interface UpdateInfo {
+  /** The version, or the short commit of a `main` build. */
+  target: string
+  /** The last line uv printed. */
+  line: string
+  /** Installed: CLAI is restarting as the new build. */
+  restarting: boolean
+}
+
 export interface ThemeInfo {
   /** `default` is Pydantic's own colours, in the browser's light or dark mode. */
   name: string
@@ -197,6 +207,9 @@ export type ServerMessage =
       tasks: TaskEntry[]
       /** Each running task's transcript so far, by task ID. */
       task_items: Record<string, Item[]>
+      /** The running CLAI's version, or a `main` build's short commit. */
+      version: string
+      update: UpdateInfo | null
     }
   | ChatMessage
   | { type: 'status'; status: StatusInfo }
@@ -212,6 +225,7 @@ export type ServerMessage =
   | { type: 'settings' }
   | { type: 'task'; task: TaskEntry }
   | { type: 'task_event'; id: string; messages: ItemMessage[] }
+  | { type: 'update'; update: UpdateInfo | null }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 
@@ -224,6 +238,8 @@ export interface SessionEntry {
   messages: number
   model: string | null
   current: boolean
+  /** Hidden from the sidebar unless it lists archived sessions too. */
+  archived: boolean
 }
 
 export interface Worktree {
