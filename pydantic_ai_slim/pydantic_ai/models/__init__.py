@@ -1022,7 +1022,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 continue
             # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
             if name == 'parallel_tool_calls' and (
-                model_settings.get('parallel_tool_calls') or not model_request_parameters.function_tools
+                model_settings.get('parallel_tool_calls') is not False or not model_request_parameters.function_tools
             ):
                 continue
             warnings.warn(
