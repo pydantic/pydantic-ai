@@ -11900,6 +11900,7 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
                     {
                         'id': IsStr(),
                         'role': 'user',
+                        'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
                         'parts': [{'type': 'text', 'text': 'Background result: 42', 'state': 'done'}],
                     }
                 ]

@@ -4660,19 +4660,22 @@ class EnqueuedMessagesEvent:
     does not affect the event, but in-place mutation of delivered content will be visible through it.
 
     Content enqueued during a tool call goes into the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
-    carrying that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], so the event carries the
-    delivered `parts`; everything else is added as whole `messages`. Exactly one of the two is non-empty.
-    Events are emitted in the order their content lands in history.
+    carrying that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Its
+    `messages` then holds a request of its own with the delivered parts, a view of what was delivered rather
+    than a message in history, and `parts` holds those parts as they sit in history. Events are emitted in
+    the order their content lands in history.
     """
 
     enqueue_id: str
     """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced this content."""
 
-    messages: tuple[ModelMessage, ...] = ()
-    """The messages added to the run's message history, or `()` when the content was delivered as `parts`."""
+    messages: tuple[ModelMessage, ...]
+    """The delivered messages: the ones added to the run's message history, or, for content that went into a
+    tool call's request, a request of its own holding the delivered `parts`."""
 
     parts: tuple[ModelRequestPart, ...] = ()
-    """The parts added to the request carrying a tool call's return, or `()` when the content was delivered as `messages`."""
+    """The parts added to the request carrying a tool call's return, as they sit in history, or `()` when the
+    content was added as its own `messages`."""
 
     event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
     """Event type identifier, used as a discriminator."""

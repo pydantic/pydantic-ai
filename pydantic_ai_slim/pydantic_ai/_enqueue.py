@@ -290,7 +290,7 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     if isinstance(target, ModelRequest) and any(message is target for message in request_context.messages):
         answered_calls = {part.tool_call_id for part in target.parts if isinstance(part, ToolReturnPart)}
 
-    spliced: dict[str, list[tuple[str, Sequence[ModelRequestPart]]]] = {}
+    spliced: dict[str, list[tuple[str, ModelRequest]]] = {}
     appended: list[tuple[str, list[ModelMessage]]] = []
     for pending in drained:
         messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
@@ -298,7 +298,7 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
             # `from_content` only keeps `tool_call_id` for content made of parts, which is one request.
             (request,) = messages
             assert isinstance(request, ModelRequest)
-            spliced.setdefault(pending.tool_call_id, []).append((pending.enqueue_id, request.parts))
+            spliced.setdefault(pending.tool_call_id, []).append((pending.enqueue_id, request))
         else:
             appended.append((pending.enqueue_id, messages))
 
@@ -309,9 +309,11 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
         for part in target.parts:
             parts.append(part)
             if isinstance(part, ToolReturnPart):
-                for enqueue_id, delivered in spliced.pop(part.tool_call_id, ()):
-                    parts.extend(delivered)
-                    events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=tuple(delivered)))
+                for enqueue_id, request in spliced.pop(part.tool_call_id, ()):
+                    parts.extend(request.parts)
+                    events.append(
+                        EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts))
+                    )
         spliced_target = replace(target, parts=parts)
         ctx.messages[-1] = spliced_target
         request_context.messages = [

@@ -29,7 +29,6 @@ from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     CompactionPart,
-    EnqueuedMessagesEvent,
     ForceDownloadMode,
     ModelMessage,
     ModelRequest,
@@ -185,19 +184,15 @@ _COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
 
 
 def enqueued_messages_for_client(
-    event: EnqueuedMessagesEvent, *, manage_system_prompt: Literal['server', 'client']
+    messages: Sequence[ModelMessage], *, manage_system_prompt: Literal['server', 'client']
 ) -> list[ModelMessage]:
     """The enqueued messages to stream to the frontend.
-
-    Parts delivered into a tool call's request go out as a request of their own: the client loads it back
-    after that request, and the two render the same once they're merged for the model.
 
     When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
     frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
     Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
     current request only, and loaded back they'd become lasting system prompts.
     """
-    messages = event.messages or (ModelRequest(parts=list(event.parts)),)
     kept: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest):

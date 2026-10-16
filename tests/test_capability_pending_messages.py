@@ -282,7 +282,23 @@ async def test_enqueue_asap_delivery_event_from_tool():
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
     tool_request = result.all_messages()[2]
     assert isinstance(tool_request, ModelRequest)
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=(tool_request.parts[1],))]
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
+    # `parts` are the very objects in history; `messages` holds them in a request of their own.
+    assert delivery_events[0].parts[0] is tool_request.parts[1]
+    assert delivery_events[0].messages[0] not in result.all_messages()
     # The delivery event precedes the model response that can depend on the delivered message.
     delivery_index = events.index(delivery_events[0])
     done_index = next(
@@ -365,8 +381,30 @@ async def test_multiple_enqueue_delivery_events_keep_order():
     tool_request = result.all_messages()[2]
     assert isinstance(tool_request, ModelRequest)
     assert delivery_events == [
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[0], parts=(tool_request.parts[1],)),
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[1], parts=(tool_request.parts[2],)),
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_ids[0],
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        ),
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_ids[1],
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[2]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[2],),
+        ),
     ]
 
 
@@ -403,7 +441,20 @@ async def test_enqueue_delivery_event_survives_history_processor_rebuild():
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
     tool_request = result.all_messages()[2]
     assert isinstance(tool_request, ModelRequest)
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=(tool_request.parts[1],))]
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
 
 
 async def test_empty_enqueue_emits_no_delivery_event():
@@ -530,7 +581,20 @@ async def test_enqueue_delivery_event_via_run_stream():
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
     tool_request = result.all_messages()[2]
     assert isinstance(tool_request, ModelRequest)
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=(tool_request.parts[1],))]
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():

@@ -429,7 +429,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # A data part rather than chat messages: the AI SDK keeps it on the assistant message, so a
         # client that rebuilds history from the stream sends the messages back without rendering them.
         # Keyed on the enqueue call: run-scoped default IDs would repeat across deliveries in one run.
-        messages = enqueued_messages_for_client(event, manage_system_prompt=self.manage_system_prompt)
+        messages = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
         if not messages:
             return
         ui_messages = VercelAIAdapter.dump_messages(

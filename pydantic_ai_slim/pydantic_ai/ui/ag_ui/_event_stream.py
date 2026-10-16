@@ -469,7 +469,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         # An activity rather than chat messages: the client keeps it in its message list and sends it
         # back, but a UI only renders activity types it registered a renderer for.
-        enqueued = enqueued_messages_for_client(event, manage_system_prompt=self.manage_system_prompt)
+        enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
         if not enqueued:
             return
         messages = AGUIAdapter.dump_messages(
