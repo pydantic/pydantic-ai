@@ -601,6 +601,29 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Each listing resolves again a folder removed or recreated since the last one, as `/resume` does."""
+    web_ = make_web(Agent(TestModel()))
+    folder = (tmp_path / 'folder').resolve()
+    folder.mkdir()
+    summary = ConversationSummary(workspace=str(folder), title='Folder')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def shown() -> list[tuple[str, bool]]:
+        return [
+            (worktree['label'], worktree['missing'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            if [entry['title'] for entry in worktree['sessions']] == ['Folder']
+        ]
+
+    assert shown() == [('folder', False)]
+    folder.rmdir()
+    assert shown() == [('folder', True)]
+    folder.mkdir()
+    assert shown() == [('folder', False)]
+
+
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
     web_ = make_web(Agent(TestModel()))
     web_.plugin.host.sessions = None
