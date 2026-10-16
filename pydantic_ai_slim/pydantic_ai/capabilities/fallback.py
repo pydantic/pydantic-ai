@@ -53,8 +53,9 @@ class Fallback(AbstractCapability[AgentDepsT]):
 
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
-    the candidate about to serve it, so provider-specific preparation — message translation,
-    compaction, context-window fitting — is redone per model instead of inherited. The request step
+    the candidate about to serve it, so the model's own message preparation and token counting, and
+    any preparation a capability does there, are redone per model instead of inherited. (The built-in
+    compaction capabilities still run once per step, in `before_model_request`.) The request step
     itself is not repeated: `before_model_request` and `wrap_model_request` run once, and the model
     never sees a retry prompt.
 

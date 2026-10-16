@@ -233,8 +233,9 @@ class RetryModelRequest(Exception):
 
     Each attempt re-runs
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
-    the model that is about to serve it, so per-model preparation (message translation, compaction,
-    context-window fitting) is redone rather than inherited from the previous attempt.
+    the model that is about to serve it, so preparation a capability does there for that model is
+    redone rather than inherited from the previous attempt, as are the model's own message preparation
+    and token counting.
     `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
     whole, not to a single attempt.
     """
