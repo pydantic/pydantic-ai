@@ -89,7 +89,7 @@ export function sessionApi(id: string | null) {
     answer: (request: string, answers: AnswerBody[] | null) =>
       call<void>('POST', `${base}/questions/${request}`, { answers }),
     /** Flip a run switch as `/set` typed in the session does; a running turn keeps the tools it started with. */
-    setSwitch: (key: Switch, on: boolean) => call<Entered>('POST', `${base}/input`, { text: `/set ${key} ${on}` }),
+    setSwitch: (key: Switch, on: boolean) => call<void>('POST', `${base}/switch`, { key, on }),
   }
 }
 
