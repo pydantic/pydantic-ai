@@ -633,6 +633,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 class _GraphTaskAsyncIterable:
     iterable: AsyncIterable[Sequence[GraphTask]]
     fork_stack: ForkStack
+    fork_run_id: NodeRunID
 
 
 @dataclass
@@ -655,6 +656,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     cancel_scopes: dict[TaskID, CancelScope] = field(init=False)
     active_tasks: dict[TaskID, GraphTask] = field(init=False)
     active_reducers: dict[tuple[JoinID, NodeRunID], JoinState] = field(init=False)
+    streaming_fork_runs: dict[TaskID, NodeRunID] = field(init=False)
+    """The fork run each still-active map task over an async iterable is streaming items into."""
     iter_stream_sender: MemoryObjectSendStream[_GraphTaskResult] = field(init=False)
     iter_stream_receiver: MemoryObjectReceiveStream[_GraphTaskResult] = field(init=False)
 
@@ -662,6 +665,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.cancel_scopes = {}
         self.active_tasks = {}
         self.active_reducers = {}
+        self.streaming_fork_runs = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
         self._next_node_run_id = 1
 
@@ -775,6 +779,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         if scope is not None:
             scope.cancel()
         self.active_tasks.pop(task_id, None)
+        self.streaming_fork_runs.pop(task_id, None)
 
     def _handle_execution_request(self, request: Sequence[GraphTask]) -> None:
         for new_task in request:
@@ -833,7 +838,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         node = self.graph.nodes[node_id]
 
         if isinstance(node, StartNode | Fork):
-            return self._handle_edges(node, inputs, fork_stack)
+            result = self._handle_edges(node, inputs, fork_stack)
+            if isinstance(result, _GraphTaskAsyncIterable):
+                self.streaming_fork_runs[task.task_id] = result.fork_run_id
+            return result
         elif isinstance(node, Step):
             with ExitStack() as stack:
                 if self.graph.auto_instrument:
@@ -1052,7 +1060,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                         yield item_tasks
                         thread_index += 1
 
-                return _GraphTaskAsyncIterable(handle_async_iterable(), fork_stack)
+                return _GraphTaskAsyncIterable(handle_async_iterable(), fork_stack, node_run_id)
 
             else:
                 raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
@@ -1069,8 +1077,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             if fork_run_id in {x.node_run_id for x in t.fork_stack}:
                 if t.node_id in parent_fork.intermediate_nodes or t.node_id == join_id:
                     return False
-            elif t.node_id == parent_fork.fork_id:
-                # A map over an async iterable stays active while it streams items into its fork run.
+            elif self.streaming_fork_runs.get(t.task_id) == fork_run_id:
+                # A map over an async iterable may still stream more items into this fork run.
                 return False
         return True
 

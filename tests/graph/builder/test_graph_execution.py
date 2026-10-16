@@ -689,6 +689,56 @@ async def test_join_waits_for_async_iterable_map_to_finish_streaming():
     assert result == [1, 2]
 
 
+async def test_join_does_not_wait_for_other_async_iterable_map_runs():
+    """A nested async-iterable map's join finalizes once its own run finishes streaming, not when sibling runs do."""
+    g = GraphBuilder(output_type=list[list[int]])
+    first_run_joined = Event()
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, int]) -> AsyncIterator[int]:
+        n = ctx.inputs
+
+        async def items() -> AsyncIterator[int]:
+            yield n * 10
+            if n == 2:
+                # Keeps this run streaming until the other run's join has fired.
+                await first_run_joined.wait()
+            yield n * 10 + 1
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    @g.step
+    async def after_inner_join(ctx: StepContext[None, None, list[int]]) -> list[int]:
+        if 10 in ctx.inputs:
+            first_run_joined.set()
+        return sorted(ctx.inputs)
+
+    inner_join = g.join(reduce_list_append, initial_factory=list[int], parent_fork_id='inner_map')
+    outer_join = g.join(reduce_list_append, initial_factory=list[list[int]], parent_fork_id='outer_map')
+    g.add(
+        g.edge_from(g.start_node).to(outer),
+        g.edge_from(outer).map(fork_id='outer_map').to(generate),
+        g.edge_from(generate).map(fork_id='inner_map').to(process),
+        g.edge_from(process).to(inner_join),
+        g.edge_from(inner_join).to(after_inner_join),
+        g.edge_from(after_inner_join).to(outer_join),
+        g.edge_from(outer_join).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert sorted(result) == [[10, 11], [20, 21]]
+
+
 async def test_nested_empty_map_join_feeds_outer_join():
     """The eagerly created join of an empty nested map still contributes its initial value to the outer join."""
     g = GraphBuilder(output_type=list[list[int]])
