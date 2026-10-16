@@ -35,9 +35,10 @@ PromptT = TypeVar('PromptT')
 async def main(root: Path, mode: str) -> None:
     package = root / 'pydantic_clai2'
     app = package / '_app.py'
-    original = app.read_text()
-    updated = original.replace("prompt_async('> ')", "prompt_async('updated> ')")
-    updated = updated.replace("'Goodbye.'", "'Updated goodbye.'")
+    updated = app.read_text()
+    runtime = package / 'runtime' / 'session_runtime.py'
+    updated_runtime = runtime.read_text().replace("prompt_async('> ')", "prompt_async('updated> ')")
+    updated_runtime = updated_runtime.replace("'Goodbye.'", "'Updated goodbye.'")
     commands = package / 'commands.py'
     commands.write_text(commands.read_text().replace('Use /help.', 'Use updated /help.'))
     if mode == 'new_imports':
@@ -117,6 +118,7 @@ async def main(root: Path, mode: str) -> None:
                 sys.path.insert(0, str(root))
                 pydantic_clai2.__path__.insert(0, str(package))
                 app.write_text(updated)
+                runtime.write_text(updated_runtime)
                 if reloads == 1:
                     if mode == 'syntax':
                         app.write_text(updated + '\ninvalid syntax!\n')
@@ -126,8 +128,8 @@ async def main(root: Path, mode: str) -> None:
                     elif mode == 'harness':
                         app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
-                        app.write_text(
-                            updated.replace(
+                        runtime.write_text(
+                            updated_runtime.replace(
                                 '    commands = Commands(workspace=lambda: Path(session.workspace))',
                                 '    raise RuntimeError("bad build")',
                             )
