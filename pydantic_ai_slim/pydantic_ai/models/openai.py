@@ -1011,7 +1011,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
       tool-call continuations), the most recent `provider_response_id` from the message
       history takes precedence so the chain extends correctly without re-sending messages
       that are already server-side. After switching from a WebSocket to HTTP or another
-      socket, retained history is sent in full without reapplying this seed.
+      socket, a stored seed can still anchor the retained history.
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state.
@@ -3840,9 +3840,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # from the message history takes precedence, so we chain to the latest stored
         # response instead of re-sending messages that are already server-side.
         #
-        # A compaction or incompatible transport in the tail is a hard chain boundary
-        # even with a concrete seed: replaying full history alongside the seed could
-        # duplicate context or reference a response unavailable on this connection.
+        # A compaction in the tail is a hard chain boundary even with a concrete seed:
+        # crossing it would re-inject the context that compaction was meant to replace.
+        # An incompatible transport instead requires history after a stored seed to be
+        # replayed, while preserving the prior context represented by that seed.
         if setting is None:
             return None, messages
         auto_id, trimmed = self._get_previous_response_id_and_new_messages(
@@ -3850,8 +3851,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if auto_id is not None:
             return auto_id, trimmed
-        if setting == 'auto' or self._is_at_history_boundary(messages):
+        if setting == 'auto':
             return None, messages
+        boundary = self._history_boundary(messages)
+        if boundary == 'compaction':
+            return None, messages
+        if boundary == 'transport':
+            for index, message in enumerate(messages):
+                if (
+                    isinstance(message, ModelResponse)
+                    and message.provider_name == self.system
+                    and message.provider_response_id == setting
+                ):
+                    return setting, messages[index + 1 :]
         return setting, messages
 
     def _prompt_cache_comparison_response_id(
@@ -3880,15 +3892,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
-    def _is_at_history_boundary(self, messages: list[ModelMessage]) -> bool:
+    def _history_boundary(self, messages: list[ModelMessage]) -> Literal['compaction', 'transport'] | None:
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 if m.provider_details and m.provider_details.get('compaction'):
-                    return True
+                    return 'compaction'
                 if (m.provider_details or {}).get('transport') == 'websocket':
-                    return self._websocket is None or m.provider_response_id != self._websocket.latest_response_id
-                return self._websocket is not None
-        return False
+                    if self._websocket is None or m.provider_response_id != self._websocket.latest_response_id:
+                        return 'transport'
+                elif self._websocket is not None:
+                    return 'transport'
+                return None
+        return None
 
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False

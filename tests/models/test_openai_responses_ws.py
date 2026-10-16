@@ -686,9 +686,26 @@ async def test_older_socket_response_replays_history(allow_model_requests: None,
     ]
 
 
-@pytest.mark.parametrize('previous_response_id', ['auto', 'resp_seed'])
+async def test_compatible_response_is_not_a_history_boundary(allow_model_requests: None, sockets: SocketHarness):
+    socket = sockets.pending[0]
+    socket.responses = deque([text_events('socket answer', 'resp_socket')])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    http_response = ModelResponse(
+        parts=[TextPart('HTTP answer')], provider_name='openai', provider_response_id='resp_http'
+    )
+    assert source._history_boundary([http_response]) is None  # pyright: ignore[reportPrivateUsage]
+
+    async with source.connect() as connected:
+        result = await Agent(connected).run('hello')
+        assert connected._history_boundary(result.all_messages()) is None  # pyright: ignore[reportPrivateUsage]
+    assert len(socket.sent) == 1
+
+
+@pytest.mark.parametrize(
+    'previous_response_id,seed_in_history', [('auto', False), ('resp_seed', False), ('resp_seed', True)]
+)
 async def test_per_step_selection_switches_websocket_and_http(
-    allow_model_requests: None, sockets: SocketHarness, previous_response_id: str
+    allow_model_requests: None, sockets: SocketHarness, previous_response_id: str, seed_in_history: bool
 ):
     """A selector can change transport inside one run without crossing cache-only IDs."""
     socket = sockets.pending[0]
@@ -732,7 +749,17 @@ async def test_per_step_selection_switches_websocket_and_http(
                 tool_models.append(ctx.model)
                 return str(len(tool_models))
 
-            result = await agent.run('start')
+            history: list[ModelRequest | ModelResponse] = []
+            if seed_in_history:
+                history = [
+                    ModelRequest(parts=[UserPromptPart('prior turn')]),
+                    ModelResponse(
+                        parts=[TextPart('prior answer')],
+                        provider_name='openai',
+                        provider_response_id='resp_seed',
+                    ),
+                ]
+            result = await agent.run('start', message_history=history)
 
     assert result.output == 'done'
     assert selection_contexts == [(1, source), (2, connected), (3, source)]
@@ -753,9 +780,9 @@ async def test_per_step_selection_switches_websocket_and_http(
         {'type': 'function_call_output', 'call_id': 'call_socket', 'output': '1'},
     ]
     assert http_body['input'] == replayed_socket_turn
-    assert 'previous_response_id' not in http_body
+    assert http_body.get('previous_response_id') == (None if previous_response_id == 'auto' else 'resp_seed')
     assert 'resp_socket' not in str(http_body)
-    assert 'previous_response_id' not in socket.sent[1]
+    assert socket.sent[1].get('previous_response_id') == (None if previous_response_id == 'auto' else 'resp_seed')
     assert 'resp_http' not in str(socket.sent[1])
     final_input = socket.sent[1]['input']
     assert isinstance(final_input, list)
@@ -812,7 +839,9 @@ async def test_per_step_selection_switches_distinct_sockets(
         {'type': 'function_call', 'name': 'step', 'arguments': '{}', 'call_id': 'call_first'},
         {'type': 'function_call_output', 'call_id': 'call_first', 'output': '1'},
     ]
-    assert 'previous_response_id' not in second_socket.sent[0]
+    assert second_socket.sent[0].get('previous_response_id') == (
+        None if previous_response_id == 'auto' else 'resp_seed'
+    )
     assert 'resp_first' not in str(second_socket.sent[0])
     assert [first_socket.close_count, second_socket.close_count] == [1, 1]
 
