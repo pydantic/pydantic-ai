@@ -118,6 +118,7 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -2167,7 +2168,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = self.profile.get('openai_system_prompt_role', None)
                 if system_prompt_role == 'developer':
@@ -4022,7 +4023,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
-                for part in message.parts:
+                for part in _sendable_request_parts(message.parts):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(
                             responses.EasyInputMessageParam(

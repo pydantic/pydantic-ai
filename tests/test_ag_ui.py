@@ -9211,6 +9211,7 @@ def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reload
     assert not [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
     [feedback_msg] = [msg for msg in ag_ui_msgs if isinstance(msg, UserMessage) and msg.encrypted_value]
     assert feedback_msg.content == snapshot("""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
 </validation_errors>\
@@ -9227,6 +9228,7 @@ def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reload
                 parts=[
                     UserPromptPart(
                         content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
 </validation_errors>\

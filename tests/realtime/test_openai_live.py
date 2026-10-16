@@ -1827,6 +1827,7 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
                     {
                         'type': 'input_text',
                         'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 not an int
 </validation_errors>\

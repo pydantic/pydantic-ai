@@ -1850,6 +1850,14 @@ request on a provider without inline system prompts.
 """
 
 
+_VALIDATION_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
+"""The line that opens validation feedback, ahead of its `<validation_errors>` fence.
+
+The feedback goes out in the user voice, so this says who is speaking: the application checking the
+model's output, not the person it is talking to (https://github.com/pydantic/pydantic-ai/issues/6404).
+"""
+
+
 def _wrap_in_tag(content: str, *, tag: Literal['system', 'validation_errors']) -> str:
     """Wrap text in `<tag>…</tag>`, neutralizing any tag the text must not be able to write itself.
 
@@ -2095,8 +2103,9 @@ class RetryFeedbackPart:
         Error details serialize the way an errored
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]'s content does, so a retry that
         answers a tool call and one that answers none show the model the same JSON. Only a
-        `'validation_error'` is fenced; the wrapping tag is what marks the model's own words off from
-        the harness's, and the other causes carry no model text to mark off.
+        `'validation_error'` is fenced, behind one line saying the application is speaking; the
+        wrapping tag is what marks the model's own words off from the harness's, and the other causes
+        carry no model text to mark off.
 
         What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
         into, and the `<system>` tagging a provider without a mid-conversation system message needs.
@@ -2107,7 +2116,8 @@ class RetryFeedbackPart:
             else tool_return_ta.dump_json(_dump_error_details(self.content), by_alias=True).decode()
         )
         if self.cause == 'validation_error':
-            return _wrap_in_tag(f'\n{content}\n', tag='validation_errors')
+            fence = _wrap_in_tag(f'\n{content}\n', tag='validation_errors')
+            return f'{_VALIDATION_FEEDBACK_FRAMING}\n{fence}'
         return content
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:

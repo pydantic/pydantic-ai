@@ -90,6 +90,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -2304,7 +2305,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # despite being authored before the marker, so whether they fall inside the boundary
                 # depends on whether anything else follows the marker.
                 deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
-                for part_index, request_part in enumerate(m.parts):
+                for part_index, request_part in enumerate(_sendable_request_parts(m.parts)):
                     if isinstance(request_part, SystemPromptPart):
                         if not inline_system_prompts or part_index < standing_prompt_count:
                             system_prompt_parts.append(request_part.content)

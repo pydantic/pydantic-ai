@@ -46,6 +46,7 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
@@ -397,7 +398,7 @@ class XaiModel(Model[AsyncClient]):
         xai_messages: list[chat_types.chat_pb2.Message] = []
         tool_results: list[ToolReturnPart] = []
 
-        for part in parts:
+        for part in _sendable_request_parts(parts):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):

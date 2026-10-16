@@ -1043,6 +1043,7 @@ Fix the errors and try again.\
                     {
                         'type': 'text',
                         'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 Output did not validate.
 </validation_errors>\
@@ -1100,6 +1101,7 @@ def test_messages_to_otel_messages_retry_feedback_across_versions():
                         {
                             'type': 'text',
                             'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
 </validation_errors>\
@@ -1116,6 +1118,7 @@ def test_messages_to_otel_messages_retry_feedback_across_versions():
                         {
                             'type': 'text',
                             'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
 </validation_errors>\

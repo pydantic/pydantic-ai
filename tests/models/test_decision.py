@@ -935,6 +935,43 @@ async def test_no_choice_limit(allow_model_requests: None):
     assert part.args == {}
 
 
+async def test_a_legacy_retry_prompt_part_on_a_direct_request_is_judged_as_what_it_meant(allow_model_requests: None):
+    """A direct `request()` skips `prepare_messages`; the deprecated part is judged as the part it always meant."""
+    model = InMemoryDecisionModel()
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart('Look it up.')]),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')]),
+            ModelRequest(
+                parts=[
+                    legacy_retry_prompt_part('bad args', tool_name='lookup', tool_call_id='c1'),
+                    legacy_retry_prompt_part('answer in one word'),
+                ]
+            ),
+        ],
+        None,
+        ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'}),
+                ToolDefinition(name='finish', parameters_json_schema={'type': 'object'}),
+            ],
+            allow_text_output=False,
+        ),
+    )
+
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Look it up.'},
+                {'tool_call': {'name': 'lookup', 'args': {}}},
+                {'tool_return': {'name': 'lookup', 'content': '{"error":"bad args"}'}},
+                {'retry': 'answer in one word'},
+            ]
+        }
+    )
+
+
 Rubric = Annotated[
     Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     WithJsonSchema(
@@ -2088,6 +2125,7 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                         {'assistant': 'Sorry about that, refunding now.'},
                         {
                             'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
 </validation_errors>\
@@ -2159,6 +2197,7 @@ async def test_feedback_after_a_tool_returned_is_a_retry_entry(allow_model_reque
                 {'assistant': 'Sorry about that, refunding now.'},
                 {
                     'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected value at line 1 column 1","input":"Sorry about that, refunding now."}]
 </validation_errors>\

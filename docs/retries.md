@@ -571,7 +571,7 @@ The stored part carries no wording at all; each model turns it into a sendable p
 
 | `cause` | What the model is sent | Why |
 |---|---|---|
-| `'validation_error'` | a user turn whose text is wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
+| `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
 | `'no_output'`, `'model_retry'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is a message your own code wrote knowing it would be shown — the same trust you already give [`instructions`][pydantic_ai.Agent]. |
 
 A closing tag inside either wrapper is escaped, so text the model had a hand in cannot end the statement that carries it, and inside `<validation_errors>` so is a `<system>` tag, opening or closing, so the model's own words cannot pass themselves off as the framework speaking.

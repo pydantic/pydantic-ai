@@ -1813,6 +1813,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                         {
                             'type': 'input_text',
                             'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
 </validation_errors>\

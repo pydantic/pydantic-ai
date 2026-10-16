@@ -7,6 +7,7 @@ from typing import Literal, assert_never
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
 from .models import (
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
 )
@@ -127,7 +128,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
             if pai_message.instructions is not None:
                 system_prompt.append(pai_message.instructions)
 
-            for part in pai_message.parts:
+            for part in _sendable_request_parts(pai_message.parts):
                 if isinstance(part, messages.SystemPromptPart):
                     system_prompt.append(part.content)
                 elif isinstance(part, messages.UserPromptPart):

@@ -38,6 +38,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -46,6 +47,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, merge_profile
@@ -2259,6 +2261,10 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return _tool_return_entry(part, images)
     elif isinstance(part, RetryFeedbackPart):
         return {'retry': part.model_response()}
+    # TODO(v3): remove `RetryPromptPart`
+    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # A direct `request()` skips `prepare_messages`; judge the deprecated part as what it always meant.
+        return _request_entry(_translate_legacy_retry_part(part), images)
     elif isinstance(part, _UnpreparedPart):  # pragma: no cover
         raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover

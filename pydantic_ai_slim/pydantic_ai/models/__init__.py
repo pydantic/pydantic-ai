@@ -2608,7 +2608,41 @@ tool list, or a retry that isn't a plain turn — and `prepare_messages` turns i
 adapter already knows how to map. So an adapter meeting one has been handed a history that step never
 ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
 on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+A deprecated `RetryPromptPart` never reaches this branch either: adapters map their parts through
+`_sendable_request_parts`, which renders it the way it rendered before it was deprecated.
 """
+
+
+# TODO(v3): remove `_legacy_retry_as_sendable` and `_sendable_request_parts` along with `RetryPromptPart`
+def _legacy_retry_as_sendable(
+    part: RetryPromptPart,  # pyright: ignore[reportDeprecated]
+) -> ToolReturnPart | UserPromptPart:
+    """A deprecated `RetryPromptPart` an adapter was handed directly, as the part it maps instead.
+
+    `prepare_messages` translates the deprecated part before any adapter sees it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't run it, and
+    deprecated functionality keeps working until v3. A tool-bound one is that call's result again,
+    as a `ToolReturnPart` with `outcome='retried'`; a tool-less one goes out as the user text it
+    always rendered as.
+    """
+    translated = _translate_legacy_retry_part(part)
+    if isinstance(translated, ToolReturnPart):
+        return translated
+    return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
+
+def _sendable_request_parts(parts: Sequence[ModelRequestPart]) -> Generator[ModelRequestPart]:  # pyright: ignore[reportUnusedFunction]
+    """A request's parts as an adapter maps them, with any deprecated `RetryPromptPart` rendered.
+
+    See `_legacy_retry_as_sendable`. Every other part comes through unchanged, so an index into the
+    request still lines up.
+    """
+    for part in parts:
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            yield _legacy_retry_as_sendable(part)
+        else:
+            yield part
 
 
 def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
