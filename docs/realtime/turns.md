@@ -21,7 +21,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModel
 settings = OpenAIRealtimeModelSettings(
     turn_detection={'sensitivity': 'high', 'silence_duration_ms': 400}
 )
-model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
+model = OpenAIRealtimeModel('{{ openai:realtime.name }}', settings=settings)
 ```
 
 Use provider-specific settings only when the shared controls are insufficient:
@@ -96,7 +96,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    realtime = agent.realtime('openai:gpt-realtime')
+    realtime = agent.realtime('{{ openai:realtime }}')
     async with realtime.session(handle_barge_in=True) as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
         ...  # stream the microphone and handle events; barge-in is handled for you
@@ -235,7 +235,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
         await session.send('Greet the visitor.')
         async for event in session:
@@ -273,7 +273,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModel
 
 agent = Agent()
 model = OpenAIRealtimeModel(
-    'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=False)
+    '{{ openai:realtime.name }}', settings=OpenAIRealtimeModelSettings(turn_detection=False)
 )
 
 

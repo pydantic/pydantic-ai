@@ -24,7 +24,7 @@ class User(BaseModel):
     age: int
 
 
-agent = Agent(model=OpenAIResponsesModel('gpt-5.2'))
+agent = Agent(model=OpenAIResponsesModel('{{ openai:medium.name }}'))
 
 
 @agent.tool_plain
@@ -196,7 +196,7 @@ class Reservation(BaseModel):
     dietary_notes: list[str]
 
 
-agent = Agent('openai:gpt-5')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.tool_plain(strict=True)
@@ -517,7 +517,7 @@ class RequireFirstCall(AbstractCapability):
         return settings
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[RequireFirstCall('get_weather')])
+agent = Agent('{{ openai:medium }}', capabilities=[RequireFirstCall('get_weather')])
 
 
 @agent.tool_plain
@@ -847,7 +847,7 @@ from pydantic_ai.capabilities import UseThreadExecutor
 
 # Per-agent: pass as a capability
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-agent = Agent('openai:gpt-5.2', capabilities=[UseThreadExecutor(executor)])
+agent = Agent('{{ openai:medium }}', capabilities=[UseThreadExecutor(executor)])
 
 # Global: wrap your server lifespan
 @asynccontextmanager
@@ -907,7 +907,7 @@ For the model to find tools well, give them descriptive names with consistent pr
 ```python {title="tool_search.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 
 
 @agent.tool_plain(defer_loading=True)
@@ -926,7 +926,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 mcp = MCPToolset('http://localhost:8000/mcp')
-agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
+agent = Agent('{{ anthropic:medium }}', toolsets=[mcp.defer_loading()])
 ```
 
 ### Configuring `ToolSearch`
@@ -953,7 +953,7 @@ def fuzzy_search(
     ]
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=fuzzy_search)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(strategy=fuzzy_search)])
 
 
 @agent.tool_plain(defer_loading=True)
