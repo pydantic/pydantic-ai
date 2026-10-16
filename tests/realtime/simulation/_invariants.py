@@ -923,20 +923,20 @@ class Checker:
         }
         not_recorded: list[Violation] = []
         for item_id, heard_ms in heard.items():
-            if (
-                response := truth.item_responses.get(item_id)
-            ) is None:  # pragma: lax no cover (a truncation of no reply)
-                continue
-            recorded = spoken.get((response.number, ' '.join(response.items[item_id])))
-            if recorded is None:
+            response = truth.item_responses.get(item_id)
+            recorded = (
+                spoken.get((response.number, ' '.join(response.items[item_id]))) if response is not None else None
+            )
+            if response is None or recorded is None:  # pragma: lax no cover (depends on what exploration reaches)
                 # Not recorded as the provider said it (lost with its connection, say): other invariants judge that.
                 continue
             message, part = recorded
-            if message.state != 'interrupted' or part.interrupted_at_ms is None or part.interrupted_at_ms > heard_ms:
+            cut = part.interrupted_at_ms
+            if message.state != 'interrupted' or cut is None or cut > heard_ms:  # pragma: lax no cover (a violation)
                 not_recorded.append(
                     (
                         f'{response.key} was truncated at {heard_ms} ms, but history records it as '
-                        f'{message.state} with a cut at {part.interrupted_at_ms}',
+                        f'{message.state} with a cut at {cut}',
                         {'response': response.key},
                     )
                 )
