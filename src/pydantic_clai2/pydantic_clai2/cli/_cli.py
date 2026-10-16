@@ -54,6 +54,11 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
     )
+    parser.add_argument(
+        '--web',
+        action='store_true',
+        help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
+    )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
@@ -88,7 +93,7 @@ def run(*, splash: Splash | None = None) -> None:
             return
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None)
+            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
         if model := args.model or os.getenv('CLAI_MODEL'):
@@ -117,6 +122,24 @@ def run(*, splash: Splash | None = None) -> None:
                     )
                 )
             )
+        if args.web:
+            from rich.console import Console
+
+            from pydantic_clai2.cli.web import run_web
+
+            asyncio.run(
+                run_web(
+                    settings=settings,
+                    store=store,
+                    project=project,
+                    console=Console(force_terminal=False, highlight=False),
+                    resume=args.resume,
+                    resume_from=args.resume_from,
+                    session_id=args.session_id,
+                    fork_session=args.fork_session,
+                )
+            )
+            return
         # `chat` relays stderr itself; this also covers the `git` calls around it.
         with relay_stderr():
             # Before the session, so commits made during it count as changes on exit.
@@ -156,7 +179,7 @@ def run(*, splash: Splash | None = None) -> None:
             print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
         parser.error(str(exc))
     except KeyboardInterrupt:
-        if args.prompt is not None:
+        if args.prompt is not None or args.web:
             raise SystemExit(130) from None
 
 
@@ -258,6 +281,11 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(str(exc))
     if args.worktree is not None and args.resume is not None:
         parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
+    if args.web:
+        if args.command or args.prompt is not None or args.agent is not None:
+            parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
+        if args.resume == '':
+            parser.error('--web requires an explicit --resume SESSION-ID')
     if args.prompt is not None:
         if args.command:
             parser.error('--prompt cannot be combined with config or plugins')
