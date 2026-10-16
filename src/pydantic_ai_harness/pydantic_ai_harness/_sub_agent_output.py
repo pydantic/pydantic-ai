@@ -24,8 +24,9 @@ def _is_resumable_output_type(output_type: object) -> bool:
 def without_resumable_outputs(output_type: OutputSpec[object]) -> OutputSpec[object]:
     """`output_type` minus the resumable output types listed directly in it as a sequence or union.
 
-    Output mode wrappers like `ToolOutput` are kept as they are. Core requires an agent to have
-    at least one other output type, so something is always left.
+    Nested sequences and unions, and output mode wrappers like `ToolOutput`, are kept as they are:
+    the rendered signature may then still mention a marker, but a run that ends with one fails
+    the call all the same.
     """
     members: Sequence[object]
     if isinstance(output_type, Sequence):
@@ -34,9 +35,9 @@ def without_resumable_outputs(output_type: OutputSpec[object]) -> OutputSpec[obj
         members = get_args(output_type)
     else:
         return output_type
-    kept = [member for member in members if not _is_resumable_output_type(member)]
-    # Each member of a valid output spec is a valid output spec item, so the kept members form one too.
-    return cast('OutputSpec[object]', kept or members)
+    # The members of a valid output spec are valid output spec items, so any subset of them is an output
+    # spec too; pyright cannot see that through `object`. Core rejects an output type that is only markers.
+    return cast('OutputSpec[object]', [member for member in members if not _is_resumable_output_type(member)])
 
 
 def resumable_output_reason(output: object) -> str | None:

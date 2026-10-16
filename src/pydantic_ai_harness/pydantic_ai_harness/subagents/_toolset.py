@@ -677,7 +677,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 return _Ended(outcome='failed', output=sub_agent.on_failure)
             return _Ended(
                 outcome='failed',
-                output=f'Sub-agent {agent_name!r} {reason}; a delegating agent cannot resume it.',
+                output=(
+                    f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
+                    'Do the task another way, or without this sub-agent.'
+                ),
                 retry=True,
             )
         return _Ended(outcome='ok', output=str(result.output))

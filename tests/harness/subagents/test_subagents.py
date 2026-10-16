@@ -561,7 +561,8 @@ class TestDelegation:
         assert retries == snapshot(
             [
                 "Sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval or "
-                'deferred tool results; a delegating agent cannot resume it.'
+                'deferred tool results, which a delegating agent cannot provide. Do the task another way, or '
+                'without this sub-agent.'
             ]
         )
 
