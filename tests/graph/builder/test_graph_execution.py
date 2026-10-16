@@ -689,6 +689,38 @@ async def test_join_waits_for_async_iterable_map_to_finish_streaming():
     assert result == [1, 2]
 
 
+async def test_reduce_first_value_stops_async_iterable_map():
+    """A join that cancels its siblings also stops the async-iterable map still streaming into its fork run."""
+    g = GraphBuilder(output_type=int)
+    never = Event()
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        async def items() -> AsyncIterator[int]:
+            yield 1
+            await never.wait()
+            raise AssertionError('should be cancelled')  # pragma: no cover
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    first = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id='items')
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map(fork_id='items').to(process),
+        g.edge_from(process).to(first),
+        g.edge_from(first).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert result == 1
+
+
 async def test_join_does_not_wait_for_other_async_iterable_map_runs():
     """A nested async-iterable map's join finalizes once its own run finishes streaming, not when sibling runs do."""
     g = GraphBuilder(output_type=list[list[int]])

@@ -1092,6 +1092,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             ):
                 del self.active_reducers[key]
 
+        # Stop any map over an async iterable that is still streaming items into the cancelled fork run.
+        for task_id in [t for t, run_id in self.streaming_fork_runs.items() if run_id == node_run_id]:
+            await self._finish_task(task_id)
+
         task_ids_to_cancel = set[TaskID]()
         for task_id, t in self.active_tasks.items():
             for item in t.fork_stack:  # pragma: no branch
