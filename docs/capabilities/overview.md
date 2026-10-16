@@ -453,13 +453,13 @@ agent = Agent(
 !!! note "`fallback_model` is deprecated"
     On both [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], `fallback_model` is the former name of `fallback_subagent_model`. It keeps working — in Python and in an [agent spec](../agent-spec.md) — and warns; passing both names is refused: [`UserError`][pydantic_ai.exceptions.UserError] when you construct the capability, and the `ValueError` the spec loader wraps it in when you load a spec. The new name says which fallback it configures: an extra agent run, as against a `local=` tool — or, on `ImageGeneration`, a `fallback_image_model` — running in your own process.
 
-Some constraint fields require the native tool (the bundled local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError].
+Some constraint fields require the native tool (the bundled local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, or its native tool can't apply the constraint (see [restricting parameters](../native-tools.md#restricting-parameters)), the capability raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ```python {title="constraints.py" test="skip" lint="skip"}
 # Limit to 5 searches per run — requires native (the local fallback can't track call count)
 WebSearch(max_uses=5)
 
-# Only fetch example.com — enforced locally when native is unavailable
+# Only fetch example.com — enforced locally when native is unavailable or can't apply the filter
 WebFetch(allowed_domains=['example.com'], local=True)
 ```
 

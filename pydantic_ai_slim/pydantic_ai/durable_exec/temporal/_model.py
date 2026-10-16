@@ -25,6 +25,7 @@ from pydantic_ai.models import (
     parse_model_id,
 )
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -429,6 +430,18 @@ class TemporalModel(WrapperModel):
             # A raw model ID carries no URL, and the default model's would name the wrong server.
             return None
         return current.base_url
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Report the native tool settings the currently active model can't apply.
+
+        A raw model string has no model class to ask, so this reports none, like `profile` reports the
+        string's inferred profile without intersecting it with the class's `supported_native_tools()`. The
+        activity resolves the concrete model, whose own `prepare_request` then rejects or swaps the tool.
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            return frozenset()
+        return current.unsupported_native_tool_settings(native_tool)
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         current = self._current_model()

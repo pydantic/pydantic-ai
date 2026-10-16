@@ -25,6 +25,7 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -1159,6 +1160,14 @@ async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
     agent = Agent(instructions='hi')
     with pytest.raises(UserError):
         async with agent.realtime(model, model_settings={'output_modality': 'text'}).session():
+            pass  # pragma: no cover
+
+
+async def test_agent_rejects_web_search_max_uses(model: OpenAILiveModel) -> None:
+    """The backend's `web_search` tool has no usage limit, so `max_uses` can't be applied and the session doesn't open."""
+    agent = Agent(capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+    with pytest.raises(UserError, match=r'`WebSearchTool.max_uses` not supported by this model'):
+        async with agent.realtime(model).session():
             pass  # pragma: no cover
 
 

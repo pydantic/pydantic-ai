@@ -118,6 +118,20 @@ class AbstractNativeTool(ABC):
         """
         return self.kind.replace('_', ' ').title()
 
+    @property
+    def restricting_settings(self) -> frozenset[str]:
+        """The names of the settings set on this instance that narrow what the tool may do.
+
+        These are settings such as domain filters and usage limits, which are usually there for compliance or
+        cost reasons. A model that can't apply one of them treats this instance as unsupported, so the request
+        uses the local fallback when one is provided and raises [`UserError`][pydantic_ai.exceptions.UserError]
+        otherwise. Settings that only tune results, such as a search context size, are not included.
+
+        Models report which of these they can't apply via
+        [`Model.unsupported_native_tool_settings`][pydantic_ai.models.Model.unsupported_native_tool_settings].
+        """
+        return frozenset()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         NATIVE_TOOL_TYPES[cls.kind] = cls
@@ -144,6 +158,9 @@ class WebSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search the web for information.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+    The restricting settings `allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` are
+    the exception: on a model that can't apply one that is set, the tool is treated as unsupported, so the local
+    fallback runs if one is provided, and [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
     OpenRouter uses its Beta web-search server tool, which lets the model decide whether to search and how often.
     It accepts the portable settings below, though their effect depends on OpenRouter's selected
     search engine and downstream provider.
@@ -233,6 +250,20 @@ class WebSearchTool(AbstractNativeTool):
 
     kind: str = 'web_search'
     """The kind of tool."""
+
+    @property
+    def restricting_settings(self) -> frozenset[str]:
+        """`allowed_domains`, `blocked_domains` and `max_uses` when set, and `external_web_access` when `False`."""
+        settings: set[str] = set()
+        if self.allowed_domains is not None:
+            settings.add('allowed_domains')
+        if self.blocked_domains is not None:
+            settings.add('blocked_domains')
+        if self.max_uses is not None:
+            settings.add('max_uses')
+        if self.external_web_access is False:
+            settings.add('external_web_access')
+        return frozenset(settings)
 
 
 class WebSearchUserLocation(TypedDict, total=False):
@@ -389,6 +420,9 @@ class WebFetchTool(AbstractNativeTool):
     """Allows your agent to access contents from URLs.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+    The restricting settings `allowed_domains`, `blocked_domains`, and `max_uses` are the exception: on a model that
+    can't apply one that is set, the tool is treated as unsupported, so the local fallback runs if one is provided,
+    and [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
 
     Supported by:
 
@@ -442,6 +476,18 @@ class WebFetchTool(AbstractNativeTool):
 
     kind: str = 'web_fetch'
     """The kind of tool."""
+
+    @property
+    def restricting_settings(self) -> frozenset[str]:
+        """`allowed_domains`, `blocked_domains` and `max_uses` when set."""
+        settings: set[str] = set()
+        if self.allowed_domains is not None:
+            settings.add('allowed_domains')
+        if self.blocked_domains is not None:
+            settings.add('blocked_domains')
+        if self.max_uses is not None:
+            settings.add('max_uses')
+        return frozenset(settings)
 
 
 @dataclass(kw_only=True)

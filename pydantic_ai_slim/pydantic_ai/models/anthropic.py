@@ -1127,6 +1127,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
         )
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that Anthropic's web tools don't take: `external_web_access=False`."""
+        if isinstance(native_tool, WebSearchTool | WebFetchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'max_uses'}
+        return frozenset()
+
     async def request(
         self,
         messages: list[ModelMessage],
