@@ -1,6 +1,5 @@
 """`clai2 --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -53,8 +52,9 @@ async def run_web(
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
-    if resume and resume_from is None:
-        project = await _start_in(store=store, conversation_id=resume) or project
+    workspace = None
+    if resume and resume_from is None and (saved := await _start_in(store=store, conversation_id=resume)):
+        workspace, project = saved
     settings = settings_for(project)
     agent = create_stock_agent()
     shell = create_shell(
@@ -68,6 +68,7 @@ async def run_web(
         builtin_plugins=STOCK_PLUGINS,
         project=project,
         headless=True,
+        workspace=workspace,
     )
     SessionWorkspace(
         session=shell.session,
@@ -120,8 +121,8 @@ def _loaded_web(loader: PluginLoader[None]) -> WebPlugin | None:
     return loaded.plugin if loaded is not None and isinstance(loaded.plugin, WebPlugin) else None
 
 
-async def _start_in(*, store: SettingsStore, conversation_id: str) -> ProjectSettings | None:
-    """Change into the directory a resumed session was saved in and read its project file; `None` when it is here."""
+async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path, ProjectSettings] | None:
+    """The directory a resumed session was saved in, with its project file; `None` when it is here."""
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
     try:
         workspace = (await conversations.get(conversation_id=conversation_id)).summary.workspace
@@ -135,6 +136,4 @@ async def _start_in(*, store: SettingsStore, conversation_id: str) -> ProjectSet
         raise ValueError(
             f'{exc} Session {conversation_id} was saved there; start without --resume to read it in the sidebar.'
         ) from exc
-    project = load_project_settings(directory)
-    os.chdir(directory)
-    return project
+    return directory, load_project_settings(directory)

@@ -1410,7 +1410,10 @@ REPO_CONTEXT = PluginSettings(id='repo_context', factory='pydantic_clai2.builtin
 def test_sessions_continue_in_their_own_directories(
     make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Under `clai2 --web`, opening a session moves CLAI into its directory, and a new one asks where it runs."""
+    """Under `clai2 --web`, opening a session moves it to its directory, and a new one asks where it runs.
+
+    The process's working directory stays where CLAI started; plugins read the session's from `host.workspace`.
+    """
     launch, other, gone = tmp_path / 'launch', tmp_path / 'other', tmp_path / 'gone'
     launch.mkdir()
     (other / '.clai').mkdir(parents=True)
@@ -1436,12 +1439,13 @@ def test_sessions_continue_in_their_own_directories(
         assert web_.post(f'/api/sessions/{there}/open').status_code == 204
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.workspace) == (there, str(other.resolve()))
-        assert Path.cwd() == other.resolve()
+        assert (Path.cwd(), shell.session.workspace) == (launch, str(other.resolve()))
         assert (shell.context.settings.instructions, shell.session.instructions) == ('Work in other.',) * 2
         assert (shell.session.model, 'test' in shell.context.store.models()) == ('test', True)
         loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
         assert list(loaded) == ['repo_context', 'web'], 'the page keeps its plugin, still after the others'
         assert (loaded['web'].plugin, loaded['repo_context'] is repo_context) == (plugin, False)
+        assert loaded['repo_context'].plugin.host.workspace == other.resolve()
 
         assert web_.post('/api/sessions/new', {'workspace': str(launch)}).status_code == 204
         snapshot = receive_until(socket, Snapshot)[1]
@@ -1505,7 +1509,11 @@ def test_a_session_moves_only_between_turns(
     assert (Path.cwd(), shell.session.workspace) == (tmp_path, str(tmp_path.resolve()))
     (tmp_path / 'next').mkdir()
     web_.portal.call(workspace.move, str(tmp_path / 'next'))
-    assert (Path.cwd(), shell.session.model) == ((tmp_path / 'next').resolve(), None)
+    assert (Path.cwd(), shell.session.workspace, shell.session.model) == (
+        tmp_path,
+        str((tmp_path / 'next').resolve()),
+        None,
+    )
     loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
     assert loaded['web'].plugin is plugin
     web_.portal.call(lambda: shell.loader.restart(project=(), keep='absent'))

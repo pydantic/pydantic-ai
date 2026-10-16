@@ -161,7 +161,7 @@ class TestShellPassthrough:
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
-            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts)
+            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts, cwd=os.getcwd())
         )
         await spawn_started.wait()
 
@@ -196,10 +196,17 @@ class TestShellPassthrough:
             stdin: int | None,
             stdout: int,
             stderr: int,
+            cwd: str,
         ) -> tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
             # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
             process = await spawn(
-                factory, command, start_new_session=start_new_session, stdin=stdin, stdout=stdout, stderr=stderr
+                factory,
+                command,
+                start_new_session=start_new_session,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=cwd,
             )
             with anyio.fail_after(5):
                 while not (tmp_path / 'ready').exists():
@@ -381,7 +388,9 @@ async def test_large_stdout_and_stderr_are_drained_concurrently(
     output = io.StringIO()
     command = "i=0; while [ $i -lt 20000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
     with anyio.fail_after(10):
-        context = await run_shell_command(command, console=Console(file=output), interrupts=Interrupts())
+        context = await run_shell_command(
+            command, console=Console(file=output), interrupts=Interrupts(), cwd=os.getcwd()
+        )
     stdout = 'stdout\n' * 20000
     stderr = 'stderr\n' * 20000
     if max_output_chars == 100:
@@ -409,7 +418,9 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
     interrupts = Interrupts()
     tasks_before = asyncio.all_tasks()
     task = asyncio.create_task(
-        run_shell_command('printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts)
+        run_shell_command(
+            'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=os.getcwd()
+        )
     )
     with anyio.fail_after(10):
         await printed.wait()
@@ -475,6 +486,7 @@ async def test_detached_descendant_cannot_hold_output_open(
             f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
             console=Console(file=Output()),
             interrupts=interrupts,
+            cwd=os.getcwd(),
         )
     )
     try:
@@ -540,8 +552,10 @@ def _interactive_context(command: str, status: str) -> str:
 async def test_terminal_command_runs_with_the_screen_released(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """The live panel leaves the screen before the command starts and returns after it exits."""
-    monkeypatch.chdir(tmp_path)
+    """The live panel leaves the screen before the command starts and returns after it exits.
+
+    The command runs in the session's directory, not the process's.
+    """
     events: list[str] = []
 
     @contextmanager
@@ -553,7 +567,7 @@ async def test_terminal_command_runs_with_the_screen_released(
     command = "printf 'sec''ret'; printf 'oo''ps' >&2; : > ran; exit 4"
     output = io.StringIO()
     with holding_output(hold):
-        context = await run_in_terminal(command, console=Console(file=output))
+        context = await run_in_terminal(command, console=Console(file=output), cwd=str(tmp_path))
     assert events == ['hold leave_screen=True ran=False', 'release ran=True']
     # The command wrote to CLAI's own standard streams, not to pipes CLAI reads.
     assert capfd.readouterr() == ('secret', 'oops')
@@ -590,9 +604,10 @@ async def test_forced_terminal_command_saves_only_its_status(
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
-async def test_cancelled_terminal_command_is_killed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    task = asyncio.create_task(run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO())))
+async def test_cancelled_terminal_command_is_killed(tmp_path: Path) -> None:
+    task = asyncio.create_task(
+        run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO()), cwd=str(tmp_path))
+    )
     with anyio.fail_after(5):
         while not (tmp_path / 'ready').exists():
             await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
@@ -603,7 +618,7 @@ async def test_cancelled_terminal_command_is_killed(tmp_path: Path, monkeypatch:
 
 async def test_terminal_command_spawn_failure_is_reported() -> None:
     output = io.StringIO()
-    context = await run_in_terminal('echo a\x00b', console=Console(file=output))
+    context = await run_in_terminal('echo a\x00b', console=Console(file=output), cwd=os.getcwd())
     assert 'Shell error: embedded null byte' in output.getvalue()
     assert context == _interactive_context('echo a\x00b', 'Shell error: embedded null byte')
 

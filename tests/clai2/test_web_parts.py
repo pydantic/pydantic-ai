@@ -477,7 +477,10 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
 
 
 async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere."""
+    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere.
+
+    The process's working directory never changes.
+    """
     opened: list[str] = []
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
     launch, other = tmp_path / 'launch', tmp_path / 'other'
@@ -501,7 +504,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
                 )
             )
             await output.ready.wait()
-            assert Path.cwd() == other.resolve()
+            assert Path.cwd() == launch
             found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
             assert found is not None
             async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
@@ -512,7 +515,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
             group.cancel_scope.cancel()
     assert 'Resumed Elsewhere' in output.getvalue()
     assert f'New session in {launch.resolve()}.' in output.getvalue()
-    assert Path.cwd() == launch.resolve()
+    assert Path.cwd() == launch
 
 
 async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:

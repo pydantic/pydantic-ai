@@ -935,7 +935,7 @@ to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
-elsewhere, or `/workspace`, moves CLAI to that session's directory. Plugins do not own worktree cleanup.
+elsewhere, or `/workspace`, moves the session to its own directory. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
@@ -1220,10 +1220,11 @@ sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` gr
 repository, then by checkout, with a session from a removed worktree under its repository by the
 checkout saved with it (`ConversationSummary.checkout`). Clicking a session sends `/resume ID`.
 Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
-directory (`host.sessions.follows_workspace`): `/resume ID` first changes CLAI's working directory
-to the one the session was saved in, reads that directory's `.clai/settings.json`, and loads every
-plugin but `web` again, so the coding tools, `repo_context`, skills, MCP project files, and a
-plugin's relative paths refer to it, as after `--worktree`. Each of those plugins gets
+directory (`host.sessions.follows_workspace`): `/resume ID` first moves the session to the
+directory it was saved in (`host.workspace`), reads that directory's `.clai/settings.json`, and
+loads every plugin but `web` again, so the coding tools, `repo_context`, skills, and MCP project
+files refer to it, as after `--worktree`. The process's working directory does not change, so a
+plugin that reads `Path.cwd()` still sees the launch directory. Each of those plugins gets
 `on_session_end` and then `on_session_start`, as on `/plugins reload`. `clai2 --web --resume ID`
 starts in that session's directory. A new session from the browser runs where the user picks,
 sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
@@ -3012,6 +3013,15 @@ background fork. It is `None` while startup resume is selecting a conversation,
 or for a host without session persistence. Custom hosts can supply a
 `session_id` callback to read their current ID.
 
+`host.workspace` is the directory the session works in: where its runs' file and
+shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
+project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not
+change the process's working directory after startup, and under `clai2 --web` each
+session has its own directory. Resolve a relative path against `host.workspace`,
+and start a subprocess with `cwd=host.workspace`. A host built outside the shell,
+such as in a test, has the current directory, unless it was built with
+`workspace=`, a function returning another.
+
 `host.status` is the footer's state: `context_tokens` and `context_window`
 render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
@@ -3036,7 +3046,6 @@ plugin unloads. The built-in row accents output-token counts and tool names usin
 the selected theme; plugin fragments stay muted.
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -3045,7 +3054,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The row is repainted about ten times a second while CLAI works and once a second

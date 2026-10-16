@@ -6,6 +6,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import islice
+from pathlib import Path
 from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
 from uuid import uuid4
 
@@ -632,6 +633,7 @@ class PluginHost(Generic[DepsT]):
         setting: Callable[[str], JsonValue] | None = None,
         plugins: PluginCatalog | None = None,
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
+        workspace: Callable[[], Path] = Path.cwd,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -640,8 +642,8 @@ class PluginHost(Generic[DepsT]):
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
         same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
         conversations; `setting` reads its settings, as the method of the same name does; `plugins`
-        is what `/plugins` manages; `tasks` returns what `/tasks` shows, read each time, as the property
-        of the same name is.
+        is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
+        directory, each read each time, as the properties of the same names are.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -671,6 +673,17 @@ class PluginHost(Generic[DepsT]):
         self.plugins = plugins
         """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
         self._tasks = tasks
+        self._workspace = workspace
+
+    @property
+    def workspace(self) -> Path:
+        """The directory this session works in: where its runs' tools work and its project files are read.
+
+        Use it instead of the process's working directory, which CLAI does not change after startup,
+        and pass it as `cwd=` to a subprocess. Under `clai2 --web` each session has its own. A host
+        built outside the shell, such as in a test, has the current directory.
+        """
+        return self._workspace()
 
     @property
     def tasks(self) -> TaskCatalog | None:

@@ -494,7 +494,6 @@ thinking, not tool-specific rendering.
 Add a fragment to the status row with get_status_segments:
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -503,7 +502,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
