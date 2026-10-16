@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx2
 import pytest
@@ -321,7 +322,8 @@ def test_adding_an_account_from_the_page_signs_in_behind_its_waiting_screen(
             assert web_.post(f'/api/dialogs/{picker.id}', {'value': 'openai-codex'}).status_code == 204
             waiting = receive_until(socket, DialogOpened)[1].dialog
             assert (waiting.kind, waiting.title) == ('wait', 'Signing in to ChatGPT/Codex')
-            assert 'https://auth.openai.com/' in receive_until(socket, DialogShown)[1].text
+            shown = receive_until(socket, DialogShown)[1].text
+            assert any(urlsplit(word).hostname == 'auth.openai.com' for word in shown.split())
             # The browser comes back to this machine: the screen closes by itself.
             web_.portal.call(called_back.set)
             assert receive_until(socket, DialogClosed)[1].id == waiting.id
