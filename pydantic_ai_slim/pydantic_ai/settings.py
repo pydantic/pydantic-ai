@@ -269,6 +269,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
@@ -321,6 +322,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (keeps the delays and status codes of the provider's `retry_options`)
@@ -345,6 +347,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -518,6 +521,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google
@@ -631,6 +635,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (Gemini API and Google Cloud)
@@ -655,6 +660,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq

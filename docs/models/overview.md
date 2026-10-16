@@ -35,6 +35,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
 | [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
+| [OpenAI ChatGPT plan usage](openai-chatgpt.md) | Subscription access for your app's users | `openai-chatgpt:` |
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
 | [OpenAI Decisions API](openai.md#decisions-api) | [Decision model](decision.md) | `openai-decisions:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
