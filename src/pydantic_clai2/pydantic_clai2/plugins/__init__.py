@@ -104,9 +104,12 @@ class SessionCatalog(Protocol):
         """
         ...
 
-    async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
+    async def listing(
+        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+    ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
+        Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
         calls the naming model, so poll it no more often than a person would look.
         """
@@ -130,6 +133,18 @@ class SessionCatalog(Protocol):
 
     async def fork(self, conversation_id: str) -> ConversationSummary:
         """Save a copy of a conversation under a new ID, leaving the original as it was, and return the copy."""
+        ...
+
+    async def archive(self, conversation_id: str) -> ConversationSummary:
+        """Hide a saved conversation from `listing` and `/resume`, deleting nothing, and return its summary.
+
+        Raises `ValueError` for the current conversation or one running in another process. Resuming one
+        unarchives it.
+        """
+        ...
+
+    async def unarchive(self, conversation_id: str) -> ConversationSummary:
+        """List an archived conversation again, and return its summary."""
         ...
 
 
