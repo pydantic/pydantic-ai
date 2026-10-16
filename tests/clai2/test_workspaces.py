@@ -318,6 +318,15 @@ async def test_a_relative_repository_is_in_the_sessions_directory(rig: Rig, repo
     assert workspace.path == (repository / '.worktrees' / workspace.id).resolve()
 
 
+async def test_a_kinds_relative_repository_is_in_the_sessions_directory(rig: Rig, repository: Path) -> None:
+    """A kind's own relative `repo` is read from the session's directory too."""
+    kinds = WorkspacesSettings(kinds={'here': WorktreeKind(repo=repository.name)})
+    plugin = loaded(rig, kinds, workspace=lambda: repository.parent)
+    await run(plugin, '/workspaces create here')
+    [workspace] = await rig.workspaces().listing()
+    assert workspace.path == (repository / '.worktrees' / workspace.id).resolve()
+
+
 async def test_usage_and_unknown_names(rig: Rig, repository: Path, tmp_path: Path) -> None:
     plugin = loaded(rig)
     for wrong in ('/workspaces open', '/workspaces create', '/workspaces create a b c d', '/workspaces nope x'):

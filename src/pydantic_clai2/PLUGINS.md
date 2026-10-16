@@ -1372,7 +1372,7 @@ branch, with its own CLAI running there as `clai2 --web`.
 | Command | Does |
 |---|---|
 | `/workspaces` or `/workspaces list` | every workspace: its ID, status (`ready`, `running at URL`, `stopped`), kind, branch, and folder |
-| `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out |
+| `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
 | `/workspaces open ID` | start the workspace's CLAI unless it runs, and open its page in your browser |
 | `/workspaces stop ID` | stop its CLAI as Ctrl-C would, killing it after ten seconds |
 | `/workspaces destroy ID` | stop its CLAI, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept |
@@ -1420,7 +1420,8 @@ processes take turns. Workspace sessions run on macOS and Linux.
 **From another plugin.** `pydantic_clai2.builtin_plugins.workspaces` exports `Workspaces`, what
 `/workspaces` calls, built from the kinds: `Workspaces(kinds=settings.kinds)`. Read the user's kinds
 from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`). Its methods:
-`listing()`, `get(id)`, `create(kind=, repo=, ref=)`, `start(id)`, `stop(id)`, `destroy(id)`, each
+`listing()`, `get(id)`, `create(kind=, repo=, ref=, base=host.workspace)` (a relative `repo` is in
+`base`), `start(id)`, `stop(id)`, `destroy(id)`, each
 returning a `Workspace` record, and `token(id)`, the running CLAI's token, for a client that talks to
 it; never show it to the model. A new backend implements `backend.Backend`: `create`, `start`,
 `alive`, `stop`, and `destroy`. `configured(host.plugins)` builds that `Workspaces` from the loaded
