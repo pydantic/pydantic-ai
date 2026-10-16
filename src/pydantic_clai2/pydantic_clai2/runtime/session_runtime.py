@@ -56,7 +56,8 @@ from pydantic_clai2.plugins import (
     TurnStart,
     bare_screen,
 )
-from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
+from pydantic_clai2.plugins.process_plugins import handling
 from pydantic_clai2.runtime._session import (
     Session,
     StockAgent,
@@ -123,20 +124,22 @@ def create_shell(
     headless: bool = False,
     load_plugins: bool = True,
     workspace: Path | None = None,
-    process: ClaiProcess | None = None,
+    process: ClaiProcess[DepsT] | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
-    what the session shares with the others in this CLAI; without one, it gets its own over `store`, which
-    is otherwise unused.
+    what the session shares with the others in this CLAI, its built-in plugins included; without one,
+    it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
         if settings is not None
         else Settings(model=None)
     )
-    process = process or ClaiProcess.open(store)
+    process = process or ClaiProcess[DepsT].open(
+        store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
+    )
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
     session = Session(
@@ -352,12 +355,11 @@ def create_shell(
     )
     screen = Screen()
     status = Status()
-    loader: PluginLoader[DepsT] = PluginLoader(
-        store=store,
+    loader = SessionPlugins[DepsT](
+        process=process.plugins,
         console=console,
         commands=commands,
         session_start=lambda: SessionStart(agent=agent, settings=context.settings, conversation_chosen=sessions.chosen),
-        builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
@@ -371,6 +373,7 @@ def create_shell(
         setting=context.setting,
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
+        running=lambda: session.running,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -510,11 +513,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     It reads input from the terminal's editor when its console is one, and otherwise from `send_input`.
     """
 
-    process: ClaiProcess
+    process: ClaiProcess[DepsT]
     agent: AbstractAgent[DepsT, OutputT]
     session: Session[DepsT, OutputT]
     plugins: tuple[AgentCapability[DepsT], ...]
-    loader: PluginLoader[DepsT]
+    loader: SessionPlugins[DepsT]
     commands: Commands
     console: Console
     context: CommandContext
@@ -686,10 +689,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def run(self) -> SessionEndReason:
         try:
-            async with self.tasks.owner.opened():
-                if isinstance(self.agent, StockAgent):
-                    self.session.delegations = self.tasks.owner
-                return await self._run()
+            # Commands and turns run here: a process-scoped plugin's host follows this session meanwhile.
+            with handling(self.loader.live_session):
+                async with self.tasks.owner.opened():
+                    if isinstance(self.agent, StockAgent):
+                        self.session.delegations = self.tasks.owner
+                    return await self._run()
         finally:
             self.session.delegations = None
             await self.forks.close()

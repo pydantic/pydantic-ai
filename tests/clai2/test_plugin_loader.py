@@ -21,6 +21,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.plugins.process_plugins import ProcessPlugins, handling
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -56,19 +57,25 @@ class Harness:
         *,
         builtin: tuple[PluginSettings, ...] = (),
         project: tuple[PluginSettings, ...] = (),
+        process: ProcessPlugins[None] | None = None,
+        name: str = 'one',
     ) -> None:
-        self.store = SettingsStore(tmp_path / 'config.db')
+        """One session; with `process`, one of several live sessions joined to it, told apart by `name`."""
+        self.store = process.store if process is not None else SettingsStore(tmp_path / 'config.db')
         self.store.plugins_dir.mkdir(exist_ok=True)
         self.output = io.StringIO()
         self.commands = Commands()
         self.commands.register(Command(name='help', description='Built in', handler=lambda _: ''))
         self.loader: PluginLoader[None] = PluginLoader(
-            store=self.store,
+            store=None if process is not None else self.store,
+            process=process,
             console=Console(file=self.output, width=200),
             commands=self.commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=self.store.load()),
             builtin=builtin,
             project=project,
+            session_id=lambda: f'conversation-{name}',
+            live_id=name,
         )
 
     def write(
@@ -990,3 +997,264 @@ async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
     assert stopped.is_set()
     assert 'TimeoutError' in harness.text
     assert harness.loader.entries()[0].loaded is None
+
+
+SHARED = """
+from pydantic_clai2.commands import Command
+from pydantic_clai2.plugins import Plugin
+
+
+class Shared(Plugin):
+    scope = 'process'
+
+    def get_commands(self):
+        return [Command(name='shared', description='From a process plugin', handler=lambda _: 'ok')]
+
+    async def on_session_start(self, event):
+        self.host.console.print(f'shared started in {self.host.live.current().id}')
+
+    async def on_session_end(self, event):
+        self.host.console.print(f'shared stopped {event.reason}')
+
+    async def on_turn_end(self, event):
+        current = self.host.live.current()
+        self.host.console.print(f'turn in {current.id} for {self.host.session_id}')
+"""
+
+
+def two_sessions(tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> tuple[Harness, Harness]:
+    """Two live sessions of one process, as `clai2 --web` holds them."""
+    process = ProcessPlugins[None](store=SettingsStore(tmp_path / 'config.db'), builtin=builtin)
+    return Harness(tmp_path, process=process, name='a'), Harness(tmp_path, process=process, name='b')
+
+
+async def test_a_change_in_one_session_reaches_every_live_one(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert (a.text.count('alpha started'), b.text.count('alpha started')) == (1, 1)
+    await a.loader.disable('alpha')
+    assert ('alpha stopped exit' in a.text, 'alpha stopped exit' in b.text) == (True, True)
+    assert 'alpha' not in a.commands and 'alpha' not in b.commands
+    await b.loader.enable('alpha')
+    assert (a.text.count('alpha started'), b.text.count('alpha started')) == (2, 2)
+    await a.loader.reload('alpha')
+    assert (a.text.count('alpha started'), b.text.count('alpha started')) == (3, 3)
+    assert 'alpha' in a.commands and 'alpha' in b.commands
+    assert await b.loader.remove('alpha') == 'Disabled alpha. Delete {} to remove the plugin itself.'.format(
+        a.store.plugins_dir / 'alpha.py'
+    )
+    assert [entry.status for entry in a.loader.entries()] == ['off']
+
+
+async def test_another_session_keeps_its_plugins_until_its_turn_ends(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    await a.loader.load_all()
+    await b.loader.load_all()
+    async with b.loader.turn():
+        await a.loader.disable('alpha')
+        assert 'alpha stopped exit' in a.text
+        assert 'alpha stopped' not in b.text, 'the running turn may still use it'
+        assert [entry.loaded for entry in b.loader.entries()] == [None]
+    assert 'alpha stopped exit' in b.text
+
+
+async def test_a_session_reports_its_own_failure_to_follow(tmp_path: Path) -> None:
+    """Another session's failure to load is shown there, as at startup; plugins off there are left alone."""
+    a, b = two_sessions(tmp_path)
+    c = Harness(tmp_path, process=a.loader._catalog, name='c')  # pyright: ignore[reportPrivateUsage]
+    c.loader.enabled = False
+    (a.store.plugins_dir / 'flaky.py').write_text(
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Flaky(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
+        "        assert self.host.session_id != 'conversation-b', 'not here'\n"
+        "        self.host.console.print('flaky started')\n"
+    )
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert 'not here' in b.text
+    await a.loader.reload('flaky')
+    assert b.text.count('not here') == 2
+    assert a.text.count('flaky started') == 2 and c.text == ''
+    [entry] = b.loader.entries()
+    assert (entry.status, entry.error) == ('failed', 'AssertionError: not here')
+
+
+async def test_a_process_plugin_is_built_once_and_hears_every_session(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert a.text == 'shared started in a\n' and b.text == '', (
+        'one instance, on the console of the session that built it'
+    )
+    [in_a], [in_b] = a.loader.entries(), b.loader.entries()
+    assert in_a.loaded is not None and in_a.loaded is in_b.loaded
+    assert 'shared' in a.commands and 'shared' in b.commands
+    await b.loader.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.loader.fire(TurnEnd(text='hi', outcome='completed'))
+    assert 'turn in b for conversation-b\nturn in a for conversation-a' in a.text
+    live = in_a.loaded.plugin.host.live
+    assert live is not None and live.current() is None
+    assert [session.id for session in live.listing()] == ['a', 'b']
+    assert live.get('b').session_id == 'conversation-b'
+    with pytest.raises(LookupError, match='No live session c'):
+        live.get('c')
+    await a.loader.close('exit')
+    assert 'shared stopped' not in a.text and 'shared' not in a.commands
+    assert [entry.loaded for entry in b.loader.entries()] == [in_b.loaded] and 'shared' in b.commands
+    await b.loader.close('eof')
+    assert a.text.count('shared stopped') == 1 and a.text.endswith('shared stopped eof\n')
+
+
+async def test_a_process_plugin_ends_once_every_running_turn_is_over(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    await b.loader.reload('shared')
+    assert (a.text.count('shared started'), a.text.count('shared stopped exit')) == (1, 1)
+    assert 'shared started in b' in b.text, 'the new instance is built by the session that reloaded it'
+    async with a.loader.turn():
+        async with b.loader.turn():
+            await a.loader.disable('shared')
+            assert 'shared' not in a.commands and 'shared' not in b.commands
+            assert 'shared stopped' not in b.text
+        assert 'shared stopped' not in b.text, 'the first session still runs a turn with it'
+    assert b.text.count('shared stopped exit') == 1
+    await b.loader.enable('shared')
+    assert [entry.status for entry in a.loader.entries()] == ['on']
+
+
+async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'shared.py').write_text(
+        SHARED.replace("self.host.console.print(f'shared started", "raise RuntimeError('no start')  # ")
+    )
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert 'no start' in a.text and 'no start' in b.text, 'each session tries it, as nothing is shared'
+    assert 'shared' not in a.commands and 'shared' not in b.commands
+
+
+async def test_a_process_plugin_follows_the_session_being_handled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its host acts on the session whose moment it handles, and `host.live` reaches every live one."""
+    calls: list[str] = []
+    module = ModuleType('follows_sessions')
+
+    class Follows(Plugin):
+        scope = 'process'
+
+        async def on_turn_end(self, event: TurnEnd) -> None:
+            host = self.host
+            host.send_input('typed')
+            host.submit_prompt('submitted')
+            host.interrupt()
+            calls.append(f'{host.workspace.name} {host.setting("theme")} {host.tasks}')
+
+    Follows.__module__ = module.__name__
+    module.__dict__['Follows'] = Follows
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    store = SettingsStore(tmp_path / 'config.db')
+    process = ProcessPlugins[None](store=store, builtin=(PluginSettings(id='follows', factory=module.__name__),))
+
+    def session(name: str) -> PluginLoader[None]:
+        commands = Commands()
+        commands.register(Command(name='help', description='Built in', handler=lambda _: ''))
+        return PluginLoader(
+            process=process,
+            console=Console(file=io.StringIO()),
+            commands=commands,
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+            submit_prompt=lambda text: calls.append(f'{name} submit {text}'),
+            send_input=lambda text: calls.append(f'{name} send {text}'),
+            interrupt=lambda: calls.append(f'{name} interrupt') is None,
+            setting=lambda key: f'{name}-{key}',
+            workspace=lambda: tmp_path / name,
+            running=lambda: name == 'b',
+            live_id=name,
+        )
+
+    a, b = session('a'), session('b')
+    await a.load_all()
+    await b.load_all()
+    await b.fire(TurnEnd(text='hi', outcome='completed'))
+    assert calls == ['b send typed', 'b submit submitted', 'b interrupt', 'b b-theme None']
+    calls.clear()
+    with handling(a.live_session):
+        live = a.entries()[0].loaded
+        assert live is not None and live.plugin.host.live is not None
+        assert live.plugin.host.live.current() is a.live_session
+    other = process.live.get('b')
+    assert (other.running, other.workspace, other.tasks, other.sessions) == (True, tmp_path / 'b', None, None)
+    assert other.conversation is not a.live_session.conversation and other.status is not a.live_session.status
+    other.send_input('hi')
+    assert other.interrupt() and calls == ['b send hi', 'b interrupt']
+    assert [completion.text for completion in await other.complete('/he')] == ['help']
+    await a.close('exit')
+    await b.close('exit')
+
+
+async def test_a_process_plugin_keeps_what_it_includes_off_in_every_session(tmp_path: Path) -> None:
+    """`web` includes `ask_user`: while it runs, no live session loads `ask_user`."""
+    builtin = (
+        PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
+        PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', enabled=False),
+    )
+    a, b = two_sessions(tmp_path, builtin=builtin)
+    await a.loader.load_all()
+    await b.loader.load_all()
+
+    def statuses(harness: Harness) -> list[str]:
+        return [entry.status for entry in harness.loader.entries()]
+
+    assert statuses(a) == statuses(b) == ['on', 'off']
+    await a.loader.enable('web')
+    assert statuses(a) == statuses(b) == ['included', 'on']
+    assert a.loader.entries()[1].loaded is b.loader.entries()[1].loaded
+    await b.loader.disable('web')
+    assert statuses(a) == statuses(b) == ['on', 'off']
+    await a.loader.close('exit')
+    await b.loader.close('exit')
+
+
+def test_a_session_joins_a_process_or_makes_its_own(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+
+    def start() -> SessionStart:
+        return SessionStart(agent=Agent(TestModel()), settings=store.load())
+
+    console = Console(file=io.StringIO())
+    with pytest.raises(TypeError, match='needs the process it joins'):
+        PluginLoader[None](console=console, commands=Commands(), session_start=start)
+    with pytest.raises(TypeError, match='pass them to it'):
+        PluginLoader[None](
+            process=ProcessPlugins[None](store=store),
+            store=store,
+            console=console,
+            commands=Commands(),
+            session_start=start,
+        )
+
+
+async def test_a_session_opened_later_joins_the_running_process_plugins(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    process = a.loader._catalog  # pyright: ignore[reportPrivateUsage]
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    later, off = Harness(tmp_path, process=process, name='later'), Harness(tmp_path, process=process, name='off')
+    off.loader.enabled = False
+    await later.loader.load_all()
+    await off.loader.load_all()
+    [shared] = a.loader.entries()
+    assert [entry.loaded for entry in later.loader.entries()] == [shared.loaded] and later.text == ''
+    assert off.loader.entries() == [] and 'shared' not in off.commands
+    await process.close('exit', origin=a.loader)
+    assert a.text.count('shared stopped exit') == 1
+    assert [entry.loaded for harness in (a, b, later) for entry in harness.loader.entries()] == [None] * 3
+    assert 'shared' not in later.commands
