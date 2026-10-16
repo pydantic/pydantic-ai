@@ -114,6 +114,24 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
+    from pydantic_ai.native_tools import MCPServerTool
+
+    if any(isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools):
+        # Redact before serialization, including its fallback, without changing the provider request.
+        model_request_parameters = replace(
+            model_request_parameters,
+            native_tools=[
+                replace(
+                    tool,
+                    url='[REDACTED]',
+                    authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
+                    headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
+                )
+                if isinstance(tool, MCPServerTool)
+                else tool
+                for tool in model_request_parameters.native_tools
+            ],
+        )
     serialized = serialize_any(model_request_parameters)
     if not include_content:
         serialized = _redact_model_request_parameters(serialized)

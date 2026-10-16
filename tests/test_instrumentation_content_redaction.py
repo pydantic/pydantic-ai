@@ -23,12 +23,19 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, span_include_content
+from pydantic_ai._instrumentation import (
+    ContentPolicy,
+    include_content_ctx,
+    model_request_parameters_attributes,
+    span_include_content,
+)
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import Tool
 
@@ -103,6 +110,35 @@ def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str
     assert spans, 'no spans exported: the scenario proves nothing about redaction'
     leaked = leaked_channels(spans)
     assert leaked == (drives if include_content else set())
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_mcp_server_credentials_never_reach_request_parameters_attribute(include_content: bool) -> None:
+    """The telemetry field must mask secrets even when content capture is enabled."""
+    tool = MCPServerTool(
+        id='docs',
+        url='https://mcp.example.com?access_token=SENTINEL-mcp-url-token',
+        authorization_token='SENTINEL-mcp-token',
+        headers={'X-Api-Key': 'SENTINEL-mcp-key', 'Authorization': 'SENTINEL-mcp-auth'},
+    )
+    parameters = ModelRequestParameters(native_tools=[tool])
+
+    serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
+        'model_request_parameters'
+    ]
+
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-mcp-token' not in serialized
+    assert 'SENTINEL-mcp-url-token' not in serialized
+    assert 'SENTINEL-mcp-key' not in serialized
+    assert 'SENTINEL-mcp-auth' not in serialized
+    assert '"authorization_token":"[REDACTED]"' in serialized
+    assert '"url":"[REDACTED]"' in serialized
+    assert '"X-Api-Key":"[REDACTED]"' in serialized
+    assert '"Authorization":"[REDACTED]"' in serialized
+    assert tool.authorization_token == 'SENTINEL-mcp-token'
+    assert tool.url == 'https://mcp.example.com?access_token=SENTINEL-mcp-url-token'
+    assert tool.headers == {'X-Api-Key': 'SENTINEL-mcp-key', 'Authorization': 'SENTINEL-mcp-auth'}
 
 
 class Output(BaseModel):
