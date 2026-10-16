@@ -4551,6 +4551,13 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.attach_token(self.cancellation_token)
             if (deadline := graph_deps.deadline) is not None:
                 # Runs started inside this one (e.g. an agent delegated to from a tool) inherit the deadline.
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No running asyncio loop (e.g. a Trio-backed run), so there's nothing to schedule expiry on.
+                    raise exceptions.UserError(
+                        '`timeout=` requires the asyncio event loop and is not supported under other async backends, such as Trio.'
+                    ) from None
                 stack.enter_context(provide_run_deadline(deadline, self.run_clock))
                 remaining = (deadline - self.run_clock()).total_seconds()
                 if remaining <= 0:
@@ -4558,7 +4565,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 else:
                     # Expiry is first-party cancellation, so the run tears down exactly as on `cancel()`.
                     # Inside a Temporal workflow, `call_later` schedules a durable workflow timer.
-                    timer = asyncio.get_running_loop().call_later(remaining, graph_deps.cancellation.expire)
+                    timer = loop.call_later(remaining, graph_deps.cancellation.expire)
                     stack.callback(timer.cancel)
 
             self.model_resources.bind_stack(stack)

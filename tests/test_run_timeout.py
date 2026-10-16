@@ -18,6 +18,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunCancelled, RunContext, RunTimedOut
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -496,3 +497,20 @@ async def test_nested_run_measures_inherited_deadline_with_parent_clock():
 
     await agent.run('go', timeout=60)
     assert seen == [50.0]
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_timeout_requires_asyncio():
+    """Expiry is scheduled on the asyncio event loop, so under another backend `timeout=` fails before the run starts."""
+    requests = 0
+
+    def model_func(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_func))
+
+    with pytest.raises(UserError, match='`timeout=` requires the asyncio event loop'):
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert requests == 0

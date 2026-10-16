@@ -65,6 +65,7 @@ async def main():
 - [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] is the time the run has to finish by, in UTC, and [`RunContext.remaining_time()`][pydantic_ai.tools.RunContext.remaining_time] returns the seconds left, so a tool can size its own work or timeouts to fit.
 - An agent run from a tool, as in [agent delegation](multi-agent-applications.md#agent-delegation), inherits the deadline. Its own `timeout=` can make it earlier, but not later. When the shared deadline passes, the parent raises `RunTimedOut`; a sub-agent's own, shorter timeout fails just the delegate tool, like a sub-agent [cancelling itself](agent.md#cancellation-and-sub-agents).
 - Running out of time is cancellation, not a model error, so a [`FallbackModel`](models/overview.md#fallback-model) doesn't fall back on it.
+- The deadline is enforced with a timer on the asyncio event loop, so under another async backend, such as Trio, `timeout=` raises a [`UserError`][pydantic_ai.exceptions.UserError] before the run starts.
 
 ```python {title="run_timeout_delegation.py"}
 from pydantic_ai import Agent, RunContext
