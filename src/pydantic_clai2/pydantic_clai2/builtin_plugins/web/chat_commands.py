@@ -1,35 +1,13 @@
 """What the web UI's composers complete and run: CLAI's commands, and the orchestrator chat's own.
 
 The session's composer enters every `/command` at the prompt. The orchestrator chat runs its own (`OWN`)
-on its conversation, and enters at the prompt only CLAI's commands in `SHARED`, showing their results
-in its chat instead of the session's.
+on its conversation, and enters at the prompt only CLAI's commands declared with `conversation=False`
+(`shared`), showing their results in its chat instead of the session's.
 """
 
 from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, Notice
 from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.plugins import CommandEnd, PluginHost
-
-SHARED = frozenset(
-    {
-        'accounts',
-        'config',
-        'keys',
-        'login',
-        'mcp',
-        'plugins',
-        'set',
-        'settings',
-        'spinner',
-        'theme',
-        'web',
-        'workspaces',
-    }
-)
-"""CLAI's commands the orchestrator chat runs too: those that change CLAI itself, not the session's conversation.
-
-`Command` declares no such scope, so this list is the split. The others, such as `/fork`, `/compact`, a
-skill, or a plugin's own command, act on the session or may, so the orchestrator chat refuses them.
-"""
 
 OWN = {
     'model': "Show or pick the orchestrator's model; /model session follows the session's again",
@@ -44,8 +22,13 @@ FOLLOW = ('session', 'default')
 """What `/model` takes in the orchestrator chat to follow the session's model again."""
 
 
+def shared(host: PluginHost[None], name: str) -> bool:
+    """Whether CLAI's command `name` changes CLAI rather than the session's conversation, so this chat runs it too."""
+    return name not in OWN and (command := host.command(name)) is not None and not command.conversation
+
+
 def picks_session_model(name: str, args: list[str]) -> bool:
-    """Whether a `SHARED` command picks the session's model all the same: `/set model NAME` is `/model NAME` there."""
+    """Whether a shared command picks the session's model all the same: `/set model NAME` is `/model NAME` there."""
     return name in ('set', 'settings') and args[:1] == ['model']
 
 
@@ -80,13 +63,8 @@ async def saved_models(host: PluginHost[None]) -> list[str]:
     return [completion.text for completion in await completions(host, '/model ') if ':' in completion.text]
 
 
-async def registered(host: PluginHost[None], name: str) -> bool:
-    """Whether CLAI has a command called `name` that is available now."""
-    return any(completion.text == name for completion in await host.complete(f'/{name}'))
-
-
 async def orchestrator_completions(host: PluginHost[None], text: str) -> list[CompletionInfo]:
-    """What Tab offers in the orchestrator chat: its own commands and the `SHARED` ones, with their arguments."""
+    """What Tab offers in the orchestrator chat: its own commands and the shared ones, with their arguments."""
     words = text[1:].split()
     if not is_command_input(text) or (not words and text.endswith(' ')):
         return []
@@ -97,16 +75,16 @@ async def orchestrator_completions(host: PluginHost[None], text: str) -> list[Co
             for name, meta in OWN.items()
             if prefix in name
         ]
-        shared = [found for found in await completions(host, text) if found.text in SHARED]
+        others = [found for found in await completions(host, text) if shared(host, found.text)]
         # Best match first, as at the prompt: the exact name, then names starting with the fragment.
-        return sorted([*own, *shared], key=lambda found: (found.text != prefix, not found.text.startswith(prefix)))
+        return sorted([*own, *others], key=lambda found: (found.text != prefix, not found.text.startswith(prefix)))
     name, args = words[0], [*words[1:], *([''] if text.endswith(' ') else [])]
     if name == 'model' and len(args) == 1:
         choices = (FOLLOW[0], *await saved_models(host))
         return [
             CompletionInfo(text=choice, start=len(args[0]), display=choice) for choice in choices if args[0] in choice
         ]
-    if name not in SHARED or picks_session_model(name, args):
+    if not shared(host, name) or picks_session_model(name, args):
         return []
     # Nor is `model` offered as the setting to change, which would pick the session's.
     found = await completions(host, text)
@@ -115,11 +93,11 @@ async def orchestrator_completions(host: PluginHost[None], text: str) -> list[Co
 
 async def orchestrator_help(host: PluginHost[None]) -> str:
     """`/help` in the orchestrator chat: its own commands, then CLAI's that it runs too."""
-    shared = [found for found in await completions(host, '/') if found.text in SHARED]
+    others = [found for found in await completions(host, '/') if shared(host, found.text)]
     return '\n'.join(
         [
             *(f'/{name}: {meta}' for name, meta in OWN.items()),
-            *(f'/{found.text}: {found.meta}' for found in shared),
+            *(f'/{found.text}: {found.meta}' for found in others),
             "The session's own commands, such as /fork or /compact, work in a session, not here.",
         ]
     )

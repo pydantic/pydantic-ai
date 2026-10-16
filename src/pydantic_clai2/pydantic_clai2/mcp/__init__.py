@@ -79,6 +79,7 @@ class MCPPlugin(Plugin[MCPSettings]):
         return (
             Command(
                 name='mcp',
+                conversation=False,
                 description='Manage MCP servers: install, start, stop, status, logs, and more (/mcp help).',
                 handler=command,
                 complete=command.complete,

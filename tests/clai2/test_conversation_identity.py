@@ -74,7 +74,7 @@ def test_transcript_identity() -> None:
 
 async def test_transcript_resolves_its_model_or_a_named_one() -> None:
     transcript = Transcript(model='test')
-    assert (await transcript.resolved_model(), await transcript.resolved_model('other:model')) == (
+    assert (await transcript.resolved_model(), await transcript.build_model('other:model')) == (
         'test',
         'other:model',
     )

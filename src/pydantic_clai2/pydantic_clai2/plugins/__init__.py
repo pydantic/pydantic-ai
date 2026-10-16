@@ -70,12 +70,17 @@ class Conversation(Protocol):
         """Swap the retained history, as `/compact` does after summarising it."""
         ...
 
-    async def resolved_model(self, name: str | None = None) -> Model | str | None:
+    async def resolved_model(self) -> Model | str | None:
         """The model CLAI or the user selected for the next run; `None` when neither has chosen one.
 
-        With `name`, the model that name selects instead, built as the selected one is (`chain:NAME`,
-        `PROVIDER@PROFILE:NAME`, a plugin's prefix). A capability that selects a model can replace CLAI's
-        default per request, so a run may use another.
+        A capability that selects a model can replace CLAI's default per request, so a run may use another.
+        """
+        ...
+
+    async def build_model(self, name: str) -> Model | str:
+        """The model `name` selects, built as the selected one is: `chain:NAME`, `PROVIDER@PROFILE:NAME`, a plugin's prefix.
+
+        A name it does not build itself comes back as it is, for core to infer.
         """
         ...
 
@@ -354,9 +359,13 @@ class Transcript:
         """Publish an in-memory history replacement."""
         self.replace_messages(messages)
 
-    async def resolved_model(self, name: str | None = None) -> Model | str | None:
-        """The `model` given at construction, or `name` as given."""
-        return self.model if name is None else name
+    async def resolved_model(self) -> Model | str | None:
+        """The `model` given at construction."""
+        return self.model
+
+    async def build_model(self, name: str) -> Model | str:
+        """`name` as it is, for core to infer."""
+        return name
 
     async def resume(self, conversation_id: str) -> str:
         """An in-memory transcript has no saved conversations to switch to."""
@@ -734,6 +743,14 @@ class PluginHost(Generic[DepsT]):
         headless `-p` run is not cancelled.
         """
         return self._interrupt()
+
+    def command(self, name: str, /) -> Command | None:
+        """The `/NAME` command `/help` lists now, given without its slash; `None` when there is none.
+
+        A remote UI reads its declaration, such as `conversation`, to tell what it may run where.
+        """
+        found = next((command for command in self._commands or () if command.name == name), None)
+        return found if found is not None and found.available() else None
 
     async def complete(self, text: str, /) -> list[Completion]:
         """What Tab offers at the prompt for `text`: command names with descriptions, their arguments, `@` paths.

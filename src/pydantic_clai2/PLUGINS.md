@@ -1480,15 +1480,17 @@ work there:
 | `/stop` | stop its running turn |
 | `/help` | list these, and CLAI's commands it runs too |
 
-CLAI's own commands that change CLAI rather than the session's conversation (`/workspaces`,
-`/plugins`, `/set`, `/settings`, `/config`, `/keys`, `/login`, `/accounts`, `/mcp`, `/theme`,
-`/spinner`, `/web`) run at the prompt exactly as from the session's composer, queued behind a
+CLAI's commands declared with `conversation=False` (see [Add a `/command`](#add-a-command-get_commands)),
+which change CLAI rather than the session's conversation (built in: `/workspaces`, `/plugins`,
+`/set`, `/settings`, `/config`, `/keys`, `/login`, `/accounts`, `/mcp`, `/theme`, `/spinner`,
+`/web`), run at the prompt exactly as from the session's composer, queued behind a
 running session turn as there, and their results show in the orchestrator chat instead of the
 session's. The terminal, under `/web`, still echoes them. `/set model` is refused there, since it
 picks the session's model; `/model NAME` picks the orchestrator's. `/set` alone opens CLAI's
 settings menu where it opens from the session's composer, and its model row is the session's. Any
-other command, such as `/fork`, `/resume`, `/compact`, a skill, or a plugin's own, says it works in
-a session. `/plugins` alone opens the plugins panel. Text starting with `/` that is not a command,
+other command, such as `/fork`, `/resume`, `/compact`, or a skill, says it works in a session. The
+chat matches a result to the command it entered by its text, so if you cancel one it entered while
+it runs, the next identical command from the session's composer answers in the orchestrator chat. `/plugins` alone opens the plugins panel. Text starting with `/` that is not a command,
 such as a path, is a prompt.
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
@@ -2476,6 +2478,10 @@ clashing with a built-in is an error at startup, not a silent override. A comman
 named after something the user names, such as a skill, sets `overridable=True`:
 it gives way to any other command with its name, registered before or after it,
 and CLAI prints one line saying which command is hidden.
+A command acts on the session's conversation unless it sets `conversation=False`: one that
+changes CLAI itself, such as its settings, keys, or plugins, sets it, so a chat beside the session,
+such as the web UI's orchestrator chat, offers and runs it too. Leave it on for anything that reads
+or changes the conversation, starts a turn, or may.
 
 A command can start a turn with `self.host.submit_prompt(text)`: the text runs
 as the next prompt once the command returns, ahead of anything queued in the
@@ -2504,7 +2510,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2532,6 +2538,8 @@ prompt the keyboard does:
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
   fails.
+- `self.host.command(NAME)` is the `Command` `/NAME` runs now, as `/help` lists it, or `None`, so a
+  remote UI can read its declaration, such as `conversation`.
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
   session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
@@ -3018,8 +3026,9 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model CLAI or the user selected for the next prompt; `resolved_model(NAME)` builds the model
-`NAME` selects instead, as CLAI builds the selected one. A capability that selects a model, such as
+model CLAI or the user selected for the next prompt; `await build_model(NAME)` builds the model
+`NAME` selects, as CLAI builds the selected one (`chain:NAME`, `PROVIDER@PROFILE:NAME`, a plugin's
+prefix), without selecting it. A capability that selects a model, such as
 Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
 status row still name the selected one, and `/compact` and session naming (without a
 `sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and

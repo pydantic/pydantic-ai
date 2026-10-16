@@ -28,13 +28,12 @@ from pydantic_ai_harness.ask_user import AskUser, AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.chat_commands import (
     FOLLOW,
     OWN,
-    SHARED,
     orchestrator_help,
     parse,
     picks_session_model,
-    registered,
     result_notice,
     saved_models,
+    shared,
 )
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_clai2.builtin_plugins.web.protocol import (
@@ -271,7 +270,10 @@ class Orchestrator:
         error: str | None = None
         usage: RunUsage | None = None
         try:
-            model = await self.host.conversation.resolved_model(self._model)
+            conversation = self.host.conversation
+            model = await (
+                conversation.resolved_model() if self._model is None else conversation.build_model(self._model)
+            )
             if model is None:
                 raise RuntimeError('Choose a model for this session first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:
@@ -322,12 +324,12 @@ class Orchestrator:
         return True
 
     async def _command(self, text: str) -> None:
-        """Run one of the chat's own commands, or enter one of CLAI's `SHARED` ones at the prompt.
+        """Run one of the chat's own commands, or enter one of CLAI's shared ones at the prompt.
 
         The prompt runs CLAI's as it runs the session's, and `command_ended` shows the result here.
         """
         name, args = parse(text)
-        if name in SHARED and not picks_session_model(name, args) and await registered(self.host, name):
+        if shared(self.host, name) and not picks_session_model(name, args):
             self._entered.append(text)
             try:
                 self.host.send_input(text)
@@ -359,7 +361,7 @@ class Orchestrator:
             raise ValueError(
                 f"/{name} model picks the session's model, in a session; /model NAME picks the orchestrator's."
             )
-        if await registered(self.host, name):
+        if self.host.command(name) is not None:
             raise ValueError(f'/{name} works in a session, not in the orchestrator chat. See /help.')
         raise ValueError(f'Unknown command /{name}. Use /help.')
 
