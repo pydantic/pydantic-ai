@@ -216,6 +216,11 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
             # Plugins resume through `host.conversation`, which refuses it too.
             with pytest.raises(ValueError, match='is open in another live session'):
                 await fleet.runtimes[other.id].session.resume(saved.id)
+            # Nor may another session delete or archive it.
+            with pytest.raises(ValueError, match='Close it first'):
+                await fleet.runtimes[other.id].sessions.delete(saved.id)
+            with pytest.raises(ValueError, match='Close it first'):
+                await fleet.runtimes[other.id].sessions.archive(saved.id)
             # The session holding it may restore it again.
             assert 'Resumed Saved' in await fleet.runtimes[first.id].sessions.resume(saved.id)
             # While one session resumes a conversation, `open` waits for it, and no other session may take it.

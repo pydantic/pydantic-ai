@@ -499,6 +499,7 @@ def create_shell(
 
     sessions.on_resume = show_resumed
     shell.session.claim = lambda conversation_id: process.live.claim(conversation_id, holder=shell.live_session)
+    sessions.in_use = process.live.in_use
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
     process.live.add(shell)

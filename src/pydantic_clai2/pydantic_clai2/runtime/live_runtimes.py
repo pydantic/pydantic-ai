@@ -134,6 +134,10 @@ class LiveRuntimes(JoinedSessions):
         live = self._holder(conversation_id)
         return live.runtime.live_session if live is not None else None
 
+    def in_use(self, conversation_id: str) -> bool:
+        """Whether a live session holds `conversation_id`, or one is opening or resuming it."""
+        return conversation_id in self._opening or self._holder(conversation_id) is not None
+
     def _holder(self, conversation_id: str) -> _Live | None:
         return next(
             (
