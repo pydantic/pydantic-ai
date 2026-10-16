@@ -8,7 +8,7 @@ name: CLAI2 bleeding
 #
 # In pydantic/pydantic-ai only `main` publishes. A fork can run this from "Run workflow" on any
 # branch and point CLAI at its own release with `CLAI_BLEEDING_URL` (see "Updating" in
-# `src/pydantic_clai2/README.md`).
+# `src/pydantic_clai2/docs/reference.md`).
 
 on:
   push:
