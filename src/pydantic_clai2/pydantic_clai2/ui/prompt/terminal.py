@@ -59,6 +59,8 @@ class Terminal(Generic[DepsT, OutputT]):
         self.prompt: PromptSession[str] | None = None
         """The line prompt, when the console is not a terminal."""
         self.shown: SessionRuntime[DepsT, OutputT] | None = None
+        self.home: SessionRuntime[DepsT, OutputT] | None = None
+        """The session CLAI started with, while `drive` runs it."""
         self.ended_in: SessionRuntime[DepsT, OutputT] | None = None
         """The session whose end ended `drive`: the one shown then."""
         self.home_closed = False
@@ -114,6 +116,7 @@ class Terminal(Generic[DepsT, OutputT]):
         The terminal shows it again before `drive` returns.
         """
         self._ended, self.ended_in, self._reason, self.home_closed = Event(), None, 'error', False
+        self.home = home
         async with self._opened(home):
             try:
                 async with create_task_group() as tasks:

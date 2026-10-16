@@ -107,7 +107,8 @@ in the reference.
 
 Run `/update`. CLAI installs the newest build, then restarts into it with the same
 conversation open. While sessions run turns in the browser, `/update` and `/reload`
-ask you to try again when they finish.
+ask you to try again when they finish. They restart CLAI in the folder it started in,
+so a session from another folder shown in the terminal cannot run them.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.

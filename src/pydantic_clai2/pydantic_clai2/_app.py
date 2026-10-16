@@ -277,7 +277,9 @@ async def chat(
                                             )
                                         if notice:
                                             console.print(notice, markup=False)
-                                    resume = session_id = None
+                                    # Applied once: a failed reload resumes the session shown without them.
+                                    resume = session_id = resume_from = None
+                                    fork_session = False
                                 warming = warming or warm_imports.start()
                                 reason = await shell.run()
                             finally:

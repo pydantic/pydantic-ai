@@ -179,7 +179,7 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> 
     home, terminal = desk.home, desk.terminal
 
     async def body() -> None:
-        b = await desk.live.new(workspace=desk.folder('b'))
+        b = await desk.live.new()
         other = desk.runtimes[b.id]
         with pytest.raises(ValueError, match='Enter them in the session CLAI started with'):
             await other.commands.execute_async('/reload')
@@ -192,6 +192,23 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> 
     assert await desk.run(body) == 'exit'
     assert terminal.ended_in is not None and terminal.ended_in.reload_requested
     assert not terminal.home_closed
+    await home.close('exit')
+
+
+async def test_a_session_shown_from_another_folder_does_not_restart_clai(tmp_path: Path) -> None:
+    """The restart resumes the session shown where CLAI started, which works only in the session's own folder."""
+    desk = Desk(tmp_path)
+    home = desk.home
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        assert await home.show_live(b.conversation.conversation_id) == ''
+        for command in ('/reload', '/update'):
+            with pytest.raises(ValueError, match=r'where it started, and this session works in .*b; restart it'):
+                await desk.runtimes[b.id].commands.execute_async(command)
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
     await home.close('exit')
 
 

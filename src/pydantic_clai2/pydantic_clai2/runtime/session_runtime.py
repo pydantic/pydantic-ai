@@ -825,6 +825,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return await self.updates.command(args)
 
     def _refuse_restart_while_others_run(self) -> None:
+        home = self.terminal.home if self.terminal is not None else None
+        if home is not None and home is not self and self.session.workspace != home.session.workspace:
+            # The restart resumes this conversation where CLAI started, which works only in its own folder.
+            raise ValueError(
+                f'CLAI restarts in {home.session.workspace}, where it started, and this session works in '
+                f'{self.session.workspace}; restart it from a session there.'
+            )
         running = sum(
             1 for session in self.process.live.listing() if session.running and session.id != self.live_session.id
         )
