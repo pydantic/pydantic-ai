@@ -238,6 +238,8 @@ export interface SessionEntry {
   messages: number
   model: string | null
   current: boolean
+  /** Hidden from the sidebar unless it lists archived sessions too. */
+  archived: boolean
 }
 
 export interface Worktree {
