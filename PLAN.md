@@ -189,6 +189,10 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    - **Restarts:** because the runner is registered on the owner rather than saved per task, a member reloaded
      from `directory=` after a restart can still be woken. With no runner registered, `start` and waking raise
      `RuntimeError`.
+   - **Owner binding:** `start` and every wake create the member's worker inside `self.bind()`, owner-side. A
+     member then sees the same owner, sub-agent roster and depth limit, and its own `delegate_task` children
+     stay tracked by the owner, whether a lead tool, a UI action, the batcher or restart reconcile woke it.
+     Today children only inherit the binding from the lead run that created them.
    - **Workspaces:** owned by a run, so they are refused, the same as today's `backgroundable` rule.
    - **Parent:** members are top-level, `parent_id=None`. A wake keeps that parent no matter who triggers it,
      including another member's tool call, where `_CHILD` is set. Their reports therefore always go to the
@@ -235,6 +239,9 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    - **Idle member, or a member whose final response settles before acknowledging:** `_run`'s settle path checks
      the member's inbox for unacknowledged entries. Like `send` to an idle member, it wakes the member with
      them, enqueued `asap` on `agent.run(None, message_history=...)`, the pattern in `subagents/README.md`.
+     It wakes only when `outcome == 'ok'`, `not user_stopped` and `resumable`. After a user stop, a failure
+     or a budget hit, entries stay saved until the next allowed wake. That keeps user stops authoritative and
+     avoids fail-and-wake loops.
    - **Lead:** delivery goes through the conversation-level receiver with `when_idle` while a lead run is active,
      so a lead mid-task finishes its step first, like reports. When no lead run is active, the entry waits and
      the §3.3 lead-wake batcher schedules a turn.
@@ -537,7 +544,9 @@ REST routes call `host.team`:
    - a member reloaded after restart can be woken;
    - a message to an idle lead survives until its next turn;
    - a member woken inside the debounce window doesn't lose its earlier report, including one left by a restart;
-   - a peer `send` to a user-stopped member doesn't wake it;
+   - a peer `send` to a user-stopped member doesn't wake it, and neither does a user stop that leaves a peer
+     message unacknowledged;
+   - a member woken from outside any run still gets owner-managed `delegate_task` children;
    - `delegate_task(resume=<member>)` from another member is refused.
 3. **Team composition:** in harness `teams/` or in `clai2`, per Q2. Board and message tools, `teams.*` events,
    gates, the `Team` observer, lead wake batching, docs and the skill update.
