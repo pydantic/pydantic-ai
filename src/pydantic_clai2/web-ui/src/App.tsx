@@ -289,7 +289,9 @@ export function App() {
     (id: string) => {
       if (id !== newFrom.current) show(id)
       else {
-        // The shown session itself switches, so `show` does not run to close what covers it.
+        // The shown session itself switches, so `show` does not run to close what covers it, nor end an earlier pick.
+        picked.current++
+        setOpening(null)
         setWorker(null)
         setPreview(null)
       }
