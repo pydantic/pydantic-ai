@@ -93,6 +93,7 @@ from ._core import (
     InputSent,
     InputWithdrawn,
     Interrupted,
+    MAX_CUTTABLE_OUTPUT_ITEMS,
     Owed,
     ReceiveEnded,
     SessionCore,
@@ -346,8 +347,6 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
-_MAX_TRUNCATABLE_AUDIO_ITEMS = 32
-"""How many recent assistant audio parts a barge-in can still truncate: far more than can be queued for playback."""
 # How long a user turn that barged in waits for the response it interrupted to be recorded, so it can
 # follow that response in history. The provider's terminal for a cut-off response normally arrives within
 # a second of the user starting to speak; past this, the turn is recorded where history stands instead of
@@ -1029,7 +1028,7 @@ class RealtimeSession:
         # Where each recent assistant audio part begins in the emitted audio, with its provider output
         # item. Generation outruns playback, so the reply being heard is often not the last one
         # generated: a barge-in truncates the item actually playing (and later ones, never heard, at 0).
-        self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=_MAX_TRUNCATABLE_AUDIO_ITEMS)
+        self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=MAX_CUTTABLE_OUTPUT_ITEMS)
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -2209,8 +2208,9 @@ class RealtimeSession:
 
         This is server-side only — it stops generation and (when a playback position is given) syncs
         the provider's transcript to what was actually heard. Generation outruns playback, so the reply
-        being heard has often finished generating: the provider's copy is still truncated, while the
-        reply keeps its full transcript and `complete` state in history, which is append-only.
+        being heard has often finished generating: with `played_bytes`, the session still truncates it,
+        and history records it as interrupted where playback stopped (see
+        [Barge-in](../realtime/turns.md#barge-in)).
 
         With `played_ms`, the caller owns all playback accounting: flushing locally buffered
         playback is the caller's responsibility, and deciding whether to interrupt at all is too.
@@ -2328,11 +2328,13 @@ class RealtimeSession:
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
-        await self._send_frame(*self._truncations_at(playhead), *([CancelResponse()] if cancel else []))
-        # Only a response still being generated can record the position: history is append-only, so a
-        # finished one keeps what it recorded, and the position must not land on the next one instead.
+        truncations = self._truncations_at(playhead)
+        await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        # Only a response still being generated takes the position as a whole: a finished one is cut off by its
+        # item's truncation instead, and the position must not land on the next response.
         self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
-        self._apply_core(Interrupted(played_ms=played_ms))
+        cuts = tuple((cut.item_id, cut.audio_end_ms) for cut in truncations if cut.item_id is not None)
+        self._apply_core(Interrupted(played_ms=played_ms, cuts=cuts))
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
 

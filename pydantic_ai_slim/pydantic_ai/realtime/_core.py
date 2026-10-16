@@ -14,11 +14,16 @@ It keeps state by id rather than in "current" slots:
 - reply obligations: every input that asked for a response, settled only by the response the connection
   says answers it (`ResponseStarted.answers`), or by the provider refusing or losing the request.
 
-History is projected from those entities, never edited: a message is built once, when its entity is
-final, and entities are ordered by where they joined the provider's conversation. A message is visible
-in `all_messages()` once every entity placed before it is final, so a response still streaming holds back
+History is projected from those entities: a message is built once, when its entity is final, and
+entities are ordered by where they joined the provider's conversation. A message is visible in
+`all_messages()` once every entity placed before it is final, so a response still streaming holds back
 what came after it, and nothing already visible ever moves. The one exception is a tool's result, which
 sits directly after the response that called it, as request-response APIs require.
+
+A recorded message is never edited in place, so a snapshot already handed out doesn't change. It is swapped
+for an updated copy, in the same position, when the provider's copy changes after the fact: when retained
+audio is evicted, and when a barge-in cuts off a response that had already ended (generation outruns
+playback, so the reply the user speaks over has usually finished).
 """
 
 from __future__ import annotations as _annotations
@@ -87,6 +92,9 @@ from .codec import (
 
 _WAV_MEDIA_TYPE = 'audio/wav'
 
+MAX_CUTTABLE_OUTPUT_ITEMS = 32
+"""How many recent assistant audio items a barge-in can still cut off: far more than can be queued for playback."""
+
 
 # --- commands: what the caller did -------------------------------------------------------------------
 
@@ -150,9 +158,14 @@ class ToolCallRefused:
 
 @dataclass(frozen=True, kw_only=True)
 class Interrupted:
-    """The caller interrupted the response being spoken, having heard `played_ms` of it."""
+    """The caller interrupted the response being spoken, having heard `played_ms` of it.
+
+    `cuts` are the output items the session truncated on the provider, by item id, each with how much of its
+    audio was heard: a response that already ended is recorded as cut off there too.
+    """
 
     played_ms: int | None
+    cuts: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -333,6 +346,10 @@ class SessionCore:
         """The response each response the provider said the exchange continues past was carried on by."""
         self._call_response: dict[str, _Response] = {}
         """The response each tool call came from."""
+        self._recorded_items: OrderedDict[str, tuple[_Response, int]] = OrderedDict()
+        """The recorded response and part index of each recent output item that spoke, for a barge-in to cut off."""
+        self._pending_cuts: dict[str, int] = {}
+        """Cuts of output items of responses still under way, applied once each is recorded."""
         self._returns: dict[str, ModelRequest] = {}
         self._result_input: dict[str, InputId] = {}
         """The input that carried each tool call's result to the provider."""
@@ -453,6 +470,8 @@ class SessionCore:
         elif isinstance(command, Interrupted):
             if (response := self._speaking_response()) is not None:
                 response.interrupted_at_ms = command.played_ms
+            for item_id, heard_ms in command.cuts:
+                self._cut_recorded_item(item_id, heard_ms)
         elif isinstance(command, ExchangeAbandoned):
             self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
             self._epoch += 1
@@ -695,6 +714,17 @@ class SessionCore:
             # Cut off before it said anything or was billed: there is nothing to record.
             return
         parts = [*response.native_parts, *response.parts]
+        for item_id, part in response.closed_parts.items():
+            if isinstance(part, SpeechPart):
+                self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
+                self._recorded_items.move_to_end(item_id)
+        while len(self._recorded_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
+            self._recorded_items.popitem(last=False)
+        pending_cuts = [
+            (item_id, self._pending_cuts.pop(item_id))
+            for item_id in response.closed_parts
+            if item_id in self._pending_cuts
+        ]
         if interrupted:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):
@@ -728,6 +758,36 @@ class SessionCore:
         response.native_parts = []
         response.closed_parts.clear()
         self._record_audio(response, message)
+        for item_id, heard_ms in pending_cuts:
+            self._cut_recorded_item(item_id, heard_ms)
+
+    def _cut_recorded_item(self, item_id: str, heard_ms: int) -> None:
+        """Record that the listener heard only `heard_ms` of a recorded response's output item.
+
+        The response is marked interrupted, as one cut off while it was still being generated is, and its
+        transcript stays what the provider said (the provider doesn't report which words were heard). The
+        message is swapped for a copy in the same position, so a snapshot of history already handed out
+        doesn't change. An item cut off twice keeps the earlier cut.
+        """
+        if (recorded := self._recorded_items.get(item_id)) is None:
+            if any(
+                response.status is None and (item_id == response.open_part_item or item_id in response.closed_parts)
+                for response in self._responses.values()
+            ):
+                # Still being generated: cut once it is recorded, however it ends.
+                self._pending_cuts[item_id] = min(heard_ms, self._pending_cuts.get(item_id, heard_ms))
+            return
+        response, index = recorded
+        message = response.message
+        assert message is not None
+        part = message.parts[index]
+        assert isinstance(part, SpeechPart)
+        if part.interrupted_at_ms is not None and part.interrupted_at_ms <= heard_ms:
+            return
+        parts = list(message.parts)
+        parts[index] = replace(part, interrupted_at_ms=heard_ms)
+        # The same audio object, so the retained-audio budget still tracks it, and eviction still finds it.
+        response.message = replace(message, parts=parts, state='interrupted')
 
     def _open_response(self, response_id: str | None) -> _Response | None:
         """The open response content names; content naming none (Azure Voice Live's text) goes to the only one open."""
