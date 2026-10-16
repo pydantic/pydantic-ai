@@ -18719,19 +18719,30 @@ async def test_azure_responses_provider_details_hook_content_filters(
     assert content_filters[0]['content_filter_results']['jailbreak'] == snapshot({'detected': False, 'filtered': False})
 
 
-async def test_responses_stream_provider_details_hook_builtin_wins_collisions(allow_model_requests: None):
+@pytest.mark.parametrize('resumed', [False, True])
+async def test_responses_stream_provider_details_hook_builtin_wins_collisions(
+    allow_model_requests: None, resumed: bool
+):
     """When streaming, built-in provider details win over colliding keys returned by the hook, as without streaming.
+
+    A stream resumed with `starting_after` has no `response.created`, so its built-in `timestamp` only comes from the
+    terminal response, which must still win over the hook's.
 
     Mocked: no real response makes a hook collide with a built-in key.
     """
 
     class CollidingModel(OpenAIResponsesModel):
         def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
-            return {'finish_reason': 'custom', 'custom': response.id}
+            return {'finish_reason': 'custom', 'timestamp': 'custom', 'custom': response.id}
 
     response = response_message([])
+    first_event: resp.ResponseStreamEvent = (
+        resp.ResponseInProgressEvent(response=response, type='response.in_progress', sequence_number=0)
+        if resumed
+        else resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0)
+    )
     stream = [
-        resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
+        first_event,
         resp.ResponseCompletedEvent(
             response=response.model_copy(update={'status': 'completed'}),
             type='response.completed',
@@ -18749,6 +18760,10 @@ async def test_responses_stream_provider_details_hook_builtin_wins_collisions(al
         async for _ in streamed:
             pass
 
-    assert streamed.get().provider_details == snapshot(
-        {'finish_reason': 'completed', 'custom': '123', 'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)}
-    )
+    # A resumed stream is only ever a background job's, so it's also stamped as one.
+    assert streamed.get().provider_details == {
+        'finish_reason': 'completed',
+        'custom': '123',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        **({'background': True} if resumed else {}),
+    }

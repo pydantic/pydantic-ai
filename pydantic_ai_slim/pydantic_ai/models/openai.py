@@ -4836,9 +4836,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _handle_terminal_response(self, response: responses.Response) -> None:
         """Take what the complete response that ends the stream reports as `_process_response` does."""
-        # Built-in provider details win on collisions, as in `_process_response`; those set later in the stream do too.
-        if hook_provider_details := self._process_provider_details(response):
-            self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
         # A stream resumed with `starting_after` has no `response.created`, so this is where it first sees these.
         self._model_name = response.model or self._model_name
         self.provider_response_id = self.provider_response_id or response.id
@@ -4856,6 +4853,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
+        # Merged last so built-in provider details win on collisions, as in `_process_response`; those set later in
+        # the stream, like `finish_reason`, do too.
+        if hook_provider_details := self._process_provider_details(response):
+            self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
 
     async def close_stream(self) -> None:
         await self._response.source.close()
