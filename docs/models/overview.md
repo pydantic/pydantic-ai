@@ -180,6 +180,8 @@ The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead,
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
 
+A `@dataclass` subclass compares its `settings` and `profile` along with its fields; any other subclass, including a `@dataclass(eq=False)` one, compares by identity. Its `repr` shows its `model_name`, its fields when it's a `@dataclass`, and its `settings` and `profile` when set. Define `__eq__` or `__repr__` on the subclass to replace either.
+
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
