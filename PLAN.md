@@ -138,7 +138,7 @@ by asking the lead *model* to call `delegate_task(resume=...)` (`resume_prompt`)
 │  Team: names, mailbox, gates, tools, wake batching                           │
 └────────▲────────────────────────────────────────────────────────────────────┘
 ┌────────┴──────────────── harness primitives (§3.1, §3.2) ────────────────────┐
-│  DelegationTasks: + name, + member_runner factory + start, + persisted inbox │
+│  DelegationTasks: + name, + member_runner + start/member_run, + persisted inbox│
 │                   with acknowledged send / wake, + max_active                 │
 │  planning: ClaimablePlanStore (atomic claim/release incl. dependent tasks)   │
 └────────▲────────────────────────────────────────────────────────────────────┘
@@ -216,9 +216,12 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
      `directory / 'inbox' / f'{sha256(conversation_id).hexdigest()}.json'`, written atomically like `save()`.
      The subdirectory keeps it away from `opened()`'s `<32-hex id>.json` record glob, and hashing makes
      arbitrary conversation ids safe as file names.
-   - **User authority:** a user stop outranks agent messages. `send` to a record that is `user_stopped` or
-     `not resumable` persists the message but never wakes the member. Only user actions wake a stopped member:
-     `TaskCatalog.resume` after `allow_resume`, or `host.team.send` with `str` content.
+   - **User authority:** a user stop outranks agent messages.
+     - An agent `send` (a `SystemPromptPart`) to a `user_stopped` record persists the message but never wakes
+       the member.
+     - A user `send` (a `str`) clears `user_stopped` the way `allow_resume` does, then wakes the member.
+     - `TaskCatalog.resume` keeps calling `allow_resume` before it wakes.
+     - Records that are `not resumable` are never woken; `start` already refuses `one_shot` types.
    - **Content:** a `str` is the user typing to the member, delivered as a user message. A `SystemPromptPart`
      is a framed message from another agent.
    - **Saving:** the content is saved on the record first.
