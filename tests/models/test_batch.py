@@ -347,6 +347,23 @@ async def test_model_request_batch_cancels_unfinished_batches_under_an_anyio_can
     assert model.canceled == [model.created[0].id]
 
 
+async def test_model_request_batch_does_not_cancel_batches_that_ended() -> None:
+    class FailingResultsModel(SlowBatchTestModel):
+        async def batch_results(self, batch: Batch) -> list[BatchResult]:
+            raise ModelHTTPError(status_code=500, model_name='test', body='results unavailable')
+
+    model = FailingResultsModel()
+    with pytest.raises(ModelHTTPError, match='results unavailable'):
+        await model_request_batch(
+            model,
+            [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
+            batch_settings=FAST_BATCH_SETTINGS,
+        )
+
+    assert len(model.created) == 1
+    assert model.canceled == []
+
+
 async def test_exiting_the_model_ends_its_queued_and_running_work() -> None:
     """Leaving `async with model:` fails queued requests and cancels in-flight submissions and checks."""
     never = anyio.Event()
@@ -520,6 +537,19 @@ async def test_results_are_shared_by_the_requests_of_a_batch(monkeypatch: pytest
     await asyncio.gather(agent.run('three'), agent.run('four'))
 
     assert wrapped.result_fetches == 2
+
+
+async def test_flushing_an_empty_queue_does_nothing() -> None:
+    wrapped = SlowBatchTestModel()
+    await BatchModel(wrapped).flush()
+    assert wrapped.created == []
+
+
+async def test_a_ticket_for_another_response_is_not_waited_on() -> None:
+    model = BatchModel(TestModel(), batch_settings=FAST_BATCH_SETTINGS)
+    pending = await _pending_response(model)
+    assert model.continuation_delay(pending) is not None
+    assert model.continuation_delay(replace(pending, provider_response_id='resp_other')) is None
 
 
 def test_a_malformed_batch_ticket_is_not_waited_on() -> None:
