@@ -21,7 +21,7 @@ _ANSWER_ROWS = 3
 
 
 async def read_line(prompt: str, *, console: Console, hidden: bool = False) -> str | None:
-    """Read one line of input; `None` when the user presses Esc or Ctrl-C.
+    """Read one line of input; `None` when the user presses Esc or Ctrl+C.
 
     In the live editor, `prompt` and the answer are pinned under the transcript, the way `ask_user`
     shows its questions, so what the command printed just before (a sign-in URL, say) stays on screen
@@ -75,7 +75,7 @@ class LineInput:
         return None
 
     def run(self, *, surface: PromptSurface, keys: Callable[[], QuestionKey]) -> str | None:
-        """Paint through the released editor's panel until Enter, Esc, or Ctrl-C."""
+        """Paint through the released editor's panel until Enter, Esc, or Ctrl+C."""
         try:
             with raw_mode():
                 while True:

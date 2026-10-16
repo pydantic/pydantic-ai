@@ -39,7 +39,7 @@ async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | 
         authorization = await flow.start()
         console.print(f'Open {authorization.verification_uri}', markup=False, highlight=False)
         console.print(f'Enter code: {authorization.user_code}', markup=False, highlight=False)
-        console.print('Approve only the code shown here. Ctrl-C cancels. You can open the link on another device.')
+        console.print('Approve only the code shown here. Ctrl+C cancels. You can open the link on another device.')
         credentials = await flow.wait_for_authorization()
     else:
         authorized: list[GitHubCopilotCredentials] = []

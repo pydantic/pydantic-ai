@@ -83,7 +83,7 @@ class TerminalText:
 class PtyRun:
     """One command's pseudo-terminal, and the relay between it and CLAI's terminal.
 
-    Until the command goes full screen, its output goes to `capture` and keys go to it, except Ctrl-C,
+    Until the command goes full screen, its output goes to `capture` and keys go to it, except Ctrl+C,
     which calls `interrupt` so CLAI interrupts the command as it does any other. Once it goes full
     screen, `full_terminal()` takes CLAI's display off the screen and the relay passes everything through.
     """

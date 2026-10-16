@@ -151,7 +151,7 @@ class Launcher:
         return self.processes.alive(session.pid)
 
     async def stop(self, session: SessionProcess) -> None:
-        """Interrupt the CLAI as Ctrl-C would, then kill it if it is still running after `stop_timeout`.
+        """Interrupt the CLAI as Ctrl+C would, then kill it if it is still running after `stop_timeout`.
 
         Only a process that answers with the token is signalled, so a process ID the system reused for
         another program after the CLAI ended is left alone.
