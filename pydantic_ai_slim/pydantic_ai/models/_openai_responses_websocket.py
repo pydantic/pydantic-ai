@@ -186,20 +186,11 @@ class ResponsesWebSocketStream:
                 # connection-local cache. An older completed ID may already have been evicted.
                 self.websocket.latest_response_id = event.response.id
             else:
-                # A terminal failure cannot be used as the parent of another response.
+                # A failed or incomplete response cannot be used as the parent of another response.
                 # Reopen explicitly so no continuation can depend on ambiguous socket state.
+                # The shared response parser still maps an incomplete result or a failed
+                # response without an error payload to its normal finish reason.
                 await self.websocket.close()
-                if isinstance(event, ResponseIncompleteEvent):
-                    reason = event.response.incomplete_details
-                    raise ModelAPIError(
-                        model_name=self.websocket.model_name,
-                        message=f'Responses WebSocket response incomplete: {reason.reason if reason else "unknown"}',
-                    )
-                if event.response.error is None:
-                    raise ModelAPIError(
-                        model_name=self.websocket.model_name,
-                        message='Responses WebSocket response failed without an error payload.',
-                    )
         return event
 
     async def __aenter__(self) -> Self:

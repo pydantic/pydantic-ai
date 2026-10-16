@@ -1086,7 +1086,6 @@ async def test_stream_cancel_during_receive(allow_model_requests: None, sockets:
         'status',
         'model_not_found',
         'failed',
-        'failed_without_error',
         'steering',
         'disconnect',
         'send',
@@ -1110,13 +1109,10 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
         if failure != 'envelope':
             error['status'] = 400
         socket.responses = deque([[error]])
-    elif failure in ('failed', 'failed_without_error'):
+    elif failure == 'failed':
         response = text_events()[-1]['response']
         assert isinstance(response, dict)
-        response.update(
-            status='failed',
-            error={'code': 'server_error', 'message': 'test failure'} if failure == 'failed' else None,
-        )
+        response.update(status='failed', error={'code': 'server_error', 'message': 'test failure'})
         socket.responses = deque([[{'type': 'response.failed', 'sequence_number': 0, 'response': response}]])
     elif failure == 'steering':
         socket.responses = deque(
@@ -1162,12 +1158,37 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
             assert raised.value.suggested_model_id == ('openai:gpt-5.2-pro' if failure == 'model_not_found' else None)
         elif failure == 'envelope':
             assert 'invalid_test: test failure' in str(raised.value)
-        elif failure in ('failed', 'failed_without_error'):
-            assert ('server_error' if failure == 'failed' else 'without an error payload') in str(raised.value)
+        elif failure == 'failed':
+            assert 'server_error' in str(raised.value)
             with pytest.raises(UserError, match='closed'):
                 await Agent(connected).run('recover')
 
     http_handler.assert_not_called()
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_failed_response_without_error(allow_model_requests: None, sockets: SocketHarness, stream: bool):
+    response = text_events()[-1]['response']
+    assert isinstance(response, dict)
+    response.update(status='failed', error=None)
+    sockets.pending[0].responses = deque([[{'type': 'response.failed', 'sequence_number': 0, 'response': response}]])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelRequest | ModelResponse] = [ModelRequest.user_text_prompt('hello')]
+    async with source.connect() as connected:
+        if stream:
+            async with connected.request_stream(messages, None, ModelRequestParameters()) as streamed:
+                async for _ in streamed:
+                    pass
+                result = streamed.get()
+        else:
+            result = await connected.request(messages, None, ModelRequestParameters())
+
+        assert result.parts == []
+        assert result.finish_reason == 'error'
+        assert (result.provider_details or {}).get('finish_reason') == 'failed'
+        assert sockets.opened[0].close_count == 1
+        with pytest.raises(UserError, match='WebSocket is closed'):
+            await connected.request(messages, None, ModelRequestParameters())
 
 
 @pytest.mark.parametrize(
@@ -1268,9 +1289,15 @@ async def test_incomplete_response(allow_model_requests: None, sockets: SocketHa
     sockets.pending[0].responses = deque([events])
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     async with source.connect() as connected:
-        with pytest.raises(ModelAPIError, match='response incomplete: max_output_tokens'):
-            await connected.request([ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters())
+        result = await connected.request(
+            [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters()
+        )
+        assert result.text == 'ready'
+        assert result.finish_reason == 'length'
+        assert (result.provider_details or {}).get('finish_reason') == 'max_output_tokens'
         assert sockets.opened[0].close_count == 1
+        with pytest.raises(UserError, match='WebSocket is closed'):
+            await connected.request([ModelRequest(parts=[UserPromptPart('again')])], None, ModelRequestParameters())
 
 
 async def test_codex_connection_unsupported(sockets: SocketHarness):
