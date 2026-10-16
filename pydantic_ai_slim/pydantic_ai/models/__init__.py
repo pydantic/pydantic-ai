@@ -1008,7 +1008,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
         `TextPart`s that any model can consume, and puts the tool results in each request in the
         order of the calls they answer, so the request bytes (and the provider's prompt cache)
-        don't depend on the order a history happened to store them in.
+        don't depend on the order a history happened to store them in. When the profile sets
+        `tool_call_id_length`, tool call IDs that don't fit it are replaced with stable hashes that do.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1087,7 +1088,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
-        return _order_tool_results_by_call(messages)
+        messages = _order_tool_results_by_call(messages)
+
+        if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
+            messages = _fit_tool_call_ids(messages, tool_call_id_length)
+
+        return messages
 
     def _translate_legacy_tool_reveals(
         self,
@@ -2614,6 +2620,78 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
         previous = message
 
     return new_messages if changed else messages
+
+
+_BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+
+def _hashed_tool_call_id(tool_call_id: str, length: int) -> str:
+    """The low-order `length` base62 digits of the SHA-256 of `tool_call_id`."""
+    number = int.from_bytes(hashlib.sha256(tool_call_id.encode()).digest())
+    digits: list[str] = []
+    for _ in range(length):
+        number, remainder = divmod(number, 62)
+        digits.append(_BASE62_ALPHABET[remainder])
+    return ''.join(digits)
+
+
+def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelMessage]:
+    """Replace the function tool call IDs that aren't exactly `length` ASCII alphanumerics with ones that are.
+
+    Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
+    replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
+    provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
+    so a call, its result or retry prompt, and the `<tool_result>` tags rendered from the result's ID keep
+    pairing up.
+
+    IDs are assigned in history order, and an ID whose replacement is already taken by an earlier,
+    different ID (a hash collision, or a hash that equals an ID that fits) is rehashed with a counter
+    until it is free. An earlier ID's replacement therefore never changes as the history grows.
+
+    Native tool parts keep their IDs: those belong to the provider that executed them. Returns the
+    original list when nothing changed, so the identity check in `_make_request` can skip the redundant
+    `_clean_message_history` pass.
+    """
+    replacements: dict[str, str] = {}
+    taken: set[str] = set()
+
+    def fit(tool_call_id: str) -> str:
+        if (replacement := replacements.get(tool_call_id)) is not None:
+            return replacement
+        fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
+        replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
+        attempt = 0
+        while replacement in taken:
+            attempt += 1
+            replacement = _hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
+        replacements[tool_call_id] = replacement
+        taken.add(replacement)
+        return replacement
+
+    def fit_request_part(part: ModelRequestPart) -> ModelRequestPart:
+        if (
+            isinstance(part, ToolReturnPart | RetryPromptPart)
+            and (replacement := fit(part.tool_call_id)) != part.tool_call_id
+        ):
+            return replace(part, tool_call_id=replacement)
+        return part
+
+    def fit_response_part(part: ModelResponsePart) -> ModelResponsePart:
+        if isinstance(part, ToolCallPart) and (replacement := fit(part.tool_call_id)) != part.tool_call_id:
+            return replace(part, tool_call_id=replacement)
+        return part
+
+    def fit_message(message: ModelMessage) -> ModelMessage:
+        if isinstance(message, ModelRequest):
+            request_parts = [fit_request_part(part) for part in message.parts]
+            changed = any(new is not old for new, old in zip(request_parts, message.parts))
+            return replace(message, parts=request_parts) if changed else message
+        response_parts = [fit_response_part(part) for part in message.parts]
+        changed = any(new is not old for new, old in zip(response_parts, message.parts))
+        return replace(message, parts=response_parts) if changed else message
+
+    new_messages = [fit_message(message) for message in messages]
+    return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
 
 
 def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
