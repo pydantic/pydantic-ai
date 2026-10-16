@@ -52,7 +52,7 @@ def get_weather(city: str) -> str:
 
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     name='checkout_assistant',
     instructions='You are a concise checkout assistant.',
     tools=[get_weather],
@@ -148,7 +148,7 @@ and the varying half stays where it belongs.
 
 ```python {test="skip"}
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     name='checkout_assistant',
     instructions='You are a concise checkout assistant.',  # editable in Logfire
     capabilities=[AgentControl()],
@@ -173,7 +173,7 @@ from pydantic_ai.messages import InstructionPart
 from pydantic_ai_harness.logfire import AgentControl
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     name='checkout_assistant',
     instructions=[
         'You are a concise checkout assistant.',
@@ -302,7 +302,7 @@ an agent's config is not something a local rename should be able to move. The re
 the capability is wired up, not mid-run:
 
 ```python {test="skip"}
-Agent('anthropic:claude-fable-5-1', capabilities=[AgentControl()])
+Agent('{{ anthropic:xlarge }}', capabilities=[AgentControl()])
 # UserError: `AgentControl` without an explicit `name` reads the agent's `name`, and this agent has none.
 ```
 
