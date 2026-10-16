@@ -1220,7 +1220,10 @@ shell output, diffs), but not a background `/fork`'s, though it fires the turn m
 Command results come from `on_command_end` and history from `host.conversation`. The
 sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
 repository, then by checkout, with a session from a removed worktree under its repository by the
-checkout saved with it (`ConversationSummary.checkout`). Clicking a session sends `/resume ID`.
+checkout saved with it (`ConversationSummary.checkout`), archived ones left out unless its archive
+button is on (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and
+`/unarchive`).
+Clicking a session sends `/resume ID`.
 Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
 directory (`host.sessions.follows_workspace`): `/resume ID` first moves the session to the
 directory it was saved in (`host.workspace`), reads that directory's `.clai/settings.json`, and
@@ -1311,7 +1314,8 @@ as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugi
 
 Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
 default and checks every request. The `Host` header must name the server's own address, which
-stops DNS rebinding. Every request must carry a random token, new each launch: API calls in a
+stops DNS rebinding. Every request must carry a random token, new each launch but kept across
+`/update`'s restart (see below): API calls in a
 header that another site's page cannot set, the page and its files in the address, as the
 printed link does, and the WebSocket as a query parameter, from the server's own origin. No
 cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
@@ -1322,6 +1326,17 @@ private. `/web stop` is refused under `clai2 --web`, where the browser is the on
 The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
 package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
 commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
+
+`/update`, typed in the browser or the terminal, shows in the page: uv's latest line while it
+installs (`on_update_progress`), then all it printed and the command's result. A failed install,
+or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
+new build serving the web UI again on the same port with the same token, and resumes the session;
+the page says it is restarting, reconnects by itself, and names the new version. That holds for
+`clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
+restarts as a terminal session with the web UI running, though the browser does not open again.
+The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
+you can read and CLAI removes before anything else runs, never on its command line, which `ps`
+shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
@@ -1441,9 +1456,9 @@ The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the side
 **New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
 orchestrator is an agent of its own, separate from the session's: its own conversation, its own
 instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
-destroying one), and only the tools below plus `ask_user_question`. It has no shell, file, code
-mode, or other CLAI tools, and the session's agent, in the terminal or the browser, gets none of
-these.
+destroying one, clean up saved sessions by archiving them), and only the tools below plus
+`ask_user_question`. It has no shell, file, code mode, or other CLAI tools, and the session's agent,
+in the terminal or the browser, gets none of these.
 
 It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
 off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
@@ -1465,6 +1480,14 @@ workspace has an **Open** link to its page, as the sidebar's Workspaces section 
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
+| `sessions_unarchive(ids)` | list them again |
+
+**Cleaning up sessions is archiving.** Archiving can be undone, so it needs no confirmation; the
+orchestrator is told to archive when asked to clean up or delete sessions. No tool deletes a
+session, and archiving removes no folder or worktree; only `workspace_destroy` removes a checkout,
+that of a workspace the orchestrator made. Each change refreshes the sidebar.
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
 orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
@@ -2254,7 +2277,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` / `on_update_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2262,9 +2285,9 @@ saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
 saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
 
-Eight `async` methods fire outside the agent run, in the shell:
+Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2276,6 +2299,7 @@ Eight `async` methods fire outside the agent run, in the shell:
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_update_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2313,6 +2337,16 @@ it started or finished. These events never reach the main run's hooks: they are 
 shows. It fires for every stream event of every running task, down to each text and thinking
 delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
 elsewhere. A failure is printed and the task goes on.
+
+`on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
+uv: `target` is the version, or on the `main` channel the short commit, being installed, and
+`stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
+line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
+or `restarting` when CLAI is about to exit and start the new build in its place, and
+`on_session_end` follows. `output` comes only while the web UI serves: reading uv's output turns
+its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
+has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
+install runs after CLAI exits.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2505,11 +2539,15 @@ prompt the keyboard does:
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
   fails.
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
-  session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
+  session persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
-  refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
-  its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
-  `listing` queues the newest untitled sessions for background naming, which calls the
+  refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
+  from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
+  `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do
+  resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only
+  archived sessions, and `archived=None` both. As in `/resume`, a fork gets its own copy of the session's
+  Monty state, and a deleted session's state is deleted with it. Like opening `/resume`, `listing`
+  queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
   moves CLAI into the directory a session was saved in, as under `clai2 --web`, rather than

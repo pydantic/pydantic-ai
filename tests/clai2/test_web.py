@@ -657,6 +657,42 @@ def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: '
     assert shown() == [('folder', False)]
 
 
+def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'MakeWeb') -> None:
+    """Archiving hides a session, listed again muted with `include_archived=true`; the open one is refused."""
+    web_ = make_web(Agent(TestModel()))
+    old = web_.portal.call(
+        lambda: web_.shell.sessions.store.save(summary=ConversationSummary(workspace='/x', title='Stale'), messages=[])
+    )
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.shell.session.conversation_id
+
+    def listed(path: str) -> dict[str, bool]:
+        return {
+            entry['title']: entry['archived']
+            for project in web_.get(path).json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        assert web_.post(f'/api/sessions/{old.id}/archive').status_code == 204
+        receive_until(socket, SessionsChanged)
+        assert listed('/api/sessions') == {'New session': False}
+        assert listed('/api/sessions?include_archived=true') == {'New session': False, 'Stale': True}
+        assert listed('/api/sessions?q=Stale&include_archived=true') == {'Stale': True}
+        refused = web_.post(f'/api/sessions/{current}/archive')
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            'The current session cannot be archived. Switch to another one first.',
+        )
+        assert web_.post('/api/sessions/missing/archive').status_code == 404
+        assert web_.client.post(f'/api/sessions/{old.id}/unarchive').status_code == 403, 'the token is checked'
+        assert web_.post(f'/api/sessions/{old.id}/unarchive').status_code == 204
+        receive_until(socket, SessionsChanged)
+    assert listed('/api/sessions') == {'New session': False, 'Stale': False}
+
+
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
     web_ = make_web(Agent(TestModel()))
     web_.plugin.host.sessions = None

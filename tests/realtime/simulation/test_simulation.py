@@ -634,9 +634,8 @@ def test_turn_spoken_while_a_cancelled_reply_ends_is_filed_after_it() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='azure')), scenario)
 
 
-@known('SIM-33')
-def test_known_gemini_async_result_cut_in_ends_the_wait_early() -> None:
-    """The model finishes speaking after an async call; the result then cuts in, before the model answers it."""
+def test_gemini_async_result_cut_in_does_not_end_the_wait() -> None:
+    """The model finishes speaking after an async call; the result then cuts in, before the model answers it (SIM-33, fixed by the session core)."""
 
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
@@ -645,7 +644,7 @@ def test_known_gemini_async_result_cut_in_ends_the_wait_early() -> None:
         sim.finish(deliver=False)
         sim.settle()
 
-    reproduce('SIM-33', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
 @known('SIM-25')

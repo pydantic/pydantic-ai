@@ -55,6 +55,8 @@ from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools
 
+from ...realtime_connections import InferredConnection
+
 
 def _ack_seen(messages: list[ModelMessage]) -> bool:
     """True if any tool return in the history is a background-execution ack."""
@@ -96,16 +98,16 @@ def _model_calling(tool_name: str, args: str = '{}', ack_callback: Callable[[], 
     return FunctionModel(model_fn)
 
 
-class _BackgroundRealtimeConnection(RealtimeConnection):
+class _BackgroundRealtimeConnection(InferredConnection):
     def __init__(self) -> None:
         self.sent: list[RealtimeInput] = []
         self.sent_event = asyncio.Event()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
         self.sent_event.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc1', tool_name='structured', args='{}')
         yield ResponseDone()
         await asyncio.Event().wait()

@@ -19,7 +19,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2 import warm_imports
-from pydantic_clai2.cli.self_update import Relaunch
+from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
     Commands,
 )
@@ -44,7 +44,7 @@ from pydantic_clai2.runtime._session import (
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
-from pydantic_clai2.runtime.session_runtime import create_shell, print_welcome
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell, print_welcome, web_serving
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
@@ -165,6 +165,7 @@ async def chat(
     session_id: str | None = None,
     fork_session: bool = False,
     worktree: Worktree | None = None,
+    web: WebHandoff | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -178,6 +179,8 @@ async def chat(
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
+    `web` is the web UI CLAI served before `/update` restarted it: the `web` plugin serves it again, with no
+    browser opening, so its open pages reconnect.
     """
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
@@ -204,6 +207,7 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
+    served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
@@ -235,6 +239,8 @@ async def chat(
                                     with shell.defer_identity() if browse else nullcontext():
                                         await shell.loader.load_all(fresh=fresh)
                                         _report_project_plugins(shell.loader, console)
+                                        await _serve_again(shell.loader, web, console=console)
+                                        web = None
                                         if restored:
                                             # Now that observability has subscribed and renderers have loaded.
                                             shell.session.record_resumed()
@@ -258,17 +264,12 @@ async def chat(
                             raise exc.exceptions[0] from None
                         raise
                     finally:
+                        served = _serving(shell)  # Before closing the plugins stops the web UI.
                         with transcript.capture(console):
                             await shell.loader.close(reason)
                 if not shell.reload_requested:
-                    if (executable := shell.updates.relaunch) is not None:
-                        summary = shell.session.summary
-                        raise Relaunch(
-                            executable=executable,
-                            session_id=summary.id if summary.revision else None,
-                            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
-                            new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
-                        )
+                    if (relaunch := shell.relaunch(web=served)) is not None:
+                        raise relaunch
                     return
                 shell.reload_requested = False
                 if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -316,6 +317,19 @@ async def chat(
                     with transcript.capture(console):
                         console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
                     fresh = True
+
+
+async def _serve_again(loader: PluginLoader[DepsT], web: WebHandoff | None, *, console: Console) -> None:
+    """Serve `web` again, the web UI CLAI served before `/update` restarted it; nothing without one."""
+    if web is not None:
+        from pydantic_clai2.cli.web import serve_again
+
+        console.print(await serve_again(loader, web), markup=False)
+
+
+def _serving(shell: SessionRuntime[DepsT, OutputT]) -> WebHandoff | None:
+    """The web UI to serve again once `/update` restarts CLAI; `None` when it does not, or none runs."""
+    return None if shell.updates.relaunch is None else web_serving(shell.loader)
 
 
 def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> None:
