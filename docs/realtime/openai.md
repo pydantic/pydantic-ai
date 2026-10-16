@@ -334,7 +334,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | --- | --- |
 | `openai_voice` | The Live voice, e.g. `marin` (the provider default). Immutable once the session has started |
 | `openai_live_instructions` | How the Live model speaks: pacing, style, and when to delegate |
-| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
+| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI retains the session, which lets it be forked or downloaded later and a dropped connection [reconnect](#gpt-live-feature-support-and-limitations) with the conversation intact. Defaults to `False` |
 | `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so text lands without a microphone. Live bills silence like speech. Defaults to `False` |
@@ -403,9 +403,12 @@ On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSetti
 effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
 GA `gpt-realtime` ignores the setting.
 
-Neither family surfaces readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
+Neither family streams readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
 GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
-continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. To have that
+reasoning carry readable text, request a summary with `openai_live_delegation={'reasoning_summary': ...}`
+(`'auto'`, `'concise'`, or `'detailed'`), as `openai_reasoning_summary` does on a direct Responses
+request. The backend summarizes only some of its reasoning, so some of these parts can still be empty.
 
 ## Browser WebRTC
 

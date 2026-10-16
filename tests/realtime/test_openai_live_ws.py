@@ -451,6 +451,44 @@ async def test_the_backend_searches_the_web(
     assert '936' in follow_up.output
 
 
+async def test_the_backend_summarizes_its_reasoning(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """`reasoning_summary` reaches the backend, which accepts it and summarizes its reasoning.
+
+    The reasoning recorded ahead of each search then reads as the summary, as on a direct Responses run
+    that requests one.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_delegation={'reasoning_summary': 'auto'}, openai_live_turn_silence_ms=1000
+        ),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    # Only reasoning the backend did summarize carries text: here, the reasoning before the first search.
+    thinking = [part.content for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking[0].startswith('**Searching for Amsterdam population**')
+    assert thinking[1:] == snapshot(['', '', ''])
+
+
 async def test_an_image_a_tool_returns_reaches_the_backend(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
     assets_path: Path,
