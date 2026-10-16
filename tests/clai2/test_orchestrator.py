@@ -474,6 +474,19 @@ async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
         )
 
 
+def test_a_later_keep_takes_back_an_earlier_destroy() -> None:
+    """Only the user's latest pick for a workspace counts, so a `Keep ID` after a `Destroy ID` refuses again."""
+
+    def answer(label: str) -> ModelRequest:
+        content = {'Destroy workspace w?': [label]}
+        return ModelRequest(parts=[ToolReturnPart(tool_name='ask_user_question', content=content, tool_call_id=label)])
+
+    assert tools_module.confirmed([answer('Destroy w')], 'w')
+    assert not tools_module.confirmed([answer('Destroy w'), answer('Keep w')], 'w')
+    assert tools_module.confirmed([answer('Keep w'), answer('Destroy w')], 'w')
+    assert not tools_module.confirmed([answer('Destroy other')], 'w')
+
+
 async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
         tools = made.tools

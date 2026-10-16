@@ -78,8 +78,12 @@ _PICKED: TypeAdapter[dict[str, list[str]]] = TypeAdapter(dict[str, list[str]])
 
 
 def confirmed(messages: Sequence[ModelMessage], workspace_id: str) -> bool:
-    """Whether the user picked `Destroy ID` in an `ask_user_question` answer in this conversation."""
-    label = f'Destroy {workspace_id}'
+    """Whether the user's latest pick of `Destroy ID` or `Keep ID` in an `ask_user_question` answer was `Destroy ID`.
+
+    A later `Keep ID` takes an earlier `Destroy ID` back.
+    """
+    destroy, keep = f'Destroy {workspace_id}', f'Keep {workspace_id}'
+    approved = False
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
@@ -90,9 +94,12 @@ def confirmed(messages: Sequence[ModelMessage], workspace_id: str) -> bool:
                 picked = _PICKED.validate_python(part.content)
             except ValidationError:  # Declined: the user picked nothing.
                 continue
-            if any(label in labels for labels in picked.values()):
-                return True
-    return False
+            for labels in picked.values():
+                if destroy in labels:
+                    approved = True
+                elif keep in labels:
+                    approved = False
+    return approved
 
 
 _PROBLEMS = (LookupError, ValueError, RuntimeError, OSError, httpx.HTTPError, WebSocketException)
