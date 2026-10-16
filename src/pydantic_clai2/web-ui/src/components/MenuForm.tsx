@@ -273,8 +273,8 @@ function Control({
 }) {
   const [other, setOther] = useState(false)
   if (field.action) {
-    // A row with nothing to show, such as one that adds something, opens rather than changes.
-    const verb = field.value || field.secret ? 'Change' : 'Open'
+    // A row says what its button does, or else one with nothing to show, such as one that adds something, opens.
+    const verb = field.button ? field.button.replace(/…$/, '') : field.value || field.secret ? 'Change' : 'Open'
     return (
       <div className="setting-action">
         <span className="setting-current">{field.secret ? '' : label(field.value)}</span>

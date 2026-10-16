@@ -96,9 +96,10 @@ from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
-from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
+from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, system_prompt_menu
 from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
+from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
@@ -699,6 +700,7 @@ def create_shell(
             description='View the system prompt and edit your own instructions, sent after the built-in ones',
             handler=lambda args: system_prompt_command(context, args, history=lambda: session.messages),
             during_turn=True,
+            menu=lambda: system_prompt_menu(context, history=lambda: session.messages),
         )
     )
     commands.register(
@@ -785,6 +787,7 @@ def create_shell(
             name='update',
             description='Install the newest CLAI from the updates.channel setting (stable or main)',
             handler=updates.command,
+            menu=lambda: update_menu(context, updates, run=lambda text: shell.send_input(text)),
         )
     )
     commands.register(
