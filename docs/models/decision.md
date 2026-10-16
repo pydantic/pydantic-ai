@@ -246,7 +246,7 @@ Every input to the agent ends up in one of two places: the state, which is judge
 
 | Agent input | Where it ends up |
 |---|---|
-| the run's prompt | the whole state when there is no history, otherwise its `text`; a [structured prompt](#structured-input) is sent as its value, under `state` |
+| the run's prompt | the whole state when there is no history, otherwise its `text`; a [structured prompt](#structured-input) is sent as its value instead: the whole state, or under `state` in place of `text` |
 | the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
 | the tool calls, their results and retry prompts since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
@@ -913,7 +913,7 @@ Accuracy falls as the state grows with detail the question does not need, and a 
 
 When the material to judge is structured, such as a question with an expected and a generated answer, pass it as a [`StructuredContent`][pydantic_ai.StructuredContent] and the decision model is sent the value itself, which a backend like TypeSafe takes as a JSON object, rather than the value serialized as text:
 
-```python {test="skip"}
+```python {title="structured_judge.py"}
 from pydantic_ai import Agent, StructuredContent
 
 judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Are the two answers equivalent?')
@@ -921,6 +921,8 @@ judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Are the two
 result = judge.run_sync(
     [StructuredContent({'question': 'What is 2 + 2?', 'expected_answer': '4', 'generated_answer': 'Four'})]
 )
+print(result.output)
+#> True
 ```
 
 The value is the whole state when there is no history; otherwise it goes under `state` where a text prompt goes under `text`, beside `history` and `done` rather than merged into it, so its keys stay its own. An earlier structured prompt in the history is a `user` entry holding its value. A Pydantic model or dataclass is sent as the JSON-compatible data it dumps to. Only a prompt that is a single `StructuredContent` is sent this way; one that has text or other items beside it is sent as text, with the item as the text it [renders](../input.md#structured-input) to, as any other model would be sent it. A language model behind the decision model in a `FallbackModel` is sent that text too.

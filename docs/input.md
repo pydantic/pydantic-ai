@@ -159,13 +159,13 @@ ui_state = UIState(url='/products/42', cart_total=949.0)
 result = agent.run_sync([StructuredContent(ui_state, tag='ui_state'), 'Why did the total jump?'])
 ```
 
-The model is sent `<ui_state>{"url":"/products/42","cart_total":949.0}</ui_state>`, followed by the question. By default the value is rendered as compact JSON, wrapped in `tag` when one is given, with `<`, `>` and `&` escaped so that a value from an untrusted client can't close the tag. Pass `format='xml'` to render it with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml] instead, or a function that takes the value and returns the text. A `description` is written on the line before the value.
+The model is sent `<ui_state>{"url":"/products/42","cart_total":949.0}</ui_state>`, followed by the question. By default the value is rendered as compact JSON, wrapped in `tag` when one is given, with `<`, `>` and `&` escaped so that a value from an untrusted client, rendered on your server, can't close the tag. Pass `format='xml'` to render it with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml] instead, or a function that takes the value and returns the text. A `description` is written on the line before the value.
 
 The text is rendered once, when the item is created, and stored in [`content`][pydantic_ai.messages.StructuredContent.content] beside the value. A message history that is stored and loaded again is therefore sent exactly as before, which keeps the [prompt cache](message-history.md) prefix intact, even when the text came from a function that isn't stored. After loading, [`value`][pydantic_ai.messages.StructuredContent.value] is the JSON-compatible form of the value, such as a dict in place of a Pydantic model.
 
 To render a kind of value the same way wherever it is used, subclass `StructuredContent` and override [`render`][pydantic_ai.messages.StructuredContent.render]:
 
-```py {title="structured_content_subclass.py" test="skip"}
+```py {title="structured_content_subclass.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import StructuredContent, format_as_xml
@@ -181,6 +181,15 @@ class UIStateContent(StructuredContent):
 
     def render(self) -> str:
         return format_as_xml(self.value, root_tag='ui_state')
+
+
+print(UIStateContent(UIState(url='/products/42', cart_total=949.0)).content)
+"""
+<ui_state>
+  <url>/products/42</url>
+  <cart_total>949.0</cart_total>
+</ui_state>
+"""
 ```
 
 `StructuredContent` is a [`TextContent`][pydantic_ai.TextContent], so code that reads the text of a prompt handles it like any other text. A [decision model](models/decision.md#structured-input) is the exception: it is sent the value itself when the prompt is a single `StructuredContent`. Code that rewrites the text of a prompt, such as a redaction step, should therefore replace the item with a plain `TextContent` holding the new text, as the harness's [guardrails](harness/guardrails.md) and [compaction](harness/compaction.md) do.

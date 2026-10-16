@@ -1033,6 +1033,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
+        - `StructuredContent` is always dumped as a separate `pydantic_ai_structured_content` activity
+          message, which reloads as a separate `UserPromptPart`, without its `metadata`.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
           inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`

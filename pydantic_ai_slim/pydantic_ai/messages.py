@@ -631,6 +631,7 @@ class StructuredContent(TextContent):
     """The value as text, sent to models without native structured input.
 
     Rendered by [`render`][pydantic_ai.messages.StructuredContent.render] when the item is created, unless given.
+    Rendering to empty text raises a `ValueError`.
     """
 
     format: InitVar[StructuredContentFormat | Callable[[Any], str] | None] = None
@@ -660,11 +661,18 @@ class StructuredContent(TextContent):
         if self.content:
             return
         if format is None:
-            self.content = self.render()
+            content = self.render()
         elif callable(format):
-            self.content = format(self.value)
+            content = format(self.value)
         else:
-            self.content = self._render_as(format)
+            content = self._render_as(format)
+        if not content:
+            # An empty `content` is what tells a reloaded item to render, so storing one would change the text.
+            raise ValueError(
+                '`StructuredContent` rendered to empty text, which a model cannot be sent; give it a `tag` or a `format`'
+                ' that renders the value as text.'
+            )
+        self.content = content
 
     def render(self) -> str:
         """Render the value as the text sent to models without native structured input, as JSON by default.

@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -233,6 +233,19 @@ def test_structured_content_subclass_renders_its_own_way():
     assert UIStateContent(_UIState(url='/p/42', cart_total=1)).content == '<ui_state url="/p/42" />'
 
 
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(lambda: StructuredContent({}, format='xml'), id='xml-without-tag'),
+        pytest.param(lambda: StructuredContent([1], format=lambda value: ''), id='function'),
+    ],
+)
+def test_structured_content_rejects_empty_text(item: Callable[[], StructuredContent]):
+    """An empty `content` is re-rendered on load, so storing one would change the text a reloaded history sends."""
+    with pytest.raises(ValueError, match='`StructuredContent` rendered to empty text'):
+        item()
+
+
 def test_structured_content_rejects_an_invalid_tag():
     with pytest.raises(ValueError, match=r"`StructuredContent\.tag` must be a valid XML tag name, got 'ui state'"):
         StructuredContent({}, tag='ui state')
@@ -285,8 +298,11 @@ def test_structured_content_round_trips_through_json():
             'Why did the total jump?',
         ]
     )
-    loaded = ModelMessagesTypeAdapter.validate_python(dumped)
-    assert loaded[0].parts[0].content == snapshot(  # pyright: ignore[reportAttributeAccessIssue]
+    [request] = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot(
         [
             StructuredContent(
                 content='<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',

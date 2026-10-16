@@ -7033,7 +7033,8 @@ def test_load_messages_skips_a_malformed_structured_content_activity() -> None:
             UserMessage(id='u1', content='Hi'),
         ]
     )
-    assert [part.content for message in messages for part in message.parts] == ['Hi']
+    [request] = messages
+    assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
 
 
 # region multimodal and coverage tests

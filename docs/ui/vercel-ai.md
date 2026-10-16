@@ -245,13 +245,13 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## Structured content
 
-A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt round-trips as a `data-structured-content` part of the user message, holding its `value`, the rendered `content`, and its `tag` and `description` when set. See [Structured input](../input.md#structured-input).
+A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt round-trips as a `data-structured-content` part of the user message, holding its `value`, the rendered `content`, and its `tag` and `description` when set. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its `value` and its `content`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
 
 ## Enqueued messages
 
 Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as a `data-enqueued-messages` [data chunk](#data-chunks) with `id` set to the enqueue ID. Its `data.messages` holds the delivered messages in the shape [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] gives them. The AI SDK keeps the data part on the assistant message, and the chat doesn't show it unless your frontend renders that type. A frontend that holds the history sends it back on the next request, and [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores the messages at the position they were delivered in.
 
-An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text.
+An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text, except a [`StructuredContent`](#structured-content), which keeps its value.
 
 ## MCP Apps
 
