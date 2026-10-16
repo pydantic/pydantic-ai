@@ -1338,9 +1338,11 @@ def test_a_refused_response_recorded_within_its_frame_is_taken_back(responses_ar
         core(retain_output_audio=True, responses_are_requests=responses_are_requests),
         started('r1'),
         AudioDelta(b'\x00\x00', response_id='r1'),
-        said('r1', 'Hi.'),
+        said('r1', 'Hi.', 'item_1'),
         ended('r1'),
         ResponseRefused(response_id='r1'),
+        # A barge-in naming its item has nothing left to cut.
+        Interrupted(played_ms=None, cuts=(('item_1', 0),)),
     )
     assert session_core.all_messages() == []
     assert session_core.usage.requests == 0

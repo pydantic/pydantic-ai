@@ -1690,6 +1690,28 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
     assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
 
 
+async def test_interrupt_played_bytes_leaves_a_reply_from_before_a_reconnect_as_recorded() -> None:
+    """The fresh conversation holds a reply from before a reconnect only as replayed text, which can't be truncated.
+
+    The connection drops a truncation of an item it no longer has, so history doesn't record that reply as cut
+    off either.
+    """
+    conn = BlockingRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone(), RealtimeSessionReconnectEvent(state_restored=True)]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, lambda event: isinstance(event, RealtimeSessionReconnectEvent))
+        await anext(stream)
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+
+    assert _speech_cuts(session) == [('complete', [None])]
+
+
 async def test_interrupt_played_ms_after_the_reply_finished_generating_leaves_no_position_behind() -> None:
     conn = _GatedRealtimeConnection(
         [*_speech('item-a'), ResponseDone()],

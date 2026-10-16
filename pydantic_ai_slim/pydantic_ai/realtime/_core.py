@@ -1075,6 +1075,8 @@ class SessionCore:
             response.refused = True
             response.message = None
             self._placed.remove(response)
+            for item_id in [item_id for item_id, (recorded, _) in self._recorded_items.items() if recorded is response]:
+                del self._recorded_items[item_id]
             if response in self._recorded_audio:
                 self._recorded_audio.remove(response)
             if self._responses_are_requests:

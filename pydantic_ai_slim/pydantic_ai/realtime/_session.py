@@ -1020,6 +1020,9 @@ class RealtimeSession:
         # item. Generation outruns playback, so the reply being heard is often not the last one
         # generated: a barge-in truncates the item actually playing (and later ones, never heard, at 0).
         self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=MAX_CUTTABLE_OUTPUT_ITEMS)
+        # Where the audio of the current connection began: a reconnect's fresh conversation holds the items
+        # before it only as replayed text, so a barge-in can't truncate them there, and history doesn't cut them.
+        self._connection_audio_start_bytes = 0
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -2298,7 +2301,14 @@ class RealtimeSession:
         # Only a response still being generated takes the position as a whole: a finished one is cut off by its
         # item's truncation instead, and the position must not land on the next response.
         self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
-        cuts = tuple((cut.item_id, cut.audio_end_ms) for cut in truncations if cut.item_id is not None)
+        on_this_connection = {
+            item_id for start, item_id in self._audio_items if start >= self._connection_audio_start_bytes
+        }
+        cuts = tuple(
+            (cut.item_id, cut.audio_end_ms)
+            for cut in truncations
+            if cut.item_id is not None and cut.item_id in on_this_connection
+        )
         self._apply_core(Interrupted(played_ms=played_ms, cuts=cuts))
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
@@ -3508,6 +3518,7 @@ class RealtimeSession:
         nothing and stays `True`. Whether the settlement *emitted* events is not the test: an in-flight
         response carried only by pending provider metadata is finalized into history without any.
         """
+        self._connection_audio_start_bytes = self._emitted_audio_bytes
         if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
         lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)

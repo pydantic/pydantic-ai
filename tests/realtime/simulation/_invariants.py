@@ -180,8 +180,19 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
 
 
 def is_cut_off_copy(old: ModelMessage, new: ModelMessage) -> bool:
-    """Whether `new` is `old` recorded as cut off by a barge-in: the same response, marked interrupted, and nothing else changed."""
+    """Whether `new` is `old` recorded as cut off by a barge-in: the same response, marked interrupted, and nothing else changed.
+
+    A cut can only move back: a part already cut keeps its cut or an earlier one.
+    """
     if not isinstance(old, ModelResponse) or not isinstance(new, ModelResponse) or new.state != 'interrupted':
+        return False
+    if any(
+        isinstance(before, SpeechPart)
+        and isinstance(after, SpeechPart)
+        and before.interrupted_at_ms is not None
+        and (after.interrupted_at_ms is None or after.interrupted_at_ms > before.interrupted_at_ms)
+        for before, after in zip(old.parts, new.parts)
+    ):
         return False
 
     def uncut(message: ModelResponse) -> bytes:
