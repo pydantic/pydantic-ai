@@ -104,18 +104,19 @@ class InferredLifecycle:
       provider while the model was working on that reply, and follows it.
     - A dropped connection loses the response under way and every reply still owed.
 
-    A provider that departs from these defaults gets a subclass that overrides these hooks:
+    These are the defaults; a provider that departs from them gets a subclass overriding these extension points:
 
-    - `_transcripts_lag_replies` (`True`): whether the provider transcribes the user's words after the model
-      started answering them.
-    - `_audio_starts_response` (`True`): whether output audio is the model speaking, so a response starts with it.
-    - `_untranscribed_audio_is_a_turn` (`True`): whether audio the model replies to before any transcript of it
-      came is a spoken turn of its own.
-    - `_takes_turn(codec)` (`False`): whether a provider message has the model take the turn, whatever its output
-      shows.
+    - [`transcripts_lag_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.transcripts_lag_replies]
+      (`True`): whether the provider transcribes the user's words after the model started answering them.
+    - [`audio_starts_response`][pydantic_ai.realtime.lifecycle.InferredLifecycle.audio_starts_response] (`True`):
+      whether output audio is the model speaking, so a response starts with it.
+    - [`untranscribed_audio_is_a_turn`][pydantic_ai.realtime.lifecycle.InferredLifecycle.untranscribed_audio_is_a_turn]
+      (`True`): whether audio the model replies to before any transcript of it came is a spoken turn of its own.
+    - [`takes_turn(codec)`][pydantic_ai.realtime.lifecycle.InferredLifecycle.takes_turn] (`False`): whether a
+      provider message has the model take the turn, whatever its output shows.
     """
 
-    _transcripts_lag_replies: ClassVar[bool] = True
+    transcripts_lag_replies: ClassVar[bool] = True
     """Whether the provider can transcribe the user's words after the model started answering them, as most do.
 
     A transcript that starts while a reply nobody asked for is under way is then the speech that reply answers,
@@ -123,14 +124,14 @@ class InferredLifecycle:
     speech over a reply while the reply is still going) sets it to `False`.
     """
 
-    _audio_starts_response: ClassVar[bool] = True
+    audio_starts_response: ClassVar[bool] = True
     """Whether output audio is the model speaking, so a response starts with it.
 
     A subclass for a provider whose output is a continuous track, silent between replies, sets it to `False`, and
-    says where the model takes the turn with `_takes_turn` instead.
+    says where the model takes the turn with `takes_turn` instead.
     """
 
-    _untranscribed_audio_is_a_turn: ClassVar[bool] = True
+    untranscribed_audio_is_a_turn: ClassVar[bool] = True
     """Whether audio the model replies to before any transcript of it came is a spoken turn of its own.
 
     A subclass for a provider that replies to speech only once it has transcribed it (a cascaded pipeline, say) sets
@@ -324,7 +325,7 @@ class InferredLifecycle:
 
     def frame_for(self, codec: Sequence[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame to yield for the codec events one provider message makes: them, with the lifecycle events around."""
-        takes_turn = self._takes_turn(codec)
+        turn_taken = self.takes_turn(codec)
         frame: RealtimeFrame = [*self.take_pending()]
         if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
             # The user cut in, and the message reports what they said ahead of the cut: that is new speech, not
@@ -334,21 +335,21 @@ class InferredLifecycle:
             self._close_turn(closed)
             frame.extend(closed)
         for event in codec:
-            before, after = self._event(event, takes_turn=takes_turn)
+            before, after = self._event(event, takes_turn=turn_taken)
             frame.extend(before)
             frame.append(event)
             frame.extend(after)
-        if takes_turn:
+        if turn_taken:
             started: list[LifecycleEvent] = []
             self._ensure_response(started)
             frame.extend(started)
         return frame
 
-    def _takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
+    def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         """Whether the provider message `codec` makes has the model take the turn, whatever its output shows.
 
-        A hook for a subclass whose connection knows where the model takes the turn better than its output shows
-        (see `_audio_starts_response`): a response then starts with the message's audio, or after its events if it
+        An extension point for a subclass whose connection knows where the model takes the turn better than its output shows
+        (see `audio_starts_response`): a response then starts with the message's audio, or after its events if it
         has none, if none is under way. `False` by default.
         """
         return False
@@ -377,7 +378,7 @@ class InferredLifecycle:
             return before, after
         output = (
             isinstance(event, (PartStartEvent, ToolCall))
-            or (isinstance(event, AudioDelta) and (self._audio_starts_response or takes_turn))
+            or (isinstance(event, AudioDelta) and (self.audio_starts_response or takes_turn))
             or (isinstance(event, OutputTranscript) and bool(event.text))
         )
         if self._deferred is not None:
@@ -647,7 +648,7 @@ class InferredLifecycle:
         self._open_named = named is not None
         if turn_id is not None:
             self._turn_reply = (turn_id, self._open)
-        elif not answers and self._transcribes and self._transcripts_lag_replies:
+        elif not answers and self._transcribes and self.transcripts_lag_replies:
             self._unprompted_reply = self._open
         continues, self._continues = self._continues, None
         events.append(
@@ -677,7 +678,7 @@ class InferredLifecycle:
             return turn.id
         if (
             not (audio and replying)
-            or (self._transcribes and (self._identified or not self._untranscribed_audio_is_a_turn))
+            or (self._transcribes and (self._identified or not self.untranscribed_audio_is_a_turn))
             or self._spoken_unanswered
         ):
             # Nothing was said for the model to reply to (or the provider names its turns, and named none here), or

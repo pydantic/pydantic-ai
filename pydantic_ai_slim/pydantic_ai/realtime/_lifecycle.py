@@ -25,7 +25,16 @@ AnswersBasis = Literal['protocol', 'inferred']
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResponseStarted:
+class LifecycleEvent:
+    """What a connection says about the responses, spoken turns, and inputs its codec events are about.
+
+    The base of the lifecycle events below, so `isinstance(event, LifecycleEvent)` tells one apart from a codec
+    event in a [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.RealtimeFrame].
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResponseStarted(LifecycleEvent):
     """A response began: exactly once per response, before any of its content."""
 
     response_id: str
@@ -54,7 +63,7 @@ reconnect did not carry it over) or closed before the provider reported it done.
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResponseEnded:
+class ResponseEnded(LifecycleEvent):
     """A response ended: exactly once per started response, after all of its content and usage."""
 
     response_id: str
@@ -66,14 +75,14 @@ class ResponseEnded:
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnStarted:
+class UserTurnStarted(LifecycleEvent):
     """The user began a spoken turn (the provider heard speech start, or a commit names a turn it hadn't)."""
 
     turn_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnEnded:
+class UserTurnEnded(LifecycleEvent):
     """A spoken turn joined the provider's conversation, at this point in its order."""
 
     turn_id: str
@@ -86,7 +95,7 @@ class UserTurnEnded:
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnClosed:
+class UserTurnClosed(LifecycleEvent):
     """No more audio or transcript is coming for a spoken turn.
 
     It was cleared, its connection lost, or its transcript is over. One that hadn't joined the conversation
@@ -97,14 +106,14 @@ class UserTurnClosed:
 
 
 @dataclass(frozen=True, kw_only=True)
-class InputAdded:
+class InputAdded(LifecycleEvent):
     """An input joined the provider's conversation, at this point in its order."""
 
     input_id: InputId
 
 
 @dataclass(frozen=True, kw_only=True)
-class InputLost:
+class InputLost(LifecycleEvent):
     """The provider will never answer these inputs' request for a response.
 
     The connection dropped the request (a barge-in cut off the response it was waiting behind), or lost it
@@ -115,14 +124,14 @@ class InputLost:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResponseRequestRefused:
+class ResponseRequestRefused(LifecycleEvent):
     """The provider refused the request for a response made for these inputs, so none will answer them."""
 
     input_ids: tuple[InputId, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
-class OutputItemDetails:
+class OutputItemDetails(LifecycleEvent):
     """What the provider says about one item of a response's output, to keep on the part that item makes.
 
     Like OpenAI's `phase`, which tells an assistant message the model meant as commentary on its way to a tool
@@ -132,34 +141,6 @@ class OutputItemDetails:
     response_id: str
     item_id: str
     provider_details: dict[str, Any]
-
-
-LifecycleEvent = TypeAliasType(
-    'LifecycleEvent',
-    ResponseStarted
-    | ResponseEnded
-    | UserTurnStarted
-    | UserTurnEnded
-    | UserTurnClosed
-    | InputAdded
-    | InputLost
-    | ResponseRequestRefused
-    | OutputItemDetails,
-)
-"""What a connection says about the responses, spoken turns, and inputs its codec events are about."""
-
-LIFECYCLE_EVENT_TYPES = (
-    ResponseStarted,
-    ResponseEnded,
-    UserTurnStarted,
-    UserTurnEnded,
-    UserTurnClosed,
-    InputAdded,
-    InputLost,
-    ResponseRequestRefused,
-    OutputItemDetails,
-)
-"""The `LifecycleEvent` variants, for `isinstance` checks."""
 
 
 @dataclass(frozen=True)

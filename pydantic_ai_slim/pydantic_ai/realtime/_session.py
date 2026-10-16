@@ -105,7 +105,7 @@ from ._core import (
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._lifecycle import LIFECYCLE_EVENT_TYPES, ResponseStarted, StaleEvent
+from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
     accumulate_transcript,
@@ -4400,7 +4400,7 @@ class RealtimeSession:
                 codec = [
                     event.event if isinstance(event, StaleEvent) else event
                     for event in frame
-                    if not isinstance(event, LIFECYCLE_EVENT_TYPES)
+                    if not isinstance(event, LifecycleEvent)
                 ]
                 handled = 0
                 try:

@@ -208,8 +208,11 @@ that re-dials. A connection that reads each provider message itself passes its c
 
 The inference assumes what most providers do: the user's words can be transcribed after the model started
 answering them, output audio is the model speaking, and audio the model answers before any transcript of it came
-is a spoken turn. A provider that departs from that gets a subclass overriding the hooks listed on
-[`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle].
+is a spoken turn. A provider that departs from that gets a subclass overriding `InferredLifecycle`'s extension
+points: [`transcripts_lag_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.transcripts_lag_replies],
+[`audio_starts_response`][pydantic_ai.realtime.lifecycle.InferredLifecycle.audio_starts_response],
+[`untranscribed_audio_is_a_turn`][pydantic_ai.realtime.lifecycle.InferredLifecycle.untranscribed_audio_is_a_turn],
+and [`takes_turn()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.takes_turn].
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from

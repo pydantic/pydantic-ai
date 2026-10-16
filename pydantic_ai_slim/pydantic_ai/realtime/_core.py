@@ -473,6 +473,8 @@ class SessionCore:
         elif isinstance(item, PartStartEvent):
             if (response := self._open_response(None)) is not None:
                 response.native_parts.append(item.part)
+        elif isinstance(item, LifecycleEvent):
+            raise TypeError(f'The session core has no handling for the lifecycle event {item!r}.')
         else:
             self._command(item)
 

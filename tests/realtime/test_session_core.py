@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 from collections import OrderedDict
 from collections.abc import Iterator
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -55,6 +56,7 @@ from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
+    LifecycleEvent,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
@@ -1278,3 +1280,14 @@ def test_a_turn_still_transcribing_when_the_next_starts_holds_no_history_back() 
     assert summary(session_core.all_messages()) == snapshot(
         ['{user:Hello}', '{user:again}', 'None [assistant:Hi.] complete stop']
     )
+
+
+def test_a_lifecycle_event_the_core_does_not_know_is_refused() -> None:
+    """`LifecycleEvent` is a base class a connection could subclass: the core says so rather than ignore it."""
+
+    @dataclass(frozen=True, kw_only=True)
+    class _Unknown(LifecycleEvent):
+        pass
+
+    with pytest.raises(TypeError, match='no handling for the lifecycle event'):
+        core().apply(_Unknown())

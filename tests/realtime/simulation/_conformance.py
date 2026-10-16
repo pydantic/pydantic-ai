@@ -45,7 +45,6 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from pydantic_ai.realtime._lifecycle import (
-    LIFECYCLE_EVENT_TYPES,
     InputAdded,
     LifecycleEvent,
     OutputItemDetails,
@@ -106,7 +105,7 @@ class LifecycleChecker:
         def issue(code: str, detail: str) -> None:
             found.append(ConformanceIssue(code, detail, position))
 
-        if isinstance(event, LIFECYCLE_EVENT_TYPES):
+        if isinstance(event, LifecycleEvent):
             self._feed_lifecycle(event, issue)
         elif self.lifecycle:
             # The codec rules are checked on the codec stream; this one carries the same events, minus stale ones.

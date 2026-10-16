@@ -599,15 +599,15 @@ class _LiveLifecycle(InferredLifecycle):
     (`turn_taken`).
     """
 
-    _transcripts_lag_replies = False
-    _audio_starts_response = False
+    transcripts_lag_replies = False
+    audio_starts_response = False
 
     def __init__(self) -> None:
         super().__init__()
         self.turn_taken = False
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
 
-    def _takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
+    def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
         return took_turn
 
