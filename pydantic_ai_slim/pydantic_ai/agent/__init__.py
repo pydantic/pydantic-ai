@@ -6,6 +6,7 @@ import dataclasses
 import functools
 import inspect
 import warnings
+import weakref
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -840,6 +841,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_model_ids: set[int] = set()
         # Models built from a name with `infer_model` while the agent is entered, reused by later runs.
         self._entered_models_by_name: dict[str, models.Model] = {}
+        # `Model` instances a model selector returned once while the agent is entered, by `id`. Held weakly, so one
+        # that's never selected again is left to its run and then garbage collected.
+        self._selected_models: weakref.WeakValueDictionary[int, models.Model] = weakref.WeakValueDictionary()
 
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
@@ -2016,7 +2020,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
 
-        model_resources = _RunModelResources(self._entered_model_ids.copy())
+        model_resources = _RunModelResources(
+            self._entered_model_ids.copy(),
+            # As for model names, a `resolve_model_id` capability leaves the lifetime of each model to the run.
+            enter_on_agent=None if run_capability.has_resolve_model_id else self._enter_selected_model,
+        )
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -2029,7 +2037,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=model_resources.enter_model,
+            enter_model=model_resources.enter_selected_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -3189,6 +3197,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._entered_model_ids.add(id(entered_model))
             return self._entered_models_by_name.get(name)
 
+    async def _enter_selected_model(self, model: models.Model) -> bool:
+        """Enter a model a model selector returned again on the entered agent's exit stack, so later runs reuse it.
+
+        The first time an instance is selected, it's only remembered, so a selector that builds a new instance for
+        each run doesn't keep them all open until the agent exits. Returns `False` to leave the run to enter the
+        model: when the agent isn't entered, or the instance hasn't been selected before.
+        """
+        if self._entered_count == 0:
+            return False
+        async with self._enter_lock:
+            exit_stack = self._exit_stack
+            # Concurrent runs can get here for the same model, so only the first one enters it.
+            if exit_stack is None or id(model) in self._entered_model_ids:
+                return exit_stack is not None
+            if self._selected_models.get(id(model)) is not model:
+                self._selected_models[id(model)] = model
+                return False
+            await exit_stack.enter_async_context(model)
+            self._entered_model_ids.add(id(model))
+            return True
+
     async def _evaluate_model_contribution(
         self,
         contribution: AgentModel[AgentDepsT],
@@ -4244,6 +4273,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     self._exit_stack = None
                     self._entered_model_ids.clear()
                     self._entered_models_by_name.clear()
+                    self._selected_models.clear()
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
@@ -4355,6 +4385,8 @@ class _RunModelResources:
     """Enter every model selected by a run on its shared resource stack."""
 
     entered_model_ids: set[int]
+    enter_on_agent: Callable[[models.Model], Awaitable[bool]] | None = None
+    """Enters a model a model selector returned on the agent's exit stack instead, returning whether it did."""
     _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
 
     def bind_stack(self, stack: AsyncExitStack) -> None:
@@ -4368,6 +4400,15 @@ class _RunModelResources:
         assert self._stack is not None
         await self._stack.enter_async_context(selected_model)
         self.entered_model_ids.add(model_identity)
+
+    async def enter_selected_model(self, selected_model: models.Model) -> None:
+        """Enter a model a model selector returned, on the agent's exit stack when it's entered."""
+        if id(selected_model) in self.entered_model_ids:
+            return
+        if self.enter_on_agent is not None and await self.enter_on_agent(selected_model):
+            self.entered_model_ids.add(id(selected_model))
+        else:
+            await self.enter_model(selected_model)
 
 
 @dataclasses.dataclass
@@ -4509,7 +4550,11 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
             if self.capability_owns_current_model:
-                await self.model_resources.enter_model(self.model)
+                if self.graph_deps.model_selected_for_step == 1:
+                    # The run's model selector already chose the model for the first step.
+                    await self.model_resources.enter_selected_model(self.model)
+                else:
+                    await self.model_resources.enter_model(self.model)
             # Including one the run's capabilities replaced, which would otherwise never be closed.
             for built_model in self.run_built_models:
                 await self.model_resources.enter_model(built_model)
@@ -4532,6 +4577,11 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+            if not run_ctx.in_durable_context:
+                # A model the run uses without entering it keeps its HTTP client between runs, which needs replacing
+                # when this run is on another event loop. A durable run sends its requests from the engine's
+                # activities, steps or tasks instead, and a Temporal workflow's event loop isn't theirs.
+                self.model._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
 
             async def _finalize_result(result: AgentRunResult[Any]) -> None:
                 self.usage_limits.check_cost(result.usage)
