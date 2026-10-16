@@ -18,6 +18,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from anyio import Lock
+from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui.completion import Completion
 
@@ -152,6 +153,10 @@ class LiveRuntime:
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         return self._running()
+
+    def setting(self, key: str, /) -> JsonValue:
+        """The effective value of a CLAI setting in the session."""
+        return self._host.setting(key)
 
     @property
     def queued(self) -> int:
