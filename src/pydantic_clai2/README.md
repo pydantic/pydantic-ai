@@ -1,5 +1,11 @@
 # CLAI 2.0
 
+[![CI](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain)
+[![PyPI](https://img.shields.io/pypi/v/pydantic-clai2.svg)](https://pypi.python.org/pypi/pydantic-clai2)
+[![versions](https://img.shields.io/pypi/pyversions/pydantic-clai2.svg)](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2)
+[![license](https://img.shields.io/github/license/pydantic/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/LICENSE)
+[![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
+
 A coding agent for your terminal, built on [Pydantic AI](https://pydantic.dev/docs/ai/).
 
 CLAI reads your code, edits files, and runs commands, and you see every step as it
