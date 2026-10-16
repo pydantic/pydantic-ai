@@ -109,6 +109,14 @@ including handled failure notifications. This identifies the entire completion p
 files and extra content. The metadata is not sent to the model and survives native message
 serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
 this metadata.
+A history loaded back from them keeps the text and its framing, but the follow-up is then an
+ordinary user prompt.
+
+The follow-up names the tool and task, then wraps what the tool returned in
+`<tool_result tool_name="..." tool_call_id="...">` tags, the same tags Pydantic AI puts around tool
+files it sends on the user channel. This tells the model the text is the tool's output rather than something the
+user said. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
+frame early. Error messages from `ModelRetry` and `ToolFailed` are framed the same way.
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
