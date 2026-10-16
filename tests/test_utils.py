@@ -1252,3 +1252,10 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
+
+
+
+def test_get_event_loop_preserves_undrivable_loop() -> None:
+    with undrivable_event_loop():
+        loop = utils_module.get_event_loop()
+        assert loop is asyncio.get_event_loop()
