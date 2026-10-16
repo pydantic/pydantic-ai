@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .. import (
@@ -118,12 +118,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.wrapped.__aexit__(*args)
-
-    def _get_connection_model_selection(self) -> models.Model | str:
-        return self.wrapped._get_connection_model_selection()
-
-    def _use_connected_model(self, model: models.Model) -> AbstractContextManager[None]:
-        return self.wrapped._use_connected_model(model)
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         return self.wrapped.output_json_schema(output_type=output_type)

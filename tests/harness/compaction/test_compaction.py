@@ -166,6 +166,28 @@ def _make_request_context(messages: list[ModelMessage], model: Model | None = No
     )
 
 
+async def _injected_warning(capability: WarnNearLimits[None]) -> ModelRequest:
+    """Return the warning request *capability* injects at its limit, as an earlier request would have."""
+    assert capability.max_iterations is not None
+    result = await capability.before_model_request(
+        _make_ctx(requests=capability.max_iterations), _make_request_context([_user('earlier')])
+    )
+    warning = result.messages[-1]
+    assert isinstance(warning, ModelRequest)
+    return warning
+
+
+def _request_texts(messages: list[ModelMessage]) -> list[str]:
+    """Return the text of every user prompt in *messages*, in order."""
+    return [
+        _part_text(part)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
 def _user(text: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=text)])
 
@@ -737,9 +759,8 @@ class TestWarnNearLimits:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'URGENT' in text.content
-        assert '[WarnNearLimits]' in text.content
+        assert 'URGENT' in _part_text(text)
+        assert '[WarnNearLimits]' in _part_text(text)
 
     async def test_iteration_warning_critical(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7, critical_remaining_iterations=3)
@@ -751,8 +772,7 @@ class TestWarnNearLimits:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        assert 'CRITICAL' in _part_text(text)
 
     async def test_context_window_warning(self):
         lw = WarnNearLimits(max_context_tokens=10)
@@ -773,7 +793,7 @@ class TestWarnNearLimits:
 
     async def test_strips_old_warnings(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
-        old_warning = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nOld warning')])
+        old_warning = await _injected_warning(lw)
         messages: list[ModelMessage] = [_user('hi'), old_warning]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)  # Below threshold.
@@ -781,15 +801,56 @@ class TestWarnNearLimits:
         # Old warning removed, no new warning added (below threshold).
         assert len(result.messages) == 1
 
-    async def test_strips_legacy_limit_warner_markers(self):
+    async def test_keeps_text_that_only_looks_like_a_warning(self):
+        """Warnings are recognized by their metadata, never by text a user could also write."""
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
-        legacy_warning = ModelRequest(parts=[UserPromptPart(content='[LimitWarner]\nOld warning')])
-        messages: list[ModelMessage] = [_user('hi'), legacy_warning]
-        rc = _make_request_context(messages)
+        messages: list[ModelMessage] = [
+            _user('Why do my logs show [WarnNearLimits] and [LimitWarner] lines?'),
+            _assistant('They are run-limit warnings.'),
+            ModelRequest(parts=[SystemPromptPart(content='[WarnNearLimits]\nquoted in a system prompt')]),
+            _user('[WarnNearLimits]\nCRITICAL: Configured run limits are approaching.'),
+        ]
+        rc = _make_request_context(list(messages))
         ctx = _make_ctx(requests=5)  # Below threshold.
         result = await lw.before_model_request(ctx, rc)
-        # Warnings injected before the rename are still recognized and stripped.
-        assert len(result.messages) == 1
+        assert result.messages == messages
+
+    async def test_user_prompt_quoting_the_marker_survives_a_run(self):
+        """A user prompt that quotes the warning marker reaches every request and stays in history."""
+        prompt = 'Why do my logs show [WarnNearLimits] lines?'
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WarnNearLimits(max_iterations=2, warning_threshold=0.5)])
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'found'
+
+        result = await agent.run(prompt)
+
+        assert result.output == 'done'
+        # The second request is past the threshold, so it also carries a warning after the prompt.
+        assert [_request_texts(messages) for messages in seen] == snapshot(
+            [
+                [prompt],
+                [
+                    prompt,
+                    """\
+[WarnNearLimits]
+CRITICAL: Configured run limits are approaching.
+- Iterations: 1/2 requests used (50%); 1 remaining.
+Complete the current task immediately and avoid unnecessary tool calls.\
+""",
+                ],
+            ]
+        )
+        assert _request_texts(result.all_messages()) == [prompt]
 
     async def test_multiple_warnings_ordered(self):
         lw = WarnNearLimits(max_iterations=10, max_total_tokens=100)
@@ -801,9 +862,8 @@ class TestWarnNearLimits:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
         # Iterations should come before total_tokens.
-        assert text.content.index('Iterations') < text.content.index('Total tokens')
+        assert _part_text(text).index('Iterations') < _part_text(text).index('Total tokens')
 
 
 # ---------------------------------------------------------------------------
@@ -1146,9 +1206,9 @@ class TestWarnNearLimitsEdgeCases:
     """Cover WarnNearLimits edge cases for marker detection and stripping."""
 
     async def test_strip_warning_with_only_marker_message(self):
-        """A message composed entirely of a marker part should be removed."""
+        """A message composed entirely of a warning part should be removed."""
         lw = WarnNearLimits(max_iterations=100)
-        marker_msg = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')])
+        marker_msg = await _injected_warning(lw)
         messages: list[ModelMessage] = [_user('real'), marker_msg]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -1156,25 +1216,10 @@ class TestWarnNearLimitsEdgeCases:
         # Marker message should be stripped; only the real message remains.
         assert len(result.messages) == 1
 
-    async def test_strip_warning_system_prompt_marker(self):
-        """Marker in a SystemPromptPart should also be detected."""
-        lw = WarnNearLimits(max_iterations=100)
-        marker_msg = ModelRequest(parts=[SystemPromptPart(content='[WarnNearLimits]\nold')])
-        messages: list[ModelMessage] = [_user('real'), marker_msg]
-        rc = _make_request_context(messages)
-        ctx = _make_ctx(requests=5)
-        result = await lw.before_model_request(ctx, rc)
-        assert len(result.messages) == 1
-
     async def test_strip_mixed_parts_keeps_non_marker(self):
         """A message with both marker and non-marker parts should keep the non-marker parts."""
         lw = WarnNearLimits(max_iterations=100)
-        mixed = ModelRequest(
-            parts=[
-                UserPromptPart(content='keep this'),
-                UserPromptPart(content='[WarnNearLimits]\nremove this'),
-            ]
-        )
+        mixed = ModelRequest(parts=[UserPromptPart(content='keep this'), *(await _injected_warning(lw)).parts])
         messages: list[ModelMessage] = [mixed]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -1217,8 +1262,7 @@ class TestWarnNearLimitsEdgeCases:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        assert 'CRITICAL' in _part_text(text)
 
     async def test_context_window_critical(self):
         """Context window at or above limit should produce CRITICAL."""
@@ -1231,8 +1275,7 @@ class TestWarnNearLimitsEdgeCases:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        assert 'CRITICAL' in _part_text(text)
 
     def test_warn_on_subset(self):
         """Can configure warn_on to only include specific limits."""
@@ -1299,7 +1342,7 @@ class TestWarnNearLimitsMarkerDetection:
         messages: list[ModelMessage] = [
             _user('hi'),
             _assistant('response'),
-            ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')]),
+            await _injected_warning(lw),
         ]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)

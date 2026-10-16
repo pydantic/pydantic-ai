@@ -5,7 +5,6 @@ import contextvars
 import dataclasses
 import functools
 import inspect
-import sys
 import warnings
 from collections.abc import (
     AsyncGenerator,
@@ -159,7 +158,6 @@ if TYPE_CHECKING:
     from pydantic_graph import Graph, GraphRunContext
 
     from .. import result as _result
-    from ..durable_exec._base import BaseDurabilityCapability
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -457,9 +455,6 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
-_RESOLVED_MODEL_ID_OUTSIDE_RUN_ERROR = (
-    'The configured model ID is resolved by a capability using run dependencies. Pass a concrete model explicitly.'
-)
 
 
 @dataclasses.dataclass
@@ -812,7 +807,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_model: ContextVar[_utils.Option[models.Model | models.KnownModelName | str]] = ContextVar(
             '_override_model', default=None
         )
-        self._connected_model: ContextVar[models.Model | None] = ContextVar('_connected_model', default=None)
         self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
             '_override_toolsets', default=None
         )
@@ -844,7 +838,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
         self._entered_model_ids: set[int] = set()
-        self._entered_models_by_selection: dict[tuple[int, str], models.Model] = {}
+        # Models built from a name with `infer_model` while the agent is entered, reused by later runs.
+        self._entered_models_by_name: dict[str, models.Model] = {}
 
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
@@ -1580,9 +1575,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         extra_capabilities = self._bind_run_capabilities(extra_capabilities)
-        # `connect()` replaces the agent's own model selection (its `model` and root capability). What the
-        # run brings (`model=`, a spec, run capabilities and their selectors) still selects over it.
-        connected_model = self._connected_model.get() if model is None else None
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1590,21 +1582,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             bootstrap_capability = model_layers[0]
         resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
+        # Models this run built from a name, which it enters so their HTTP clients close when it ends.
+        run_built_models: list[models.Model] = []
 
         # Explicit run/spec/override models are authoritative. Otherwise the capability model
         # contribution selects the initial model needed to construct RunContext and resolve
         # `for_run()`; dynamic contributions are evaluated again for later request steps.
         model_is_explicit = model is not None or self._override_model.get() is not None
-        if model_is_explicit:
-            model_contribution = None
-        elif connected_model is not None:
-            model_contribution = CombinedCapability(extra_capabilities).get_model()
-        else:
-            model_contribution = bootstrap_capability.get_model()
+        model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        default_selection = model if model is not None else connected_model
-        has_default_model = self._has_model(default_selection)
+        has_default_model = self._has_model(model)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -1614,7 +1602,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         default_model_id: str | None = None
         default_model: models.Model | None = None
         if has_default_model:
-            raw_model = self._pick_raw_model(default_selection)
+            raw_model = self._pick_raw_model(model)
             model_id = raw_model if isinstance(raw_model, str) else None
             default_model_id = model_id
             default_model = await self._resolve_model_selection(
@@ -1622,6 +1610,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                run_built_models=run_built_models,
             )
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
@@ -1962,13 +1951,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
 
-        if model_is_explicit:
-            run_model_contribution = None
-        elif connected_model is not None:
-            run_layer = resolved_caps.run_layer
-            run_model_contribution = run_layer.get_model() if run_layer is not None else None
-        else:
-            run_model_contribution = run_capability.get_model()
+        run_model_contribution = None if model_is_explicit else run_capability.get_model()
         self._check_dynamic_model_resume(run_model_contribution, message_history)
         model_selector: ModelSelector[AgentDepsT] | None
         model_selected_for_step: int | None
@@ -1992,6 +1975,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                run_built_models=run_built_models,
             )
             model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
@@ -2091,6 +2075,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cancellation_token=cancellation_token,
             model=model_used,
             capability_owns_current_model=capability_owns_current_model,
+            run_built_models=run_built_models,
             model_resources=model_resources,
             run_capability=run_capability,
             toolset=toolset,
@@ -3159,23 +3144,50 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
+        run_built_models: list[models.Model] | None = None,
     ) -> models.Model:
-        """Resolve a concrete model selection through the capability chain."""
+        """Resolve a concrete model selection through the capability chain.
+
+        A name that only `infer_model` can resolve builds a new model, with its own provider and HTTP client.
+        While the agent is entered and has no `resolve_model_id` capability, that model is entered on the agent's
+        exit stack and reused by later runs; otherwise it's added to `run_built_models` so the run can enter it
+        and close its client when it ends.
+        """
         if not isinstance(selection, str):
             return selection
         cache_key = (id(capability), selection)
         if resolved_models is not None and (resolved_model := resolved_models.get(cache_key)) is not None:
             return resolved_model
-        if entered_model := self._entered_models_by_selection.get(cache_key):
-            if resolved_models is not None:
-                resolved_models[cache_key] = entered_model
-            return entered_model
-        resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
-        resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
-        resolved_model = resolved if resolved is not None else models.infer_model(selection)
+        if capability.has_resolve_model_id:
+            # Resolution can depend on the run's deps, so it isn't reused across runs.
+            resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
+            resolved_model = await capability.resolve_model_id(resolution_ctx, model_id=selection)
+        else:
+            resolved_model = await self._entered_model_for_name(selection)
+        if resolved_model is None:
+            resolved_model = models.infer_model(selection)
+            if run_built_models is not None:
+                run_built_models.append(resolved_model)
         if resolved_models is not None:
             resolved_models[cache_key] = resolved_model
         return resolved_model
+
+    async def _entered_model_for_name(self, name: str) -> models.Model | None:
+        """Return the model built from `name` for this entered agent, building and entering it on first use.
+
+        Returns `None` when the agent isn't entered, as nothing would close a client built here.
+        """
+        if (entered_model := self._entered_models_by_name.get(name)) is not None or self._entered_count == 0:
+            return entered_model
+        async with self._enter_lock:
+            # Concurrent runs can get here for the same name, so only the first one builds the model.
+            exit_stack = self._exit_stack
+            if exit_stack is not None and name not in self._entered_models_by_name:
+                entered_model = models.infer_model(name)
+                await exit_stack.enter_async_context(entered_model)
+                self._entered_models_by_name[name] = entered_model
+                self._entered_model_ids.add(id(entered_model))
+            return self._entered_models_by_name.get(name)
 
     async def _evaluate_model_contribution(
         self,
@@ -3213,13 +3225,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'that model explicitly to `run(model=...)` when resuming.'
             )
 
-    def _get_model_selection_outside_run(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> models.Model | str:
-        """Resolve a configured or static capability model selection where run deps are unavailable."""
+    def _get_model_outside_run(self, model: models.Model | models.KnownModelName | str | None = None) -> models.Model:
+        """Resolve a configured or static capability model where run deps are unavailable."""
         capability = self._effective_root_capability()
         if model is not None or self._override_model.get() is not None:
-            return self._pick_raw_model(model)
+            selection = self._pick_raw_model(model)
+            return selection if _is_model(selection) else models.infer_model(selection)
         contribution = capability.get_model()
         if callable(contribution) and not _is_model(contribution):
             raise exceptions.UserError(
@@ -3228,45 +3239,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
         selection = contribution if contribution is not None else self._pick_raw_model(None)
         if isinstance(selection, str) and capability.has_resolve_model_id:
-            raise exceptions.UserError(_RESOLVED_MODEL_ID_OUTSIDE_RUN_ERROR)
-        return selection
-
-    def _get_connection_model_selection(self) -> models.Model | str:
-        # Looked up through `sys.modules` like `RunContext.in_durable_context`: without the module, no
-        # durability capability exists.
-        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
-        durability: BaseDurabilityCapability[object] | None = (
-            None if durable_exec is None else durable_exec.BaseDurabilityCapability.from_agent(self)
-        )
-        if durability is not None and durability.in_durable_context:
-            # Connecting is I/O in deterministic durable code, and the connected model isn't registered.
             raise exceptions.UserError(
-                f'`agent.connect()` is not supported inside a {durability.engine_name} '
-                f'{durability.durable_container_noun}.'
+                'The configured model ID is resolved by a capability using run dependencies. '
+                'Pass a concrete model explicitly.'
             )
-        selection = self._get_model_selection_outside_run()
-        if not isinstance(selection, str):
-            return selection
-        capability = self._effective_root_capability()
-        if capability.has_resolve_model_id:
-            # `override()` keeps a string only when a capability resolves model IDs; the configured
-            # selection already raised above.
-            raise exceptions.UserError(_RESOLVED_MODEL_ID_OUTSIDE_RUN_ERROR)
-        # Borrow the model the agent context entered rather than opening a second provider client.
-        return self._entered_models_by_selection.get((id(capability), selection), selection)
-
-    @contextmanager
-    def _use_connected_model(self, model: models.Model) -> Generator[None]:
-        if self._override_model.get() is not None:
-            # An override model already wins over run models, so the connection replaces it.
-            with self.override(model=model):
-                yield
-            return
-        token = self._connected_model.set(model)
-        try:
-            yield
-        finally:
-            self._connected_model.reset(token)
+        return selection if _is_model(selection) else models.infer_model(selection)
 
     def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
         """Resolve effective `InstrumentationSettings` from `Agent.instrument_all` / `agent.instrument`."""
@@ -4252,7 +4229,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         await exit_stack.enter_async_context(model)
                         self._entered_model_ids.add(id(model))
                         if isinstance(static_selection, str):
-                            self._entered_models_by_selection[id(capability), static_selection] = model
+                            self._entered_models_by_name[static_selection] = model
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
@@ -4267,7 +4244,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 finally:
                     self._exit_stack = None
                     self._entered_model_ids.clear()
-                    self._entered_models_by_selection.clear()
+                    self._entered_models_by_name.clear()
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
@@ -4275,8 +4252,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         If no sampling model is provided, the agent's model will be used.
         """
         try:
-            selection = model or self._get_model_selection_outside_run()
-            sampling_model = models.infer_model(selection)
+            sampling_model = models.infer_model(model) if model else self._get_model_outside_run()
         except exceptions.UserError as e:
             capability = self._effective_root_capability()
             if model is None and (callable(capability.get_model()) or capability.has_resolve_model_id):
@@ -4413,6 +4389,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     cancellation_token: CancellationToken | None
     model: models.Model
     capability_owns_current_model: bool
+    run_built_models: list[models.Model]
     model_resources: _RunModelResources
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
@@ -4534,6 +4511,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
             if self.capability_owns_current_model:
                 await self.model_resources.enter_model(self.model)
+            # Including one the run's capabilities replaced, which would otherwise never be closed.
+            for built_model in self.run_built_models:
+                await self.model_resources.enter_model(built_model)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,

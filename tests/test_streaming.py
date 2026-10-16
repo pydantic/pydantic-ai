@@ -97,6 +97,9 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
 
+READINESS_WAIT_TIMEOUT = 5
+"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
+
 
 class Foo(BaseModel):
     a: int
@@ -7207,8 +7210,8 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
-        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
-        await asyncio.wait_for(anext(events), timeout=1.0)
+        # Bound the first iteration so a lazy-start regression fails instead of hanging here.
+        await asyncio.wait_for(anext(events), timeout=READINESS_WAIT_TIMEOUT)
         assert producer_started.is_set()
 
 
