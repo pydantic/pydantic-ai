@@ -31,16 +31,18 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_clai2.plugins import PluginOrigin, PluginStatus
+from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
-from pydantic_clai2.runtime.repl_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 
-REPL_TOOL = 'run_code'
-"""The code mode tool whose cells make up the REPL panel."""
+MONTY_TOOL = 'run_code'
+"""The code mode tool whose cells make up the Monty panel."""
 
 RESULT_CHARS = 20_000
 """The most of a tool result the browser receives; the model's copy is unchanged."""
@@ -92,7 +94,7 @@ class Item:
     calls: list[SubCall] = field(default_factory=list[SubCall])
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
-    """A `run_code` cell the user ran with `/repl`, rather than one the model wrote."""
+    """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
 
 
 @dataclass(kw_only=True)
@@ -124,6 +126,46 @@ class Questions:
 
 
 @dataclass(kw_only=True)
+class Choice:
+    """One value a settings row or a dialog offers."""
+
+    value: str
+    label: str
+    description: str = ''
+
+
+DialogKind = Literal['choose', 'text', 'confirm', 'wait']
+
+
+@dataclass(kw_only=True)
+class Dialog:
+    """What a plugin's settings menu asks, open until `POST /api/dialogs/ID` answers or cancels it.
+
+    Which fields apply depends on `kind`, after the `Dialogs` method that asks it.
+    """
+
+    id: str
+    kind: DialogKind
+    title: str
+    description: str = ''
+    options: list[Choice] = field(default_factory=list[Choice])
+    """`choose`: what to pick from."""
+    current: str | None = None
+    """`choose`: the value marked as the current one."""
+    label: str = ''
+    """`text`: the input's label."""
+    placeholder: str = ''
+    initial: str = ''
+    secret: bool = False
+    """`text`: mask what is typed; the answer is never sent to any browser."""
+    yes: str = ''
+    """`confirm`: the answer that confirms; `no`, the other, is the safe one."""
+    no: str = ''
+    shown: str = ''
+    """`wait`: the latest text the waiting task showed, such as a sign-in link."""
+
+
+@dataclass(kw_only=True)
 class SessionInfo:
     """The conversation the shell holds."""
 
@@ -139,6 +181,11 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
+
+
+def usage_info(usage: RunUsage) -> Usage:
+    """The browser's copy of a run's usage."""
+    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
 
 
 @dataclass(kw_only=True)
@@ -181,6 +228,26 @@ class ThemeInfo:
 
 
 @dataclass(kw_only=True)
+class TaskEntry:
+    """A delegated task as the sidebar's Workers tree shows it, like a `/tasks` row."""
+
+    id: str
+    parent_id: str | None
+    agent: str
+    model: str | None
+    prompt: str
+    status: Literal['running', 'finished']
+    outcome: DelegationOutcome | None
+    started_at: datetime
+    finished_at: datetime | None
+    background: bool
+    resumable: bool
+    activity: str
+    """Its last action, such as `thinking` or `running: shell`."""
+    usage: Usage
+
+
+@dataclass(kw_only=True)
 class Snapshot:
     """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
 
@@ -190,7 +257,14 @@ class Snapshot:
     running: bool
     status: StatusInfo
     questions: list[Questions]
+    dialogs: list[Dialog]
     theme: ThemeInfo
+    tasks: list[TaskEntry]
+    """The conversation's delegated tasks, each parent before its children."""
+    task_items: dict[str, list[Item]]
+    """Each running task's transcript so far, by task ID."""
+    follows_workspace: bool = False
+    """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
 
 
 @dataclass(kw_only=True)
@@ -338,6 +412,31 @@ class QuestionClosed:
 
 
 @dataclass(kw_only=True)
+class DialogOpened:
+    """A plugin's settings menu asks something; answer it with `POST /api/dialogs/ID`."""
+
+    type: Literal['dialog'] = 'dialog'
+    dialog: Dialog
+
+
+@dataclass(kw_only=True)
+class DialogShown:
+    """A `wait` dialog's task showed new text, such as a sign-in code."""
+
+    type: Literal['dialog_shown'] = 'dialog_shown'
+    id: str
+    text: str
+
+
+@dataclass(kw_only=True)
+class DialogClosed:
+    """A dialog was answered or cancelled, or its menu closed it."""
+
+    type: Literal['dialog_closed'] = 'dialog_closed'
+    id: str
+
+
+@dataclass(kw_only=True)
 class Notice:
     """A `/command`'s result, or another line the browser should show once."""
 
@@ -371,6 +470,14 @@ class SessionsChanged:
 
 
 @dataclass(kw_only=True)
+class TaskChanged:
+    """A delegated task started, or its row changed: its activity, usage, or status."""
+
+    type: Literal['task'] = 'task'
+    task: TaskEntry
+
+
+@dataclass(kw_only=True)
 class PluginsChanged:
     """A command ran, which may have changed the plugins or their settings; an open plugins panel lists them again."""
 
@@ -390,19 +497,60 @@ ItemMessage = (
     | SubCallOutput
     | SubCallDone
 )
+
+
+@dataclass(kw_only=True)
+class TaskItems:
+    """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
+
+    type: Literal['task_event'] = 'task_event'
+    id: str
+    """The task's ID."""
+    messages: list[ItemMessage]
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorState:
+    """The orchestrator chat, sent on connect, as a turn starts, and on a new chat; `GET /api/orchestrator/state` too."""
+
+    type: Literal['orchestrator_state'] = 'orchestrator_state'
+    enabled: bool
+    """Whether the `workspaces` plugin is on; the orchestrator runs only then."""
+    running: bool
+    items: list[Item]
+    questions: list[Questions]
+
+
+OrchestratorEvent = ItemMessage | TurnStarted | TurnEnded | QuestionAsked | QuestionClosed | OrchestratorState
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorMessage:
+    """A message for the orchestrator chat, on the session's WebSocket."""
+
+    type: Literal['orchestrator'] = 'orchestrator'
+    message: OrchestratorEvent
+
+
 ServerMessage = (
     Snapshot
+    | OrchestratorMessage
     | ItemMessage
     | TurnStarted
     | TurnEnded
     | StatusChanged
     | QuestionAsked
     | QuestionClosed
+    | DialogOpened
+    | DialogShown
+    | DialogClosed
     | Notice
     | TitleChanged
     | ThemeChanged
     | SessionsChanged
     | PluginsChanged
+    | TaskChanged
+    | TaskItems
 )
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
@@ -430,14 +578,27 @@ class SessionEntry:
     current: bool
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
+class Worktree:
+    """A project's checkout, or a folder outside Git, with the sessions saved in it."""
+
+    root: str
+    label: str
+    """Its branch, or its folder's name outside Git or when the branch is unknown."""
+    current: bool
+    missing: bool
+    """The folder is gone, as with a removed worktree."""
+    sessions: list[SessionEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
 class Project:
-    """Saved sessions grouped by repository, as the `/resume` browser groups them."""
+    """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
     name: str
     current: bool
-    sessions: list[SessionEntry]
+    worktrees: list[Worktree]
 
 
 @dataclass(kw_only=True)
@@ -449,7 +610,17 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it here; it refuses a session saved in another directory."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    missing: bool = False
+    """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+
+
+@dataclass(kw_only=True)
+class TaskTranscript:
+    """A delegated task with its history, as it saved it."""
+
+    task: TaskEntry
+    items: list[Item]
 
 
 @dataclass(kw_only=True)
@@ -474,13 +645,99 @@ class PluginRow:
     notice: str | None
     provides: str
     has_menu: bool
-    """Whether it has a settings menu of its own, which opens in the terminal."""
+    """Whether it has a settings menu."""
+    settings_menu: bool
+    """Whether that menu is declared, so this page shows it; otherwise it opens in the terminal."""
     terminal: bool
-    """Whether this CLAI has a terminal for that menu to open in; `clai2 --web` has none."""
+    """Whether this CLAI has a terminal for an undeclared menu to open in; `clai2 --web` has none."""
     form: PluginForm | None
-    """Its settings while it is on, unless it takes none or its model has no JSON Schema."""
+    """Its settings while it is on, unless it declares a menu, takes none, or its model has no JSON Schema."""
     serving: bool
     """Whether it is the plugin serving this page, which the page must not turn off or reload."""
+
+
+@dataclass(kw_only=True)
+class PanelInfo:
+    """A plugin's side panel, as the page shows it now."""
+
+    plugin: str
+    id: str
+    title: str
+    icon: PanelIcon
+    url: str | None
+    """The page to show; `None` shows `note` alone."""
+    note: str
+    embed: bool
+    """Whether `url` lets this page show it in a frame; otherwise it opens in a window of its own."""
+
+
+@dataclass(kw_only=True)
+class MenuField:
+    """One row of a declared settings menu, as `FieldRow` describes it, with its current value."""
+
+    key: str
+    label: str
+    description: str
+    value: str
+    """The current value as the user would type it, as the terminal list shows it: never a secret itself."""
+    default: str
+    choices: list[Choice]
+    allow_custom: bool
+    """Whether a value other than `choices` may be typed."""
+    secret: bool
+    note: str
+    """Where the value comes from when not from the user."""
+    action: bool
+    """Whether choosing it runs an action, with dialogs, instead of editing a value."""
+
+
+@dataclass(kw_only=True)
+class MenuInfo:
+    """A plugin's declared settings menu, with every row's current value."""
+
+    title: str
+    fields: list[MenuField]
+
+
+@dataclass(kw_only=True)
+class MenuEdited:
+    """What an edit through a settings menu said, and the menu as it is now."""
+
+    messages: list[str]
+    menu: MenuInfo | None
+    """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
+
+
+WorkspaceState = Literal['ready', 'running', 'stopped']
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRow:
+    """A workspace as the sidebar lists it; never its token."""
+
+    id: str
+    kind: str
+    repo: str
+    branch: str
+    path: str
+    status: WorkspaceState
+    url: str | None
+    """Its page's address without the token, while its CLAI runs."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspacesInfo:
+    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
+
+    enabled: bool
+    workspaces: list[WorkspaceRow]
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceOpened:
+    """A workspace's page, with its token, for this page to open."""
+
+    url: str
 
 
 @dataclass(kw_only=True)
@@ -504,7 +761,7 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
 def user_text(part: UserPromptPart) -> str:
     """A prompt's text, naming the attachments the browser does not show.
 
-    Notes telling the model about `/repl` cells are left out: the REPL panel shows those cells.
+    Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
     """
     if isinstance(part.content, str):
         return part.content
@@ -573,7 +830,9 @@ class EventTranslator:
     the write and is shown once it lands.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, scope: str = '') -> None:
+        """`scope` starts every item ID, so a delegated task's items cannot take the session's IDs."""
+        self._scope = scope
         self._parts: dict[int, str] = {}
         self._count = 0
         self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
@@ -582,6 +841,17 @@ class EventTranslator:
 
     def translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         """The item messages `event` makes; none for an event the browser does not show."""
+        messages = self._translate(event)
+        if not self._scope:
+            return messages
+        return [
+            ItemAdded(item=replace(message.item, id=self._scope + message.item.id))
+            if isinstance(message, ItemAdded)
+            else replace(message, id=self._scope + message.id)
+            for message in messages
+        ]
+
+    def _translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         if isinstance(event, PartStartEvent):
             return self._start(event)
         if isinstance(event, PartDeltaEvent):
@@ -612,12 +882,12 @@ class EventTranslator:
     def _start(self, event: PartStartEvent) -> list[ItemMessage]:
         part = event.part
         if isinstance(part, ToolCallPart):
-            if part.tool_name != REPL_TOOL:
+            if part.tool_name != MONTY_TOOL:
                 return []
             self._parts[event.index] = part.tool_call_id
             self._streamed.add(part.tool_call_id)
             args = part.args if isinstance(part.args, str) else part.args_as_json_str() if part.args else ''
-            item = Item(id=part.tool_call_id, kind='tool', name=REPL_TOOL, args=args, state='running')
+            item = Item(id=part.tool_call_id, kind='tool', name=MONTY_TOOL, args=args, state='running')
             return [ItemAdded(item=item)]
         if not isinstance(part, TextPart | ThinkingPart):
             return []

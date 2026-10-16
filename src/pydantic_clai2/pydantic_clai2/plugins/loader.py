@@ -3,7 +3,7 @@
 import asyncio
 import importlib
 import logging
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,10 +44,13 @@ from pydantic_clai2.plugins import (
     PluginOrigin,
     PluginStatus,
     Renderer,
+    ResultT,
     SessionCatalog,
     SessionEnd,
     SessionEndReason,
     SessionStart,
+    SidePanel,
+    TaskCatalog,
     TurnStart,
     bare_screen,
     collect,
@@ -56,6 +59,7 @@ from pydantic_clai2.plugins._factories import build, import_file, settings_capab
 from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -218,14 +222,15 @@ class PluginLoader(Generic[DepsT]):
         interrupt: Callable[[], bool] = lambda: False,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
+        tasks: Callable[[], TaskCatalog | None] = lambda: None,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, and
-        `commands` are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
+        and `commands` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -240,12 +245,15 @@ class PluginLoader(Generic[DepsT]):
         self._interrupt = interrupt
         self._sessions = sessions
         self._setting = setting
+        self._tasks = tasks
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
         # A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store.
         self._staged: dict[str, PluginSettings] = {}
+        self._editing: set[str] = set()
+        """Plugins whose settings menu is open, in the terminal or for an edit from elsewhere, so only one edits at a time."""
         # Capabilities that rejected their configuration while a run was set up, by plugin, until it loads again.
         self._suspended: dict[str, list[object]] = {}
         # The capability CLAI built from a `module:Class` declaration's settings, by plugin.
@@ -497,6 +505,7 @@ class PluginLoader(Generic[DepsT]):
             sessions=self._sessions,
             setting=self._setting,
             plugins=self,
+            tasks=self._tasks,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
@@ -653,10 +662,28 @@ class PluginLoader(Generic[DepsT]):
         self._from_settings.pop(entry.name, None)
         self._guards.pop(entry.name, None)
 
+    async def restart(self, *, project: Sequence[PluginSettings], keep: str) -> None:
+        """Load every plugin but `keep` again, with `project` as the project file's declarations.
+
+        As CLAI starting in another directory would: what a plugin read from the working directory
+        is read again. `keep` stays loaded, and its capabilities still come after the others'.
+        """
+        for name in reversed(list(self._loaded)):
+            if name != keep:
+                await self.unload(name)
+        self._project = canonical_plugin_declarations(project)
+        await self.load_all()
+        if (kept := self._loaded.pop(keep, None)) is not None:
+            self._loaded[keep] = kept
+
     async def close(self, reason: SessionEndReason) -> None:
         """Unload every plugin, last loaded first."""
         for name in reversed(list(self._loaded)):
             await self.unload(name, reason=reason)
+
+    def handles(self, event: type[HostEvent]) -> bool:
+        """Whether a loaded plugin handles `event`, so a caller can skip building one that nothing reads."""
+        return any(loaded.handles(event) for loaded in self._loaded.values())
 
     async def fire(self, event: HostEvent) -> None:
         """Dispatch to every loaded plugin. `turn_start` fails closed; the rest report and continue."""
@@ -769,18 +796,28 @@ class PluginLoader(Generic[DepsT]):
 
     async def configure(self, name: str) -> str:
         """Open the plugin's settings menu, then load it again if its saved settings changed."""
-        entry = self._entry(name)
-        loaded = entry.loaded
         _requested('configure', name)
+        async with self._settings_open(name) as loaded:
+            if not loaded.plugin.has_configure:
+                raise ValueError(f'Plugin {name} has no settings menu; replace its declaration with /plugins add.')
+            return await loaded.plugin.configure()
+
+    @asynccontextmanager
+    async def _settings_open(self, name: str) -> AsyncGenerator[LoadedPlugin[DepsT]]:
+        """The loaded plugin, its menu held open for the block; afterwards it loads again if its saved settings changed."""
+        entry = self._entry(name)
         _check_not_included(entry)
+        loaded = entry.loaded
         if loaded is None:
             raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
-        if not loaded.plugin.has_configure:
-            raise ValueError(f'Plugin {name} has no settings menu; replace its declaration with /plugins add.')
-        before = self._entry(name).declaration.settings
+        if name in self._editing:
+            raise ValueError(f'The settings menu of {name} is already open; finish there first.')
+        self._editing.add(name)
+        before = entry.declaration.settings
         try:
-            return await loaded.plugin.configure()
+            yield loaded
         finally:
+            self._editing.discard(name)
             # Also when the menu fails after saving, so the running plugin matches what is saved.
             if self._entry(name).declaration.settings != before:
                 await self._load_again(name)
@@ -791,25 +828,32 @@ class PluginLoader(Generic[DepsT]):
 
     async def save_settings(self, name: str, settings: BaseModel) -> None:
         """Save a loaded plugin's settings through its host, then load it again if they changed, as `configure` does."""
-        async with self._changing:
-            await self._save_settings(name, settings)
+        async with self._changing, self._settings_open(name) as loaded:
+            model = loaded.plugin.settings_type
+            if model is NoSettings:
+                raise ValueError(f'Plugin {name} takes no settings.')
+            if not isinstance(settings, model):
+                raise TypeError(f'Plugin {name} takes {model.__name__}, not {type(settings).__name__}.')
+            _requested('configure', name)
+            loaded.plugin.host.save_settings(settings)
 
-    async def _save_settings(self, name: str, settings: BaseModel) -> None:
-        entry = self._entry(name)
-        _check_not_included(entry)
-        loaded = entry.loaded
-        if loaded is None:
-            raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
-        model = loaded.plugin.settings_type
-        if model is NoSettings:
-            raise ValueError(f'Plugin {name} takes no settings.')
-        if not isinstance(settings, model):
-            raise TypeError(f'Plugin {name} takes {model.__name__}, not {type(settings).__name__}.')
-        _requested('configure', name)
-        before = entry.declaration.settings
-        loaded.plugin.host.save_settings(settings)
-        if self._entry(name).declaration.settings != before:
-            await self._load_again(name)
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        """A loaded plugin's declared settings menu, for `host.plugins`; see `PluginCatalog`."""
+        loaded = self._entry(name).loaded
+        return None if loaded is None else loaded.plugin.settings_menu()
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        """Loaded plugins' side panels, for `host.plugins`; see `PluginCatalog`."""
+        return {name: loaded.side_panels for name, loaded in self._loaded.items() if loaded.side_panels}
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        """Edit through a loaded plugin's declared menu, then load it again if its settings changed; see `PluginCatalog`."""
+        async with self._settings_open(name) as loaded:
+            menu = loaded.plugin.settings_menu()
+            if menu is None:
+                raise ValueError(f'Plugin {name} declares no settings menu; /plugins configure {name} opens its own.')
+            _requested('configure', name)
+            return await edit(menu)
 
     def configurable(self, name: str) -> bool:
         """Whether the plugin is loaded and offers a settings menu by overriding `configure`."""
@@ -984,6 +1028,7 @@ def _info(entry: PluginEntry[DepsT]) -> PluginInfo:
         notice=entry.ignored,
         provides=loaded.summary() if loaded is not None else '',
         has_menu=loaded is not None and loaded.plugin.has_configure,
+        settings_menu=loaded is not None and loaded.plugin.settings_menu() is not None,
         settings_model=None if settings is None else model,
         settings=settings,
     )

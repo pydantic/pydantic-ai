@@ -30,7 +30,7 @@ export interface Item {
   diffs: Diff[]
   /** Tools a `run_code` cell called from its sandbox; live runs only. */
   calls: SubCall[]
-  /** A cell the user ran with `/repl`, rather than one the model wrote. */
+  /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
 }
 
@@ -44,6 +44,31 @@ export interface QuestionInfo {
   question: string
   options: Option[]
   multi_select: boolean
+}
+
+/** One value a settings row or a dialog offers. */
+export interface Choice {
+  value: string
+  label: string
+  description: string
+}
+
+/** What a plugin's settings menu asks; which fields apply depends on `kind`. */
+export interface Dialog {
+  id: string
+  kind: 'choose' | 'text' | 'confirm' | 'wait'
+  title: string
+  description: string
+  options: Choice[]
+  current: string | null
+  label: string
+  placeholder: string
+  initial: string
+  secret: boolean
+  yes: string
+  no: string
+  /** `wait`: the latest text its task showed, such as a sign-in link. */
+  shown: string
 }
 
 export interface Questions {
@@ -97,16 +122,34 @@ export interface ThemeInfo {
   palette: Palette | null
 }
 
-export type ServerMessage =
-  | {
-      type: 'snapshot'
-      session: SessionInfo
-      items: Item[]
-      running: boolean
-      status: StatusInfo
-      questions: Questions[]
-      theme: ThemeInfo
-    }
+export type TaskOutcome = 'ok' | 'timeout' | 'budget' | 'failed' | 'contained' | 'cancelled' | 'error'
+
+/** A delegated task, as the sidebar's Workers tree shows it. */
+export interface TaskEntry {
+  id: string
+  parent_id: string | null
+  agent: string
+  model: string | null
+  prompt: string
+  status: 'running' | 'finished'
+  outcome: TaskOutcome | null
+  started_at: string
+  finished_at: string | null
+  background: boolean
+  resumable: boolean
+  /** Its last action, such as `thinking` or `running: shell`. */
+  activity: string
+  usage: Usage
+}
+
+/** A delegated task with the history it saved. */
+export interface TaskTranscript {
+  task: TaskEntry
+  items: Item[]
+}
+
+/** A message that changes one transcript's items, the session's or a task's. */
+export type ItemMessage =
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
@@ -118,16 +161,56 @@ export type ServerMessage =
   | { type: 'tool_done'; id: string; text: string; state: ToolState }
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
+
+/** A transcript's item, turn, and question messages, which the session and the orchestrator chat both get. */
+export type ChatMessage =
+  | ItemMessage
   | { type: 'turn_start'; item: Item | null }
   | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
-  | { type: 'status'; status: StatusInfo }
   | { type: 'question'; questions: Questions }
   | { type: 'question_closed'; id: string }
+
+/** The orchestrator chat: sent on connect, as a turn starts, and when it starts over. */
+export interface OrchestratorState {
+  type: 'orchestrator_state'
+  /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
+  enabled: boolean
+  running: boolean
+  items: Item[]
+  questions: Questions[]
+}
+
+export type OrchestratorEvent = ChatMessage | OrchestratorState
+
+export type ServerMessage =
+  | {
+      type: 'snapshot'
+      session: SessionInfo
+      items: Item[]
+      running: boolean
+      status: StatusInfo
+      questions: Questions[]
+      dialogs: Dialog[]
+      theme: ThemeInfo
+      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      follows_workspace: boolean
+      tasks: TaskEntry[]
+      /** Each running task's transcript so far, by task ID. */
+      task_items: Record<string, Item[]>
+    }
+  | ChatMessage
+  | { type: 'status'; status: StatusInfo }
+  | { type: 'orchestrator'; message: OrchestratorEvent }
+  | { type: 'dialog'; dialog: Dialog }
+  | { type: 'dialog_shown'; id: string; text: string }
+  | { type: 'dialog_closed'; id: string }
   | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null }
   | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
+  | { type: 'task'; task: TaskEntry }
+  | { type: 'task_event'; id: string; messages: ItemMessage[] }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 
@@ -142,11 +225,21 @@ export interface SessionEntry {
   current: boolean
 }
 
+export interface Worktree {
+  root: string
+  /** Its branch, or its folder's name outside Git or when the branch is unknown. */
+  label: string
+  current: boolean
+  /** The folder is gone, as with a removed worktree. */
+  missing: boolean
+  sessions: SessionEntry[]
+}
+
 export interface Project {
   key: string
   name: string
   current: boolean
-  sessions: SessionEntry[]
+  worktrees: Worktree[]
 }
 
 export interface Transcript {
@@ -155,6 +248,8 @@ export interface Transcript {
   workspace: string
   items: Item[]
   openable: boolean
+  /** CLAI would move to its directory, but that directory is gone. */
+  missing: boolean
 }
 
 export interface CompletionInfo {
@@ -191,13 +286,74 @@ export interface PluginRow {
   error: string | null
   notice: string | null
   provides: string
-  /** It has a settings menu of its own, which opens in the terminal. */
+  /** It has a settings menu. */
   has_menu: boolean
-  /** Whether this CLAI has a terminal for that menu to open in; `clai2 --web` has none. */
+  /** That menu is declared, so this page shows it; otherwise it opens in the terminal. */
+  settings_menu: boolean
+  /** Whether this CLAI has a terminal for an undeclared menu to open in; `clai2 --web` has none. */
   terminal: boolean
   form: PluginForm | null
   /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */
   serving: boolean
+}
+
+/** A plugin's side panel, as it is now. */
+export interface PanelInfo {
+  plugin: string
+  id: string
+  title: string
+  icon: 'panel' | 'traces'
+  /** The page to show; `null` shows `note` alone, such as how to set the plugin up. */
+  url: string | null
+  note: string
+  /** The page lets this one frame it; otherwise it opens in a window of its own. */
+  embed: boolean
+}
+
+/** One row of a plugin's declared settings menu, with its current value. */
+export interface MenuField {
+  key: string
+  label: string
+  description: string
+  /** As the user would type it; never a secret itself. */
+  value: string
+  default: string
+  choices: Choice[]
+  /** A value other than `choices` may be typed. */
+  allow_custom: boolean
+  secret: boolean
+  /** Where the value comes from when not from the user. */
+  note: string
+  /** Choosing it runs an action, with dialogs, instead of editing a value. */
+  action: boolean
+}
+
+/** A workspace as the sidebar lists it; never its token. */
+export interface WorkspaceRow {
+  id: string
+  kind: string
+  repo: string
+  branch: string
+  path: string
+  status: 'ready' | 'running' | 'stopped'
+  /** Its page's address without the token, while its CLAI runs. */
+  url: string | null
+}
+
+/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
+export interface WorkspacesInfo {
+  enabled: boolean
+  workspaces: WorkspaceRow[]
+}
+
+export interface MenuInfo {
+  title: string
+  fields: MenuField[]
+}
+
+export interface MenuEdited {
+  messages: string[]
+  menu: MenuInfo | null
 }
 
 /** The parts of a Pydantic JSON Schema the settings form reads. */

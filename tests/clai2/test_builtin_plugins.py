@@ -45,6 +45,7 @@ CURATED = {
     'grain',
     'linear',
     'web',
+    'workspaces',
 }
 OPT_IN = {
     'herdr',
@@ -61,6 +62,7 @@ OPT_IN = {
     'pylon',
     'slack',
     'web',
+    'workspaces',
 }
 
 

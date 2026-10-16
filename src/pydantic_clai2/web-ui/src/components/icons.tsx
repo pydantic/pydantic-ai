@@ -37,6 +37,15 @@ export const SearchIcon = icon(
 )
 export const FolderIcon = icon(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />)
 export const ChevronIcon = icon(<path d="m9 6 6 6-6 6" />)
+export const BranchIcon = icon(
+  <>
+    <circle cx="6" cy="5" r="2" />
+    <circle cx="6" cy="19" r="2" />
+    <circle cx="18" cy="7" r="2" />
+    <path d="M6 7v10" />
+    <path d="M18 9v1a4 4 0 0 1-4 4H9a3 3 0 0 0-3 3" />
+  </>,
+)
 export const ArrowUpIcon = icon(
   <>
     <path d="M12 19V5" />
@@ -119,4 +128,27 @@ export const PaletteIcon = icon(
 export const CloseIcon = icon(<path d="M6 6l12 12M18 6 6 18" />)
 export const PuzzleIcon = icon(
   <path d="M9 4.5a2 2 0 1 1 4 0V6h3a1 1 0 0 1 1 1v3h1.5a2 2 0 1 1 0 4H17v3a1 1 0 0 1-1 1h-3v-1.5a2 2 0 1 0-4 0V18H6a1 1 0 0 1-1-1v-3h1.5a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h3Z" />,
+)
+export const OrchestratorIcon = icon(
+  <>
+    <circle cx="12" cy="12" r="2.5" />
+    <circle cx="5.5" cy="5.5" r="2" />
+    <circle cx="18.5" cy="5.5" r="2" />
+    <circle cx="12" cy="20" r="2" />
+    <path d="m7 7 3.2 3.2M17 7l-3.2 3.2M12 14.5V18" />
+  </>,
+)
+export const TracesIcon = icon(<path d="M3 12h4l3-8 4 16 3-8h4" />)
+export const PanelIcon = icon(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M15 4v16" />
+  </>,
+)
+export const ExternalIcon = icon(
+  <>
+    <path d="M14 4h6v6" />
+    <path d="M20 4 11 13" />
+    <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
+  </>,
 )

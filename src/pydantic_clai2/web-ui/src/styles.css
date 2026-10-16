@@ -156,12 +156,31 @@ pre {
   grid-template-columns: 1fr;
 }
 
-.app.with-repl {
+.app.with-monty {
   grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw);
 }
 
-.app.no-sidebar.with-repl {
+.app.no-sidebar.with-monty {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw);
+}
+
+/* A plugin's side panel takes the last column; on a narrow screen it covers the page instead. */
+@media (min-width: 761px) {
+  .app.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.with-monty.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-monty.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
 }
 
 .icon-button {
@@ -311,6 +330,49 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.worktree.nested {
+  margin: 2px 0 6px 12px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.worktree-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px 4px 6px;
+  color: var(--faint);
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.worktree-title:hover,
+.worktree.current > .worktree-title {
+  color: var(--text-soft);
+}
+
+.worktree-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-tag {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.worktree.missing .session-title {
+  color: var(--muted);
 }
 
 .chevron {
@@ -1404,11 +1466,12 @@ pre {
 }
 
 .toast {
-  position: absolute;
+  position: fixed;
   top: 64px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 30;
+  /* Above the plugins panel and dialogs, whose errors it shows. */
+  z-index: 70;
   max-width: min(560px, 90%);
   padding: 10px 16px;
   border-radius: 12px;
@@ -1418,6 +1481,10 @@ pre {
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+}
+
+.toast.info {
+  color: var(--text);
 }
 
 .toast.expired {
@@ -1538,6 +1605,14 @@ pre {
     inset: 0 auto 0 0;
     width: 280px;
     z-index: 40;
+    box-shadow: var(--shadow);
+  }
+
+  .app .side-panel {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(var(--side-panel-width), 100vw);
+    z-index: 30;
     box-shadow: var(--shadow);
   }
 
@@ -1671,14 +1746,14 @@ pre {
   color: var(--text);
 }
 
-/* The run_code REPL */
+/* Monty, the run_code sandbox */
 
-.repl-toggle.active {
+.monty-toggle.active {
   background: var(--active);
   color: var(--lithium);
 }
 
-.repl {
+.monty {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1687,7 +1762,7 @@ pre {
   background: var(--code-bg);
 }
 
-.repl-head {
+.monty-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1697,12 +1772,12 @@ pre {
   color: var(--muted);
 }
 
-.repl-title {
+.monty-title {
   color: var(--text);
   font-weight: 600;
 }
 
-.repl-head .badge {
+.monty-head .badge {
   margin-right: auto;
 }
 
@@ -1711,21 +1786,21 @@ pre {
   color: var(--lithium);
 }
 
-.repl-body {
+.monty-body {
   flex: 1;
   overflow-y: auto;
   padding: 12px 16px 20px;
   font: 12.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
-.repl-empty {
+.monty-empty {
   padding: 24px 4px;
   color: var(--faint);
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   font-size: 13px;
 }
 
-.repl-divider {
+.monty-divider {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1736,39 +1811,39 @@ pre {
   text-transform: uppercase;
 }
 
-.repl-divider::after {
+.monty-divider::after {
   content: '';
   flex: 1;
   border-top: 1px dashed var(--border-strong);
 }
 
-.repl-cell {
+.monty-cell {
   margin-bottom: 14px;
 }
 
-.repl-prompt {
+.monty-prompt {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
 }
 
-.repl-label {
+.monty-label {
   color: var(--lithium);
   font-weight: 600;
 }
 
-.repl-out {
+.monty-out {
   margin-top: 6px;
   color: var(--green);
 }
 
-.repl-running {
+.monty-running {
   font-size: 11.5px;
 }
 
-.repl-code,
-.repl-result {
+.monty-code,
+.monty-result {
   margin: 0;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -1779,17 +1854,17 @@ pre {
   font: inherit;
 }
 
-.repl-result {
+.monty-result {
   max-height: 280px;
   overflow: auto;
   color: var(--text-soft);
 }
 
-.repl-result.error {
+.monty-result.error {
   color: var(--red);
 }
 
-.repl-caret {
+.monty-caret {
   display: inline-block;
   width: 7px;
   height: 14px;
@@ -1799,14 +1874,14 @@ pre {
   animation: blink 1s steps(2) infinite;
 }
 
-.repl-calls {
+.monty-calls {
   margin: 6px 0 0;
   padding: 0 0 0 10px;
   border-left: 1px solid var(--border-strong);
   list-style: none;
 }
 
-.repl-calls li {
+.monty-calls li {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1815,7 +1890,7 @@ pre {
   color: var(--muted);
 }
 
-.repl-dot {
+.monty-dot {
   flex: none;
   width: 6px;
   height: 6px;
@@ -1823,48 +1898,48 @@ pre {
   background: var(--green);
 }
 
-.repl-dot.running {
+.monty-dot.running {
   background: var(--lithium);
   animation: pulse 1.6s ease-out infinite;
 }
 
-.repl-dot.error,
-.repl-dot.interrupted {
+.monty-dot.error,
+.monty-dot.interrupted {
   background: var(--red);
 }
 
-.repl-call-name {
+.monty-call-name {
   color: var(--text-soft);
 }
 
-.repl-call-subject {
+.monty-call-subject {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.repl-foot {
+.monty-foot {
   padding: 8px 16px;
   border-top: 1px solid var(--border);
   color: var(--faint);
   font-size: 11.5px;
 }
 
-.repl-calls.derived .repl-dot {
+.monty-calls.derived .monty-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--faint);
 }
 
-.repl-divider.restart {
+.monty-divider.restart {
   color: var(--amber);
 }
 
-.repl-foot code {
+.monty-foot code {
   font-size: 11px;
 }
 
-.repl-input {
+.monty-input {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1876,15 +1951,15 @@ pre {
   font: 12.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
-.repl-input:focus-within {
+.monty-input:focus-within {
   border-color: var(--focus);
 }
 
-.repl-input.disabled {
+.monty-input.disabled {
   opacity: 0.6;
 }
 
-.repl-input textarea {
+.monty-input textarea {
   flex: 1;
   min-height: 20px;
   border: 0;
@@ -1895,8 +1970,113 @@ pre {
   font: inherit;
 }
 
-.repl-input textarea::placeholder {
+.monty-input textarea::placeholder {
   color: var(--faint);
+}
+
+/* Plugins' side panels */
+
+.side-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.side-panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.side-panel-resize:hover,
+.side-panel.resizing .side-panel-resize {
+  background: color-mix(in srgb, var(--lithium) 45%, transparent);
+}
+
+/* A frame would take the pointer from a drag that crosses it. */
+.side-panel.resizing .side-panel-frame {
+  pointer-events: none;
+}
+
+.side-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.side-panel-title {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.side-panel-head .badge {
+  margin-right: auto;
+}
+
+.side-panel-head a.icon-button {
+  text-decoration: none;
+}
+
+.side-panel-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+
+.side-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 18px;
+  overflow-y: auto;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.side-panel-body p {
+  margin: 0;
+}
+
+.side-panel-body .primary,
+.side-panel-body .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.side-panel-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.side-panel-label {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.side-panel-link a {
+  color: var(--link);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  word-break: break-all;
 }
 
 /* Plugins panel */
@@ -2399,4 +2579,563 @@ textarea.setting-input {
   .plugins-hint {
     display: none;
   }
+}
+
+/* Workers: the current session's delegated tasks, under it in the sidebar, and one open in the main pane */
+
+.workers {
+  margin: 2px 0 8px 14px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.workers-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px 3px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workers-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.worker {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.worker:hover {
+  background: var(--hover);
+}
+
+.worker.selected {
+  background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
+}
+
+.worker-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.worker-agent {
+  flex: none;
+  color: var(--text-soft);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.worker.selected .worker-agent {
+  color: var(--text);
+}
+
+.worker-model {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.worker-time {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.worker-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.worker > .worker-activity {
+  padding-left: 16px;
+}
+
+.worker.running > .worker-activity {
+  color: var(--text-soft);
+}
+
+.spinner.worker-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  animation: spin 0.7s linear infinite;
+}
+
+.worker .state,
+.worker-banner .state,
+.worker-chip .state {
+  margin: 0 2px;
+}
+
+.worker .state.completed,
+.worker-banner .state.completed,
+.worker-chip .state.completed {
+  background: var(--green);
+}
+
+.worker-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.worker-banner-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.worker-banner .worker-model {
+  flex: 0 1 auto;
+}
+
+.worker-banner .worker-time {
+  margin-left: 0;
+}
+
+.stop-worker:hover {
+  color: var(--red);
+}
+
+.worker-note {
+  padding: 12px 4px 4px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.worker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 8px 26px;
+}
+
+.worker-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.worker-chip:hover {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
+/* A settings menu row's current value and the button that changes it, and where its value comes from. */
+
+.setting-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting-current {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setting-action .ghost {
+  border: 1px solid var(--border);
+}
+
+.setting-note {
+  margin: 4px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* Dialogs a settings menu opens: above the plugins panel. */
+
+.dialog-overlay {
+  z-index: 60;
+}
+
+.dialog-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(640px, calc(100vh - 48px));
+  overflow-y: auto;
+  padding: 22px 24px 18px;
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  animation: appear 0.12s ease both;
+}
+
+/* A long description scrolls the whole dialog rather than squeezing its choices to nothing. */
+.dialog-box > * {
+  flex-shrink: 0;
+}
+
+.dialog-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-description,
+.dialog-shown {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.dialog-description p,
+.dialog-shown p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.dialog-description p:last-child,
+.dialog-shown p:last-child {
+  margin-bottom: 0;
+}
+
+.dialog-shown {
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.dialog-description a,
+.dialog-shown a {
+  color: var(--accent-strong);
+}
+
+.dialog-choose {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 4px;
+}
+
+.dialog-choose .search {
+  margin: 0;
+  border: 1px solid var(--border);
+}
+
+.dialog-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 2px 8px;
+  outline: 0;
+}
+
+.dialog-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text-soft);
+  text-align: left;
+}
+
+.dialog-option.active {
+  background: var(--active);
+  color: var(--text);
+}
+
+.dialog-option-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.dialog-option-description {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dialog-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--green);
+  font-size: 11.5px;
+}
+
+.dialog-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dialog-label .setting-input.invalid {
+  border-color: var(--red);
+}
+
+.dialog-waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.dialog-waiting .spinner {
+  flex: none;
+  margin-top: 2px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.dialog-actions .ghost {
+  border: 1px solid var(--border);
+}
+
+.dialog-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+/* The plugins panel and dialogs scroll inside a modal, where an overlay scrollbar that shows only while
+   scrolling hides that there is more: keep a thin one showing. */
+.plugin-detail::-webkit-scrollbar,
+.plugin-list nav::-webkit-scrollbar,
+.dialog-options::-webkit-scrollbar {
+  width: 10px;
+}
+
+.plugin-detail::-webkit-scrollbar-thumb,
+.plugin-list nav::-webkit-scrollbar-thumb,
+.dialog-options::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--border-strong) content-box;
+}
+
+.plugin-detail::-webkit-scrollbar-thumb:hover,
+.plugin-list nav::-webkit-scrollbar-thumb:hover,
+.dialog-options::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted);
+}
+
+/* Elsewhere, such as Firefox, the standard properties; set in Chrome too, they would bring back the overlay. */
+@supports not selector(::-webkit-scrollbar) {
+  .plugin-detail,
+  .plugin-list nav,
+  .dialog-options {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+/* Where a new session runs, under `clai2 --web`. */
+.new-session-dialog .dialog-description {
+  margin: 0;
+}
+
+.new-session-dialog .dialog-option-label svg {
+  flex: none;
+  color: var(--muted);
+}
+/* The Workspaces section: the workspaces plugin's checkouts, each opening its own CLAI's page. */
+.workspace {
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+}
+
+.workspace-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workspace-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace-open {
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.workspace-open:hover:not(:disabled) {
+  border-color: var(--lithium);
+  color: var(--text);
+}
+
+.workspace-open:disabled {
+  opacity: 0.5;
+}
+
+/* The orchestrator: its sidebar entry, below New session, and its chat */
+
+.orchestrator-entry .state {
+  margin-left: auto;
+}
+
+.orchestrator-entry.active {
+  background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
+  color: var(--text);
+}
+
+/* While the orchestrator chat shows, the current session is not what the main pane shows. */
+.sidebar.orchestrating .session.current {
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar.orchestrating .session.current:hover {
+  background: var(--hover);
+}
+
+.sidebar.orchestrating .session.current .session-title {
+  color: var(--text-soft);
+}
+
+.topbar .new-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.pill.static,
+.pill.static:hover {
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+.orchestrator-off {
+  align-items: center;
+}
+
+.orchestrator-off .hero-hint {
+  max-width: 460px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.hero-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--lithium);
+}
+
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.tool-head .tool-row {
+  width: auto;
+  min-width: 0;
+}
+
+.open > .tool-head > .row-toggle .chevron {
+  opacity: 1;
+}
+
+.tool-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--lithium);
+  font-size: 12px;
+}
+
+.tool-link:hover {
+  background: var(--hover);
+}
+
+.orchestrator-off-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 13px;
 }

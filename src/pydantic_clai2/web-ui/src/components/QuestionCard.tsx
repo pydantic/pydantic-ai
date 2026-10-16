@@ -3,8 +3,17 @@ import { api } from '../api'
 import type { AnswerBody, Questions } from '../protocol'
 import { CheckIcon, QuestionIcon } from './icons'
 
+interface Props {
+  request: Questions
+  /** Who asks when the request names no one: CLAI, or the orchestrator. */
+  asker?: string
+  /** Where the answer goes: the session's questions by default. */
+  onAnswer?: (id: string, answers: AnswerBody[] | null) => Promise<void>
+  onError: (message: string) => void
+}
+
 /** The model's multiple-choice questions, answerable here or in the terminal, whichever comes first. */
-export function QuestionCard({ request, onError }: { request: Questions; onError: (message: string) => void }) {
+export function QuestionCard({ request, asker = 'CLAI', onAnswer = api.answer, onError }: Props) {
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [custom, setCustom] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -28,7 +37,7 @@ export function QuestionCard({ request, onError }: { request: Questions; onError
           return { header: q.header, selected: typed ? [] : (picked[q.header] ?? []), custom: typed || null }
         })
     try {
-      await api.answer(request.id, answers)
+      await onAnswer(request.id, answers)
     } catch (error) {
       onError(String(error instanceof Error ? error.message : error))
       setBusy(false)
@@ -39,7 +48,7 @@ export function QuestionCard({ request, onError }: { request: Questions; onError
     <div className="question-card">
       <div className="question-title">
         <QuestionIcon size={16} />
-        {request.asker ? `${request.asker} needs your input` : 'CLAI needs your input'}
+        {request.asker ?? asker} needs your input
       </div>
       {request.questions.map((q) => (
         <fieldset key={q.header} className="question">

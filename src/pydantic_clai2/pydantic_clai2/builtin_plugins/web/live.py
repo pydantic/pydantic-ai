@@ -1,13 +1,13 @@
 """Fan messages out to every connected browser, and answer `ask_user` questions from whichever side answers first."""
 
 import asyncio
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import anyio
 
-from pydantic_ai_harness.ask_user import Answerer, AskUserRequest, AskUserResponse
+from pydantic_ai_harness.ask_user import Answerer, AskUserAnswer, AskUserRequest, AskUserResponse, check_response
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.protocol import (
     QuestionAsked,
@@ -74,7 +74,7 @@ class BrowserAnswerer:
     either the terminal or the browser can be answered there.
     """
 
-    def __init__(self, *, publish: Callable[[ServerMessage], None], terminal: Answerer | None) -> None:
+    def __init__(self, *, publish: Callable[[QuestionAsked | QuestionClosed], None], terminal: Answerer | None) -> None:
         self._publish = publish
         self._terminal = terminal
         self._open: dict[str, _Open] = {}
@@ -90,6 +90,13 @@ class BrowserAnswerer:
         if entry is None or entry.answered.done():
             raise LookupError('That question is no longer open.')
         entry.answered.set_result(response)
+
+    def reply(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
+        """Answer an open question, or decline it with `None`; `ValueError` when the answers do not fit it."""
+        request = self.request(request_id)
+        response = AskUserResponse(cancelled=True) if answers is None else AskUserResponse(answers=tuple(answers))
+        check_response(request, response)
+        self.answer(request_id, response)
 
     def request(self, request_id: str) -> AskUserRequest:
         """The open request with this ID, to check an answer against; `LookupError` when it is not open."""

@@ -16,16 +16,33 @@ from typing import Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
-from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, PluginRow, Project, Transcript, dump
-from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch
+from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    CompletionInfo,
+    MenuEdited,
+    MenuInfo,
+    OrchestratorMessage,
+    OrchestratorState,
+    PanelInfo,
+    PluginRow,
+    Project,
+    TaskTranscript,
+    Transcript,
+    WorkspaceOpened,
+    WorkspacesInfo,
+    dump,
+)
+from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch, TaskAction
+from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -103,6 +120,12 @@ class Answers(BaseModel):
     answers: list[Answer] | None = None
 
 
+class RequestAnswers(Answers):
+    """Answers to the orchestrator's question request `id`."""
+
+    id: str
+
+
 class Rename(BaseModel):
     """A session's new title."""
 
@@ -135,10 +158,34 @@ class PluginChanges(BaseModel):
     reset: list[str] = []
 
 
+class FieldValue(BaseModel):
+    """A settings menu row's new value, as typed in its menu; empty or `None` resets it."""
+
+    value: str | None = Field(default=None, max_length=100_000)
+
+
+class DialogAnswer(BaseModel):
+    """A dialog's answer: the chosen value, the typed text, or `yes`; `None` backs out."""
+
+    value: str | None = Field(default=None, max_length=100_000)
+
+
+class NewSession(BaseModel):
+    """Where a new session runs: an absolute directory, or `None` for the current session's."""
+
+    workspace: str | None = Field(default=None, max_length=4096)
+
+
 class Forked(BaseModel):
     """The copy a fork saved."""
 
     id: str
+
+
+class Steered(BaseModel):
+    """Whether the task was running to take the message; a finished one can be resumed instead."""
+
+    steered: bool
 
 
 def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Path = STATIC) -> ASGIApp:
@@ -151,6 +198,10 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _prompt(app, remote)
     _sessions(app, remote)
     _plugins(app, remote)
+    _tasks(app, remote)
+    _panels(app, remote)
+    _workspaces(app, remote)
+    _orchestrator(app, remote.orchestrator)
     _events(app, remote)
     if (static / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
@@ -177,7 +228,9 @@ def _page(app: FastAPI, *, token: str, static: Path) -> None:
                 'Cache-Control': 'no-store',
                 'Content-Security-Policy': (
                     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                    # Side panels frame only pages whose own headers allow it, which the server checks first.
+                    f"connect-src 'self'; frame-src {FRAME_SOURCES}; "
+                    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
                 ),
                 'Referrer-Policy': 'no-referrer',
                 'X-Content-Type-Options': 'nosniff',
@@ -221,6 +274,10 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
         answers = None if body.answers is None else [_answer(answer) for answer in body.answers]
         _run(lambda: remote.answer(request_id, answers))
 
+    @app.post('/api/dialogs/{dialog_id}', status_code=204)
+    async def answer_dialog(dialog_id: str, body: DialogAnswer) -> None:
+        _run(lambda: remote.answer_dialog(dialog_id, body.value))
+
 
 def _answer(answer: Answer) -> AskUserAnswer:
     if answer.custom is not None:
@@ -236,8 +293,8 @@ def _sessions(app: FastAPI, remote: Remote) -> None:
         return await _wait(remote.projects(q))
 
     @app.post('/api/sessions/new', status_code=204)
-    async def new() -> None:
-        _run(remote.new)
+    async def new(body: NewSession | None = None) -> None:
+        _run(lambda: remote.new(None if body is None else body.workspace))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:
@@ -276,9 +333,84 @@ def _plugins(app: FastAPI, remote: Remote) -> None:
     async def menu(name: str) -> None:
         _run(lambda: remote.open_plugin_menu(name))
 
+    @app.get('/api/plugins/{name}/fields')
+    async def fields(name: str) -> MenuInfo:
+        return await _wait(remote.plugin_menu(name))
+
+    @app.post('/api/plugins/{name}/fields/{key}')
+    async def set_field(name: str, key: str, body: FieldValue) -> MenuEdited:
+        return await _wait(remote.edit_menu(name, key, body.value))
+
+    @app.post('/api/plugins/{name}/fields/{key}/action')
+    async def run_action(name: str, key: str) -> MenuEdited:
+        return await _wait(remote.run_menu_action(name, key))
+
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:
         await _wait(remote.plugin_action(name, action))
+
+
+def _tasks(app: FastAPI, remote: Remote) -> None:
+    """The Workers tree: read a delegated task's history, steer it, and stop, background, or resume it."""
+
+    @app.get('/api/tasks/{task_id}')
+    async def task(task_id: str) -> TaskTranscript:
+        return _run(lambda: remote.task_transcript(task_id))
+
+    # Before the action route, which would otherwise take `steer` for an action.
+    @app.post('/api/tasks/{task_id}/steer')
+    async def steer(task_id: str, body: Input) -> Steered:
+        return Steered(steered=_run(lambda: remote.steer(task_id, body.text)))
+
+    @app.post('/api/tasks/{task_id}/{action}', status_code=204)
+    async def act(task_id: str, action: TaskAction) -> None:
+        await _wait(remote.task_action(task_id, action))
+
+
+def _panels(app: FastAPI, remote: Remote) -> None:
+    """Plugins' side panels, as they are now; the page asks again when a turn starts or ends."""
+
+    @app.get('/api/panels')
+    async def panels(request: Request) -> list[PanelInfo]:
+        # `Guard` admitted only the server's own addresses, so `Host` names the origin this page came from.
+        return await remote.panels(origin=f'http://{request.headers["host"]}')
+
+
+def _workspaces(app: FastAPI, remote: Remote) -> None:
+    """The sidebar's Workspaces section: list them, and open one's own page."""
+
+    @app.get('/api/workspaces')
+    async def workspaces() -> WorkspacesInfo:
+        return await listing(remote.host.plugins)
+
+    @app.post('/api/workspaces/{workspace_id}/open')
+    async def open_one(workspace_id: str) -> WorkspaceOpened:
+        return await _wait(open_workspace(remote.host.plugins, workspace_id))
+
+
+def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
+    """The orchestrator chat: its own conversation with its own agent, streamed on the same WebSocket."""
+
+    @app.get('/api/orchestrator/state')
+    async def state() -> OrchestratorState:
+        return await orchestrator.state()
+
+    @app.post('/api/orchestrator/input', status_code=204)
+    async def send(body: Input) -> None:
+        await _wait(orchestrator.send(body.text))
+
+    @app.post('/api/orchestrator/interrupt')
+    async def interrupt() -> Interrupted:
+        return Interrupted(interrupted=orchestrator.interrupt())
+
+    @app.post('/api/orchestrator/answer', status_code=204)
+    async def answer(body: RequestAnswers) -> None:
+        answers = None if body.answers is None else [_answer(answer) for answer in body.answers]
+        _run(lambda: orchestrator.answer(body.id, answers))
+
+    @app.post('/api/orchestrator/clear', status_code=204)
+    async def clear() -> None:
+        await _wait(orchestrator.clear())
 
 
 def _events(app: FastAPI, remote: Remote) -> None:
@@ -290,6 +422,7 @@ def _events(app: FastAPI, remote: Remote) -> None:
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with remote.hub.subscribe() as queue:
             await socket.send_text(dump(remote.snapshot()))
+            await socket.send_text(dump(OrchestratorMessage(message=await remote.orchestrator.state())))
             async with anyio.create_task_group() as connection:
 
                 async def forward() -> None:
