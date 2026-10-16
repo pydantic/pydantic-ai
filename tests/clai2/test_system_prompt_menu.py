@@ -164,7 +164,7 @@ def test_rows_summarize_yours_and_take_values_only_there(tmp_path: Path) -> None
     assert source.problem(rows[PROMPT], 'x') == 'Full system prompt takes no value; open it instead.'
     with pytest.raises(ValueError, match='takes no value'):
         source.apply(rows[APPEND], 'x')
-    assert source.reset(rows[APPEND]) == 'You have no instructions to remove.'
+    assert source.reset(rows[APPEND]) == 'Append to yours has nothing to reset.'
     assert context.settings.instructions == 'One line', 'only its own row removes them'
 
     context.project = ProjectSettings(overrides={'run.instructions': 'From the project.'})

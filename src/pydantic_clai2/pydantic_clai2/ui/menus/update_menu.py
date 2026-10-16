@@ -73,8 +73,8 @@ def update_menu(context: CommandContext, updates: Updates, *, run: Callable[[str
             yes='Update',
             no='Cancel',
             description=(
-                f'Installs the newest CLAI from the {channel} channel with uv tool install --force, as /update does, '
-                'then restarts CLAI into it. A running turn finishes first.'
+                f'Installs the newest CLAI from the {channel} channel with uv tool install --force, as /update '
+                'typed in the terminal does. A running turn finishes first.'
             ),
         )
         if not confirmed:

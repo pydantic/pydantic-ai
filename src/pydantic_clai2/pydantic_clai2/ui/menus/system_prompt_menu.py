@@ -139,7 +139,9 @@ class SystemPromptSource:
 
     def reset(self, row: FieldRow) -> str:
         """Remove your instructions, leaving CLAI's defaults."""
-        if row.key != INSTRUCTIONS or not self.instructions:
+        if row.key != INSTRUCTIONS:
+            return f'{row.label} has nothing to reset.'
+        if not self.instructions:
             return 'You have no instructions to remove.'
         return self._save('')
 
