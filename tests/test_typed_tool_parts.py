@@ -253,10 +253,12 @@ def test_a_speech_part_still_needs_the_right_speaker() -> None:
 
 
 def test_narrow_message_parts_promotes_a_kind_set_after_the_message_was_built() -> None:
-    request = ModelRequest(parts=[ToolReturnPart('lookup', {'in_stock': True}, tool_call_id='c1')])
-    response = ModelResponse(parts=[ToolCallPart('lookup', {'sku': 'A-1'}, tool_call_id='c1')])
-    request.parts[0].tool_kind = 'test.lookup'  # pyright: ignore[reportAttributeAccessIssue]
-    response.parts[0].tool_kind = 'test.lookup'  # pyright: ignore[reportAttributeAccessIssue]
+    return_part = ToolReturnPart('lookup', {'in_stock': True}, tool_call_id='c1')
+    call_part = ToolCallPart('lookup', {'sku': 'A-1'}, tool_call_id='c1')
+    request = ModelRequest(parts=[return_part])
+    response = ModelResponse(parts=[call_part])
+    return_part.tool_kind = 'test.lookup'
+    call_part.tool_kind = 'test.lookup'
 
     narrowed_response, narrowed_request = narrow_message_parts([response, request])
 
