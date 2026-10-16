@@ -119,7 +119,7 @@ class ConversationStore(ABC):
     [`save`][pydantic_ai.conversation_store.ConversationStore.save] a
     [`Conversation`][pydantic_ai.conversation.Conversation] around each run:
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
     result = await agent.run(prompt, conversation=conversation)
     await store.save(result.conversation)
