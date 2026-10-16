@@ -2,6 +2,8 @@
 
 # pydantic_ai_slim/pydantic_ai/models/ Guidelines
 
+Rendering history into a request must be deterministic and must keep every message in its trust channel: see [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md), "Canonicalize on send" and "Trust tiers map to channels".
+
 ## API Design
 
 <!-- rule:912 -->

@@ -611,6 +611,38 @@ interpreter; the reason names the process-boundary property under test. Also
 don't flag a launch in a `session`- or `module`-scoped fixture (shared cost,
 the recommended pattern) or a short real wait whose duration is the claim.
 
+### Example 6 — message history and prompt cache
+
+Trigger: the diff enqueues or edits messages, contributes instructions or
+tools, renders history in a model adapter, wraps content in tags, or converts
+history to or from a UI protocol. The rules, each with its reason, are in
+`agent_docs/message-history-and-caching.md`. A violation with a concrete
+trigger is HIGH: a moved prefix makes every later request re-process it uncached, with no error,
+and content in the wrong channel is a prompt injection.
+
+**Flag this (HIGH):**
+```python
+async def before_model_request(self, ctx, request_context):
+    report = await self._sub_agent_report()
+    ctx.enqueue(SystemPromptPart(f'Sub-agent finished:\n{report}'))
+```
+*Why:* The report is another agent's output, which can repeat anything it
+read, and here it is sent in operator voice. It belongs in the tool result
+channel, or in a framed and escaped data wrapper on a user turn. The same goes
+for a hook that rewrites or strips earlier messages on every request, for
+framework guidance enqueued as a plain `str` (it becomes a user message), and
+for code that finds its own earlier parts by matching their text.
+
+**Don't flag this:**
+```python
+async def before_model_request(self, ctx, request_context):
+    ctx.enqueue(SystemPromptPart('Keep the answer under 100 words.', scope='request'))
+```
+*Why:* Fixed framework text in system voice, request-scoped, and added to
+history, so later requests send the same bytes. Also don't flag compaction
+moving the prefix once when it crosses its threshold, or assigning a new list
+to `request_context.messages` to trim or redact what one request sends.
+
 ## Sub-agent finding format
 
 When a Task sub-agent returns findings, use this exact format (one block
