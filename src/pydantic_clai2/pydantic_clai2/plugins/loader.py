@@ -668,7 +668,7 @@ class PluginLoader(Generic[DepsT]):
     async def restart(self, *, project: Sequence[PluginSettings], keep: str) -> None:
         """Load every plugin but `keep` again, with `project` as the project file's declarations.
 
-        As CLAI starting in another directory would: what a plugin read from the working directory
+        As CLAI starting in another directory would: what a plugin read from `host.workspace`
         is read again. `keep` stays loaded, and its capabilities still come after the others'.
         """
         for name in reversed(list(self._loaded)):

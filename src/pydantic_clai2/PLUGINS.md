@@ -122,7 +122,7 @@ cannot produce the same name.
 ### Project servers and trust
 
 A repository can commit either or both of these project files. Each is found by
-looking in the working directory, then each parent up to the git root:
+looking in the session's directory, then each parent up to the git root:
 
 | Path | Shape |
 | --- | --- |

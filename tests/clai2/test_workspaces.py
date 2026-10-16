@@ -186,11 +186,14 @@ def rig(tmp_path: Path) -> Rig:
     return Rig(processes=processes, probe=answers, launcher=launcher, directory=tmp_path / 'state')
 
 
-def loaded(rig: Rig, settings: WorkspacesSettings | None = None) -> LoadedPlugin[None]:
+def loaded(
+    rig: Rig, settings: WorkspacesSettings | None = None, *, workspace: Callable[[], Path] = Path.cwd
+) -> LoadedPlugin[None]:
     host = PluginHost(
         name='workspaces',
         console=Console(file=StringIO()),
         settings=(settings or WorkspacesSettings()).model_dump(mode='json'),
+        workspace=workspace,
     )
     plugin = load_plugin(WorkspacesPlugin, host)
     assert isinstance(plugin.plugin, WorkspacesPlugin)
@@ -305,6 +308,14 @@ async def test_teardown_keep_leaves_the_checkout(rig: Rig, repository: Path) -> 
     destroyed = await run(plugin, f'/workspaces destroy {workspace.id}')
     assert destroyed.endswith('was kept.')
     assert workspace.path.exists() and await rig.workspaces().listing() == []
+
+
+async def test_a_relative_repository_is_in_the_sessions_directory(rig: Rig, repository: Path) -> None:
+    """`/workspaces create KIND REPO` reads a relative `REPO` from the session's directory, not the process's."""
+    plugin = loaded(rig, workspace=lambda: repository.parent)
+    await run(plugin, f'/workspaces create local-worktree "{repository.name}"')
+    [workspace] = await rig.workspaces().listing()
+    assert workspace.path == (repository / '.worktrees' / workspace.id).resolve()
 
 
 async def test_usage_and_unknown_names(rig: Rig, repository: Path, tmp_path: Path) -> None:

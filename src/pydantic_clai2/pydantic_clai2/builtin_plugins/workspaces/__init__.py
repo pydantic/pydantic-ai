@@ -10,10 +10,12 @@ see `registry`. `Workspaces` in `manager` is what `/workspaces` and the web UI's
 
 import html
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 
 from anyio import to_thread
 from pydantic import ValidationError
 
+from pydantic_clai2.builtin_plugins.workspaces.backend import is_url
 from pydantic_clai2.builtin_plugins.workspaces.kinds import (
     KindName,
     Teardown,
@@ -109,6 +111,8 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
                 return '\n'.join(describe(workspace) for workspace in listing)
             case ['create', kind, *rest] if len(rest) <= 2:
                 repo, ref = (*rest, '', '')[:2]
+                if repo and not is_url(repo):
+                    repo = str(self.host.workspace / Path(repo).expanduser())
                 workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref)
                 return (
                     f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}. '

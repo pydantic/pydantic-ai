@@ -270,16 +270,17 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
 
 
 @pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
-async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
-    """A stdio server without its own `cwd` starts in the session's directory, not the process's."""
+@pytest.mark.parametrize('cwd', [None, 'sub'])
+async def test_tools_without_start_and_empty_server(tmp_path: Path, cwd: str | None) -> None:
+    """A stdio server starts in the session's directory, not the process's; a relative `cwd` is inside it."""
     script, pid_file = write_server(tmp_path, with_tool=False)
-    (tmp_path / 'repo').mkdir()
+    (tmp_path / 'repo' / 'sub').mkdir(parents=True)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path / 'repo')
     plugin = make_plugin({}, store)
-    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)]))
+    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)], cwd=cwd))
     assert await plugin.commands.execute_async('/mcp tools local') == 'No tools provided by local.'
     assert_exited(pid_file)
-    assert Path((tmp_path / 'server.cwd').read_text()).resolve() == (tmp_path / 'repo').resolve()
+    assert Path((tmp_path / 'server.cwd').read_text()).resolve() == (tmp_path / 'repo' / (cwd or '')).resolve()
 
 
 @pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
