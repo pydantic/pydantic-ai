@@ -335,7 +335,6 @@ CLAI shares, such as `display.*`, still reach every session, as typing `/set` do
 
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
 `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
-default session: the
-one this page last opened or started while it stays live, else the most recently opened.
+default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
 orchestrators of other CLAI versions use them.
