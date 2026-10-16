@@ -37,6 +37,15 @@ export const SearchIcon = icon(
 )
 export const FolderIcon = icon(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />)
 export const ChevronIcon = icon(<path d="m9 6 6 6-6 6" />)
+export const BranchIcon = icon(
+  <>
+    <circle cx="6" cy="5" r="2" />
+    <circle cx="6" cy="19" r="2" />
+    <circle cx="18" cy="7" r="2" />
+    <path d="M6 7v10" />
+    <path d="M18 9v1a4 4 0 0 1-4 4H9a3 3 0 0 0-3 3" />
+  </>,
+)
 export const ArrowUpIcon = icon(
   <>
     <path d="M12 19V5" />

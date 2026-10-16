@@ -12,11 +12,24 @@ show it. The page follows `/theme`, and the sidebar's footer picks a theme too. 
 ends the web UI; `/web status` shows its address.
 
 To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web`). It prints
-the address, opens it, and logs the conversation to the terminal until Ctrl-C.
+the address, opens it, and logs the conversation to the terminal until Ctrl-C. There, each
+session runs in its own directory. Opening a session saved elsewhere moves CLAI there before its
+next turn, with that directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if
+CLAI had started there. **New session** asks where the session runs: a project or worktree from
+the sidebar, by default the current one, or any directory by its absolute path
+(`/workspace DIRECTORY` in the composer does the same). The header shows where the session works.
+`clai2 --web --resume ID` starts in that session's directory. Nothing moves while a turn, a
+background `/fork`, or a delegated task runs. The launch directory's `.env` stays loaded.
 
-The sidebar lists the sessions `/resume` shows, grouped by project, with search. Click one to
-switch to it, or use its menu to rename, fork, or delete it; a session saved in another
-directory opens read-only. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
+The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
+after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
+the current ones first and search across all of them. A folder outside Git is a project of its own.
+A session remembers its checkout when it is saved, so one from a worktree you have since removed
+stays under its project, marked removed; an older session from a removed folder is placed by
+where it was, or listed under Removed folders. Click one to switch to it, or use its menu to
+rename, fork, or delete it. A session whose directory is gone, such as a removed worktree, opens
+read-only; so does, with `/web` from a terminal, a session saved in another directory, since the
+terminal works where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
 Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and

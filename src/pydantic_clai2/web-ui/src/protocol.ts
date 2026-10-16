@@ -132,6 +132,8 @@ export type ServerMessage =
       questions: Questions[]
       dialogs: Dialog[]
       theme: ThemeInfo
+      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      follows_workspace: boolean
     }
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
@@ -171,11 +173,21 @@ export interface SessionEntry {
   current: boolean
 }
 
+export interface Worktree {
+  root: string
+  /** Its branch, or its folder's name outside Git or when the branch is unknown. */
+  label: string
+  current: boolean
+  /** The folder is gone, as with a removed worktree. */
+  missing: boolean
+  sessions: SessionEntry[]
+}
+
 export interface Project {
   key: string
   name: string
   current: boolean
-  sessions: SessionEntry[]
+  worktrees: Worktree[]
 }
 
 export interface Transcript {
@@ -184,6 +196,8 @@ export interface Transcript {
   workspace: string
   items: Item[]
   openable: boolean
+  /** CLAI would move to its directory, but that directory is gone. */
+  missing: boolean
 }
 
 export interface CompletionInfo {

@@ -232,6 +232,8 @@ class Snapshot:
     questions: list[Questions]
     dialogs: list[Dialog]
     theme: ThemeInfo
+    follows_workspace: bool = False
+    """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
 
 
 @dataclass(kw_only=True)
@@ -499,14 +501,27 @@ class SessionEntry:
     current: bool
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
+class Worktree:
+    """A project's checkout, or a folder outside Git, with the sessions saved in it."""
+
+    root: str
+    label: str
+    """Its branch, or its folder's name outside Git or when the branch is unknown."""
+    current: bool
+    missing: bool
+    """The folder is gone, as with a removed worktree."""
+    sessions: list[SessionEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
 class Project:
-    """Saved sessions grouped by repository, as the `/resume` browser groups them."""
+    """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
     name: str
     current: bool
-    sessions: list[SessionEntry]
+    worktrees: list[Worktree]
 
 
 @dataclass(kw_only=True)
@@ -518,7 +533,9 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it here; it refuses a session saved in another directory."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    missing: bool = False
+    """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
 
 
 @dataclass(kw_only=True)

@@ -9,6 +9,7 @@ import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
 import { DialogLayer } from './components/DialogLayer'
+import { NewSessionDialog } from './components/NewSessionDialog'
 import { ReplPanel } from './components/ReplPanel'
 import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
@@ -48,6 +49,8 @@ export function App() {
     setPluginFocus(null)
     setPlugins(true)
   }, [])
+  // Asking where a new session runs, when each session runs in its own directory.
+  const [choosing, setChoosing] = useState(false)
   const closePlugins = useCallback(() => setPlugins(false), [])
   const [panels, setPanels] = useState<PanelInfo[]>([])
   // Which plugin side panel is open, and how wide, as this browser last left them.
@@ -177,6 +180,12 @@ export function App() {
   const showError = useCallback((message: string) => showToast(message, 'error'), [showToast])
   const showNotice = useCallback((message: string) => showToast(message, 'info'), [showToast])
 
+  const followsWorkspace = state.followsWorkspace
+  const newSession = useCallback(() => {
+    if (followsWorkspace) setChoosing(true)
+    else void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+  }, [followsWorkspace, showError])
+
   // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
   const closePreview = useCallback(() => {
     picked.current++
@@ -234,7 +243,7 @@ export function App() {
         window.setTimeout(() => sidebarRef.current?.focusSearch())
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault()
-        void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+        newSession()
       } else if (mod && event.key === 'j') {
         event.preventDefault()
         setRepl((open) => !open)
@@ -259,7 +268,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.running, showError, togglePanel, openPlugins])
+  }, [state.running, showError, togglePanel, openPlugins, newSession])
 
   const status = state.status
   const title = preview ? preview.title : (state.session?.title ?? 'New session')
@@ -302,6 +311,7 @@ export function App() {
             void api.send(`/theme ${name}`).catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
           }
           onView={(session) => void view(session)}
+          onNew={newSession}
           onCollapse={() => setSidebar(false)}
           onPlugins={openPlugins}
           onError={showError}
@@ -357,7 +367,9 @@ export function App() {
           <div className="preview-banner">
             {preview.openable
               ? 'A turn is running. You can switch to this session once it ends.'
-              : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+              : preview.missing
+                ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
             {preview.openable && !state.running && (
               <button className="primary small" onClick={() => void open(preview)}>
                 Continue here
@@ -454,6 +466,9 @@ export function App() {
           }}
           onError={showError}
         />
+      )}
+      {choosing && state.session && (
+        <NewSessionDialog current={state.session.workspace} onClose={() => setChoosing(false)} />
       )}
       <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>

@@ -157,6 +157,12 @@ class DialogAnswer(BaseModel):
     value: str | None = Field(default=None, max_length=100_000)
 
 
+class NewSession(BaseModel):
+    """Where a new session runs: an absolute directory, or `None` for the current session's."""
+
+    workspace: str | None = Field(default=None, max_length=4096)
+
+
 class Forked(BaseModel):
     """The copy a fork saved."""
 
@@ -265,8 +271,8 @@ def _sessions(app: FastAPI, remote: Remote) -> None:
         return await _wait(remote.projects(q))
 
     @app.post('/api/sessions/new', status_code=204)
-    async def new() -> None:
-        _run(remote.new)
+    async def new(body: NewSession | None = None) -> None:
+        _run(lambda: remote.new(None if body is None else body.workspace))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:

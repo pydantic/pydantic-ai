@@ -72,7 +72,8 @@ export const api = {
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
   sessions: (query: string) => call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
-  newSession: () => call<void>('POST', '/api/sessions/new'),
+  newSession: (workspace?: string) =>
+    call<void>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
   open: (id: string) => call<void>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),

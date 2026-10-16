@@ -658,6 +658,20 @@ class PluginLoader(Generic[DepsT]):
         self._from_settings.pop(entry.name, None)
         self._guards.pop(entry.name, None)
 
+    async def restart(self, *, project: Sequence[PluginSettings], keep: str) -> None:
+        """Load every plugin but `keep` again, with `project` as the project file's declarations.
+
+        As CLAI starting in another directory would: what a plugin read from the working directory
+        is read again. `keep` stays loaded, and its capabilities still come after the others'.
+        """
+        for name in reversed(list(self._loaded)):
+            if name != keep:
+                await self.unload(name)
+        self._project = canonical_plugin_declarations(project)
+        await self.load_all()
+        if (kept := self._loaded.pop(keep, None)) is not None:
+            self._loaded[keep] = kept
+
     async def close(self, reason: SessionEndReason) -> None:
         """Unload every plugin, last loaded first."""
         for name in reversed(list(self._loaded)):
