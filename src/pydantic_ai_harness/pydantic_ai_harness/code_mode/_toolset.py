@@ -626,6 +626,9 @@ class NestedCallOutcome:
     metadata: Any = None
     """`ToolReturn.metadata` when the tool returned a `ToolReturn`."""
 
+    tool_content: str | Sequence[Any] | None = None
+    """`ToolReturn.content` that should be delivered to the model outside the return value."""
+
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
 
@@ -660,10 +663,12 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         )
 
     metadata: Any = None
+    tool_content: str | Sequence[Any] | None = None
     if isinstance(result, ToolReturn):
         metadata = result.metadata
+        tool_content = result.content
         result = result.return_value
-    return NestedCallOutcome(content=result, metadata=metadata)
+    return NestedCallOutcome(content=result, metadata=metadata, tool_content=tool_content)
 
 
 @dataclass
@@ -680,6 +685,7 @@ class RunCodeExecution:
     budget_exhausted: bool = False
     nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
+    nested_content: list[Any] = field(default_factory=list[Any])
 
     def next_tool_call_id(self, *, max_tool_calls: int) -> str:
         """Reserve nested-call budget and return the next stable child call ID."""
@@ -705,6 +711,11 @@ class RunCodeExecution:
             )
         if outcome.error is not None:
             raise outcome.error
+        if outcome.tool_content is not None:
+            if isinstance(outcome.tool_content, str):
+                self.nested_content.append(outcome.tool_content)
+            else:
+                self.nested_content.extend(outcome.tool_content)
         self.nested_returns[tool_call_id] = ToolReturnPart(
             tool_name=call_part.tool_name,
             content=outcome.content,
@@ -726,8 +737,17 @@ class RunCodeExecution:
         else:
             return_value = {'output': output, 'result': result}
 
+        content: str | list[Any] | None
+        if not self.nested_content:
+            content = None
+        elif len(self.nested_content) == 1:
+            content = self.nested_content[0]
+        else:
+            content = self.nested_content
+
         return ToolReturn(
             return_value=return_value,
+            content=content,
             metadata={
                 'code_mode': True,
                 'tool_calls': self.nested_calls,
