@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1018"
+      - "1072"
       content-type:
       - application/json
       host:
@@ -56,7 +56,7 @@ interactions:
         - type: function
           function:
             name: get_weather
-            description: Get the weather for a city.
+            description: "Get the weather for a city: the tool `weather_tool_calls_without_thinking` calls."
             parameters:
               additionalProperties: false
               properties:
@@ -73,24 +73,6 @@ interactions:
       - keep-alive
       content-type:
       - application/json; charset=utf-8
-      msh-context-cache-token-boosted-nvme:
-      - "0"
-      msh-gid:
-      - enterprise-tier-2
-      msh-org-id:
-      - org-30b79407c5054f7885f3033c1614921d
-      msh-project-id:
-      - proj-c71799aed1924aa2b7b5779d0f9cbcf2
-      msh-request-id:
-      - e2b5f872-c99a-11f1-95a3-de7ba041809a
-      msh-trace-mode:
-      - "on"
-      msh-uid:
-      - d1sjhbnkgnumadtmapl0
-      msh-usage-cache-write-tokens-1h:
-      - "0"
-      msh-usage-cache-write-tokens-5m:
-      - "256"
       strict-transport-security:
       - max-age=31536000; includeSubDomains
       transfer-encoding:
@@ -100,23 +82,23 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-6ad2801a1328c8f56a792928
+        id: chatcmpl-6ad282c00d53fd6fa7cc71cc
         object: chat.completion
-        created: 1792180250
+        created: 1792180929
         model: kimi-k3
         choices:
         - index: 0
           message:
             role: assistant
-            content: The weather in Paris is sunny and in London it's rainy.
-            reasoning_content: "Paris: sunny, London: rainy. One short sentence."
+            content: Paris is sunny, while London is rainy.
+            reasoning_content: Now answer both in one short sentence.
           finish_reason: stop
         usage:
-          prompt_tokens: 379
-          completion_tokens: 40
-          total_tokens: 419
+          prompt_tokens: 391
+          completion_tokens: 33
+          total_tokens: 424
           completion_tokens_details:
-            reasoning_tokens: 13
+            reasoning_tokens: 9
           prompt_tokens_details:
             cache_write_tokens: 256
-  recorded_at: 2026-10-16T19:50:51.888042+00:00
+  recorded_at: 2026-10-16T20:02:10.244333+00:00

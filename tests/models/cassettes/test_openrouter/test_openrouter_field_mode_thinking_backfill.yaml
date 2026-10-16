@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1042"
+      - "1129"
       content-type:
       - application/json
       host:
@@ -55,7 +55,7 @@ interactions:
         - type: function
           function:
             name: get_weather
-            description: Get the weather for a city.
+            description: "Get the weather for a city: the tool `weather_tool_calls_without_thinking` calls."
             parameters:
               additionalProperties: false
               properties:
@@ -65,6 +65,9 @@ interactions:
               - city
               type: object
             strict: true
+        provider:
+          only:
+          - together
         reasoning:
           effort: medium
           enabled: true
@@ -90,13 +93,13 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792179575-2vVqfgpFj252SbXynMCF
+        id: gen-1792180931-A44rwkLRdhB8Cbtb8Pq6
         object: chat.completion
-        created: 1792179575
+        created: 1792180931
         model: deepseek/deepseek-v4.1-flash
-        provider: AtlasCloud
-        system_fingerprint: null
-        service_tier: default
+        provider: Together
+        system_fingerprint: default
+        service_tier: null
         choices:
         - index: 0
           logprobs: null
@@ -108,10 +111,10 @@ interactions:
             refusal: null
             reasoning: null
         usage:
-          prompt_tokens: 433
-          completion_tokens: 11
-          total_tokens: 444
-          cost: 0.000064395
+          prompt_tokens: 452
+          completion_tokens: 12
+          total_tokens: 464
+          cost: 0.00015
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -119,11 +122,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.000064395
-            upstream_inference_prompt_cost: 0.000058455
-            upstream_inference_completions_cost: 5.94e-6
+            upstream_inference_cost: 0.00015
+            upstream_inference_prompt_cost: 0.0001356
+            upstream_inference_completions_cost: 0.0000144
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-16T19:39:36.370440+00:00
+  recorded_at: 2026-10-16T20:02:12.041012+00:00
