@@ -45,7 +45,7 @@ def save(web_: Web, summary: ConversationSummary, *, days: float = 0) -> str:
 
 def sidebar(web_: Web, *, archived: bool = False) -> dict[str, bool]:
     """The titles the sidebar lists, each with whether it is archived."""
-    projects = web_.get(f'/api/sessions?archived={str(archived).lower()}').json()
+    projects = web_.get(f'/api/sessions?include_archived={str(archived).lower()}').json()
     return {
         entry['title']: entry['archived']
         for project in projects

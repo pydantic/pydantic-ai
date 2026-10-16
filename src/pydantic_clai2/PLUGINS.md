@@ -1219,7 +1219,8 @@ Command results come from `on_command_end` and history from `host.conversation`.
 sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
 repository, then by checkout, with a session from a removed worktree under its repository by the
 checkout saved with it (`ConversationSummary.checkout`), archived ones left out unless its archive
-button is on (`GET /api/sessions?archived=true`; `POST /api/sessions/ID/archive` and `/unarchive`).
+button is on (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and
+`/unarchive`).
 Clicking a session sends `/resume ID`.
 Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
 directory (`host.sessions.follows_workspace`): `/resume ID` first changes CLAI's working directory
@@ -1438,9 +1439,9 @@ The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the side
 **New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
 orchestrator is an agent of its own, separate from the session's: its own conversation, its own
 instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
-destroying one, clean up saved sessions by archiving them), and only the tools below plus `ask_user_question`. It has no shell, file, code
-mode, or other CLAI tools, and the session's agent, in the terminal or the browser, gets none of
-these.
+destroying one, clean up saved sessions by archiving them), and only the tools below plus
+`ask_user_question`. It has no shell, file, code mode, or other CLAI tools, and the session's agent,
+in the terminal or the browser, gets none of these.
 
 It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
 off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
@@ -1467,8 +1468,9 @@ workspace has an **Open** link to its page, as the sidebar's Workspaces section 
 | `sessions_unarchive(ids)` | list them again |
 
 **Cleaning up sessions is archiving.** Archiving can be undone, so it needs no confirmation; the
-orchestrator is told to archive when asked to clean up or delete sessions, and that it cannot
-delete sessions or remove worktrees, which no tool does. Each change refreshes the sidebar.
+orchestrator is told to archive when asked to clean up or delete sessions. No tool deletes a
+session, and archiving removes no folder or worktree; only `workspace_destroy` removes a checkout,
+that of a workspace the orchestrator made. Each change refreshes the sidebar.
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
 orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
@@ -2514,8 +2516,8 @@ prompt the keyboard does:
   refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
   from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
   `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so does
-  resuming it. `listing(archived=True)` lists only archived sessions, `archived=None` both. As in `/resume`, a fork gets
-  its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
+  resuming it, even to fork it. `listing(archived=True)` lists only archived sessions, and
+  `archived=None` both. As in `/resume`, a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`

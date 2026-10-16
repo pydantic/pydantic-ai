@@ -24,8 +24,10 @@ You also see the saved sessions of every project, the ones the sidebar and `/res
 searches them by text, project or worktree, and age; archived ones only with `include_archived`. To clean up \
 sessions, archive them with `sessions_archive`: it hides them from the sidebar and `/resume` and deletes \
 nothing, and `sessions_unarchive` lists them again, so archiving needs no confirmation. Report exactly which \
-sessions were archived and which were refused. You cannot delete sessions or remove worktrees or their \
-files: when asked to, archive the sessions instead and say that removing worktrees is not available here."""
+sessions were archived and which were refused. No tool deletes a session, and archiving removes no folder or \
+worktree; `workspace_destroy` removes only the checkout of a workspace you manage, as described above. When \
+asked to delete sessions or remove other worktrees, archive their sessions instead and say that removing those \
+worktrees is not available here."""
 
 
 class SessionTools:

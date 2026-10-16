@@ -289,8 +289,8 @@ def _sessions(app: FastAPI, remote: Remote) -> None:
     """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
 
     @app.get('/api/sessions')
-    async def sessions(q: str = '', archived: bool = False) -> list[Project]:
-        return await _wait(remote.projects(q, include_archived=archived))
+    async def sessions(q: str = '', include_archived: bool = False) -> list[Project]:
+        return await _wait(remote.projects(q, include_archived=include_archived))
 
     @app.post('/api/sessions/new', status_code=204)
     async def new(body: NewSession | None = None) -> None:

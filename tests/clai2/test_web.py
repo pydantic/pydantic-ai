@@ -648,8 +648,8 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
         assert web_.post(f'/api/sessions/{old.id}/archive').status_code == 204
         receive_until(socket, SessionsChanged)
         assert listed('/api/sessions') == {'New session': False}
-        assert listed('/api/sessions?archived=true') == {'New session': False, 'Stale': True}
-        assert listed('/api/sessions?q=Stale&archived=true') == {'Stale': True}
+        assert listed('/api/sessions?include_archived=true') == {'New session': False, 'Stale': True}
+        assert listed('/api/sessions?q=Stale&include_archived=true') == {'Stale': True}
         refused = web_.post(f'/api/sessions/{current}/archive')
         assert (refused.status_code, refused.json()['detail']) == (
             400,

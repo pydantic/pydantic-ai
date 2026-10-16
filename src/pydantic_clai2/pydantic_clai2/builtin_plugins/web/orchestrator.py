@@ -1,8 +1,9 @@
 """The orchestrator: an agent of its own in the web UI, which runs workspaces for the user.
 
 It has its own conversation and only the tools in `workspace_tools` and `session_tools`, plus
-`ask_user_question`, answered in its own chat. The session's agent gets none of them. Its conversation is one JSON file in CLAI's state
-directory, so it survives a reload and a restart, and never shows among the saved sessions.
+`ask_user_question`, answered in its own chat. The session's agent gets none of them. Its conversation
+is one JSON file in CLAI's state directory, so it survives a reload and a restart, and never shows
+among the saved sessions.
 """
 
 import asyncio

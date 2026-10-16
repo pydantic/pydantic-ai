@@ -74,7 +74,7 @@ export const api = {
   setSwitch: (key: Switch, on: boolean) => call<void>('POST', '/api/switch', { key, on }),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
   sessions: (query: string, archived = false) =>
-    call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&archived=true' : ''}`),
+    call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   newSession: (workspace?: string) =>
     call<void>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
