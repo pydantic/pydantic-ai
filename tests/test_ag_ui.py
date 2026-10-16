@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     AudioUrl,
@@ -70,6 +70,7 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    sanitize_messages,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -8966,6 +8967,208 @@ async def test_compaction_stream_matches_dumped_activity_message() -> None:
     assert isinstance(activity, ActivityMessage)
     assert snapshot_event['activityType'] == activity.activity_type
     assert snapshot_event['content'] == activity.content
+
+
+def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
+    """The messages `@ag-ui/client`'s default reducer appends for these events.
+
+    A minimal port covering the event types the enqueued-messages tests produce: text messages, tool
+    calls and results, and activity snapshots, each appended at its stream position.
+    """
+    messages: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    tool_calls: dict[str, dict[str, Any]] = {}
+    for event in events:
+        match event['type']:
+            case 'TEXT_MESSAGE_START':
+                by_id[event['messageId']] = {'id': event['messageId'], 'role': 'assistant'}
+                messages.append(by_id[event['messageId']])
+            case 'TEXT_MESSAGE_CONTENT':
+                message = by_id[event['messageId']]
+                message['content'] = message.get('content', '') + event['delta']
+            case 'TOOL_CALL_START':
+                # The stream announces every parent message before a tool call references it.
+                tool_calls[event['toolCallId']] = {
+                    'id': event['toolCallId'],
+                    'type': 'function',
+                    'function': {'name': event['toolCallName'], 'arguments': ''},
+                }
+                by_id[event['parentMessageId']].setdefault('toolCalls', []).append(tool_calls[event['toolCallId']])
+            case 'TOOL_CALL_ARGS':
+                tool_calls[event['toolCallId']]['function']['arguments'] += event['delta']
+            case 'TOOL_CALL_RESULT':
+                messages.append(
+                    {
+                        'id': event['messageId'],
+                        'role': 'tool',
+                        'toolCallId': event['toolCallId'],
+                        'content': event['content'],
+                    }
+                )
+            case 'ACTIVITY_SNAPSHOT':
+                messages.append(
+                    {
+                        'id': event['messageId'],
+                        'role': 'activity',
+                        'activityType': event['activityType'],
+                        'content': event['content'],
+                    }
+                )
+            case _:
+                pass
+    return TypeAdapter(list[Message]).validate_python(messages)
+
+
+def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tuple[str, Any]]]]:
+    """Message boundaries, part kinds and content, without the IDs and timestamps a reload re-mints."""
+    return [
+        (
+            message.kind,
+            [
+                (
+                    part.part_kind,
+                    part.args_as_dict() if isinstance(part, ToolCallPart) else getattr(part, 'content', None),
+                )
+                for part in message.parts
+            ],
+        )
+        for message in messages
+    ]
+
+
+def _enqueuing_agent() -> Agent[object, str]:
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Background result: 42')
+        ctx.enqueue(SystemPromptPart(content='Announcement'))
+        return 'started'
+
+    return agent
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt: Literal['server', 'client']) -> None:
+    """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
+
+    They ride in a `pydantic_ai_enqueued_messages` activity, which the client keeps in its message list and
+    only renders if it registered a renderer for that type, and load back as their own requests at the
+    position they were delivered in. Inside, they get the same handling as the rest of client-submitted
+    history: an enqueued system prompt is stripped when the server owns the system prompt.
+    """
+    agent = _enqueuing_agent()
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19', manage_system_prompt=manage_system_prompt)
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+
+    activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    assert activities == snapshot(
+        [
+            {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'activityType': 'pydantic_ai_enqueued_messages',
+                'content': {
+                    'messages': [
+                        {
+                            'id': IsStr(),
+                            'role': 'user',
+                            'content': 'Background result: 42',
+                        }
+                    ]
+                },
+                'replace': True,
+            },
+            {
+                'type': 'ACTIVITY_SNAPSHOT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'activityType': 'pydantic_ai_enqueued_messages',
+                'content': {'messages': [{'id': IsStr(), 'role': 'system', 'content': 'Announcement'}]},
+                'replace': True,
+            },
+        ]
+    )
+    # Delivered after the tool result and before the step that responds to it, as in server history.
+    types = [event['type'] for event in events]
+    assert types.index('TOOL_CALL_RESULT') < types.index('ACTIVITY_SNAPSHOT') < types.index('TEXT_MESSAGE_CONTENT')
+
+    reloaded = AGUIAdapter(
+        agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
+    )
+    if manage_system_prompt == 'server':
+        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+            loaded = reloaded.sanitize_messages(reloaded.messages)
+    else:
+        loaded = reloaded.sanitize_messages(reloaded.messages)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
+    assert _model_visible(loaded) == _model_visible(expected)
+    announcement = [('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []
+    assert _model_visible(loaded) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background result: 42')]),
+        *announcement,
+        ('response', [('text', 'done')]),
+    ]
+
+
+async def test_enqueued_messages_event_skipped_for_legacy_ag_ui() -> None:
+    """Enqueued-message activities are omitted when the negotiated AG-UI version predates activity events."""
+    agent = _enqueuing_agent()
+    adapter = AGUIAdapter(agent, create_input(UserMessage(id='user-1', content='Go')), ag_ui_version='0.1.10')
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+    assert not any(event['type'] == 'ACTIVITY_SNAPSHOT' for event in events)
+
+
+def test_enqueued_messages_malformed_or_nested_payload_is_skipped() -> None:
+    """A client can put anything in the activity; malformed content loads nothing, and nesting doesn't recurse."""
+    nested = ActivityMessage(
+        id='nested',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'x', 'role': 'user', 'content': 'dropped'}]},
+    )
+    messages: list[Message] = [
+        AssistantMessage(id='assistant-1', content='hello'),
+        ActivityMessage(id='a1', activity_type='pydantic_ai_enqueued_messages', content={'messages': 'not-a-list'}),
+        ActivityMessage(id='a2', activity_type='pydantic_ai_enqueued_messages', content={}),
+        ActivityMessage(
+            id='a3',
+            activity_type='pydantic_ai_enqueued_messages',
+            content={
+                'messages': [
+                    {'id': 'inner', 'role': 'user', 'content': 'kept'},
+                    nested.model_dump(mode='json', by_alias=True),
+                ]
+            },
+        ),
+    ]
+
+    assert _model_visible(AGUIAdapter.load_messages(messages)) == snapshot(
+        [('response', [('text', 'hello')]), ('request', [('user-prompt', 'kept')])]
+    )
 
 
 async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:

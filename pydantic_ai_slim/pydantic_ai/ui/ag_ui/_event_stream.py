@@ -20,6 +20,7 @@ from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
     CustomEvent,
+    EnqueuedMessagesEvent,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -50,6 +51,7 @@ from ._utils import (
     BUILTIN_TOOL_CALL_ID_PREFIX,
     COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
+    ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -443,6 +445,26 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id=str(uuid4()),
             activity_type=COMPACTION_ACTIVITY_TYPE,
             content=compaction_payload(part),
+        )
+
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        # The adapter module imports this one to build its stream.
+        from ._adapter import AGUIAdapter
+
+        # An activity rather than chat messages: the client keeps it in its message list and sends it
+        # back, but a UI only renders activity types it registered a renderer for.
+        messages = AGUIAdapter.dump_messages(event.messages, ag_ui_version=self.ag_ui_version)
+        yield ActivitySnapshotEvent(
+            message_id=event.enqueue_id,
+            activity_type=ENQUEUED_MESSAGES_ACTIVITY_TYPE,
+            content={
+                'messages': [message.model_dump(mode='json', by_alias=True, exclude_none=True) for message in messages]
+            },
         )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:

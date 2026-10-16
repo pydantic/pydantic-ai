@@ -9,7 +9,7 @@ from dataclasses import KW_ONLY, InitVar, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 
@@ -62,6 +62,7 @@ from .._utils import get_ui_message_id, set_ui_message_id
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
+    ENQUEUED_MESSAGES_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
@@ -118,6 +119,7 @@ if TYPE_CHECKING:
 __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
+_ui_messages_ta: TypeAdapter[list[UIMessage]] = TypeAdapter(list[UIMessage])
 
 _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
     'image': ImageUrl,
@@ -461,6 +463,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and (compaction_part := compaction_part_from_payload(part.data)) is not None
                         ):
                             builder.add(compaction_part)
+                        elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
+                            # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                            builder.messages.extend(cls.load_messages(_enqueued_ui_messages(part.data)))
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
@@ -1284,3 +1289,28 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
         else:
             assert_never(chunk)
     return parts
+
+
+def _enqueued_ui_messages(data: Any) -> list[UIMessage]:
+    """The `UIMessage`s in a `data-enqueued-messages` payload, or none when the client sent something malformed.
+
+    Enqueued-message parts nested inside are dropped: the payload is the client's to send, and honoring
+    them would let it recurse `load_messages` as deeply as it liked.
+    """
+    raw = data.get('messages') if _is_str_dict(data) else None
+    try:
+        messages = _ui_messages_ta.validate_python(raw)
+    except ValidationError:
+        return []
+    return [
+        message.model_copy(
+            update={
+                'parts': [
+                    part
+                    for part in message.parts
+                    if not (isinstance(part, DataUIPart) and part.type == ENQUEUED_MESSAGES_DATA_TYPE)
+                ]
+            }
+        )
+        for message in messages
+    ]

@@ -12,6 +12,7 @@ from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
     CustomEvent,
+    EnqueuedMessagesEvent,
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
@@ -39,6 +40,7 @@ from .._adapter import compaction_payload
 from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
+    ENQUEUED_MESSAGES_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
@@ -411,6 +413,28 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield DataChunk(
             type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
             data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
+
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseChunk]:
+        # The adapter module imports this one to build its stream.
+        from ._adapter import VercelAIAdapter
+
+        # A data part rather than chat messages: the AI SDK keeps it on the assistant message, so a
+        # client that rebuilds history from the stream sends the messages back without rendering them.
+        # Keyed on the enqueue call: run-scoped default IDs would repeat across deliveries in one run.
+        ui_messages = VercelAIAdapter.dump_messages(
+            event.messages,
+            sdk_version=self.sdk_version,
+            generate_message_id=lambda _message, role, index: f'{event.enqueue_id}-{role}-{index}',
+        )
+        yield DataChunk(
+            type=ENQUEUED_MESSAGES_DATA_TYPE,
+            id=event.enqueue_id,
+            data={
+                'messages': [
+                    message.model_dump(mode='json', by_alias=True, exclude_none=True) for message in ui_messages
+                ]
+            },
         )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:

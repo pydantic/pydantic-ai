@@ -16,7 +16,7 @@ from typing import (
     assert_never,
 )
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
@@ -98,6 +98,7 @@ try:
         COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
+        ENQUEUED_MESSAGES_ACTIVITY_TYPE,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
@@ -192,6 +193,26 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
+_messages_ta: TypeAdapter[list[Message]] = TypeAdapter(list[Message])
+
+
+def _enqueued_messages(content: dict[str, Any]) -> list[Message]:
+    """The AG-UI messages in a `pydantic_ai_enqueued_messages` activity, or none when the client sent something malformed.
+
+    Enqueued-message activities nested inside are dropped: the content is the client's to send, and
+    honoring them would let it recurse `load_messages` as deeply as it liked.
+    """
+    try:
+        messages = _messages_ta.validate_python(content.get('messages'))
+    except ValidationError:
+        return []
+    return [
+        message
+        for message in messages
+        if not (isinstance(message, ActivityMessage) and message.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE)
+    ]
+
+
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -260,8 +281,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
-    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction and
-      [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
+    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction, enqueued
+      messages and [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting, and `build_run_input` skips inbound content types the installed
@@ -594,6 +615,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
+                    elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
+                        # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                        builder.messages.extend(
+                            cls.load_messages(
+                                _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
+                            )
+                        )
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
