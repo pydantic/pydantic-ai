@@ -337,7 +337,8 @@ export function reduce(state: State, action: Action): State {
     case 'live': {
       const live = Object.fromEntries(action.sessions.map((entry) => [entry.id, entry]))
       const next = { ...state, live }
-      if (state.awaiting === null) return next
+      // The shown session closed, as with `/exit` typed in it: nothing shows until the default session does.
+      if (state.awaiting === null) return state.shown === null || state.shown in live ? next : { ...next, shown: null }
       if (state.awaiting in live) return { ...next, confirmed: true }
       // Sent before the awaited session opened: its answer is still to come.
       if (!state.confirmed) return next

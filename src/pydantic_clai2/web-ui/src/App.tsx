@@ -274,6 +274,8 @@ export function App() {
 
   // Show a live session, by conversation ID; the effect above watches it, and its snapshot replaces what shows.
   const show = useCallback((id: string) => {
+    // A session picked earlier and still opening loses to this one.
+    picked.current++
     setPane('session')
     setWorker(null)
     setPreview(null)
@@ -293,12 +295,19 @@ export function App() {
   const newSession = useCallback(() => {
     setPane('session')
     newFrom.current = shown
-    if (followsWorkspace) setChoosing(true)
-    else
-      void api
-        .newSession()
-        .then(({ id }) => showNew(id))
-        .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+    if (followsWorkspace) {
+      setChoosing(true)
+      return
+    }
+    // A session picked before still opening loses to the new one, which loses to one picked after.
+    const request = ++picked.current
+    setOpening(null)
+    void api
+      .newSession()
+      .then(({ id }) => {
+        if (request === picked.current) showNew(id)
+      })
+      .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
   }, [followsWorkspace, shown, showNew, showError])
 
   // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
@@ -309,7 +318,7 @@ export function App() {
   }, [])
 
   const view = useCallback(
-    async (session: SessionEntry) => {
+    async (session: Opening) => {
       // Only the last session clicked is shown, however the requests for earlier ones resolve.
       const request = ++picked.current
       setPane('session')
@@ -456,7 +465,6 @@ export function App() {
           tasks={chat.tasks}
           worker={workerTask?.id ?? null}
           onWorker={openWorker}
-          onShow={show}
         />
       )}
       <main className="main">

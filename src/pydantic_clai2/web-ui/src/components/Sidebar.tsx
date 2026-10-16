@@ -40,7 +40,8 @@ interface Props {
   onTheme: () => void
   themeInfo: ThemeInfo | null
   onPickTheme: (name: string) => void
-  onView: (session: SessionEntry) => void
+  /** Show a session, such as a fork just made: live, or read-only when CLAI cannot open it. */
+  onView: (session: Pick<SessionEntry, 'id' | 'title'>) => void
   /** Start a new session, asking where it runs when sessions run in their own directories. */
   onNew: () => void
   /** Whether the main pane shows the orchestrator chat, and whether its turn runs. */
@@ -56,8 +57,6 @@ interface Props {
   /** The worker open in the main pane. */
   worker: string | null
   onWorker: (id: string) => void
-  /** Show a live session, such as a fork just made, by conversation ID. */
-  onShow: (id: string) => void
 }
 
 export function ago(iso: string): string {
@@ -134,7 +133,6 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     tasks,
     worker,
     onWorker,
-    onShow,
   },
   ref,
 ) {
@@ -259,7 +257,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         {menu === session.id && (
           <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
             <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
-            <button onClick={() => void act(async () => onShow((await api.fork(session.id)).id))}>Fork</button>
+            <button onClick={() => void act(async () => onView({ id: (await api.fork(session.id)).id, title: session.title }))}>
+              Fork
+            </button>
             {session.archived ? (
               <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
             ) : (
