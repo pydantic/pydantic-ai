@@ -3518,9 +3518,10 @@ class RealtimeSession:
         nothing and stays `True`. Whether the settlement *emitted* events is not the test: an in-flight
         response carried only by pending provider metadata is finalized into history without any.
         """
-        self._connection_audio_start_bytes = self._emitted_audio_bytes
         if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
+        # The fresh conversation holds what came before only as replayed text, which a barge-in can't truncate.
+        self._connection_audio_start_bytes = self._emitted_audio_bytes
         lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
         events = self._finalize_lost_state()
         if lost_in_flight:

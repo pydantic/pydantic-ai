@@ -1697,7 +1697,7 @@ async def test_interrupt_played_bytes_leaves_a_reply_from_before_a_reconnect_as_
     off either.
     """
     conn = BlockingRealtimeConnection(
-        [*_speech('item-a', 2), ResponseDone(), RealtimeSessionReconnectEvent(state_restored=True)]
+        [*_speech('item-a', 2), ResponseDone(), RealtimeSessionReconnectEvent(state_restored=False)]
     )
     session = RealtimeSession(conn, _noop_runner)
 
