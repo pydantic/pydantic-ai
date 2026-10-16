@@ -86,18 +86,18 @@ def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
 
 
 def _check_for_updates(now: float, cache: VersionCache | None) -> None:
-    if cache is None:
-        # The first banner announces the check instead of making it, so that someone who would rather
-        # it never ran can turn it off before the next banner does. Without a cache file to remember
-        # the announcement in, the check is never made.
-        _write_cache({'checked_at': None, 'latest': {}})
-        return
-
     try:
-        latest = cache['latest']
+        if cache is None:
+            # The first banner announces the check instead of making it, so that someone who would
+            # rather it never ran can turn it off before the next banner does. Without a cache file to
+            # remember the announcement in, the check is never made.
+            _write_cache({'checked_at': None, 'latest': {}})
+            return
+
         # Record the attempt first so an unavailable endpoint or an interrupted process does not
-        # turn every subsequent banner into another request.
-        _write_cache({'checked_at': now, 'latest': latest})
+        # turn every subsequent banner into another request. When it can't be recorded, this raises
+        # and the request isn't made, for the same reason.
+        _write_cache({'checked_at': now, 'latest': cache['latest']})
 
         response = httpx2.get(
             VERSION_CHECK_URL,
@@ -139,10 +139,7 @@ def read_cache() -> VersionCache | None:
 
 
 def _write_cache(cache: VersionCache) -> None:
-    try:
-        atomic_write_bytes(_cache_file(), json.dumps(cache, separators=(',', ':')).encode())
-    except Exception:
-        pass
+    atomic_write_bytes(_cache_file(), json.dumps(cache, separators=(',', ':')).encode())
 
 
 def _validated_latest(value: object) -> dict[str, str] | None:

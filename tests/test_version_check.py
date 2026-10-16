@@ -235,6 +235,19 @@ def test_unwritable_cache_never_checks(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert cache_root.read_text(encoding='utf-8') == 'occupied'
 
 
+@pytest.mark.usefixtures('announced')
+def test_unrecordable_attempt_is_not_made(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+    def fail(_path: Path, _content: bytes) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(_version_check, 'atomic_write_bytes', fail)
+    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
+
+    run_check()
+
+    assert requests == []
+
+
 def test_unavailable_home_never_checks(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('XDG_CACHE_HOME')
     monkeypatch.setattr(Path, 'home', lambda: (_ for _ in ()).throw(RuntimeError('no home')))
@@ -467,8 +480,18 @@ def test_cache_paths_follow_the_platform(monkeypatch: pytest.MonkeyPatch, tmp_pa
         tmp_path / 'home' / '.cache' / 'pydantic-ai' / 'version-check.json'
     )
 
-    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    monkeypatch.setenv('XDG_CACHE_HOME', '')
+    assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
+        tmp_path / 'home' / '.cache' / 'pydantic-ai' / 'version-check.json'
+    )
+
+    monkeypatch.setenv('LOCALAPPDATA', '')
     monkeypatch.setattr(_utils, 'os', SimpleNamespace(name='nt', environ=os.environ))
+    assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
+        tmp_path / 'home' / 'AppData' / 'Local' / 'pydantic-ai' / 'version-check.json'
+    )
+
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
     assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
         tmp_path / 'local' / 'pydantic-ai' / 'version-check.json'
     )

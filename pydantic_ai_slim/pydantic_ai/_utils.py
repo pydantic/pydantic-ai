@@ -1168,12 +1168,13 @@ def user_cache_dir() -> Path:
     """Where Pydantic AI keeps what it caches for the user: `pydantic-ai` under the platform's user cache directory.
 
     `LOCALAPPDATA` on Windows, `XDG_CACHE_HOME` or `~/.cache` elsewhere. Shared by every cache, so the
-    places the docs describe as one location can't drift apart. Doesn't create the directory.
+    places the docs describe as one location can't drift apart. Doesn't create the directory. An empty
+    variable counts as unset, as the XDG spec has it, rather than as the current working directory.
     """
     if os.name == 'nt':
-        base = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
+        base = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
     else:
-        base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
+        base = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
     return base / 'pydantic-ai'
 
 
