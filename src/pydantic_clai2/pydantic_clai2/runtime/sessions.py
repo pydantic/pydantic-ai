@@ -74,6 +74,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
         self.namer.listeners.append(self.named)
+        self._newest_name: tuple[str, str] | None = None
+        """The conversation and title `named` heard last, which wins over one still waiting for the terminal."""
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
@@ -111,10 +113,12 @@ class Sessions(Generic[DepsT, OutputT]):
         if conversation_id != self.session.conversation_id:
             return
         before = self.session.title
+        self._newest_name = (conversation_id, title)
         async with self.quiet():
-            # A rename in `/resume` while this waited wins over the generated name. A save in the
-            # meantime may already have adopted it from the store without telling plugins.
-            if self.session.title in (before, title):
+            # A rename in `/resume` while this waited wins over the generated name, as does a newer name
+            # announced meanwhile. A save in the meantime may already have adopted it from the store
+            # without telling plugins.
+            if self.session.title in (before, title) and self._newest_name == (conversation_id, title):
                 await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:

@@ -244,6 +244,16 @@ async def test_background_names_wait_for_the_terminal(tmp_path: Path) -> None:
         await anyio.wait_all_tasks_blocked()
     assert session.title == 'Mine'
     assert events[-1] == ConversationChanged(conversation_id=session.conversation_id, title='Mine')
+    # Of two generated names waiting for the terminal, the newer one wins.
+    events.clear()
+    async with anyio.create_task_group() as tasks:
+        async with shell.forks.busy():
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Older')
+            await anyio.wait_all_tasks_blocked()
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Newer')
+            await anyio.wait_all_tasks_blocked()
+        await anyio.wait_all_tasks_blocked()
+    assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Newer')]
 
 
 async def test_a_name_a_save_already_adopted_still_reaches_plugins(tmp_path: Path) -> None:
