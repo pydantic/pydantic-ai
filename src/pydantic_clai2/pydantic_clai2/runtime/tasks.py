@@ -119,7 +119,7 @@ class TaskRouter:
         """Save tasks in `directory`, and capture their steps in `step_store`; neither is kept without one."""
         self.views: list[Tasks] = []
         self.started: dict[str, Tasks] = {}
-        """The session each task started in, whose plugins it runs with even after that session moves on."""
+        """The session each task last started or resumed in, whose plugins it runs with after that session moves on."""
         self.progress: dict[str, Status] = {}
         self.partial: dict[str, str] = {}
         self.partial_truncated: set[str] = set()
@@ -197,7 +197,11 @@ class TaskRouter:
         if event is not None:
             progress.observe(event)
         if (view := self.view(record.conversation_id)) is not None:
-            self.started.setdefault(record.id, view)
+            # A resumed task runs again, with the plugins of the session that resumed it.
+            if isinstance(event, DelegationStartEvent):
+                self.started[record.id] = view
+            else:
+                self.started.setdefault(record.id, view)
             await view.deliver(update)
 
 
@@ -256,10 +260,11 @@ class Tasks:
         return tuple(r for r in self.owner.records.values() if r.conversation_id == self.conversation_id())
 
     def runs(self, record: DelegationTask) -> bool:
-        """Whether `record` runs for this session: in the active conversation, or one it started before."""
-        return record.status == 'running' and (
-            record.conversation_id == self.conversation_id() or self.router.started.get(record.id) is self
-        )
+        """Whether `record` runs for this session: one it started, or one of its conversation no session started."""
+        starter = self.router.started.get(record.id)
+        if starter is None:
+            return record.status == 'running' and record.conversation_id == self.conversation_id()
+        return record.status == 'running' and starter is self
 
     def running(self) -> bool:
         """Whether a task of this session still runs."""

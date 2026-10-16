@@ -12,7 +12,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationTaskEvent
+from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTaskEvent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -105,6 +105,8 @@ async def test_closing_one_runtime_leaves_the_others_tasks_running(tmp_path: Pat
     background.background = True
     # A's own: one of its conversation, and one it started in a conversation it has since left.
     own, earlier = task(task_id='d' * 32, conversation_id=a.session.summary.id), task(task_id='e' * 32)
+    # B's, though in the conversation A holds now: it runs with B's plugins.
+    foreign = task(task_id='f' * 32, conversation_id=a.session.summary.id)
     reasons: dict[str, str] = {}
 
     async def run(name: str, runtime: SessionRuntime[None, str]) -> None:
@@ -118,15 +120,16 @@ async def test_closing_one_runtime_leaves_the_others_tasks_running(tmp_path: Pat
             process.tasks.owner.records[background.id] = background
             assert b.background_running() and not a.background_running()
             assert b.plugins_busy('/plugins list') and not a.plugins_busy('/plugins list')
-            process.tasks.owner.records.update({own.id: own, earlier.id: earlier})
-            process.tasks.started[earlier.id] = a.tasks
+            process.tasks.owner.records.update({own.id: own, earlier.id: earlier, foreign.id: foreign})
+            process.tasks.started.update({earlier.id: a.tasks, foreign.id: b.tasks})
             assert a.background_running()
+            assert b.tasks.runs(foreign) and not a.tasks.runs(foreign)
             a.send_input('hello')
             a.send_input('/exit')
             await run('a', a)
             assert '> hello\n\nsuccess (no tool calls)' in a_output.getvalue()
             # B's turn is still streaming, and its task is neither cancelled nor finished.
-            assert (background.status, background.outcome) == ('running', None)
+            assert [(record.status, record.outcome) for record in (background, foreign)] == [('running', None)] * 2
             assert [(record.outcome, record.user_stopped) for record in (own, earlier)] == [('cancelled', False)] * 2
             release.set()
             b.send_input('/exit')
@@ -177,6 +180,15 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     record.status, record.outcome = 'running', None
     held['b'] = 'b2'
     assert b.running() and not b.records() and not a.running()
+    # A session that takes the conversation over does not take over B's task, until it resumes the task.
+    held['a'] = 'b'
+    assert a.records() == (record,) and not a.running()
+    start = DelegationStartEvent(agent_name='worker', task='inspect', truncated=False, inherits_tools=True, model=None)
+    await router.observe(DelegationTaskEvent(task=record, event=start))
+    assert router.started == {record.id: a}
+    assert a.running() and not b.running()
+    held['a'] = 'a'
+    router.started[record.id] = b
     router.detach(b)
     assert router.views == [a] and not router.started
     await a.observe(DelegationTaskEvent(task=record))
