@@ -103,11 +103,14 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
-_RESTARTS = 'Restarts CLAI: enter it in the session CLAI started with'
+_RESTARTS = 'Restarts CLAI: enter it in the session the terminal shows'
 
 
 def _refuse_restart(args: list[str]) -> str:
-    raise ValueError('/reload and /update restart CLAI. Enter them in the session CLAI started with.')
+    raise ValueError(
+        '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
+        'or with no terminal, in the session CLAI started with.'
+    )
 
 
 def create_shell(
@@ -825,6 +828,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return await self.updates.command(args)
 
     def _refuse_restart_while_others_run(self) -> None:
+        if self.terminal is None and self.process.live.focused not in (None, self.live_session.id):
+            # The session CLAI started with, while the terminal shows another: the restart starts from that one.
+            _refuse_restart([])
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:
             # The restart resumes this conversation where CLAI started, which works only in its own folder.

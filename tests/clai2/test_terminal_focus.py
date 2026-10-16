@@ -186,9 +186,14 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> 
     async def body() -> None:
         b = await desk.live.new()
         other = desk.runtimes[b.id]
-        with pytest.raises(ValueError, match='Enter them in the session CLAI started with'):
+        with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
             await other.commands.execute_async('/reload')
         assert await home.show_live(b.conversation.conversation_id) == ''
+        # Hidden now, the session CLAI started with takes input from the browser, but not a restart.
+        for command in ('/reload', '/update'):
+            with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
+                await home.commands.execute_async(command)
+        assert not home.reload_requested
         assert await home.show_live(home.session.conversation_id) is None, 'not while hidden'
         assert await other.show_live(other.session.conversation_id) is None, 'its own'
         assert await other.show_live('unknown') is None
