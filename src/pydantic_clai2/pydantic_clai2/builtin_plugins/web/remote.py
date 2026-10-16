@@ -3,7 +3,7 @@
 import math
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
@@ -25,6 +25,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
     EventTranslator,
     Item,
+    ItemAdded,
     ItemLog,
     Notice,
     Palette,
@@ -36,6 +37,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     StatusChanged,
     StatusInfo,
+    TextDelta,
     ThemeChanged,
     ThemeInfo,
     TitleChanged,
@@ -49,6 +51,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import CommandEnd, ConversationChanged, PluginHost, SessionCatalog, TurnOutcome
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+from pydantic_clai2.runtime.repl_cells import is_repl_cell
 
 THEME = 'display.theme'
 CODE_MODE = 'run.code_mode'
@@ -151,9 +154,17 @@ class Remote:
         """A run of the conversation the shell holds, rather than a background `/fork` or a delegated task."""
         return ctx.conversation_id == self.host.conversation.conversation_id and DelegationTasks.child_id() is None
 
-    def observe(self, event: AgentStreamEvent, *, usage: RunUsage) -> None:
-        self._usage = usage
+    def observe(self, event: AgentStreamEvent, *, usage: RunUsage, by_user: bool = False) -> None:
+        """Send `event` to browsers; `by_user` marks a `/repl` cell's run, which is not a turn and has no usage to show."""
+        if not by_user:
+            self._usage = usage
         for message in self._translator.translate(event):
+            if by_user:
+                # Only the cell itself: the scripted model's closing text is not the user's.
+                if isinstance(message, TextDelta) or (isinstance(message, ItemAdded) and message.item.kind != 'tool'):
+                    continue
+                if isinstance(message, ItemAdded):
+                    message = ItemAdded(item=replace(message.item, by_user=True))
             self._turn.apply(message)
             self.hub.publish(message)
         if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
@@ -350,7 +361,8 @@ class Observer(AbstractCapability[None]):
     remote: Remote
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
-        if not self.remote.foreground(ctx):
+        # A `/repl` cell is not a turn: its result comes as the command's, and its events as any run's.
+        if not self.remote.foreground(ctx) or is_repl_cell(ctx):
             return await handler()
         self.remote.run_started(ctx.prompt)
         try:
@@ -366,4 +378,4 @@ class Observer(AbstractCapability[None]):
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if self.remote.foreground(ctx):
-            self.remote.observe(event, usage=ctx.usage)
+            self.remote.observe(event, usage=ctx.usage, by_user=is_repl_cell(ctx))

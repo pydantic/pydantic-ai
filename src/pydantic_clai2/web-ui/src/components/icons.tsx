@@ -116,3 +116,4 @@ export const PaletteIcon = icon(
     <circle cx="14.5" cy="7" r="1" fill="currentColor" />
   </>,
 )
+export const CloseIcon = icon(<path d="M6 6l12 12M18 6 6 18" />)

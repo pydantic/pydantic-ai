@@ -5,7 +5,7 @@
 
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
-blocks, live token counts while a turn streams, and a composer with `/` command completion, a
+blocks, live token counts while a turn streams, a panel with code mode's `run_code` REPL cells, and a composer with `/` command completion, a
 model picker, and a stop button. The
 terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
@@ -24,3 +24,11 @@ every request must carry a token that is new each launch; the printed link conta
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with
 `/plugins enable web`, and `--web` loads it for that launch only. See
 [the plugin guide](PLUGINS.md#web-this-session-in-your-browser) for settings and limits.
+
+<!-- From #10282 -->
+`/repl CODE` runs your own cell in that sandbox between turns, with the same tool
+functions the model's cells get: `/repl x = 41`, then `/repl print(x)`. It prints
+what the cell printed and returned, keeps the state with the session, and stays out
+of the conversation; your next prompt tells the model what you ran, since the
+variables are in its sandbox now. A cell that fails is reported, not retried. In the
+web UI, the REPL panel's input runs `/repl` too.

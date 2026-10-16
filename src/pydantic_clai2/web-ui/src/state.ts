@@ -86,6 +86,33 @@ export function reduce(state: State, message: ServerMessage): State {
         ...state,
         entries: update(state.entries, message.id, (item) => ({ ...item, text: message.text, state: message.state })),
       }
+    case 'args_delta':
+      return { ...state, entries: update(state.entries, message.id, (item) => ({ ...item, args: item.args + message.text })) }
+    case 'tool_args':
+      return { ...state, entries: update(state.entries, message.id, (item) => ({ ...item, args: message.args })) }
+    case 'call':
+      return {
+        ...state,
+        entries: update(state.entries, message.id, (item) => ({ ...item, calls: [...item.calls, message.call] })),
+      }
+    case 'call_output':
+      return {
+        ...state,
+        entries: update(state.entries, message.id, (item) => ({
+          ...item,
+          calls: item.calls.map((call) => (call.id === message.call_id ? { ...call, output: call.output + message.text } : call)),
+        })),
+      }
+    case 'call_done':
+      return {
+        ...state,
+        entries: update(state.entries, message.id, (item) => ({
+          ...item,
+          calls: item.calls.map((call) =>
+            call.id === message.call_id ? { ...call, text: message.text, state: message.state } : call,
+          ),
+        })),
+      }
     case 'shell_done':
       return { ...state, entries: update(state.entries, message.id, (item) => ({ ...item, exit_code: message.exit_code })) }
     case 'diff':
@@ -103,7 +130,13 @@ export function reduce(state: State, message: ServerMessage): State {
       }
     case 'turn_end': {
       const entries = state.entries.map((entry) =>
-        entry.kind === 'tool' && entry.state === 'running' ? { ...entry, state: 'interrupted' as const } : entry,
+        entry.kind === 'tool' && (entry.state === 'running' || entry.calls.some((call) => call.state === 'running'))
+          ? {
+              ...entry,
+              state: entry.state === 'running' ? ('interrupted' as const) : entry.state,
+              calls: entry.calls.map((call) => (call.state === 'running' ? { ...call, state: 'interrupted' as const } : call)),
+            }
+          : entry,
       )
       const summary: TurnSummary = {
         id: nextId('turn'),

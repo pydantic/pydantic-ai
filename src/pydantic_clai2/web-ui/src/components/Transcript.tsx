@@ -2,6 +2,7 @@ import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { OpenCardsContext } from '../openCards'
 import type { Item } from '../protocol'
 import type { Entry } from '../state'
+import { cell } from '../code'
 import { compact, duration } from '../format'
 import type { TurnSummary } from '../state'
 import { ChevronIcon } from './icons'
@@ -81,13 +82,8 @@ function plural(count: number, one: string, many: string): string {
 /** The names of what each call did; a code-mode script counts as the harness calls inside it. */
 function actions(tool: Item): string[] {
   if (tool.name !== 'run_code') return [tool.name]
-  let code = ''
-  try {
-    code = String((JSON.parse(tool.args) as { code?: unknown }).code ?? '')
-  } catch {
-    // Arguments still streaming or not JSON: count it as one command.
-  }
-  const calls = codeCalls(code).map((call) => call.name)
+  if (tool.calls.length) return tool.calls.map((call) => call.name)
+  const calls = codeCalls(cell(tool.args).code).map((call) => call.name)
   return calls.length ? calls : ['run_code']
 }
 
@@ -171,7 +167,7 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
       <div className="column">
         {entries.length === 0
           ? empty
-          : rows(entries).map((row) =>
+          : rows(entries.filter((entry) => !(entry.kind === 'tool' && entry.by_user))).map((row) =>
               row.kind === 'group' ? (
                 <ToolGroup key={row.id} tools={row.tools} />
               ) : (
