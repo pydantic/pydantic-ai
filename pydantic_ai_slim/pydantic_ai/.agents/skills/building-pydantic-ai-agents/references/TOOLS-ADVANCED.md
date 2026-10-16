@@ -185,7 +185,7 @@ See [Parallel Output Tool Calls](https://pydantic.dev/docs/ai/core-concepts/outp
 
 For tool-call retries, use `ModelRetry` and tool `retries=...`.
 
-For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures.
+For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures. The provider SDK client retries too, on top of the transport; set `model_settings={'max_retries': 0}` to leave retrying to the transport alone, or another count to change the SDK's.
 
 ## Tool Search and Tool-Level Deferred Loading
 
