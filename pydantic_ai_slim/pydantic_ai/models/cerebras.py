@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -106,6 +107,13 @@ class CerebrasModel(OpenAIChatModel):
         if effort := model_settings.get('openai_reasoning_effort'):
             return effort
         return omit
+
+    @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `thinking=False` is sent as `openai_reasoning_effort='none'`, replacing an explicit effort.
+        if model_settings.get('thinking') is False:
+            return ()
+        return super()._settings_overriding_thinking(model_settings)
 
     @override
     def prepare_request(

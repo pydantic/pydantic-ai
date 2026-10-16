@@ -12,7 +12,7 @@ import json
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -865,6 +865,47 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return 'native'
         return mode
 
+    def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
+        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile."""
+        thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
+        supports_thinking = self.profile.get('supports_thinking', False) or thinking_always_enabled
+        return supports_thinking and not (thinking is False and thinking_always_enabled)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        """The provider-specific settings in `model_settings` that take precedence over its unified `thinking`.
+
+        Adapters override this to mirror their own translation, naming a setting only where it replaces what
+        `thinking` would have sent.
+        """
+        return ()
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[tuple[str, ModelSettings | None]]) -> None:
+        """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
+
+        `layers` run from broadest to narrowest, each named as the warning describes it. A provider-specific setting
+        in the same layer as `thinking`, or a narrower one, keeps its documented precedence without a warning.
+        """
+        merged: ModelSettings | None = None
+        for _, settings in layers:
+            merged = merge_model_settings(merged, settings)
+        if not merged or (thinking := merged.get('thinking')) is None:
+            return
+        # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
+        overriding = self._settings_overriding_thinking(merged)
+        if not overriding or not self._thinking_applies(thinking):
+            return
+        thinking_layer = max(i for i, (_, settings) in enumerate(layers) if settings and 'thinking' in settings)
+        for key in overriding:
+            key_layer = max(i for i, (_, settings) in enumerate(layers) if settings and key in settings)
+            if key_layer < thinking_layer:
+                source, target = layers[key_layer][0], layers[thinking_layer][0]
+                warnings.warn(
+                    f'`{key}` from {source} takes precedence over `thinking={thinking!r}` from {target}. '
+                    f'Set `{key}` in {target} instead of `thinking`, or remove it from {source}.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -878,6 +919,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         they need to customize the preparation flow further, but most implementations should simply call
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
+        # An agent run passes settings that already include this model's own, so this warns only where they arrive
+        # separately: a direct request, or a `FallbackModel` child with settings of its own.
+        self._warn_if_thinking_overridden(
+            [("the model's `settings`", self.settings), ("the request's `model_settings`", model_settings)]
+        )
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
@@ -889,11 +935,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            supports_thinking = self.profile.get('supports_thinking', False)
-            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
-            if supports_thinking or thinking_always_enabled:
-                if not (thinking_value is False and thinking_always_enabled):
-                    params = replace(params, thinking=thinking_value)
+            if self._thinking_applies(thinking_value):
+                params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
