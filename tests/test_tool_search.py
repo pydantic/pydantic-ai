@@ -4233,7 +4233,7 @@ async def test_openai_replays_hosted_tool_search_call_and_output(
 
     expected_call: dict[str, Any] = {
         'call_id': None,
-        'arguments': {'queries': ['get_exchange_rate']},
+        'arguments': {'paths': ['get_exchange_rate']},
         'type': 'tool_search_call',
         'execution': 'server',
         'status': call_status,
@@ -4316,7 +4316,7 @@ async def test_openai_replays_legacy_tool_search_history_call_only(
 
     expected_call: dict[str, Any] = {
         'call_id': 'ts_old',
-        'arguments': {'queries': ['get_exchange_rate']},
+        'arguments': {'paths': ['get_exchange_rate']},
         'type': 'tool_search_call',
         'execution': 'server',
         'status': 'completed',
