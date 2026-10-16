@@ -6,14 +6,18 @@ directory, so it survives a reload and a restart, and never shows among the save
 """
 
 import asyncio
+import functools
+import hashlib
 import os
 import tempfile
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from anyio import get_cancelled_exc_class
+import anyio
+from anyio import get_cancelled_exc_class, to_thread
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, AgentStreamEvent
@@ -33,8 +37,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ServerMessage,
     TurnEnded,
     TurnStarted,
-    Usage,
     history_items,
+    usage_info,
 )
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import PluginHost, TurnOutcome
@@ -57,6 +61,54 @@ destroy a workspace unasked: before `workspace_destroy`, ask with `ask_user_ques
 options `Destroy ID` and `Keep ID`, and destroy it only if the user picks `Destroy ID`."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class Saved:
+    """The conversation as its file held it, and that file's revision, which a later save checks."""
+
+    messages: list[ModelMessage]
+    revision: str | None
+    """A digest of the file's contents; `None` when there was none."""
+
+
+class ChatChanged(Exception):
+    """Another CLAI changed the conversation's file since this one read it."""
+
+
+def _revision(path: Path) -> tuple[bytes | None, str | None]:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None, None
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def read_saved(path: Path) -> Saved:
+    """The conversation in `path`; empty when there is none or it cannot be read."""
+    data, revision = _revision(path)
+    try:
+        messages = [] if data is None else ModelMessagesTypeAdapter.validate_json(data)
+    except ValidationError:
+        messages = []
+    return Saved(messages=messages, revision=revision)
+
+
+def write_saved(path: Path, messages: list[ModelMessage], *, revision: str | None) -> Saved:
+    """Replace `path` with `messages` through a new file only you can read; `ChatChanged` if it is not at `revision`."""
+    if _revision(path)[1] != revision:
+        raise ChatChanged
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = ModelMessagesTypeAdapter.dump_json(messages)
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{HISTORY}.', suffix='.tmp')
+    try:
+        with os.fdopen(descriptor, 'wb') as file:
+            file.write(data)
+        os.replace(name, path)
+    except BaseException:
+        os.unlink(name)
+        raise
+    return Saved(messages=messages, revision=hashlib.sha256(data).hexdigest())
+
+
 class Orchestrator:
     """The orchestrator chat every connected browser shares: one conversation, one turn at a time."""
 
@@ -67,8 +119,8 @@ class Orchestrator:
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
         self._turn = ItemLog()
-        self._history: list[ModelMessage] = []
-        """The conversation as the running turn started from it."""
+        self._saved = Saved(messages=[], revision=None)
+        """The conversation as last read or saved; the running turn started from it."""
         self._unsaved: list[ModelMessage] | None = None
         """A turn's conversation its file could not take, kept here until a later save succeeds."""
         self._task: asyncio.Task[None] | None = None
@@ -83,36 +135,14 @@ class Orchestrator:
     def path(self) -> Path:
         return state_dir() / HISTORY
 
-    @property
-    def messages(self) -> list[ModelMessage]:
-        """The conversation: read from its file again between turns, as another CLAI may have saved it since.
-
-        Empty when there is none or it cannot be read.
-        """
+    async def load(self) -> Saved:
+        """The conversation, read from its file again between turns, as another CLAI may have saved it since."""
         if self.running:
-            return self._history
+            return self._saved
         if self._unsaved is not None:
-            self._history = self._unsaved
-            return self._history
-        try:
-            self._history = ModelMessagesTypeAdapter.validate_json(self.path.read_bytes())
-        except (OSError, ValidationError):
-            self._history = []
-        return self._history
-
-    def _save(self, messages: list[ModelMessage]) -> None:
-        """Replace the file with `messages`, through a new one only you can read."""
-        folder = self.path.parent
-        folder.mkdir(parents=True, exist_ok=True)
-        descriptor, name = tempfile.mkstemp(dir=folder, prefix=f'.{HISTORY}.', suffix='.tmp')
-        try:
-            with os.fdopen(descriptor, 'wb') as file:
-                file.write(ModelMessagesTypeAdapter.dump_json(messages))
-            os.replace(name, self.path)
-        except BaseException:
-            os.unlink(name)
-            raise
-        self._unsaved = None
+            return Saved(messages=self._unsaved, revision=self._saved.revision)
+        self._saved = await to_thread.run_sync(read_saved, self.path)
+        return self._saved
 
     def enabled(self) -> bool:
         """Whether the `workspaces` plugin is on, which the orchestrator's tools work over."""
@@ -121,15 +151,15 @@ class Orchestrator:
 
         return configured(self.host.plugins) is not None
 
-    def state(self) -> OrchestratorState:
-        items = history_items(self.messages)
+    async def state(self) -> OrchestratorState:
+        return self._state((await self.load()).messages)
+
+    def _state(self, messages: Sequence[ModelMessage]) -> OrchestratorState:
+        items = history_items(messages)
         if self.running:
             items += self._turn.items.values()
         return OrchestratorState(
-            enabled=self.enabled(),
-            running=self.running,
-            items=items,
-            questions=self.answerer.questions,
+            enabled=self.enabled(), running=self.running, items=items, questions=self.answerer.questions
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -156,25 +186,26 @@ class Orchestrator:
 
     # What the browser does.
 
-    def send(self, text: str) -> None:
+    async def send(self, text: str) -> None:
         """Start a turn with `text`; one runs at a time, and only while the `workspaces` plugin is on."""
         text = text.strip()
         if not text:
             raise ValueError('Type a message for the orchestrator.')
-        if self.running:
-            raise RuntimeError('The orchestrator is still working. Wait for it, or stop it.')
         if not self.enabled():
-            raise RuntimeError('Turn the workspaces plugin on first.')
-        history = self.messages
-        self._task = asyncio.get_running_loop().create_task(self._run(text, history), name='clai2-orchestrator')
+            raise RuntimeError('Turn the `workspaces` plugin on first.')
+        saved = await self.load()
+        if self.running:  # Checked after the read, as another request may have started a turn meanwhile.
+            raise RuntimeError('The orchestrator is still working. Wait for it, or stop it.')
+        self._task = asyncio.get_running_loop().create_task(self._run(text, saved), name='clai2-orchestrator')
 
-    async def _run(self, prompt: str, messages: list[ModelMessage]) -> None:
+    async def _run(self, prompt: str, saved: Saved) -> None:
         item = Item(id=f'orchestrator{time.monotonic_ns()}', kind='user', text=prompt)
         self._turn.clear()
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
         # The history this turn starts from, which another CLAI may have changed since the page loaded.
-        self._send(self.state())
+        self._send(self._state(saved.messages))
+        messages = saved.messages
         outcome: TurnOutcome = 'failed'
         error: str | None = None
         usage: RunUsage | None = None
@@ -201,17 +232,22 @@ class Orchestrator:
             error = str(exc) or type(exc).__name__
         finally:
             self._turn.clear()
+            save = functools.partial(write_saved, self.path, messages, revision=saved.revision)
             try:
-                self._save(messages)
+                with anyio.CancelScope(shield=True):
+                    self._saved = await to_thread.run_sync(save)
+                self._unsaved = None
+            except ChatChanged:
+                # Not written over: what the other CLAI saved is the chat now.
+                self._unsaved = None
+                outcome, error = (
+                    'failed',
+                    'Another CLAI changed the orchestrator chat during this turn, so it was not kept.',
+                )
             except OSError as exc:
                 self._unsaved = messages
                 outcome, error = 'failed', f'The orchestrator chat could not be saved: {exc}'
-            used = None
-            if usage is not None:
-                used = Usage(
-                    input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests
-                )
-            self._send(TurnEnded(outcome=outcome, error=error, usage=used))
+            self._send(TurnEnded(outcome=outcome, error=error, usage=None if usage is None else usage_info(usage)))
 
     def interrupt(self) -> bool:
         """Stop the running turn; `False` when none runs."""
@@ -224,13 +260,13 @@ class Orchestrator:
         """Answer the orchestrator's open question, or decline it with `None`."""
         self.answerer.reply(request_id, answers)
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Start a new orchestrator chat, forgetting this one; its workspaces are kept."""
         if self.running:
             raise RuntimeError('Stop the orchestrator before starting a new chat.')
-        self.path.unlink(missing_ok=True)
+        await to_thread.run_sync(functools.partial(self.path.unlink, missing_ok=True))
         self._unsaved = None
-        self._send(self.state())
+        self._send(await self.state())
 
     async def close(self) -> None:
         """Stop a running turn and disconnect from the workspaces; their CLAIs keep running."""

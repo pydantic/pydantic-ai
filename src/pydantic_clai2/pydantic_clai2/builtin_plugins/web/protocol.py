@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
@@ -179,6 +180,11 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
+
+
+def usage_info(usage: RunUsage) -> Usage:
+    """The browser's copy of a run's usage."""
+    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
 
 
 @dataclass(kw_only=True)

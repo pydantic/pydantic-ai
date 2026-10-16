@@ -1437,7 +1437,8 @@ workspace, a CLAI that stopped) come back as `Error: ...` lines rather than fail
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
 among the saved sessions or in `/resume`. Every CLAI with the web UI, a workspace's own included,
 has the same chat: each turn starts from the file as it is then, which an open page catches up to,
-and saves it when it ends, so of two turns run at once in two CLAIs, the one that ends last is kept.
+and saves it when it ends, unless another CLAI changed the file meanwhile: that turn then fails and
+is not kept, rather than writing over the other CLAI's.
 A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
 it rather than from the file, and that save then replaces the file.
 `/web stop` stops a running turn, since no page is left to watch it or answer it.

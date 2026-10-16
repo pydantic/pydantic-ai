@@ -354,11 +354,11 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
 
     @app.get('/api/orchestrator/state')
     async def state() -> OrchestratorState:
-        return orchestrator.state()
+        return await orchestrator.state()
 
     @app.post('/api/orchestrator/input', status_code=204)
     async def send(body: Input) -> None:
-        _run(lambda: orchestrator.send(body.text))
+        await _wait(orchestrator.send(body.text))
 
     @app.post('/api/orchestrator/interrupt')
     async def interrupt() -> Interrupted:
@@ -371,7 +371,7 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
 
     @app.post('/api/orchestrator/clear', status_code=204)
     async def clear() -> None:
-        _run(orchestrator.clear)
+        await _wait(orchestrator.clear())
 
 
 def _events(app: FastAPI, remote: Remote) -> None:
@@ -383,7 +383,7 @@ def _events(app: FastAPI, remote: Remote) -> None:
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with remote.hub.subscribe() as queue:
             await socket.send_text(dump(remote.snapshot()))
-            await socket.send_text(dump(OrchestratorMessage(message=remote.orchestrator.state())))
+            await socket.send_text(dump(OrchestratorMessage(message=await remote.orchestrator.state())))
             async with anyio.create_task_group() as connection:
 
                 async def forward() -> None:

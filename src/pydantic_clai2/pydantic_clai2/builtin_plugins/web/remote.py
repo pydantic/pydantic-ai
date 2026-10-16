@@ -56,9 +56,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     TurnEnded,
     TurnStarted,
-    Usage,
     Worktree,
     history_items,
+    usage_info,
     user_text,
 )
 from pydantic_clai2.config.theme_names import names as theme_names
@@ -161,7 +161,7 @@ class Remote:
             cost=None if status.cost is None else str(status.cost),
             streamed_tokens=math.ceil(status.streamed_chars / 4),
             output_tokens=status.output_tokens,
-            run=None if self._usage is None else _usage(self._usage),
+            run=None if self._usage is None else usage_info(self._usage),
             code_mode=self._switch(CODE_MODE),
             speculation=self._switch(SPECULATION),
         )
@@ -223,7 +223,7 @@ class Remote:
             TurnEnded(
                 outcome=outcome,
                 error=None if error is None else str(error) or type(error).__name__,
-                usage=None if usage is None else _usage(usage),
+                usage=None if usage is None else usage_info(usage),
             )
         )
         self.publish_status()
@@ -546,10 +546,6 @@ def _worktrees(
         for root, (identity, sessions) in found.items()
     ]
     return sorted(worktrees, key=lambda worktree: not worktree.current)
-
-
-def _usage(usage: RunUsage) -> Usage:
-    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
 
 
 def _form(info: PluginInfo) -> PluginForm | None:

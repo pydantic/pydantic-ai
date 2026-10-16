@@ -124,10 +124,10 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
     assert saved.is_file() and saved.stat().st_mode & 0o777 == 0o600
     # A restarted CLAI reads the same conversation; the session's own stays empty.
     again = Orchestrator(host=web_.plugin.host, publish=lambda message: None)
-    assert [item.kind for item in again.state().items] == ['user', 'tool', 'tool', 'assistant']
+    assert [item.kind for item in web_.portal.call(again.state).items] == ['user', 'tool', 'tool', 'assistant']
     assert web_.get('/api/state').json()['items'] == []
     # Another CLAI starting a new chat starts one here too: the file is read again between turns.
-    again.clear()
+    web_.portal.call(again.clear)
     assert web_.get('/api/orchestrator/state').json()['items'] == []
 
 
@@ -148,7 +148,7 @@ def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
         path.rmdir()
         web_.post('/api/orchestrator/input', {'text': 'Say hello again'})
         assert orchestrator_until(socket, TurnEnded)[1].outcome == 'completed'
-    assert len(Orchestrator(host=web_.plugin.host, publish=lambda message: None).state().items) == 4
+    assert len(web_.portal.call(Orchestrator(host=web_.plugin.host, publish=lambda message: None).state).items) == 4
 
 
 def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -> None:
@@ -190,7 +190,7 @@ def test_the_orchestrator_needs_workspaces(make_web: MakeWeb) -> None:
     web_ = orchestrated(make_web, workspaces=False)
     assert web_.get('/api/orchestrator/state').json()['enabled'] is False
     refused = web_.post('/api/orchestrator/input', {'text': 'Hi'})
-    assert (refused.status_code, refused.json()['detail']) == (409, 'Turn the workspaces plugin on first.')
+    assert (refused.status_code, refused.json()['detail']) == (409, 'Turn the `workspaces` plugin on first.')
     assert web_.post('/api/plugins/workspaces/enable').status_code == 204
     assert web_.get('/api/orchestrator/state').json()['enabled'] is True
 
@@ -219,9 +219,28 @@ def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> 
     orchestrator = web_.plugin.remote.orchestrator
     orchestrator.path.parent.mkdir(parents=True)
     orchestrator.path.write_text('not json')
-    assert orchestrator.messages == []
+    assert web_.portal.call(orchestrator.load).messages == []
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         opened(socket)
         assert web_.post('/api/orchestrator/input', {'text': 'Hi'}).status_code == 204
         ended = orchestrator_until(socket, TurnEnded)[1]
     assert ended == TurnEnded(outcome='failed', error='Choose a model for this session first.')
+
+
+def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:
+    """A turn whose file another CLAI changed meanwhile fails rather than writing over that CLAI's chat."""
+    web_ = orchestrated(make_web)
+    other = Orchestrator(host=web_.plugin.host, publish=lambda message: None)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        opened(socket)
+        web_.post('/api/orchestrator/input', {'text': 'Say hello'})
+        assert orchestrator_until(socket, TurnEnded)[1].outcome == 'completed'
+        web_.post('/api/orchestrator/input', {'text': 'Work until I stop you'})
+        orchestrator_until(socket, ItemAdded)
+        web_.portal.call(other.clear)
+        web_.post('/api/orchestrator/interrupt')
+        ended = orchestrator_until(socket, TurnEnded)[1]
+    assert ended == TurnEnded(
+        outcome='failed', error='Another CLAI changed the orchestrator chat during this turn, so it was not kept.'
+    )
+    assert web_.get('/api/orchestrator/state').json()['items'] == [], "the other CLAI's new chat stands"

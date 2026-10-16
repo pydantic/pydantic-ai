@@ -36,7 +36,7 @@ async def open_workspace(plugins: PluginCatalog | None, workspace_id: str) -> Wo
 
     workspaces = configured(plugins)
     if workspaces is None:
-        raise LookupError('The workspaces plugin is off.')
+        raise LookupError('The `workspaces` plugin is off.')
     workspace = await workspaces.start(workspace_id)
     assert workspace.session is not None, 'a started workspace has a session'
     return WorkspaceOpened(url=f'{workspace.session.url}?token={await workspaces.token(workspace_id)}')

@@ -96,6 +96,9 @@ def confirmed(messages: Sequence[ModelMessage], workspace_id: str) -> bool:
 
 
 _PROBLEMS = (LookupError, ValueError, RuntimeError, OSError, httpx.HTTPError, WebSocketException)
+"""What the workspace and client layers raise for a problem the model can act on, such as an unknown workspace."""
+_BUGS = (KeyError, IndexError, NotImplementedError, RecursionError)
+"""Subclasses of those that mean a bug here, which fails the turn instead."""
 P = ParamSpec('P')
 
 
@@ -106,6 +109,8 @@ def reported(tool: Callable[P, Awaitable[str]]) -> Callable[P, Awaitable[str]]:
     async def run(*args: P.args, **kwargs: P.kwargs) -> str:
         try:
             return await tool(*args, **kwargs)
+        except _BUGS:
+            raise
         except _PROBLEMS as exc:
             return f'Error: {exc}'
 

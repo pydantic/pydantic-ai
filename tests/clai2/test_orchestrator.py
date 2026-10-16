@@ -445,13 +445,13 @@ async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, model=model) as made:
         orchestrator = made.orchestrator
         with made.web.hub.subscribe() as queue:
-            orchestrator.send('Say hi in a new workspace, then clean up.')
+            await orchestrator.send('Say hi in a new workspace, then clean up.')
             seen = await converse(orchestrator, queue, [1, None, 0])
         end = seen[-1]
         assert isinstance(end, TurnEnded) and end.outcome == 'completed'
         tools = [event.item.name for event in seen if isinstance(event, ItemAdded) and event.item.kind == 'tool']
         assert tools[:4] == ['workspace_create', 'session_start', 'session_wait', 'session_read']
-        results = returned(orchestrator.messages)
+        results = returned((await orchestrator.load()).messages)
         workspace = results[0].split()[2]
         path = Path(results[0].split()[4])
         assert 'Hello from the workspace: say hi.' in results[2]
@@ -466,8 +466,12 @@ async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
 
         # The conversation is saved, so another load of the web UI shows it.
         again = Orchestrator(host=made.web.host, publish=lambda message: None)
-        kinds = [item.kind for item in again.state().items]
-        assert kinds[0] == 'user' and kinds[-1] == 'assistant' and len(again.messages) == len(orchestrator.messages)
+        kinds = [item.kind for item in (await again.state()).items]
+        assert (
+            kinds[0] == 'user'
+            and kinds[-1] == 'assistant'
+            and len((await again.load()).messages) == len((await orchestrator.load()).messages)
+        )
 
 
 async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -538,6 +542,16 @@ async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path, monk
         await made.tools.session_wait(workspace, timeout=10)
 
 
+async def test_a_bug_in_a_tool_fails_the_turn() -> None:
+    """A `KeyError` is a bug, not a problem for the model: it propagates rather than coming back as an error line."""
+
+    async def broken() -> str:
+        raise KeyError('oops')
+
+    with pytest.raises(KeyError):
+        await tools_module.reported(broken)()
+
+
 def test_items_in_short() -> None:
     tool = Item(id='t', kind='tool', name='run_code', args='{"code": "print(1)"}', text='1', state='done')
     assert summarize(tool) == '- tool `run_code` (done): {"code": "print(1)"} -> 1'
@@ -576,5 +590,5 @@ async def test_the_sidebar_lists_and_opens_workspaces(
             assert (await page.post('/api/workspaces/nope-1/open', headers=headers)).status_code == 404
         await made.tools.session_wait(workspace, timeout=10)
     assert await listing(None) == WorkspacesInfo(enabled=False, workspaces=[])
-    with pytest.raises(LookupError, match='The workspaces plugin is off'):
+    with pytest.raises(LookupError, match='The `workspaces` plugin is off'):
         await open_workspace(None, 'any')
