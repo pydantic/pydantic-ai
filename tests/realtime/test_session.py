@@ -117,7 +117,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
-from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, ResponseStarted
+from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, ResponseStarted, StaleEvent
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -12403,7 +12403,8 @@ async def test_context_window_used_moves_with_the_usage_counted_in_the_same_fram
                 ResponseEnded(response_id='r1', status='completed'),
                 SessionUsage(RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.42),
             ]
-            await asyncio.Event().wait()
+            # (The session can stop reading before it asks for the next frame.)
+            await asyncio.Event().wait()  # pragma: lax no cover
 
     session = RealtimeSession(_AnswersWithUsage([]))
     async with session:
@@ -12422,7 +12423,8 @@ async def test_context_window_used_is_the_frames_latest_even_when_handling_stops
                 SessionUsage(RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.4),
                 SessionUsage(RequestUsage(input_tokens=20), response_scoped=False, context_window_used=0.2),
             ]
-            await asyncio.Event().wait()
+            # (The session can stop reading before it asks for the next frame.)
+            await asyncio.Event().wait()  # pragma: lax no cover
 
     session = RealtimeSession(_TwoReports([]), usage_limits=UsageLimits(input_tokens_limit=5))
     with pytest.raises(UsageLimitExceeded):
@@ -12430,3 +12432,15 @@ async def test_context_window_used_is_the_frames_latest_even_when_handling_stops
             async for _ in session:
                 pass
     assert (session.usage.input_tokens, session.context_window_used) == (30, 0.2)
+
+
+async def test_a_stale_usage_report_still_moves_the_context_window_used() -> None:
+    """A report about a response already over isn't counted, but it is still the provider's latest context reading."""
+
+    class _StaleReport(FakeRealtimeConnection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [StaleEvent(SessionUsage(RequestUsage(input_tokens=10), context_window_used=0.3))]
+
+    session = RealtimeSession(_StaleReport([]))
+    await collect_events(session)
+    assert (session.usage.input_tokens, session.context_window_used) == (0, 0.3)

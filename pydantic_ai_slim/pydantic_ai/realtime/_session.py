@@ -4394,9 +4394,11 @@ class RealtimeSession:
                 for event in frame:
                     if not isinstance(event, StaleEvent):
                         core.apply(event)
-                        if isinstance(event, SessionUsage) and event.context_window_used is not None:
-                            # Taken with the usage the core just counted, so the two never disagree.
-                            self._reported_context_window_used = event.context_window_used
+                    report = event.event if isinstance(event, StaleEvent) else event
+                    if isinstance(report, SessionUsage) and report.context_window_used is not None:
+                        # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
+                        # still the provider's latest reading of its context, though its usage isn't counted.)
+                        self._reported_context_window_used = report.context_window_used
                 # (A response this session refuses as it handles the frame can have ended in it already.)
                 self._frame_response = next(
                     (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted)), None
