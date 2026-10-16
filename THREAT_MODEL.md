@@ -135,7 +135,7 @@ Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it
 
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 
-Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [CLAI 2 telemetry](src/pydantic_clai2/README.md#telemetry-and-references), [CLAI 2 storage and authentication](src/pydantic_clai2/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
+Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [CLAI 2 telemetry](src/pydantic_clai2/docs/reference.md#telemetry-and-references), [CLAI 2 storage and authentication](src/pydantic_clai2/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
 
 ### Availability and resource lifetime
 
@@ -173,7 +173,7 @@ On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its d
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
 
-See the CLAI 2 README on [environment variables](src/pydantic_clai2/README.md#environment-variables), [Code Mode](src/pydantic_clai2/README.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_clai2/README.md#agent-folders), and [the stock agent in your own code](src/pydantic_clai2/README.md#the-stock-agent-in-your-own-code).
+See the CLAI 2 reference on [environment variables](src/pydantic_clai2/docs/reference.md#environment-variables), [Code Mode](src/pydantic_clai2/docs/reference.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_clai2/docs/reference.md#agent-folders), and [the stock agent in your own code](src/pydantic_clai2/docs/reference.md#the-stock-agent-in-your-own-code).
 
 ACP integrations can delegate filesystem access and approvals to a client. Evaluate that client's authorization alongside the server's enabled tools; the client-backed filesystem toolset does not add a sandbox. See the [ACP client toolsets](src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/_client_toolsets.py).
 
