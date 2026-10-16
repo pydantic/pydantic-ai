@@ -141,12 +141,19 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 
 ### Tools & native abilities
 
-Connections to systems outside the agent's workspace, and abilities the provider executes natively.
+Abilities the provider executes natively, and connections to any MCP server.
 
 | Capability | Package | What it does |
 |---|---|---|
 | [MCP](../capabilities/mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
 | [Image Generation](../capabilities/image-generation.md) | Core | Generate and edit images; provider-native where supported, sub-agent fallback elsewhere |
+
+### Integrations
+
+Tools from third-party services, most through the service's own hosted MCP server. The [Integrations](integrations.md) page groups them by what they connect to.
+
+| Capability | Package | What it does |
+|---|---|---|
 | [GitHub](github.md) | Harness | Read and change GitHub repositories, issues, pull requests, and other accessible resources. |
 | [Linear](linear.md) | Harness | Read and change Linear issues, projects, teams, and comments. |
 | [Notion](notion.md) | Harness | Search and change Notion workspace content. |
@@ -160,6 +167,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [Pylon](pylon.md) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
 | [LocalStack](localstack.md) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](macroscope.md) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
+| [Logfire MCP](logfire-mcp.md) | Harness | Query Logfire telemetry and manage observability resources. |
 
 ### Web & research
 
@@ -252,7 +260,6 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
-| [Logfire MCP](logfire-mcp.md) | Harness | Query Logfire telemetry and manage observability resources. |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](../capabilities/thread-executor.md) | Core | Run sync tools on a shared thread pool |
 
