@@ -570,7 +570,10 @@ snapshot references.
 A database written by an earlier release keeps working: its rows hold the
 history inline and still read, and new snapshots in the same database store
 their messages once. Earlier releases can't read snapshots written this way, so
-don't downgrade a store that a newer release has written to.
+don't downgrade a store that a newer release has written to. An existing
+database doesn't shrink right away: its earlier rows keep their history until
+pruning or deleting their conversation removes them, and SQLite keeps the freed
+space in the file until you run `VACUUM`.
 
 `FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's
 directory stays readable and greppable on its own. `MongoStepStore` and
