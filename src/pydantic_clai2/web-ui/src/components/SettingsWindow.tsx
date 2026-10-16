@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, PuzzleIcon, SlidersIcon } from './icons'
+import { BackIcon, FileIcon, InfoIcon, PuzzleIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -28,6 +28,20 @@ export const SECTIONS = [
     icon: PuzzleIcon,
     hint: 'Turn plugins on and off and edit their settings, as /plugins does.',
     commands: [],
+  },
+  {
+    id: 'system-prompt',
+    label: 'System prompt',
+    icon: FileIcon,
+    hint: "Your own instructions, sent after CLAI's, and the full prompt the model last received.",
+    commands: ['system_prompt'],
+  },
+  {
+    id: 'about',
+    label: 'About',
+    icon: InfoIcon,
+    hint: 'The CLAI running now, and the channel /update installs from.',
+    commands: ['update'],
   },
 ] as const satisfies readonly Section[]
 
@@ -119,6 +133,26 @@ export function SettingsWindow({
               onError={onError}
               onNotice={onNotice}
             />
+          )}
+          {section === 'system-prompt' && (
+            <div className="settings-card">
+              <MenuForm
+                target={{ kind: 'commands', name: 'system_prompt' }}
+                version={settingsVersion}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            </div>
+          )}
+          {section === 'about' && (
+            <div className="settings-card">
+              <MenuForm
+                target={{ kind: 'commands', name: 'update' }}
+                version={settingsVersion}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            </div>
           )}
           {section === 'plugins' && (
             <PluginsPanel

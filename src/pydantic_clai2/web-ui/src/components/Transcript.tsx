@@ -10,6 +10,7 @@ import { ChevronIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
 import { ToolCard, codeCalls, isWorkspaceTool } from './ToolCard'
+import { UsageCard } from './UsageCard'
 
 const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
   switch (entry.kind) {
@@ -26,6 +27,7 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
     case 'tool':
       return <ToolCard item={entry} />
     case 'notice':
+      if (entry.usage && entry.level === 'info') return <UsageCard notice={entry} usage={entry.usage} />
       return (
         <div className={`notice ${entry.level}`}>
           {entry.command && <span className="notice-command">{entry.command}</span>}

@@ -23,6 +23,8 @@ import {
 
 export interface SidebarHandle {
   focusSearch: () => void
+  /** Focus the first row of the Workers tree; `false` when the session has no delegated tasks. */
+  focusWorkers: () => boolean
 }
 
 interface Props {
@@ -101,8 +103,21 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const [renaming, setRenaming] = useState<string | null>(null)
   const [unsaved, setUnsaved] = useState(false)
   const search = useRef<HTMLInputElement>(null)
+  const aside = useRef<HTMLElement>(null)
 
-  useImperativeHandle(ref, () => ({ focusSearch: () => search.current?.focus() }), [])
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusSearch: () => search.current?.focus(),
+      focusWorkers: () => {
+        const first = aside.current?.querySelector<HTMLElement>('.workers .worker')
+        first?.scrollIntoView({ block: 'nearest' })
+        first?.focus()
+        return Boolean(first)
+      },
+    }),
+    [],
+  )
 
   const loading = useRef(0)
   const load = useCallback(async () => {
@@ -236,7 +251,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
 
   return (
-    <aside className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
+    <aside ref={aside} className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
       <div className="sidebar-top">
         <div className="brand">
           <Logo />

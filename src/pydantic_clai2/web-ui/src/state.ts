@@ -10,6 +10,7 @@ import type {
   TaskEntry,
   ThemeInfo,
   Usage,
+  UsageReport,
 } from './protocol'
 
 export interface NoticeEntry {
@@ -18,6 +19,8 @@ export interface NoticeEntry {
   text: string
   level: 'info' | 'error'
   command: string | null
+  /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
+  usage: UsageReport | null
 }
 
 export interface TurnSummary {
@@ -217,6 +220,7 @@ export function reduce(state: State, message: ServerMessage): State {
         text: message.text,
         level: message.level,
         command: message.command,
+        usage: message.usage,
       }
       return { ...state, entries: [...state.entries, notice] }
     }

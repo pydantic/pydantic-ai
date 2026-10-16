@@ -55,6 +55,20 @@ saved; a change made in the terminal shows here too. `/set` or `/settings` typed
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
 in the terminal.
 
+<!-- From the clai2 web settings stack, part 5 -->
+**System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the
+composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens your instructions in
+a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
+**Append…** adds a paragraph, and **View…** shows the full system prompt the model last received,
+read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running CLAI's
+version and the `updates.channel` setting; its **Update…** button asks before it runs `/update`.
+`/usage` and `/cost` show their figures as a card in the chat: the retained history's cost,
+tokens, and requests, and for `/usage` a row per turn. Cmd/Ctrl+Shift+P, or `/help` in the
+composer, opens the command palette: every command this CLAI offers, plugins' and skills'
+included, with what it does and the arguments it takes. Type to filter; Enter runs one as typing it
+bare would, and a command that needs arguments (or Tab) goes into the composer to finish. `/tasks`
+in the composer moves to the sidebar's Workers tree, and `/resume` to its session search.
+
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
 footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and

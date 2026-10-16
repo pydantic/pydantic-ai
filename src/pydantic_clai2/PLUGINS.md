@@ -1232,7 +1232,8 @@ gone opens read-only, and so does, with `/web` from a terminal, a session saved 
 directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
-window's General section, the others a dialog. Its edits go through the menu's own source, as in
+window's General section, `/system_prompt` its System prompt section, `/update` its About section,
+the others a dialog. Its edits go through the menu's own source, as in
 the terminal, which prints what each one saved. Any other bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
@@ -1268,8 +1269,20 @@ the browser at its next status update, which an idle session sends only when a p
 runs; reloading the page shows it at once.
 
 The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
-left; each has its own address, `#settings/general` or `#settings/plugins`. **General** is `/set`'s
+left; each has its own address, such as `#settings/general` or `#settings/plugins`. **General** is `/set`'s
 menu, from `host.command_menu('set')`, grouped by the part of each key before its dot.
+**System prompt** is `/system_prompt`'s menu, the one the terminal runs: your instructions in a
+multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and the full system
+prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
+menu: the running version, whose **Update…** asks before it enters `/update` (bare `/update` in
+the terminal still installs at once), and the `updates.channel` setting. `/usage` and `/cost`
+results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
+the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
+`/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
+commands included, with its description and the arguments it shows there; Enter runs one as typing
+it bare would, and one that needs an argument goes to the composer to finish. Bare `/tasks` and
+`/resume` in the composer focus the sidebar's Workers tree and session search instead of opening
+their terminal pickers.
 The **Plugins** section (the puzzle button in the sidebar's footer, or `/plugins` typed in the
 composer), called the plugins panel below, is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
 status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
@@ -2883,9 +2896,14 @@ answer. Backing out returns `None` or `False`, never raises:
 | Method | Asks for |
 |---|---|
 | `choose(title=..., options=[Option(value=..., label=..., description=...)], current=...)` | one of the options; returns its `value` |
-| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=..., description=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable, and `description` says more above the input, such as where to find the value |
+| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=..., description=..., multiline=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable, and `description` says more above the input, such as where to find the value. `multiline=True` takes text with line breaks, never masked: `$VISUAL`, `$EDITOR`, or a built-in editor in the terminal (reopened with `check`'s reason until it accepts the text), a text area in the web UI |
 | `confirm(title=..., yes=..., no=..., description=...)` | `yes` or `no`, with `no` selected first |
 | `wait(title=..., description=..., task=...)` | nothing: it runs `task(show)` behind a screen the user can cancel, showing the latest text passed to `show` (a sign-in link, a code), and returns whether it finished |
+| `view(title=..., text=...)` | nothing: it shows `text` read-only, scrollable (a pager in the terminal), until the user closes it |
+
+A `FieldRow` with an action may set `button`, what the web UI's button for it says, such as
+`View…`; it says **Change…** otherwise. A `Dialogs` of your own, such as one passed to
+`host.command_menu`'s actions, needs `view` and `text`'s `multiline` too.
 
 ```python
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu

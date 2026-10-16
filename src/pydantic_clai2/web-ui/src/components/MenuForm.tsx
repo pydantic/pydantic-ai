@@ -213,8 +213,14 @@ function Control({
     return (
       <div className="setting-action">
         <span className="setting-current">{field.secret ? '' : label(field.value)}</span>
-        <button id={id} className="ghost small" disabled={disabled} onClick={onAction} aria-label={`Change ${field.label}`}>
-          Change…
+        <button
+          id={id}
+          className="ghost small"
+          disabled={disabled}
+          onClick={onAction}
+          aria-label={`${(field.button || 'Change…').replace('…', '')} ${field.label}`}
+        >
+          {field.button || 'Change…'}
         </button>
       </div>
     )

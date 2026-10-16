@@ -8,6 +8,7 @@ import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { CommandMenu } from './components/CommandMenu'
+import { CommandPalette } from './components/CommandPalette'
 import { SettingsWindow, commandSection, linkedSection, type SettingsSection } from './components/SettingsWindow'
 import { DialogLayer } from './components/DialogLayer'
 import { MontyPanel } from './components/MontyPanel'
@@ -87,7 +88,9 @@ export function App() {
   // Which plugin side panel is open, and how wide, as this browser last left them.
   const [sidePanel, setSidePanel] = useState(() => localStorage.getItem('clai-side-panel'))
   const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem('clai-side-panel-width')) || 440)
-  const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
+  // The command palette, with every command the registry offers.
+  const [commandPalette, setCommandPalette] = useState(false)
+  const closeCommandPalette = useCallback(() => setCommandPalette(false), [])
   const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
@@ -227,6 +230,35 @@ export function App() {
   const showError = useCallback((message: string) => showToast(message, 'error'), [showToast])
   const showNotice = useCallback((message: string) => showToast(message, 'info'), [showToast])
 
+  // Bare commands whose terminal pickers have a place in this page already: the sidebar, or the palette.
+  const focusSessions = useCallback(() => {
+    setSidebar(true)
+    window.setTimeout(() => sidebarRef.current?.focusSearch())
+  }, [])
+  const focusWorkers = useCallback(() => {
+    setSidebar(true)
+    window.setTimeout(() => sidebarRef.current?.focusWorkers() || showNotice('This session has no delegated tasks yet.'))
+  }, [showNotice])
+  const local = useMemo(
+    () => ({ '/plugins': openPlugins, '/help': () => setCommandPalette(true), '/tasks': focusWorkers, '/resume': focusSessions }),
+    [openPlugins, focusWorkers, focusSessions],
+  )
+  /** A bare command picked in the palette, run as the composer runs it. */
+  const runCommand = useCallback(
+    async (name: string) => {
+      const text = `/${name}`
+      const handle = Object.hasOwn(local, text) ? local[text as keyof typeof local] : undefined
+      if (handle) return handle()
+      try {
+        const entered = await api.send(text)
+        if (entered.menu !== null) openMenu(entered.menu)
+      } catch (error) {
+        showError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [local, openMenu, showError],
+  )
+
   const followsWorkspace = state.followsWorkspace
   const newSession = useCallback(() => {
     setPane('session')
@@ -300,8 +332,10 @@ export function App() {
       const mod = MAC ? event.metaKey : event.ctrlKey
       if (mod && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setSidebar(true)
-        window.setTimeout(() => sidebarRef.current?.focusSearch())
+        focusSessions()
+      } else if (mod && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        setCommandPalette((open) => !open)
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault()
         newSession()
@@ -329,7 +363,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, showError, togglePanel, openSettings, newSession])
+  }, [running, stop, orchestrating, workerTask, showError, togglePanel, openSettings, newSession, focusSessions])
 
   const status = state.status
   const title = workerTask
@@ -486,7 +520,8 @@ export function App() {
                 ))}
                 {composerElement}
                 <p className="hero-hint">
-                  Type <kbd>/</kbd> for commands. The terminal and this page drive the same session.
+                  Type <kbd>/</kbd> for commands, or <kbd>{MOD}⇧P</kbd> to browse them. The terminal and this page drive
+                  the same session.
                 </p>
               </div>
             ) : (
@@ -580,6 +615,20 @@ export function App() {
       )}
       {choosing && state.session && (
         <NewSessionDialog current={state.session.workspace} onClose={() => setChoosing(false)} />
+      )}
+      {commandPalette && (
+        <CommandPalette
+          onRun={(name) => void runCommand(name)}
+          onInsert={(text) => {
+            setPane('session')
+            setWorker(null)
+            closePreview()
+            setDraft(text)
+            window.setTimeout(() => composer.current?.focus())
+          }}
+          onClose={closeCommandPalette}
+          onError={showError}
+        />
       )}
       <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>

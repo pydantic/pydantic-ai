@@ -231,7 +231,8 @@ one that is not.
 - Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
   on a temporary file, else (on Windows, unset, or failing to start) a built-in
   prompt_toolkit editor, since termflow has no multi-line input. Call it from a
-  menu worker between widgets. Do not write another editor.
+  menu worker between widgets, or ask with `Dialogs.text(multiline=True)` from a
+  settings menu action, which the web UI shows as a text area. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`. Code that asks through `Dialogs` (settings menu
@@ -331,9 +332,10 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldMenu`, `Runners`, `run_flow`) |
-| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets, and `run_settings_menu`, which shows a `SettingsMenu` under one hold |
+| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets (multi-line text through `Runners.edit`, `view` as a pager), and `run_settings_menu`, which shows a `SettingsMenu` under one hold |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext`, and `settings_menu`, the `SettingsMenu` `/set`, `/theme`, and `/spinner` declare as their `Command.menu` |
-| `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
+| `ui/menus/system_prompt_menu.py` | `/system_prompt`: `system_prompt_menu`, the `SettingsMenu` the terminal runs and the web UI shows (its `Command.menu`): the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, edited and appended in a multi-line `Dialogs.text`, and the latest request's full instructions in a read-only `Dialogs.view` |
+| `ui/menus/update_menu.py` | `/update`'s declared menu, the web UI's Settings > About: the running version, whose action confirms before entering `/update`, and the `updates.channel` row of `/set` |
 | `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
@@ -406,6 +408,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/web/workspace_tools.py` | the orchestrator's tools: `WorkspaceTools` over `workspaces.configured(host.plugins)` and one followed `SessionView` per workspace; `workspace_destroy` needs the user's `Destroy ID` pick in an `ask_user_question` answer (`confirmed`); `reported` turns problems into `Error:` lines. Imported lazily by `orchestrator.py`, since `workspaces` imports the web package |
 | `builtin_plugins/web/workspaces.py` | the sidebar's Workspaces section: `GET /api/workspaces` (no tokens) and `POST /api/workspaces/ID/open` (the workspace's address with its token, for this page only); `web-ui/src/components/WorkspacesSection.tsx` draws it |
 | `web-ui/` (beside the package) | the React and TypeScript source of the browser UI, built with Vite |
+| `web-ui/src/components/CommandPalette.tsx` | the command palette (Cmd/Ctrl+Shift+P, or bare `/help`): every command `host.complete('/')` offers, filtered; Enter runs the bare command as the composer would, one needing arguments goes to the composer |
+| `web-ui/src/components/UsageCard.tsx` | `/usage` and `/cost` results as a card, from the `UsageReport` on their `Notice` |
 | `web-ui/src/components/SettingsWindow.tsx`, `CommandMenu.tsx` | the Settings window (sections by `#settings/ID`: General is `/set`'s declared menu, Plugins the plugins panel) and the dialog for another bare command's declared menu (`Command.menu`, read through `PluginHost.command_menu` and `/api/commands/NAME/fields`), both drawn by `MenuForm.tsx`; add a section to `SECTIONS`, not a second window |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
