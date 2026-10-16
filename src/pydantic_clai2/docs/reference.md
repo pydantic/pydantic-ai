@@ -259,6 +259,9 @@ again afterwards. Without uv on `PATH`, `/update` prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
+In the web UI, `/update` opens the Settings window's **About** section instead: the running
+version and `updates.channel`, with an **Update…** button that asks before it runs `/update`.
+
 ### Environment variables
 
 CLAI trusts the launch directory and its parents for automatic dotenv loading.
@@ -1561,10 +1564,12 @@ and replace none of them.
 
 | Row | What it does |
 | --- | --- |
-| Edit your instructions | Opens your instructions in an editor. Saving an empty text removes them. |
-| Append to your instructions | Opens an empty editor; what you write is added as a new paragraph. |
-| Reset: remove your instructions | Removes them, so only CLAI's defaults are sent. Greyed out when you have none. |
-| View the full system prompt | The instructions sent with the conversation's latest request, yours included. Enter opens them in a scrollable view. |
+| Your instructions | Shows their first line and how many lines they have. Enter opens them in an editor; saving an empty text removes them. `r` removes them, so only CLAI's defaults are sent. |
+| Append to yours | Opens an empty editor; what you write is added as a new paragraph. |
+| Full system prompt | The instructions sent with the conversation's latest request, yours included, in a scrollable view. |
+
+The web UI shows the same menu as its Settings window's **System prompt** section, with a
+multi-line dialog for the editor.
 
 Editing opens `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, on a temporary
 Markdown file. Save and quit the editor to keep your changes. Unchanged text
