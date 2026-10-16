@@ -68,10 +68,10 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     Release resources in a `finally` block, using a shielded AnyIO cancel scope for asynchronous
     cleanup that must finish under cancellation. When the stream ends early (the consumer stops, an
     error is raised, or the run is cancelled), async work an observer is in the middle of can be
-    interrupted even inside a shielded scope, such as cleanup after it stopped iterating or a
-    shielded write in its loop. For cleanup to finish, keep iterating to the end of the stream and
-    skip the events you don't need instead of breaking out of the loop, then run the shielded
-    cleanup in `finally`. A shielded write in the loop can still be interrupted.
+    interrupted even inside a shielded scope, such as cleanup after it stopped iterating. For
+    cleanup to finish, keep iterating to the end of the stream and skip the events you don't need
+    instead of breaking out of the loop, then run the shielded cleanup in `finally`. A shielded
+    write in the loop can still be interrupted.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
