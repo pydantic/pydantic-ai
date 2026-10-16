@@ -13,7 +13,9 @@ _BACKGROUND_RESULT_ORIGIN = 'pydantic-ai-harness.background_tools.result.v1'
 _TOOL_RESULT_CLOSING_TAG = re.compile(r'</(tool_result)\s*>', re.IGNORECASE)
 
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once core ships it.
+# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (https://github.com/pydantic/pydantic-ai/pull/10547).
+# This escaper is local because core's `_tool_result_provenance_tags` frames media only and never escapes a
+# closing tag in a body; the background result frames text, so it neutralizes `</tool_result>` itself.
 def tool_result_tags(tool_name: str, tool_call_id: str) -> tuple[str, str]:
     """The tags framing a background tool's output, which reaches the model on the user channel.
 
