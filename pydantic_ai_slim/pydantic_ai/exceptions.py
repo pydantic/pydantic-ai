@@ -47,6 +47,7 @@ __all__ = (
     'TransportPhase',
     'ModelTimeoutError',
     'ModelContextWindowExceededError',
+    'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -716,7 +717,9 @@ class ModelTimeoutError(ModelConnectionError):
     """Raised when a single attempt at the request timed out at the transport layer.
 
     This is the provider SDK's or HTTP client's own timeout, controlled by
-    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt.
+    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A deadline
+    over all attempts at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout],
+    which raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
     """
 
 
@@ -731,6 +734,26 @@ class ModelContextWindowExceededError(ModelAPIError):
     model may have a larger context window. See
     [Handling context window overflow](../models/overview.md#context-window-overflow) to change that.
     """
+
+
+class ModelRequestTimeout(ModelAPIError):
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+
+    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
+    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    default `fallback_on` falls back on this error.
+    """
+
+    timeout: float
+    """The `request_timeout` that ran out, in seconds."""
+
+    def __init__(self, model_name: str, timeout: float):
+        self.timeout = timeout
+        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.timeout)
 
 
 class ModelHTTPError(ModelAPIError):

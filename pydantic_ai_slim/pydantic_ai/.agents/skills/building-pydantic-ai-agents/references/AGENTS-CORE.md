@@ -240,3 +240,11 @@ cost limits, but not in the answering response's `usage`. Neither they nor faile
 `UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
 
 To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelContextWindowExceededError`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider.
+
+To bound how long one model can hold up the fallback, set `model_settings={'request_timeout': seconds}`. Unlike
+`timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by
+Pydantic AI over all attempts at a request to one model, and over reading a streamed response through its last chunk
+(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `FallbackModel` falls back on
+by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
+Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
+per-model deadlines run inside the activity instead.

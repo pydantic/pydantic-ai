@@ -281,7 +281,7 @@ these categories, whichever provider it came from:
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider said it's unavailable because it's overloaded, e.g. an HTTP 529 or Anthropic's `overloaded_error`. A subclass of `ModelUnavailableError`. |
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
-| [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. |
+| [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
 | [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
@@ -403,6 +403,8 @@ exception handlers, and response handlers — all of which can be sync or async.
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
 
     When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
+
+    To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
