@@ -112,7 +112,7 @@ class CoderSettings(BaseModel):
     def skill_libraries(self, *, home: Path, parents: Sequence[Path] = ()) -> list[str]:
         """`skill_folders` with `~/` expanded, each once, in precedence order.
 
-        Each relative folder is followed by the same folder in each of `parents`: the launch directory's
+        Each relative folder is followed by the same folder in each of `parents`: the session directory's
         parents up to the git root, nearest first, so launching in a subdirectory still finds the
         repository's skills.
         """

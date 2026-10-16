@@ -18,6 +18,7 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
+from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
@@ -209,7 +210,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
-        self._session_tracing.start(await _user_email(self.settings))
+        self._session_tracing.start(await _user_email(self.settings, workspace=self.host.workspace))
         agent_instrumentation.claim(self.instrumentation.settings)
         if self.settings.httpx:
             if not self._active_httpx:
@@ -281,10 +282,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
 
 
-async def _user_email(settings: LogfireSettings) -> str | None:
-    """The email `user_tag` names; Git is queried only when chosen."""
+async def _user_email(settings: LogfireSettings, *, workspace: Path) -> str | None:
+    """The email `user_tag` names; Git is queried in `workspace` only when chosen."""
     if settings.user_tag == 'git-email':
-        return await git_email()
+        return await git_email(cwd=workspace)
     account = settings.account
     if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
         return account.email

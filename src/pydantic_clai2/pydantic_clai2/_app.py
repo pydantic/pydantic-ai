@@ -201,7 +201,7 @@ async def open_stock_agent(
             for declaration in declarations:
                 await loader.load(declaration.id)
             bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
-            if (local := local_workspace(bound, workspace)) is not None:
+            if (local := local_workspace(bound, root)) is not None:
                 bound.append(local)
             agent = template.with_plugins(
                 [

@@ -23,6 +23,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli.shell_passthrough import (
     _ctrl_c_ignored,  # pyright: ignore[reportPrivateUsage]
     _ShellOutput,  # pyright: ignore[reportPrivateUsage]
@@ -31,6 +32,8 @@ from pydantic_clai2.cli.shell_passthrough import (
     shell_command,
     terminal_modes_kept,
 )
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime._processes import taskkill_path
 from pydantic_clai2.ui.menus.menu_worker import holding_output
@@ -657,3 +660,28 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
             return signal.getsignal(signal.SIGINT)
 
     assert await asyncio.to_thread(handler_inside) == signal.getsignal(signal.SIGINT)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_commands_run_in_the_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`!pwd` prints the session's directory, not the one CLAI was started in."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'repo').mkdir()
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(), deps_type=type(None)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, force_terminal=False, width=200),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=tmp_path / 'repo',
+    )
+    shell.send_input('!pwd')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+    assert str((tmp_path / 'repo').resolve()) in output.getvalue()

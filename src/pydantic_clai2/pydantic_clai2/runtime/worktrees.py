@@ -224,15 +224,17 @@ def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
 def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
     """Remove the checkout without `--force`, and an unchanged branch this launch created; report a refusal."""
     root = str(worktree.path)
+    original = Path.cwd()
     try:
         common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
-        _git('-C', str(common), 'worktree', 'remove', '--', root, cwd=common.parent)
+        # Run outside the checkout so successful removal leaves a valid working directory.
+        os.chdir(common.parent)
+        _git('-C', str(common), 'worktree', 'remove', '--', root)
     except (OSError, subprocess.CalledProcessError) as exc:
+        os.chdir(original)
         detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
         print(f'Worktree kept at {root}: {detail}', file=sys.stderr)
         return False
-    # Exiting CLAI worked in the checkout just removed; leave it in a directory that still exists.
-    os.chdir(common.parent)
     if unchanged and worktree.new_branch:
         try:
             # `-d`, not `-D`: Git keeps a branch that is not merged into the main checkout's `HEAD`.
@@ -242,10 +244,9 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
     return True
 
 
-def _git(*args: str, cwd: Path | None = None) -> str:
+def _git(*args: str) -> str:
     return subprocess.run(
         ['git', *args],
-        cwd=cwd,
         check=True,
         capture_output=True,
         text=True,
