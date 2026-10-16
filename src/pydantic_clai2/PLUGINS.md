@@ -1072,9 +1072,9 @@ folders. Outside a git repository only the launch directory is used. `coder`
 binds harness `Skills` with `missing_directories='skip'` and
 `duplicate_names='keep_first'`, so a missing folder is skipped, a folder that is
 a file, a single skill package, or unreadable is skipped with a notice, and the
-earlier of two skills with one name wins. It reads the folders once when it loads, in `prepare`, for the `/skill-name` commands and the
-startup notices, and harness reads them again at the start of every turn for the
-model's catalog. With a plugin's capability function in the run, the run's
+earlier of two skills with one name wins. It reads the folders once when it
+loads, in `prepare`, for the `/skill-name` commands and the startup notices, and
+harness reads them again at the start of every turn for the model's catalog. With a plugin's capability function in the run, the run's
 workspace is chosen after `Skills` reads its catalog, so `coder` reads the
 catalog from the project directory. A `/skill-name` command reads them again
 when it runs, so it sends the current `SKILL.md`, and fails with a message when
