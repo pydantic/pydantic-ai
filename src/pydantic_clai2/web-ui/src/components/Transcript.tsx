@@ -1,4 +1,6 @@
-import { memo, useContext, useMemo, useState } from 'react'
+import { memo, useContext, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ConversationContext, mediaUrl } from '../media'
 import { OpenCardsContext } from '../openCards'
 import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { WorkspaceLinkContext } from '../workspaceLink'
@@ -17,7 +19,10 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
     case 'user':
       return (
         <div className="user-row">
-          <div className="user-bubble">{entry.text}</div>
+          <div className="user-message">
+            {entry.images.length > 0 && <PromptImages ids={entry.images} />}
+            {entry.text && <div className="user-bubble">{entry.text}</div>}
+          </div>
         </div>
       )
     case 'assistant':
@@ -42,6 +47,42 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
       )
   }
 })
+
+/** A prompt's images as thumbnails, from the conversation's saved prompts; one opens larger when clicked. */
+function PromptImages({ ids }: { ids: string[] }) {
+  const conversation = useContext(ConversationContext)
+  const [shown, setShown] = useState<string | null>(null)
+  if (conversation === null) return null
+  return (
+    <div className="prompt-images">
+      {ids.map((id, index) => (
+        <button key={`${id}-${index}`} className="prompt-image" onClick={() => setShown(id)} title="View image">
+          <img src={mediaUrl(conversation, id)} alt="Attached image" loading="lazy" />
+        </button>
+      ))}
+      {shown !== null && <ImageViewer url={mediaUrl(conversation, shown)} onClose={() => setShown(null)} />}
+    </div>
+  )
+}
+
+/** One image over the page; a click or Esc closes it, and Esc does not also interrupt the turn. */
+function ImageViewer({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
+    }
+    window.addEventListener('keydown', close, true)
+    return () => window.removeEventListener('keydown', close, true)
+  }, [onClose])
+  return createPortal(
+    <div className="image-viewer" role="dialog" aria-label="Attached image" onClick={onClose}>
+      <img src={url} alt="Attached image" />
+    </div>,
+    document.body,
+  )
+}
 
 /** What a finished turn used, in one quiet line. */
 function TurnUsage({ turn }: { turn: TurnSummary }) {

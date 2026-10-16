@@ -16,7 +16,7 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.messages import UserContent, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_ai_harness.step_persistence.conversations import (
@@ -33,7 +33,6 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Choice,
     CompletionInfo,
     EventTranslator,
-    Item,
     ItemAdded,
     ItemLog,
     MenuEdited,
@@ -67,8 +66,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     UpdateInfo,
     Worktree,
     history_items,
+    prompt_item,
+    shown_images,
     usage_info,
-    user_text,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.cli.self_update import installed
@@ -147,6 +147,8 @@ class Remote:
         self.update: UpdateInfo | None = None
         """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
         self._uv_output: list[str] = []
+        self._prompt_images: dict[str, BinaryContent] = {}
+        """The last turn's prompt images, by identifier, shown before its run saves them."""
 
     # What the browser sees.
 
@@ -243,7 +245,9 @@ class Remote:
         self._turn.clear()
         item = None
         if prompt is not None:
-            item = Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=user_text(UserPromptPart(prompt)))
+            part = UserPromptPart(prompt)
+            self._prompt_images = {image.identifier: image for image in shown_images(part)}
+            item = prompt_item(part, item_id=f'prompt{time.monotonic_ns()}')
         self.hub.publish(TurnStarted(item=item))
         self.publish_status()
 
@@ -310,21 +314,36 @@ class Remote:
 
     # What the browser does.
 
-    def send(self, text: str) -> str | None:
+    def send(self, text: str, *, images: Sequence[BinaryContent] = ()) -> str | None:
         """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
 
         That menu opens in the page instead of the terminal: the name of its command is returned, and
-        nothing is entered. Otherwise the result is `None`.
+        nothing is entered. Otherwise the result is `None`. `images` go with a prompt, as pasted ones do.
         """
         text = text.strip()
-        if not text:
+        if not text and not images:
             raise ValueError('Type a prompt or a /command.')
         if text.startswith('!'):
             raise ValueError('Shell lines (!) run only in the terminal.')
-        if is_command_input(text) and len(text.split()) == 1 and self.host.command_menu(text[1:]) is not None:
+        menu = not images and is_command_input(text) and len(text.split()) == 1
+        if menu and self.host.command_menu(text[1:]) is not None:
             return text[1:]
-        self.host.send_input(text)
+        self.host.send_input(text, images=images)
         return None
+
+    async def image(self, conversation_id: str, identifier: str) -> BinaryContent:
+        """A prompt's image the page shows, from the held conversation or a saved one."""
+        if conversation_id == self.host.conversation.conversation_id:
+            if (image := self._prompt_images.get(identifier)) is not None:
+                return image
+            messages = self.host.conversation.messages
+        else:
+            messages = (await self.catalog.saved(conversation_id)).messages
+        prompts = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+        images = [image for part in prompts if isinstance(part, UserPromptPart) for image in shown_images(part)]
+        if (image := next((image for image in images if image.identifier == identifier), None)) is None:
+            raise LookupError(f'No image {identifier!r} in this conversation.')
+        return image
 
     async def complete(self, text: str) -> list[CompletionInfo]:
         return [

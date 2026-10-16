@@ -18,7 +18,7 @@ import type {
 } from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
-const token =
+export const token =
   document.querySelector<HTMLMetaElement>('meta[name="clai-token"]')?.content ??
   new URLSearchParams(location.search).get('token') ??
   ''
@@ -75,7 +75,8 @@ export interface MenuTarget {
 const fieldsPath = (target: MenuTarget) => `/api/${target.kind}/${encodeURIComponent(target.name)}/fields`
 
 export const api = {
-  send: (text: string) => call<Entered>('POST', '/api/input', { text }),
+  /** `images` are base64 data, for a prompt. */
+  send: (text: string, images: string[] = []) => call<Entered>('POST', '/api/input', { text, images }),
   /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
   update: () => call<void>('POST', '/api/input', { text: '/update' }),
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/interrupt'),

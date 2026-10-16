@@ -16,6 +16,7 @@ import { NewSessionDialog } from './components/NewSessionDialog'
 import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
 import { WorkerView } from './components/WorkerView'
 import { SidebarIcon, TerminalIcon } from './components/icons'
+import { ConversationContext, type Attachment } from './media'
 import type { PanelInfo, ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
@@ -89,6 +90,9 @@ export function App() {
   const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem('clai-side-panel-width')) || 440)
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  // Files dragged over the session pane, which drops them into the composer.
+  const [dropping, setDropping] = useState(false)
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
 
@@ -351,6 +355,20 @@ export function App() {
   const entries = preview ? preview.items : state.entries
   const project = (state.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && state.session !== null
+  const droppable = !orchestrating && !preview && !workerTask
+  const carriesFiles = (event: React.DragEvent) => droppable && event.dataTransfer.types.includes('Files')
+  // A file dropped anywhere else would replace the page with it.
+  useEffect(() => {
+    const refuse = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
+    }
+    window.addEventListener('dragover', refuse)
+    window.addEventListener('drop', refuse)
+    return () => {
+      window.removeEventListener('dragover', refuse)
+      window.removeEventListener('drop', refuse)
+    }
+  }, [])
   const composerElement = (
     <Composer
       ref={composer}
@@ -364,6 +382,8 @@ export function App() {
       onMenu={openMenu}
       draft={draft}
       onDraft={setDraft}
+      attachments={attachments}
+      onAttachments={setAttachments}
       onError={showError}
     />
   )
@@ -403,7 +423,29 @@ export function App() {
           onWorker={openWorker}
         />
       )}
-      <main className="main">
+      <main
+        className="main"
+        onDragOver={(event) => {
+          if (!carriesFiles(event)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'copy'
+          setDropping(true)
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false)
+        }}
+        onDrop={(event) => {
+          setDropping(false)
+          if (!carriesFiles(event)) return
+          event.preventDefault()
+          composer.current?.attach(event.dataTransfer.files)
+        }}
+      >
+        {dropping && droppable && (
+          <div className="drop-zone" role="status">
+            Drop images to attach them
+          </div>
+        )}
         {orchestrating ? (
           <OrchestratorPane
             view={orchestration}
@@ -502,11 +544,13 @@ export function App() {
             ) : (
               <>
                 <WorkersContext.Provider value={links}>
-                  <Transcript
-                    entries={entries}
-                    running={!preview && state.running}
-                    empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
-                  />
+                  <ConversationContext.Provider value={preview ? preview.id : (state.session?.id ?? null)}>
+                    <Transcript
+                      entries={entries}
+                      running={!preview && state.running}
+                      empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
+                    />
+                  </ConversationContext.Provider>
                 </WorkersContext.Provider>
                 <footer className="bottom">
                   {!preview &&

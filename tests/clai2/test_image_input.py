@@ -27,6 +27,7 @@ from pydantic_clai2.ui.prompt.image_input import (
     ImageBuffer,
     ImageInput,
     clipboard_images,
+    decode_images,
     encode_image,
     pasted_paths,
     read_image,
@@ -328,6 +329,23 @@ def test_batch_limit_stops_before_reading_remaining_files(image_path: Path, monk
     monkeypatch.setattr(image_input, 'MAX_PENDING_BYTES', 1)
     with pytest.raises(ValueError, match='Pasted images exceed'):
         read_images([image_path, image_path.with_name('does-not-exist.png')])
+
+
+def test_uploaded_images_are_checked_and_normalized(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Image bytes from a browser get the checks and the PNG normalization a pasted file gets."""
+    jpeg = io.BytesIO()
+    Image.new('RGB', (3, 2), color='blue').save(jpeg, format='JPEG')
+    [image] = decode_images([jpeg.getvalue()])
+    assert image.media_type == 'image/png' and image.data.startswith(b'\x89PNG')
+    assert decode_images([image_path.read_bytes()]) == [read_image(image_path)]
+    with pytest.raises(ValueError, match='Only PNG, JPEG, GIF, WebP, BMP, and TIFF images'):
+        decode_images([b'<svg xmlns="http://www.w3.org/2000/svg"/>'])
+    monkeypatch.setattr(image_input, 'MAX_PENDING_BYTES', len(image.data))
+    with pytest.raises(ValueError, match='Images exceed the 32 MiB'):
+        decode_images([jpeg.getvalue(), jpeg.getvalue()])
+    monkeypatch.setattr(image_input, 'MAX_IMAGE_BYTES', 10)
+    with pytest.raises(ValueError, match='10 MiB attachment limit'):
+        decode_images([jpeg.getvalue()])
 
 
 def test_palette_transparency() -> None:
