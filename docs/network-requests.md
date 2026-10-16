@@ -2,7 +2,7 @@
 
 This page lists every request Pydantic AI makes on its own initiative, what each one carries, and how to turn it off. It doesn't cover the requests you configure: to model providers, MCP servers, or from your own tools.
 
-One of them, [the version check](#the-version-check), goes to a server run by Pydantic. Like any web server, it sees the IP address and `User-Agent` of each request, and Pydantic uses these in aggregate to understand which versions and platforms Pydantic AI is used on, and by what kind of organization. To turn it off, set `PYDANTIC_AI_NO_VERSION_CHECK` to any value (for example, `PYDANTIC_AI_NO_VERSION_CHECK=1`), or see [every way to turn it off](#turning-the-version-check-off).
+One of them, [the version check](#the-version-check), goes to a server run by Pydantic, which uses its `User-Agent` in aggregate to understand which versions and platforms Pydantic AI is used on. It [can be turned off](#turning-the-version-check-off) with one environment variable.
 
 ## Model provider requests
 
@@ -16,16 +16,9 @@ For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`.
 
 ## The version check
 
-Whenever the banner is displayed, Pydantic AI checks `https://info.pydantic.info/versions.json` in a background thread. The endpoint lists the latest versions of Pydantic's packages, grouped by registry. Pydantic AI reads only `pydantic-ai` and `pydantic-ai-harness` from the `pypi` registry and ignores unknown registries, packages, and package fields. The result appears in the next banner, never the banner that starts the request.
+When the [first-run banner](logfire.md#the-first-run-banner) or the intro banner of [`clai`](cli.md) is displayed, Pydantic AI checks `https://info.pydantic.dev/versions.json` in a background thread for newer releases of Pydantic AI and Pydantic AI Harness. `clai` displays its banner under the same conditions as the first-run banner, except that configured instrumentation doesn't hide it.
 
-The check runs at most once per 24 hours per user cache directory, so each user on a machine, and each container started with a fresh home directory, makes its own. For an agent run, the banner is displayed on the first run in a process only when instrumentation is not configured and a terminal or coding agent is present. `clai` displays its intro banner when a terminal or coding agent is present, including when instrumentation is configured.
-
-Neither banner is displayed:
-
-- in CI;
-- under `pytest`;
-- when neither a terminal nor a coding agent is present; or
-- when the banner is disabled.
+The first banner only announces the check. The request is made from the next banner on, at most once per 24 hours per user cache directory, and a newer release it finds appears in the banner after that. A container started with a fresh home directory every time therefore never makes the request.
 
 The request has no query parameters or body. Its only explicitly configured header is a pip-style `User-Agent`, for example:
 
@@ -42,7 +35,7 @@ It contains:
 
 It does not contain an identifier, model or provider names, prompts, tool or capability names, paths, hostnames, or usernames. Unrecognized coding-agent names provided through the environment are never sent.
 
-The response is cached in `pydantic-ai/version-check.json` under the user cache directory: `$XDG_CACHE_HOME` or `~/.cache` on POSIX, and `%LOCALAPPDATA%` or `~/AppData/Local` on Windows. The file contains the time of the last check and the latest release versions:
+The response is cached in `pydantic-ai/version-check.json` under the user cache directory: `$XDG_CACHE_HOME` or `~/.cache` on POSIX, and `%LOCALAPPDATA%` or `~/AppData/Local` on Windows. The file contains the time of the last check (`null` until the first) and the latest release versions:
 
 ```json
 {"checked_at": 1750000000.0, "latest": {"pydantic-ai": "2.46.0", "pydantic-ai-harness": "0.8.0"}}
@@ -52,7 +45,7 @@ The cache contains no identifying information and is never sent to the server.
 
 ### Turning the version check off {#turning-the-version-check-off}
 
-Set `PYDANTIC_AI_NO_VERSION_CHECK` to any value (for example, `PYDANTIC_AI_NO_VERSION_CHECK=1`) to disable the check without hiding the banner. A non-empty `DO_NOT_TRACK` value other than `0` or `false` also disables it. Everything that prevents the relevant banner also prevents the check: `PYDANTIC_AI_NO_BANNER`, `pydantic_ai.BANNER_ENABLED = False`, CI, `pytest`, or the absence of both a terminal and a coding agent. Configured instrumentation prevents an agent run's banner and therefore its check, but does not prevent the `clai` intro banner.
+Set `PYDANTIC_AI_NO_VERSION_CHECK` to any value (for example, `PYDANTIC_AI_NO_VERSION_CHECK=1`) to turn the check off without hiding the banner. A non-empty `DO_NOT_TRACK` value other than `0` or `false` also turns it off. Anything that keeps the banner from being displayed, as described in [the first-run banner](logfire.md#the-first-run-banner), also keeps the check from running.
 
 ## Model price updates
 

@@ -58,9 +58,15 @@ def cache_file(tmp_path: Path) -> Path:
     return tmp_path / 'pydantic-ai' / 'version-check.json'
 
 
-def write_cache(cache_file: Path, *, checked_at: float, latest: dict[str, object]) -> None:
+def write_cache(cache_file: Path, *, checked_at: float | None, latest: dict[str, object]) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps({'checked_at': checked_at, 'latest': latest}), encoding='utf-8')
+
+
+@pytest.fixture
+def announced(cache_file: Path) -> None:
+    """A previous banner announced the check, so the next one makes it."""
+    write_cache(cache_file, checked_at=None, latest={})
 
 
 def run_check() -> None:
@@ -71,7 +77,18 @@ def run_check() -> None:
     assert not thread.is_alive()
 
 
-def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+def test_first_banner_announces_the_check_without_making_it(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
+
+    assert _version_check.cached_updates(_version_check.read_cache()) == []
+    run_check()
+
+    assert requests == []
+    assert json.loads(cache_file.read_text(encoding='utf-8')) == snapshot({'checked_at': None, 'latest': {}})
+
+
+@pytest.mark.usefixtures('announced')
+def test_announced_check_is_made_by_the_next_banner(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
     monkeypatch.setattr(_version_check.platform, 'python_version', lambda: '3.14.1')
     monkeypatch.setattr(_version_check.platform, 'system', lambda: 'TestOS')
     monkeypatch.setattr(_version_check.platform, 'machine', lambda: 'test-cpu')
@@ -87,7 +104,9 @@ def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.Monkey
             200,
             json={
                 'pypi': {
-                    'pydantic-ai': {'latest': '2.46.0', 'future-field': 'ignored'},
+                    'pydantic-ai-slim': {'latest': '2.46.0', 'future-field': 'ignored'},
+                    # Released together with `pydantic-ai-slim`, but not always installed.
+                    'pydantic-ai': {'latest': '99.0.0'},
                     'unknown-package': {'latest': '99.0.0'},
                 },
                 'npm': {'unknown-package': {'latest': '99.0.0'}},
@@ -172,6 +191,7 @@ def test_failed_request_is_already_throttled_and_preserves_latest(monkeypatch: p
         pytest.param(httpx2.Response(200, content=b'not json'), id='invalid-json'),
     ],
 )
+@pytest.mark.usefixtures('announced')
 def test_failed_responses_are_silent(response: httpx2.Response, monkeypatch: pytest.MonkeyPatch, cache_file: Path):
     install_transport(monkeypatch, lambda request: response)
 
@@ -186,12 +206,13 @@ def test_failed_responses_are_silent(response: httpx2.Response, monkeypatch: pyt
         pytest.param(['2.46.0'], id='non-object'),
         pytest.param({}, id='no-pypi-registry'),
         pytest.param({'pypi': []}, id='pypi-registry-not-an-object'),
-        pytest.param({'pypi': {'pydantic-ai': '2.46.0'}}, id='package-not-an-object'),
-        pytest.param({'pypi': {'pydantic-ai': {'other': '2.46.0'}}}, id='package-without-latest'),
-        pytest.param({'pypi': {'pydantic-ai': {'latest': 246}}}, id='non-string-version'),
-        pytest.param({'pypi': {'pydantic-ai': {'latest': '2.46.0\x1b[31m'}}}, id='unsafe-version'),
+        pytest.param({'pypi': {'pydantic-ai-slim': '2.46.0'}}, id='package-not-an-object'),
+        pytest.param({'pypi': {'pydantic-ai-slim': {'other': '2.46.0'}}}, id='package-without-latest'),
+        pytest.param({'pypi': {'pydantic-ai-slim': {'latest': 246}}}, id='non-string-version'),
+        pytest.param({'pypi': {'pydantic-ai-slim': {'latest': '2.46.0\x1b[31m'}}}, id='unsafe-version'),
     ],
 )
+@pytest.mark.usefixtures('announced')
 def test_malformed_response_body_caches_no_latest(body: object, monkeypatch: pytest.MonkeyPatch, cache_file: Path):
     install_transport(monkeypatch, lambda request: httpx2.Response(200, json=body))
 
@@ -200,29 +221,29 @@ def test_malformed_response_body_caches_no_latest(body: object, monkeypatch: pyt
     assert json.loads(cache_file.read_text(encoding='utf-8')) == {'checked_at': _NOW, 'latest': {}}
 
 
-def test_unwritable_cache_still_checks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_unwritable_cache_never_checks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     cache_root = tmp_path / 'not-a-directory'
     cache_root.write_text('occupied', encoding='utf-8')
     monkeypatch.setenv('XDG_CACHE_HOME', str(cache_root))
-    requests = install_transport(
-        monkeypatch,
-        lambda request: httpx2.Response(200, json={'pypi': {'pydantic-ai': {'latest': '2.46.0'}}}),
-    )
+    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
+    # Every banner is the first one when the announcement can't be remembered.
+    run_check()
     run_check()
 
-    assert len(requests) == 1
+    assert requests == []
     assert cache_root.read_text(encoding='utf-8') == 'occupied'
 
 
-def test_unavailable_home_still_checks(monkeypatch: pytest.MonkeyPatch):
+def test_unavailable_home_never_checks(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('XDG_CACHE_HOME')
     monkeypatch.setattr(Path, 'home', lambda: (_ for _ in ()).throw(RuntimeError('no home')))
     requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
     run_check()
+    run_check()
 
-    assert len(requests) == 1
+    assert requests == []
 
 
 def test_corrupt_cache_is_a_miss(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
@@ -233,7 +254,8 @@ def test_corrupt_cache_is_a_miss(monkeypatch: pytest.MonkeyPatch, cache_file: Pa
     assert _version_check.cached_updates(_version_check.read_cache()) == []
     run_check()
 
-    assert len(requests) == 1
+    assert requests == []
+    assert json.loads(cache_file.read_text(encoding='utf-8')) == {'checked_at': None, 'latest': {}}
 
 
 @pytest.mark.parametrize(
@@ -260,6 +282,7 @@ def test_opt_out_never_accesses_cache_or_network(variable: str, value: str, monk
 
 
 @pytest.mark.parametrize('value', ['', '0', 'false', 'FALSE'])
+@pytest.mark.usefixtures('announced')
 def test_do_not_track_false_values_allow_the_check(value: str, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('DO_NOT_TRACK', value)
     requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
@@ -357,6 +380,7 @@ def test_harness_notice_requires_an_installed_harness(monkeypatch: pytest.Monkey
         ),
     ],
 )
+@pytest.mark.usefixtures('announced')
 def test_user_agent_reports_only_known_agent_names(
     variable: str, value: str, expected: str, monkeypatch: pytest.MonkeyPatch
 ):
@@ -378,6 +402,7 @@ def test_user_agent_reports_only_known_agent_names(
     assert requests[0].headers['user-agent'] == expected
 
 
+@pytest.mark.usefixtures('announced')
 def test_no_coding_agent_adds_no_agent_token(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_display, 'detect_coding_agent', lambda: None)
 
@@ -424,16 +449,14 @@ def test_harness_version_is_defensive(cached: list[object], expected: str | None
         pytest.param('{"checked_at": true, "latest": {}}', id='timestamp-is-bool'),
         pytest.param('{"checked_at": "now", "latest": {}}', id='timestamp-is-string'),
         pytest.param('{"checked_at": 1, "latest": []}', id='latest-not-object'),
+        pytest.param('{"latest": {}}', id='timestamp-missing'),
     ],
 )
-def test_wrong_cache_types_are_a_miss(contents: str, monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+def test_wrong_cache_types_are_a_miss(contents: str, cache_file: Path):
     cache_file.parent.mkdir(parents=True)
     cache_file.write_text(contents, encoding='utf-8')
-    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
-    assert _version_check.cached_updates(_version_check.read_cache()) == []
-    run_check()
-    assert len(requests) == 1
+    assert _version_check.read_cache() is None
 
 
 def test_cache_paths_follow_the_platform(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

@@ -17,7 +17,7 @@ from typing_extensions import TypedDict
 
 from ._utils import atomic_write_bytes, is_str_dict, user_cache_dir
 
-VERSION_CHECK_URL = 'https://info.pydantic.info/versions.json'
+VERSION_CHECK_URL = 'https://info.pydantic.dev/versions.json'
 """Reports the latest release of every package Pydantic publishes, keyed by registry and then by name.
 
 Read as `{'pypi': {'pydantic-ai': {'latest': '2.46.0'}}}`. The endpoint only ever adds keys, so
@@ -28,11 +28,17 @@ _CHECK_INTERVAL = 24 * 60 * 60
 _VERSION_PATTERN = re.compile(r'^\d+(?:\.\d+){0,3}$')
 _RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*')
 _PRE_RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*[.-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)', re.IGNORECASE)
-_DISTRIBUTIONS = ('pydantic-ai', 'pydantic-ai-harness')
+_DISTRIBUTIONS = {'pydantic-ai-slim': 'pydantic-ai', 'pydantic-ai-harness': 'pydantic-ai-harness'}
+"""The endpoint's package for each name the banner shows a version under.
+
+`pydantic-ai-slim` is the one distribution every install has, whether it came in through `pydantic-ai`,
+`pydantic-ai-slim` or `clai`, and all of them are released together under one version.
+"""
 
 
 class VersionCache(TypedDict):
-    checked_at: float
+    checked_at: float | None
+    """When the last check was made, or `None` when the banner has announced the check but not yet made one."""
     latest: dict[str, str]
 
 
@@ -52,7 +58,7 @@ def cached_updates(cache: VersionCache | None) -> list[tuple[str, str]]:
     installed = _installed_versions()
     return [
         (distribution, latest)
-        for distribution in _DISTRIBUTIONS
+        for distribution in _DISTRIBUTIONS.values()
         if (latest := cache['latest'].get(distribution)) is not None
         and (installed_version := installed.get(distribution)) is not None
         and _is_newer(latest, installed_version)
@@ -67,7 +73,11 @@ def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
     now = time.time()
     # A timestamp from the future is a clock that was wrong when it was written, not a check that
     # is still fresh: trusting it would put off the next check until the clock caught up with it.
-    if cache is not None and 0 <= now - cache['checked_at'] < _CHECK_INTERVAL:
+    if (
+        cache is not None
+        and (checked_at := cache['checked_at']) is not None
+        and 0 <= now - checked_at < _CHECK_INTERVAL
+    ):
         return None
 
     thread = threading.Thread(target=_check_for_updates, args=(now, cache), daemon=True)
@@ -76,8 +86,15 @@ def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
 
 
 def _check_for_updates(now: float, cache: VersionCache | None) -> None:
+    if cache is None:
+        # The first banner announces the check instead of making it, so that someone who would rather
+        # it never ran can turn it off before the next banner does. Without a cache file to remember
+        # the announcement in, the check is never made.
+        _write_cache({'checked_at': None, 'latest': {}})
+        return
+
     try:
-        latest = cache['latest'] if cache is not None else {}
+        latest = cache['latest']
         # Record the attempt first so an unavailable endpoint or an interrupted process does not
         # turn every subsequent banner into another request.
         _write_cache({'checked_at': now, 'latest': latest})
@@ -108,13 +125,15 @@ def read_cache() -> VersionCache | None:
         data = json.loads(_cache_file().read_bytes())
         if not is_str_dict(data):
             return None
-        checked_at = data.get('checked_at')
-        if not isinstance(checked_at, (int, float)) or isinstance(checked_at, bool):
+        if 'checked_at' not in data:
+            return None
+        checked_at = data['checked_at']
+        if checked_at is not None and (not isinstance(checked_at, (int, float)) or isinstance(checked_at, bool)):
             return None
         latest = _validated_latest(data.get('latest'))
         if latest is None:
             return None
-        return {'checked_at': float(checked_at), 'latest': latest}
+        return {'checked_at': None if checked_at is None else float(checked_at), 'latest': latest}
     except Exception:
         return None
 
@@ -131,7 +150,7 @@ def _validated_latest(value: object) -> dict[str, str] | None:
         return None
 
     latest: dict[str, str] = {}
-    for distribution in _DISTRIBUTIONS:
+    for distribution in _DISTRIBUTIONS.values():
         version = value.get(distribution)
         if isinstance(version, str) and _VERSION_PATTERN.fullmatch(version):
             latest[distribution] = version
@@ -143,7 +162,11 @@ def _latest_from_response(value: object) -> dict[str, str] | None:
     if not is_str_dict(value) or not is_str_dict(packages := value.get('pypi')):
         return None
     return _validated_latest(
-        {name: package.get('latest') for name, package in packages.items() if is_str_dict(package)}
+        {
+            shown_as: package.get('latest')
+            for name, shown_as in _DISTRIBUTIONS.items()
+            if is_str_dict(package := packages.get(name))
+        }
     )
 
 
