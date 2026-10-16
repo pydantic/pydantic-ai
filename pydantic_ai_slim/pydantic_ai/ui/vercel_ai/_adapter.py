@@ -1331,17 +1331,10 @@ def _metadata_target(
     Enqueued messages loaded from a `data-enqueued-messages` part are appended whole and carry their own id
     and metadata, so they're never the target, even when one lands before the message's own parts.
     """
-    if not enqueued:
-        return builder.last_modified(checkpoint, of_type=of_type)
-    candidates: list[ModelMessage] = []
-    prev_last = checkpoint.last_message
-    if prev_last is not None and len(prev_last.parts) > checkpoint.last_message_part_count:
-        candidates.append(prev_last)
-    candidates.extend(builder.messages[checkpoint.message_count :])
     return next(
         (
             message
-            for message in candidates
+            for message in builder._modified_since(checkpoint)  # pyright: ignore[reportPrivateUsage]
             if isinstance(message, of_type) and not any(message is loaded for loaded in enqueued)
         ),
         None,

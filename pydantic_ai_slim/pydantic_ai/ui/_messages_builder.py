@@ -66,9 +66,13 @@ class MessagesBuilder:
         e.g. tool-return parts follow a response). Callers that need to attribute side metadata to
         a logical "the message I just built" use this rather than re-deriving it from `messages`.
         """
+        return next((message for message in self._modified_since(checkpoint) if isinstance(message, of_type)), None)
+
+    def _modified_since(self, checkpoint: BuilderCheckpoint) -> list[ModelMessage]:
+        """The messages created or extended since `checkpoint`, in order."""
         candidates: list[ModelMessage] = []
         prev_last = checkpoint.last_message
         if prev_last is not None and len(prev_last.parts) > checkpoint.last_message_part_count:
             candidates.append(prev_last)
         candidates.extend(self.messages[checkpoint.message_count :])
-        return next((message for message in candidates if isinstance(message, of_type)), None)
+        return candidates
