@@ -483,7 +483,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     @classmethod
     def _build(  # noqa: C901
         cls,
-        outputs: Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: Sequence[_OutputSpecItem[OutputDataT]],
         *,
         name: str | None,
         description: str | None,
