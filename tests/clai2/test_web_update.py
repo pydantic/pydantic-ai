@@ -51,7 +51,7 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
         assert isinstance(snapshot, Snapshot)
         assert (snapshot.version, snapshot.update) == (installed().label, None)
         running = web_.run()
-        assert web_.post('/api/input', {'text': '/update'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/update'}).json() == {'menu': None}
         received, output = receive_until(socket_, Notice)
         assert [message.update for message in received if isinstance(message, UpdateChanged)] == [
             UpdateInfo(target='0.53.0'),
@@ -110,7 +110,7 @@ async def test_run_web_restarts_on_the_same_port_and_token(tmp_path: Path, monke
         found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
         assert found is not None
         async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
-            assert (await client.post('/api/input', json={'text': '/update'})).status_code == 204
+            assert (await client.post('/api/input', json={'text': '/update'})).json() == {'menu': None}
 
     relaunched: list[Relaunch] = []
     with anyio.fail_after(30):
@@ -148,7 +148,7 @@ async def test_run_web_serves_the_handed_over_web_ui(
         # A launcher keeps the token itself, so the address it reads leaves it out.
         assert found[2] == ('' if launcher else f'?token={WEB_TOKEN}')
         async with httpx.AsyncClient(base_url=found[1], headers={HEADER: WEB_TOKEN}) as client:
-            assert (await client.post('/api/input', json={'text': '/exit'})).status_code == 204
+            assert (await client.post('/api/input', json={'text': '/exit'})).json() == {'menu': None}
 
     with anyio.fail_after(30):
         async with anyio.create_task_group() as group:

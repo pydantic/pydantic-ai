@@ -50,10 +50,19 @@ of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
 web UI, the Monty panel's input runs `/monty` too.
 
+<!-- From #10442 -->
+The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
+on its left, each with its own address (`#settings/general`, `#settings/plugins`) to link or
+reload. **General** holds the settings `/set` changes, grouped as their keys are (Display, Run,
+Sessions, ...): each change is checked, saved, and applied at once, and the terminal prints what it
+saved; a change made in the terminal shows here too. `/set` or `/settings` typed in the composer
+opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
+in the terminal.
+
 <!-- From #10289 -->
-The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
-composer) turns plugins on and off and edits their settings, saved and applied at once, as
-`/plugins` does in the terminal. A plugin that declares its settings menu shows it there, sign-ins
+The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
+footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and
+applied at once, as `/plugins` does in the terminal. A plugin that declares its settings menu shows it there, sign-ins
 and `/keys` entries included, as dialogs in the page; any other plugin's own menu opens in the
 terminal.
 
