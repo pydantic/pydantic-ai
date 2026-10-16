@@ -1,30 +1,48 @@
-"""Shared machinery for falling back between models.
+"""The core shared by both ways to fall back between models.
 
-Used by both entry points: the [`Fallback`][pydantic_ai.capabilities.Fallback] capability, which
-drives the agent's own attempt loop, and
-[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which loops internally so it also
-works outside an agent (`direct.model_request`, a standalone `Model`). Keeping the predicates and
-the error aggregation here means the two can never disagree about what counts as a failure.
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] walks its chain inside a single model
+request, so it also works outside an agent (`direct.model_request`, a standalone `Model`); the
+[`Fallback`][pydantic_ai.capabilities.Fallback] capability walks it through the agent's own attempt
+loop, one [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] at a time. Everything they
+have in common lives here, so a fix lands once and the two can never disagree:
+
+- what counts as a failure (`FallbackPredicates`), and what an exhausted chain raises (`FallbackChain`);
+- the records and spans of the attempts that failed (`AttemptLog`), which the agent's attempt loop also
+  keeps for any capability that raises `RetryModelRequest`;
+- opening a candidate's stream so that an error before its first event can still fall back
+  (`request_stream_until_first_event`), and the warning for response handlers on a streamed request;
+- pinning a suspended response to the model that started it.
 """
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
+from opentelemetry.trace import Span, Tracer
+
+from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from ._utils import await_maybe, get_first_param_type, is_str_dict
 from .exceptions import FallbackExceptionGroup, UserError
-from .messages import ModelRequestAttempt, ModelResponse
+from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, ModelResponseStreamEvent
 
 if TYPE_CHECKING:
-    from .models import StreamedResponse
+    from ._run_context import RunContext
+    from .models import Model, ModelRequestParameters, StreamedResponse
+    from .settings import ModelSettings
 
 __all__ = (
     'ExceptionHandler',
     'ResponseHandler',
     'FallbackOn',
     'FallbackPredicates',
+    'FallbackChain',
+    'AttemptLog',
+    'request_stream_until_first_event',
+    'warn_response_handlers_not_applied',
     'ResponseRejected',
     'raise_fallback_exception_group',
     'stamp_continuation_pin',
@@ -196,3 +214,135 @@ def raise_fallback_exception_group(
     group = FallbackExceptionGroup(f'All models from {owner} failed', all_errors)
     group.attempts = attempts
     raise group
+
+
+@dataclass
+class AttemptLog:
+    """The attempts at a request that failed before one produced the response, in order.
+
+    Each is a [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt], which goes on the response
+    that answers or on the `FallbackExceptionGroup` that ends the request, and an ERROR child span of the
+    request's `chat` span when the request is instrumented.
+    """
+
+    attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
+
+    def record(
+        self,
+        model: Model,
+        failure: Exception | ModelResponse,
+        start: AttemptStart,
+        *,
+        parent: Span | None,
+        tracer: Tracer | None,
+    ) -> None:
+        """Record that the attempt at `model` started at `start` failed with `failure`, an error or a rejected response.
+
+        `parent` is the request's `chat` span and `tracer` the one it was opened with; without both, only the
+        record is kept.
+        """
+        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
+        if isinstance(failure, ModelResponse):
+            self.attempts.extend(failure.failed_attempts or [])
+        elif isinstance(failure, FallbackExceptionGroup):
+            self.attempts.extend(failure.attempts)
+        attempt = failed_attempt(model, failure, start=start, duration=start.elapsed())
+        self.attempts.append(attempt)
+        if parent is not None and tracer is not None:
+            record_attempt_span(
+                attempt, failure, model=model, index=len(self.attempts) - 1, parent=parent, tracer=tracer
+            )
+
+    def attach(self, response: ModelResponse) -> ModelResponse:
+        """`response`, carrying the attempts that failed before it."""
+        if not self.attempts:
+            return response
+        return replace(response, failed_attempts=[*self.attempts, *(response.failed_attempts or [])])
+
+    def attach_to_stream(self, stream: StreamedResponse) -> None:
+        """Have the response `stream` produces carry the attempts that failed before it was opened."""
+        if self.attempts:
+            stream.failed_attempts = [*self.attempts, *(stream.failed_attempts or [])]
+
+
+@dataclass
+class FallbackChain:
+    """One request's way down a fallback chain: what `fallback_on` moved on from, and the attempts that failed.
+
+    `FallbackModel` keeps one per request, and the `Fallback` capability one per request step. The capability
+    leaves `log` to the agent's attempt loop, which records every attempt a hook moves on from.
+    """
+
+    predicates: FallbackPredicates
+    owner: str
+    """The class whose chain this is, named in the group raised when it is exhausted."""
+    exceptions: list[Exception] = field(default_factory=list[Exception])
+    rejected_responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    log: AttemptLog = field(default_factory=AttemptLog)
+
+    async def falls_back(self, failure: Exception | ModelResponse) -> bool:
+        """Whether `fallback_on` moves on from `failure`, an error or a response, noting it for the group if so."""
+        if not await self.predicates.should_fallback(failure):
+            return False
+        if isinstance(failure, Exception):
+            self.exceptions.append(failure)
+        else:
+            self.rejected_responses.append(failure)
+        return True
+
+    def exhausted(self) -> NoReturn:
+        """Raise the `FallbackExceptionGroup` for a chain with no model left to attempt."""
+        raise_fallback_exception_group(self.exceptions, self.rejected_responses, self.log.attempts, owner=self.owner)
+
+    def warn_if_streamed_responses_unjudged(self) -> None:
+        """Warn that a streamed request accepts its response without consulting the response handlers."""
+        if self.predicates.response_handlers:
+            warn_response_handlers_not_applied(self.owner)
+
+
+def warn_response_handlers_not_applied(owner: str) -> None:
+    """Warn that `owner`'s response handlers can't judge a streamed response, which is accepted as is."""
+    warnings.warn(
+        f'`{owner}` response handlers in `fallback_on` are not applied to streamed requests, '
+        'so the streamed response is accepted as is. A request is streamed whenever something consumes '
+        "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
+        'an `event_stream_handler`, or an event listener or hook.',
+        UserWarning,
+        stacklevel=2,
+    )
+
+
+@asynccontextmanager
+async def request_stream_until_first_event(
+    model: Model,
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    run_context: RunContext[Any] | None,
+) -> AsyncGenerator[StreamedResponse]:
+    """Open `model`'s stream and wait for its first event before handing it over.
+
+    Providers can accept a streamed request and then report a failure before producing any output,
+    like an OpenAI Responses `response.failed` after `response.created`, or a Bedrock throttling
+    error as the first stream event. Waiting for the first event means such an error is raised here,
+    while the request can still fall back to another model. The event is replayed to the consumer,
+    so the stream it gets is unchanged. A stream that ends without any event is handed over as is.
+    """
+    async with model.request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+        events = aiter(response)
+        try:
+            first_event = await anext(events)
+        except StopAsyncIteration:
+            pass
+        else:
+            # `StreamedResponse.__aiter__` hands out the iterator stored here, so this puts the event back.
+            response._event_iterator = _prepend_event(first_event, events)  # pyright: ignore[reportPrivateUsage]
+        yield response
+
+
+async def _prepend_event(
+    first_event: ModelResponseStreamEvent, events: AsyncIterator[ModelResponseStreamEvent]
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    yield first_event
+    async for event in events:
+        yield event

@@ -14,7 +14,7 @@ from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 
 
 def success(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -276,6 +276,27 @@ async def test_streamed_open_failure_recovered_by_error_hook_is_replayed():
     agent = Agent(FunctionModel(stream_function=failure_stream), deps_type=type(None), capabilities=[hooks])
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'recovered'
+
+
+async def test_streamed_failure_before_the_first_event_reaches_the_error_hook():
+    """A provider that accepts a streamed request and then fails before any output is handled like an open failure."""
+    hooks = Hooks[None]()
+
+    @hooks.on.model_request_error
+    async def recover(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(f'recovered from {error}')])
+
+    async def fails_before_first_event(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {}  # produces no event, like a provider's `response.created`
+        raise ModelAPIError(model_name='m', message='overloaded')
+
+    agent = Agent(FunctionModel(stream_function=fails_before_first_event), deps_type=type(None), capabilities=[hooks])
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'recovered from overloaded'
 
 
 async def test_streamed_open_failure_raised_as_model_retry_retries_the_step():

@@ -42,6 +42,7 @@ from typing import Any, Literal
 import anyio
 
 from .. import _utils
+from .._fallback import request_stream_until_first_event
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
@@ -363,13 +364,14 @@ class _ContinuationStreamedResponse(StreamedResponse):
         return self._event_iterator
 
     async def prime(self) -> None:
-        """Open the first segment before the stream is handed to a consumer.
+        """Open the first segment and wait for its first event before the stream is handed to a consumer.
 
-        A provider that fails to open a stream (a connection error or an HTTP error status) otherwise
-        only surfaces that failure once the stream is first iterated. Priming moves that point to
-        before the consumer has seen anything, so the failure can still be handled by retrying or
-        falling back to another model. No events are consumed, so nothing the consumer hasn't seen
-        is reflected in `get()`.
+        A provider that fails to open a stream (a connection error or an HTTP error status), or that
+        accepts it and then reports a failure before any output (an OpenAI Responses `response.failed`,
+        a Bedrock throttling event), otherwise only surfaces that failure once the stream is iterated.
+        Priming moves that point to before the consumer has seen anything, so the failure can still be
+        handled by retrying or falling back to another model, as `FallbackModel` does for its candidates.
+        The first event is replayed to the consumer, so the stream it gets is unchanged.
 
         When the stream resumes a suspended response, the first segment is its continuation: the
         provider's requested delay is waited out first, and a failure to open it cancels the
@@ -387,8 +389,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
         try:
             with self.segment_context():
                 sub = await stack.enter_async_context(
-                    self.model.request_stream(
-                        messages, self.model_settings, self.model_request_parameters, self.run_context
+                    request_stream_until_first_event(
+                        self.model, messages, self.model_settings, self.model_request_parameters, self.run_context
                     )
                 )
         except BaseException:

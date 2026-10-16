@@ -42,7 +42,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelRequestAttempt
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -636,8 +636,54 @@ async def test_response_handlers_are_not_consulted_for_a_streamed_response():
         FunctionModel(stream_function=nope_stream),
         capabilities=[Fallback(FunctionModel(stream_function=success_stream), fallback_on=reject_nope)],
     )
+    with pytest.warns(UserWarning, match='`Fallback` response handlers in `fallback_on` are not applied to streamed'):
+        async with agent.run_stream('x') as stream:
+            assert await stream.get_output() == 'nope'
+
+
+async def failure_before_first_event_stream(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """A provider that accepts the streamed request, then reports an overload before any output."""
+    # A chunk that produces no event, like a provider's `response.created`, so the stream opens fine.
+    yield {}
+    raise ModelAPIError(model_name='m', message='overloaded')
+
+
+async def test_stream_error_before_first_event_falls_back():
+    """An error a stream raises before its first event falls back, as one while opening it does."""
+    first = FunctionModel(stream_function=failure_before_first_event_stream, model_name='failure')
+    agent = Agent(first, capabilities=[Fallback(FunctionModel(stream_function=success_stream))])
     async with agent.run_stream('x') as stream:
-        assert await stream.get_output() == 'nope'
+        assert await stream.get_output() == 'hello'
+    response = stream.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert _described(response.failed_attempts) == snapshot(
+        [('failure', 'function', 'error', 'ModelAPIError: overloaded', None)]
+    )
+
+
+async def test_stream_error_after_first_event_propagates():
+    """Once a stream has produced an event, a later error propagates rather than falling back."""
+
+    async def fails_after_first_event(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'partial'
+        raise ModelAPIError(model_name='m', message='lost')
+
+    fallback_calls: list[bool] = []
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        fallback_calls.append(True)  # pragma: no cover
+        yield 'hello'  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=fails_after_first_event),
+        capabilities=[Fallback(FunctionModel(stream_function=fallback_stream))],
+    )
+    with pytest.raises(ModelAPIError, match='lost'):
+        async with agent.run_stream('x') as stream:
+            await stream.get_output()
+    assert fallback_calls == []
 
 
 # Telemetry and usage, compared with the same chain under `FallbackModel`.

@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai._fallback import (
     FALLBACK_CAPABILITY_PIN_KEY,
+    FallbackChain,
     FallbackOn,
     FallbackPredicates,
     continuation_pin,
-    raise_fallback_exception_group,
     stamp_continuation_pin,
 )
 from pydantic_ai._utils import replace_no_init
@@ -75,8 +75,8 @@ class Fallback(AbstractCapability[AgentDepsT]):
     _cursor: int = field(repr=False)
     _attempted_models: list[Model] = field(repr=False)
     _attempted_ids: set[str] = field(repr=False)
-    _exceptions: list[Exception] = field(repr=False)
-    _rejected_responses: list[ModelResponse] = field(repr=False)
+    _chain: FallbackChain = field(repr=False)
+    """This step's way down the chain. Its attempt log stays empty: the agent records the attempts."""
     _pin_checked: bool = field(repr=False)
     _unpinned_model: Model | str | None = field(repr=False)
     """The step's own model, when a resumed continuation was routed away from it to the pinned candidate."""
@@ -103,8 +103,9 @@ class Fallback(AbstractCapability[AgentDepsT]):
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
                 Response handlers only apply to non-streamed requests: a streamed response has
-                already reached the consumer by the time it could be judged. Stream-opening
-                failures still fall back.
+                already reached the consumer by the time it could be judged, so it's accepted as
+                is, with a `UserWarning`. A stream that fails to open, or whose provider reports
+                an error before its first event, still falls back.
         """
         super().__init__()
         if not models:
@@ -116,8 +117,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
         self._cursor = 0
         self._attempted_models = []
         self._attempted_ids = set()
-        self._exceptions = []
-        self._rejected_responses = []
+        self._chain = self._new_chain()
         self._pin_checked = False
         self._unpinned_model = None
 
@@ -159,8 +159,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
             _cursor=0,
             _attempted_models=[],
             _attempted_ids=set(),
-            _exceptions=[],
-            _rejected_responses=[],
+            _chain=self._new_chain(),
             _pin_checked=False,
             _unpinned_model=None,
         )
@@ -195,9 +194,8 @@ class Fallback(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        if not await self._predicates.should_fallback(error):
+        if not await self._chain.falls_back(error):
             raise error
-        self._exceptions.append(error)
         raise self._advance()
 
     async def after_model_request(
@@ -207,9 +205,11 @@ class Fallback(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        # A streamed response has already reached the consumer, so it's accepted without consulting
-        # the response handlers, as `FallbackModel` does.
-        if request_context.streaming or not await self._predicates.should_fallback(response):
+        if request_context.streaming:
+            # A streamed response has already reached the consumer, so it's accepted without consulting
+            # the response handlers, with a warning when there are any, as `FallbackModel` does.
+            self._chain.warn_if_streamed_responses_unjudged()
+        if request_context.streaming or not await self._chain.falls_back(response):
             if response.state == 'suspended':
                 # Its continuation, in this run or a later one that resumes it, has to go back to the
                 # model that started the provider-side job, not to the top of the chain.
@@ -222,8 +222,10 @@ class Fallback(AbstractCapability[AgentDepsT]):
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
         # and records the attempt on the response that answers, as `FallbackModel` does.
-        self._rejected_responses.append(response)
         raise self._advance()
+
+    def _new_chain(self) -> FallbackChain:
+        return FallbackChain(self._predicates, owner='Fallback')
 
     def _reset_for_step(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reset the chain when a new request step begins.
@@ -236,8 +238,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
             self._cursor = 0
             self._attempted_models = []
             self._attempted_ids = set()
-            self._exceptions = []
-            self._rejected_responses = []
+            self._chain = self._new_chain()
             self._pin_checked = False
             self._unpinned_model = None
 
@@ -273,7 +274,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
                 return RetryModelRequest(candidate)
         # The attempts are the agent's to list, as it made them: it records each failed one, and
         # lists them on this group once it ends the request.
-        raise_fallback_exception_group(self._exceptions, self._rejected_responses, [], owner='Fallback')
+        self._chain.exhausted()
 
     def _already_attempted(self, candidate: Model | KnownModelName | str) -> bool:
         if isinstance(candidate, Model):

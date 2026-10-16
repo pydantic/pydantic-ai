@@ -14453,6 +14453,64 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
     assert output == 'from fallback'
 
 
+_OVERLOADED_FAILED_EVENT: dict[str, Any] = {
+    'type': 'response.failed',
+    'response': _failed_response_json(
+        {'code': 'server_is_overloaded', 'message': 'Our servers are currently overloaded.'}
+    ),
+    'sequence_number': 2,
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    'events',
+    [
+        pytest.param([_CREATED_EVENT, _OVERLOADED_FAILED_EVENT], id='created-failed'),
+        pytest.param(
+            [
+                _CREATED_EVENT,
+                {
+                    'type': 'response.in_progress',
+                    'response': {**_failed_response_json(None), 'status': 'in_progress'},
+                    'sequence_number': 1,
+                },
+                _OVERLOADED_FAILED_EVENT,
+            ],
+            id='created-in-progress-failed',
+        ),
+    ],
+)
+async def test_response_failed_before_output_falls_back(allow_model_requests: None, events: list[dict[str, Any]]):
+    """A `response.failed` after lifecycle events that carry no output fires `FallbackModel`'s default `fallback_on`.
+
+    https://github.com/pydantic/pydantic-ai/issues/10123
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(*events), headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+        assert output == 'from fallback'
+
+        # Without `FallbackModel`, the stream still opens and the failure is raised while it's consumed.
+        async with primary.request_stream(
+            [ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters()
+        ) as streamed_response:
+            with pytest.raises(ModelAPIError, match='server_is_overloaded'):
+                async for _ in streamed_response:
+                    pass  # pragma: no cover
+
+
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize('call', ['request', 'retrieve', 'count_tokens', 'compact'])
 async def test_text_plain_response_body_raises_model_api_error(allow_model_requests: None, call: str):

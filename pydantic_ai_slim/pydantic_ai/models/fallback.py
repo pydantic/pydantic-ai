@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
@@ -19,22 +18,23 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai._model_request_attempts import AttemptStart, record_failed_attempt
+from pydantic_ai._model_request_attempts import AttemptStart
 from pydantic_ai._run_context import RunContext
 
 from .._fallback import (
     FALLBACK_MODEL_PIN_KEY,
     ExceptionHandler,
+    FallbackChain,
     FallbackOn,
     FallbackPredicates,
     ResponseHandler,
     ResponseRejected,
     continuation_pin,
-    raise_fallback_exception_group,
+    request_stream_until_first_event,
     stamp_continuation_pin,
 )
 from ..exceptions import ModelAPIError
-from ..messages import ModelRequestAttempt, ModelResponse
+from ..messages import ModelResponse
 from ..profiles import ModelProfile
 from . import (
     KnownModelName,
@@ -171,9 +171,7 @@ class FallbackModel(Model):
         (stripping the suspended response and trailing continuation request) and the
         normal fallback chain is tried.
         """
-        exceptions: list[Exception] = []
-        rejected_responses: list[ModelResponse] = []
-        attempts: list[ModelRequestAttempt] = []
+        chain = self._chain()
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -190,8 +188,7 @@ class FallbackModel(Model):
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                duration = start.elapsed()
-                if not await self._predicates.should_fallback(exc):
+                if not await chain.falls_back(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
                 # Best-effort cancel the suspended server-side job we're abandoning before rewinding
@@ -202,8 +199,7 @@ class FallbackModel(Model):
                     await pinned.cancel_suspended_response(suspended_response)
                 messages = _rewind_messages(messages)
                 rewound = True
-                exceptions.append(exc)
-                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
+                self._record_failed_attempt(chain, pinned, exc, start)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -220,22 +216,17 @@ class FallbackModel(Model):
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                duration = start.elapsed()
-                if await self._predicates.should_fallback(exc):
-                    exceptions.append(exc)
-                    self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
+                if await chain.falls_back(exc):
+                    self._record_failed_attempt(chain, model, exc, start)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
-            duration = start.elapsed()
-            if await self._predicates.should_fallback(response):
-                rejected_responses.append(response)
-                self._record_failed_attempt(model, attempts, response, start=start, duration=duration)
+            if await chain.falls_back(response):
+                self._record_failed_attempt(chain, model, response, start)
                 continue
 
-            if attempts:
-                response = replace(response, failed_attempts=[*attempts, *(response.failed_attempts or [])])
+            response = chain.log.attach(response)
 
             # After a rewind, the first successful response is fresh generation that supersedes the
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
@@ -246,7 +237,7 @@ class FallbackModel(Model):
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        raise_fallback_exception_group(exceptions, rejected_responses, attempts, owner='FallbackModel')
+        chain.exhausted()
 
     @asynccontextmanager
     async def request_stream(
@@ -266,8 +257,7 @@ class FallbackModel(Model):
         Response handlers are not applied: the response has already been streamed by the time
         it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
         """
-        exceptions: list[Exception] = []
-        attempts: list[ModelRequestAttempt] = []
+        chain = self._chain()
         # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
         rewound = False
 
@@ -282,11 +272,12 @@ class FallbackModel(Model):
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        request_stream_until_first_event(
+                            pinned, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
-                    duration = start.elapsed()
-                    if not await self._predicates.should_fallback(exc):
+                    if not await chain.falls_back(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
                         raise
                     # Best-effort cancel the suspended server-side job we're abandoning before
@@ -296,8 +287,7 @@ class FallbackModel(Model):
                         await pinned.cancel_suspended_response(suspended_response)
                     messages = _rewind_messages(messages)
                     rewound = True
-                    exceptions.append(exc)
-                    self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
+                    self._record_failed_attempt(chain, pinned, exc, start)
                     # Fall through to normal chain below
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
@@ -309,14 +299,7 @@ class FallbackModel(Model):
                         _stamp_continuation(streamed_response, pinned)
                     return
 
-        if self._predicates.response_handlers:
-            warnings.warn(
-                '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests, '
-                'so the streamed response is accepted as is. A request is streamed whenever something consumes '
-                "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
-                'an `event_stream_handler`, or an event listener or hook.',
-                UserWarning,
-            )
+        chain.warn_if_streamed_responses_unjudged()
 
         for model in self.models:
             async with AsyncExitStack() as stack:
@@ -326,13 +309,13 @@ class FallbackModel(Model):
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                        request_stream_until_first_event(
+                            model, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
-                    duration = start.elapsed()
-                    if await self._predicates.should_fallback(exc):
-                        exceptions.append(exc)
-                        self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
+                    if await chain.falls_back(exc):
+                        self._record_failed_attempt(chain, model, exc, start)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
                     raise exc
@@ -345,8 +328,7 @@ class FallbackModel(Model):
                 # stream supersedes the suspended turn is known the moment the rewound chain is entered.
                 if rewound:
                     _stamp_replace_previous(streamed_response)
-                if attempts:
-                    streamed_response.failed_attempts = [*attempts, *(streamed_response.failed_attempts or [])]
+                chain.log.attach_to_stream(streamed_response)
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
                 # Stamp after `yield` (see the pinned path above): `state` is only final once the
@@ -355,7 +337,7 @@ class FallbackModel(Model):
                     _stamp_continuation(streamed_response, model)
                 return
 
-        raise_fallback_exception_group(exceptions, [], attempts, owner='FallbackModel')
+        chain.exhausted()
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         """Cancel a suspended continuation on the underlying model holding the server-side job.
@@ -477,28 +459,17 @@ class FallbackModel(Model):
                     )
                 span.set_attributes(span_attributes)
 
+    def _chain(self) -> FallbackChain:
+        return FallbackChain(self._predicates, owner='FallbackModel')
+
     def _record_failed_attempt(
-        self,
-        model: Model,
-        attempts: list[ModelRequestAttempt],
-        failure: Exception | ModelResponse,
-        *,
-        start: AttemptStart,
-        duration: timedelta,
+        self, chain: FallbackChain, model: Model, failure: Exception | ModelResponse, start: AttemptStart
     ) -> None:
-        """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
+        """Record the attempt this request is falling back from, as a span under `chat` too."""
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         span = self._fallback_span()
         policy = open_request_policy() if span else None
-        record_failed_attempt(
-            attempts,
-            model,
-            failure,
-            start=start,
-            duration=duration,
-            parent=span,
-            tracer=policy.tracer if policy else None,
-        )
+        chain.log.record(model, failure, start, parent=span, tracer=policy.tracer if policy else None)
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

@@ -58,9 +58,9 @@ When the agent is [instrumented](../logfire.md), the model request (`chat`) span
 
 ## Streaming
 
-A streamed request falls back if the stream fails to open: `Fallback` makes the first request to the provider before any output reaches you, so a connection error or an error status can still be handled. Once output has been streamed, a failure is raised to you rather than retried.
+A streamed request falls back if it fails before any output reaches you: `Fallback` waits for each candidate's stream to produce its first event before handing it over, so a connection error, an error status, or an error the provider reports right after accepting the request (like an overload) can still be handled. The first event is then replayed, so you see the same stream. Once output has been streamed, a failure is raised to you rather than retried. `FallbackModel` streams the same way.
 
-Response handlers aren't consulted for a streamed response, which is accepted as is: it has already been streamed by the time it could be judged. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
+Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`: it has already been streamed by the time it could be judged. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ## Continuing suspended responses
 

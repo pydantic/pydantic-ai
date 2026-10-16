@@ -17,6 +17,7 @@ import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
+from pydantic_ai._fallback import AttemptLog
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -27,7 +28,7 @@ from pydantic_ai._instrumentation import (
     get_instructions_source as _get_history_instructions_source,
     open_request_policy,
 )
-from pydantic_ai._model_request_attempts import AttemptStart, record_failed_attempt
+from pydantic_ai._model_request_attempts import AttemptStart
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
@@ -453,18 +454,15 @@ class _FailedAttempts:
 
     An attempt fails when its error or response leads a hook to raise
     [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], or a `FallbackExceptionGroup` that ends
-    the step. Each failed attempt is a [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] on
-    the response the step is answered with, or on that group, and an ERROR child span of the request's
-    `chat` span when the request is instrumented.
+    the step. They're kept in the same `AttemptLog` a `FallbackModel` keeps: on the response the step is
+    answered with, or on that group, and as ERROR child spans of the request's `chat` span.
 
     The records only describe usage committed elsewhere: a rejected response's usage was committed at the
     provider boundary when it arrived, before any hook judged it, so they are attached after that and
     never counted again.
     """
 
-    attempts: list[_messages.ModelRequestAttempt] = dataclasses.field(
-        default_factory=list[_messages.ModelRequestAttempt]
-    )
+    log: AttemptLog = dataclasses.field(default_factory=AttemptLog)
 
     def record(
         self,
@@ -474,12 +472,10 @@ class _FailedAttempts:
     ) -> None:
         """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
         policy = open_request_policy()
-        record_failed_attempt(
-            self.attempts,
+        self.log.record(
             request_context.model,
             failure,
-            start=start,
-            duration=start.elapsed(),
+            start,
             parent=policy.span if policy else None,
             tracer=policy.tracer if policy else None,
         )
@@ -501,13 +497,7 @@ class _FailedAttempts:
             # The model's own group, such as a `FallbackModel`'s, already lists the attempts it made.
             return
         self.record(request_context, failure, start)
-        group.attempts = list(self.attempts)
-
-    def attach(self, response: _messages.ModelResponse) -> _messages.ModelResponse:
-        """`response`, carrying the attempts that failed before it."""
-        if not self.attempts:
-            return response
-        return replace(response, failed_attempts=[*self.attempts, *(response.failed_attempts or [])])
+        group.attempts = list(self.log.attempts)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -2070,7 +2060,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             # Committed before the earlier attempts are attached, so their usage isn't counted twice.
             state.record(ctx, outcome, request_context)
-            response = failed.attach(outcome)
+            response = failed.log.attach(outcome)
         except (exceptions.ModelRetry, exceptions.RetryModelRequest):
             raise
         except Exception as e:
@@ -2473,11 +2463,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> tuple[models.StreamedResponse, ModelRequestContext, float]:
         """Open the stream for this request step, re-attempting while a hook asks for another attempt.
 
-        Each attempt's stream is primed (its first segment opened and its first event received) before
-        it's handed over, so a failure to open it still reaches `on_model_request_error`, which can
-        recover it, or raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to try
-        again. Once events have reached the consumer there is nothing to rewind, so a mid-stream failure
-        propagates (tracked separately by #4140). Returns the open stream, the context of the attempt
+        When an `on_model_request_error` hook exists, each attempt's stream is primed before it's handed
+        over: its first segment is opened and its first event pulled (then replayed). A failure to open
+        it, or one the provider reports before any output, still reaches `on_model_request_error`, which
+        can recover it, or raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to try
+        again. Without such a hook, the stream opens lazily once the consumer iterates it. Once events
+        have reached the consumer there is nothing to rewind, so a later failure propagates (tracked
+        separately by #4140). Returns the open stream, the context of the attempt
         that produced it, and the instant the request was issued.
         """
         failed = _FailedAttempts()
@@ -2544,7 +2536,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
             stream_stack.push_async_exit(attempt_stack)
             # Stream-opening failures carry no usage, so the response these end up on records none twice.
-            sr.failed_attempts = failed.attempts or None
+            failed.log.attach_to_stream(sr)
             return sr, request_context, request_start
 
     async def _start_next_attempt(
