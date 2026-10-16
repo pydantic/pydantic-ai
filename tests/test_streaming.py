@@ -1577,10 +1577,12 @@ async def test_run_stream_outer_cancel_during_debounce_lets_source_cleanup_finis
     cleanup_permitted = anyio.Event()
     cleanup_finished = anyio.Event()
     sources: list[AsyncGenerator[str]] = []
+    source_tasks: list[asyncio.Task[object] | None] = []
 
     async def tokens() -> AsyncGenerator[str]:
         try:
             yield 'first'
+            source_tasks.append(asyncio.current_task())
             source_waiting.set()
             await anyio.sleep_forever()
         finally:
@@ -1616,6 +1618,9 @@ async def test_run_stream_outer_cancel_during_debounce_lets_source_cleanup_finis
                 assert cleanup_finished.is_set(), 'Model source cleanup was interrupted during teardown'
 
         assert scope.cancelled_caught
+        # The debouncer pulls the source in a task of its own: that pull is what teardown has to wait for.
+        [source_task] = source_tasks
+        assert source_task is not asyncio.current_task()
     finally:
         cleanup_permitted.set()
         for iterator in sources:

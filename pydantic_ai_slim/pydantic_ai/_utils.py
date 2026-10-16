@@ -411,13 +411,10 @@ async def _cleanup_temporal_group(
 ) -> None:
     """Clean up pending task and async iterator after group_by_temporal exits."""
     if task:
-        task.cancel('Cancelling group_by_temporal pending task')
         # A plain `await task` would forward each re-cancel of an outer `anyio` scope into the pull natively,
-        # interrupting the shielded source cleanup that the single cancel above lets run. `asyncio.shield` would
-        # report the pull's later exception to the loop on CPython 3.14 and 3.15 releases without the fix for
-        # https://github.com/python/cpython/issues/156321.
-        with anyio.CancelScope(shield=True):
-            await asyncio.wait((task,))
+        # interrupting the source's shielded cleanup. The drain discards the pull's outcome, so read it back to
+        # keep propagating a source failure.
+        await cancel_and_drain(task, msg='Cancelling group_by_temporal pending task')
         with suppress(asyncio.CancelledError, StopAsyncIteration):
             task.result()
     aclose = getattr(aiterator, 'aclose', None)
