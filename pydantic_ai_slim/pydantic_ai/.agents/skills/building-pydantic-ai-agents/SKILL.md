@@ -254,6 +254,9 @@ After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), awai
 `session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
 full buffer, or emitted before the view subscribed; it requires exactly one audio view.
+ElevenLabs Agents wraps an agent hosted on ElevenLabs, addressed as `elevenlabs-agents:<agent_id>`: the agent must
+permit the conversation overrides the session sends (instructions, voice, ...) in its Security tab, and its client
+tools must match the session's unless `elevenlabs_agents_tool_sync` is `'sync'` (which updates the agent) or `'off'`.
 
 ```python {test="skip"}
 import anyio
