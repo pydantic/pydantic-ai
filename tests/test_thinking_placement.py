@@ -9,9 +9,11 @@ tags in the answers the user reads — measured live in
 `tests/models/anthropic/test_thinking_tag_mimicry.py`. Models carrying
 `mimics_assistant_message_formatting` therefore take it in a user turn instead.
 
-The outbound request body is asserted directly via each model's `_map_message`/`_map_messages`: provider
-cassettes match on method and URI only, so a VCR test would play back green regardless of which turn the
-reasoning ends up in.
+The outbound request body is asserted directly via each model's `_map_message`/`_map_messages`, which pins
+the placement across every history shape (tool results, mid-conversation `system` entries, cache points at
+Bedrock's four-point cap, three adapters) without a recording per shape. Anthropic accepting the hardest of
+those shapes is recorded live, through `Agent.run` and the wire, in
+`tests/models/anthropic/test_carried_thinking.py`.
 """
 
 from __future__ import annotations
@@ -56,8 +58,6 @@ with try_import() as xai_imports:
 with try_import() as bedrock_imports:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
-
-pytestmark = pytest.mark.anyio
 
 _QUESTION = 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'
 _REASONING = (
