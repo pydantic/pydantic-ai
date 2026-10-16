@@ -5,7 +5,7 @@
 
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
-blocks, live token counts while a turn streams, a panel with code mode's `run_code` REPL cells, and a composer with `/` command completion, a
+blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
 model picker, and a stop button. The
 terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
@@ -39,12 +39,12 @@ the link private. The `web` plugin starts disabled; `/web` works once it is enab
 [the plugin guide](PLUGINS.md#web-this-session-in-your-browser) for settings and limits.
 
 <!-- From #10282 -->
-`/repl CODE` runs your own cell in that sandbox between turns, with the same tool
-functions the model's cells get: `/repl x = 41`, then `/repl print(x)`. It prints
+`/monty CODE` runs your own cell in Monty, that sandbox, between turns, with the same
+tool functions the model's cells get: `/monty x = 41`, then `/monty print(x)`. It prints
 what the cell printed and returned, keeps the state with the session, and stays out
 of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
-web UI, the REPL panel's input runs `/repl` too.
+web UI, the Monty panel's input runs `/monty` too.
 
 <!-- From #10289 -->
 The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
@@ -148,6 +148,14 @@ terminal.
 +  edit or returns to the previous menu, and an empty edit changes nothing;
 +  **Save & close** returns with changes already saved.
 ```
+
+<!-- From #10357 -->
+Plugins can add a panel on the right, toggled by its button at the top right or Cmd/Ctrl+Shift+L,
+resizable by its left edge, and remembered by the browser. The `observability` plugin's shows
+Logfire's live view of the current conversation, opened at the latest turn. Logfire does not let
+other sites show its pages inside theirs today, so the panel opens it in a window beside CLAI's
+instead, and points that window at each new turn. Without a Logfire project the panel says how to
+set one up.
 
 <!-- From #10372 -->
 `clai2 --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`

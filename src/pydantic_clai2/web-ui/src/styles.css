@@ -156,12 +156,31 @@ pre {
   grid-template-columns: 1fr;
 }
 
-.app.with-repl {
+.app.with-monty {
   grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw);
 }
 
-.app.no-sidebar.with-repl {
+.app.no-sidebar.with-monty {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw);
+}
+
+/* A plugin's side panel takes the last column; on a narrow screen it covers the page instead. */
+@media (min-width: 761px) {
+  .app.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.with-monty.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-monty.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
 }
 
 .icon-button {
@@ -1589,6 +1608,14 @@ pre {
     box-shadow: var(--shadow);
   }
 
+  .app .side-panel {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(var(--side-panel-width), 100vw);
+    z-index: 30;
+    box-shadow: var(--shadow);
+  }
+
   .column,
   .bottom,
   .hero {
@@ -1719,14 +1746,14 @@ pre {
   color: var(--text);
 }
 
-/* The run_code REPL */
+/* Monty, the run_code sandbox */
 
-.repl-toggle.active {
+.monty-toggle.active {
   background: var(--active);
   color: var(--lithium);
 }
 
-.repl {
+.monty {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1735,7 +1762,7 @@ pre {
   background: var(--code-bg);
 }
 
-.repl-head {
+.monty-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1745,12 +1772,12 @@ pre {
   color: var(--muted);
 }
 
-.repl-title {
+.monty-title {
   color: var(--text);
   font-weight: 600;
 }
 
-.repl-head .badge {
+.monty-head .badge {
   margin-right: auto;
 }
 
@@ -1759,21 +1786,21 @@ pre {
   color: var(--lithium);
 }
 
-.repl-body {
+.monty-body {
   flex: 1;
   overflow-y: auto;
   padding: 12px 16px 20px;
   font: 12.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
-.repl-empty {
+.monty-empty {
   padding: 24px 4px;
   color: var(--faint);
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   font-size: 13px;
 }
 
-.repl-divider {
+.monty-divider {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1784,39 +1811,39 @@ pre {
   text-transform: uppercase;
 }
 
-.repl-divider::after {
+.monty-divider::after {
   content: '';
   flex: 1;
   border-top: 1px dashed var(--border-strong);
 }
 
-.repl-cell {
+.monty-cell {
   margin-bottom: 14px;
 }
 
-.repl-prompt {
+.monty-prompt {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
 }
 
-.repl-label {
+.monty-label {
   color: var(--lithium);
   font-weight: 600;
 }
 
-.repl-out {
+.monty-out {
   margin-top: 6px;
   color: var(--green);
 }
 
-.repl-running {
+.monty-running {
   font-size: 11.5px;
 }
 
-.repl-code,
-.repl-result {
+.monty-code,
+.monty-result {
   margin: 0;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -1827,17 +1854,17 @@ pre {
   font: inherit;
 }
 
-.repl-result {
+.monty-result {
   max-height: 280px;
   overflow: auto;
   color: var(--text-soft);
 }
 
-.repl-result.error {
+.monty-result.error {
   color: var(--red);
 }
 
-.repl-caret {
+.monty-caret {
   display: inline-block;
   width: 7px;
   height: 14px;
@@ -1847,14 +1874,14 @@ pre {
   animation: blink 1s steps(2) infinite;
 }
 
-.repl-calls {
+.monty-calls {
   margin: 6px 0 0;
   padding: 0 0 0 10px;
   border-left: 1px solid var(--border-strong);
   list-style: none;
 }
 
-.repl-calls li {
+.monty-calls li {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1863,7 +1890,7 @@ pre {
   color: var(--muted);
 }
 
-.repl-dot {
+.monty-dot {
   flex: none;
   width: 6px;
   height: 6px;
@@ -1871,48 +1898,48 @@ pre {
   background: var(--green);
 }
 
-.repl-dot.running {
+.monty-dot.running {
   background: var(--lithium);
   animation: pulse 1.6s ease-out infinite;
 }
 
-.repl-dot.error,
-.repl-dot.interrupted {
+.monty-dot.error,
+.monty-dot.interrupted {
   background: var(--red);
 }
 
-.repl-call-name {
+.monty-call-name {
   color: var(--text-soft);
 }
 
-.repl-call-subject {
+.monty-call-subject {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.repl-foot {
+.monty-foot {
   padding: 8px 16px;
   border-top: 1px solid var(--border);
   color: var(--faint);
   font-size: 11.5px;
 }
 
-.repl-calls.derived .repl-dot {
+.monty-calls.derived .monty-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--faint);
 }
 
-.repl-divider.restart {
+.monty-divider.restart {
   color: var(--amber);
 }
 
-.repl-foot code {
+.monty-foot code {
   font-size: 11px;
 }
 
-.repl-input {
+.monty-input {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1924,15 +1951,15 @@ pre {
   font: 12.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
-.repl-input:focus-within {
+.monty-input:focus-within {
   border-color: var(--focus);
 }
 
-.repl-input.disabled {
+.monty-input.disabled {
   opacity: 0.6;
 }
 
-.repl-input textarea {
+.monty-input textarea {
   flex: 1;
   min-height: 20px;
   border: 0;
@@ -1943,8 +1970,113 @@ pre {
   font: inherit;
 }
 
-.repl-input textarea::placeholder {
+.monty-input textarea::placeholder {
   color: var(--faint);
+}
+
+/* Plugins' side panels */
+
+.side-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.side-panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.side-panel-resize:hover,
+.side-panel.resizing .side-panel-resize {
+  background: color-mix(in srgb, var(--lithium) 45%, transparent);
+}
+
+/* A frame would take the pointer from a drag that crosses it. */
+.side-panel.resizing .side-panel-frame {
+  pointer-events: none;
+}
+
+.side-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.side-panel-title {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.side-panel-head .badge {
+  margin-right: auto;
+}
+
+.side-panel-head a.icon-button {
+  text-decoration: none;
+}
+
+.side-panel-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+
+.side-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 18px;
+  overflow-y: auto;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.side-panel-body p {
+  margin: 0;
+}
+
+.side-panel-body .primary,
+.side-panel-body .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.side-panel-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.side-panel-label {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.side-panel-link a {
+  color: var(--link);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  word-break: break-all;
 }
 
 /* Plugins panel */

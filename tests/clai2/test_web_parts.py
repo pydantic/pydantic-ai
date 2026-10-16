@@ -82,7 +82,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.plugins.menus import Option
-from pydantic_clai2.runtime.repl_cells import ReplCell
+from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.worktrees import Worktree
 from tests.clai2.test_web import WIRE
@@ -267,7 +267,7 @@ def test_history_items() -> None:
         ('tool', 'grep', 'interrupted'),
     ]
     assert items[0].text == 'Look\n[BinaryContent]'
-    note = ReplCell(code='x = 1', returned='{}').note()
+    note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
 

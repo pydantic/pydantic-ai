@@ -49,6 +49,8 @@ from pydantic_clai2.plugins import (
     SessionEnd,
     SessionEndReason,
     SessionStart,
+    SidePanel,
+    TaskCatalog,
     TurnStart,
     bare_screen,
     collect,
@@ -220,14 +222,15 @@ class PluginLoader(Generic[DepsT]):
         interrupt: Callable[[], bool] = lambda: False,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
+        tasks: Callable[[], TaskCatalog | None] = lambda: None,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, and
-        `commands` are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
+        and `commands` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -242,6 +245,7 @@ class PluginLoader(Generic[DepsT]):
         self._interrupt = interrupt
         self._sessions = sessions
         self._setting = setting
+        self._tasks = tasks
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
@@ -501,6 +505,7 @@ class PluginLoader(Generic[DepsT]):
             sessions=self._sessions,
             setting=self._setting,
             plugins=self,
+            tasks=self._tasks,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
@@ -676,6 +681,10 @@ class PluginLoader(Generic[DepsT]):
         for name in reversed(list(self._loaded)):
             await self.unload(name, reason=reason)
 
+    def handles(self, event: type[HostEvent]) -> bool:
+        """Whether a loaded plugin handles `event`, so a caller can skip building one that nothing reads."""
+        return any(loaded.handles(event) for loaded in self._loaded.values())
+
     async def fire(self, event: HostEvent) -> None:
         """Dispatch to every loaded plugin. `turn_start` fails closed; the rest report and continue."""
         for name, loaded in list(self._loaded.items()):
@@ -832,6 +841,10 @@ class PluginLoader(Generic[DepsT]):
         """A loaded plugin's declared settings menu, for `host.plugins`; see `PluginCatalog`."""
         loaded = self._entry(name).loaded
         return None if loaded is None else loaded.plugin.settings_menu()
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        """Loaded plugins' side panels, for `host.plugins`; see `PluginCatalog`."""
+        return {name: loaded.side_panels for name, loaded in self._loaded.items() if loaded.side_panels}
 
     async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
         """Edit through a loaded plugin's declared menu, then load it again if its settings changed; see `PluginCatalog`."""

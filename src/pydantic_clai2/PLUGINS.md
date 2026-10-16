@@ -491,6 +491,15 @@ its link, where Esc cancels it. From the web UI's plugins panel, **Change…** o
 row asks each step as a dialog in the page. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
+In the [web UI](#web-this-session-in-your-browser), the plugin adds a **Logfire live view** side
+panel: the project's live view filtered to the current conversation's trace
+(`?q=trace_id='...'`), with the latest run's details open (`traceId` and `spanId`), so it follows
+each new turn. The project's page comes from Logfire's `/v1/info` for the write token the plugin
+sends with, asked once per load when the panel first shows; without a token, or with sending off,
+the panel says how to set a project up. Logfire's `frame-ancestors` admits no `http://127.0.0.1`
+port today, so the panel opens the live view in a window beside the web UI. The panel lives in
+`pydantic_clai2.builtin_plugins.logfire_live`.
+
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
@@ -1226,13 +1235,14 @@ browser's light or dark mode, and any other palette paints the page as it paints
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
 and a change made in the terminal shows in the browser once the command ends.
 
-The **REPL** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
-cells: each cell's code as the model writes it, the tools it calls from the sandbox as they run
-(speculative launches marked), and what it printed and returned. Code mode keeps the REPL with
-the session between turns and on resume, so cells are numbered across the session, as a
-notebook numbers them, until a `restart: true` clears it. Its input runs your own cell with
-`/repl` between turns, shown as yours; your next prompt tells the model what you ran. A saved
-session keeps no sandbox call log, so its cells list the calls found in their code.
+The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
+cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes
+it, the tools it calls from the sandbox as they run (speculative launches marked), and what it
+printed and returned. Code mode keeps Monty's state with the session between turns and on resume,
+so cells are numbered across the session, as a notebook numbers them, until a `restart: true`
+clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
+prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
+the calls found in their code.
 
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
@@ -1259,6 +1269,13 @@ status, origin, and description, and a switch that turns it on or off as `/plugi
   for a list of strings, and JSON for anything else. Each change is validated by the model and
   saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
   in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+
+Plugins' [side panels](#show-a-page-beside-the-conversation-get_side_panels) each get a button
+at the top right; Cmd/Ctrl+Shift+L toggles the first one, such as `observability`'s Logfire live
+view. A panel sits on the right, resized by dragging its left edge; the browser remembers which
+one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
+others open in a window beside this one, which follows the panel as its page changes. The page's
+own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot
@@ -2115,8 +2132,9 @@ contributes nothing:
 | `get_status_segments()` | text appended to the status row |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
+| `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2124,9 +2142,9 @@ saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
 saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`
 
-Seven `async` methods fire outside the agent run, in the shell:
+Eight `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2137,6 +2155,7 @@ Seven `async` methods fire outside the agent run, in the shell:
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+| `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2165,6 +2184,15 @@ instead, including a `/plugins` command refused while delegated tasks run. A com
 with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
+
+`on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
+event from the task's own run (text, thinking, tool calls and results), its
+`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
+it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
+shows. It fires for every stream event of every running task, down to each text and thinking
+delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
+elsewhere. A failure is printed and the task goes on.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2328,7 +2356,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2360,7 +2388,7 @@ prompt the keyboard does:
   session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
   refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
-  its own copy of the session's `run_code` REPL, and a deleted session's REPL is deleted with it. Like opening `/resume`,
+  its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
@@ -2379,6 +2407,17 @@ prompt the keyboard does:
   its settings changed; it refuses while that plugin's menu is open elsewhere. Adding and removing
   declarations, and a menu a plugin did not declare, go through the prompt:
   `send_input('/plugins configure NAME')`.
+- `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
+  conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
+  such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
+  `-p` run; with an agent other than CLAI's stock one; and on a host built outside the shell. Read
+  it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
+  each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
+  (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
+  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
+  `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
+  `send_input` would. An ID from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
@@ -2898,6 +2937,43 @@ Fragments are truncated from the right on a narrow terminal and are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+### Show a page beside the conversation: `get_side_panels()`
+
+The [web UI](#web-this-session-in-your-browser) shows each `SidePanel` as a button at the top
+right that opens a resizable panel on the right. A panel names itself (`id`, `title`, and
+`icon`, `panel` or `traces`) and has a `view`: an async function returning a `PanelView`, an
+`http` or `https` `url` to show, or a `note` saying why there is none, such as how to set the
+plugin up. With no `url`, the panel shows the note and a button that opens the plugin's settings.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import PanelView, Plugin, SidePanel
+
+
+class Dashboard(Plugin):
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        return (SidePanel(id='board', title='Dashboard', view=self.board),)
+
+    async def board(self) -> PanelView:
+        return PanelView(url=f'https://dash.example.com/sessions/{self.host.session_id}')
+```
+
+The page asks for every view when it connects, when the conversation changes, when a turn starts
+or ends, after each command, and, while a turn runs with a panel or its window open, every few
+seconds, so the page can follow the conversation. Keep `view` quick: cache what needs the network.
+A view that raises, or takes more than ten seconds, shows that in the panel instead, and a `url`
+that is not a well-formed `http` or `https` address with a host is refused.
+
+Only `https` pages, or `http` pages on `127.0.0.1` or `localhost`, can be framed: the web UI's
+own `Content-Security-Policy` allows no others. For those, the server reads the response headers,
+at the page's address without the query, until it has them once, and frames the page only when
+its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Options`, lets the
+web UI's address show it; a browser would draw an error box instead. The server follows no
+redirect, so a page that redirects or answers an error is not framed, nor one that does not
+answer within five seconds; those are read again next time. Otherwise the panel offers to open the page in a
+window beside CLAI's, and points that window at the view's new `url` as it changes.
 
 ### Offer a spinner: `get_spinners()`
 

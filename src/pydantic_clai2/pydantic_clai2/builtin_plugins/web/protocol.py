@@ -34,13 +34,13 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_clai2.plugins import PluginOrigin, PluginStatus
+from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
-from pydantic_clai2.runtime.repl_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 
-REPL_TOOL = 'run_code'
-"""The code mode tool whose cells make up the REPL panel."""
+MONTY_TOOL = 'run_code'
+"""The code mode tool whose cells make up the Monty panel."""
 
 RESULT_CHARS = 20_000
 """The most of a tool result the browser receives; the model's copy is unchanged."""
@@ -92,7 +92,7 @@ class Item:
     calls: list[SubCall] = field(default_factory=list[SubCall])
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
-    """A `run_code` cell the user ran with `/repl`, rather than one the model wrote."""
+    """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
 
 
 @dataclass(kw_only=True)
@@ -572,6 +572,21 @@ class PluginRow:
 
 
 @dataclass(kw_only=True)
+class PanelInfo:
+    """A plugin's side panel, as the page shows it now."""
+
+    plugin: str
+    id: str
+    title: str
+    icon: PanelIcon
+    url: str | None
+    """The page to show; `None` shows `note` alone."""
+    note: str
+    embed: bool
+    """Whether `url` lets this page show it in a frame; otherwise it opens in a window of its own."""
+
+
+@dataclass(kw_only=True)
 class MenuField:
     """One row of a declared settings menu, as `FieldRow` describes it, with its current value."""
 
@@ -629,7 +644,7 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
 def user_text(part: UserPromptPart) -> str:
     """A prompt's text, naming the attachments the browser does not show.
 
-    Notes telling the model about `/repl` cells are left out: the REPL panel shows those cells.
+    Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
     """
     if isinstance(part.content, str):
         return part.content
@@ -737,12 +752,12 @@ class EventTranslator:
     def _start(self, event: PartStartEvent) -> list[ItemMessage]:
         part = event.part
         if isinstance(part, ToolCallPart):
-            if part.tool_name != REPL_TOOL:
+            if part.tool_name != MONTY_TOOL:
                 return []
             self._parts[event.index] = part.tool_call_id
             self._streamed.add(part.tool_call_id)
             args = part.args if isinstance(part.args, str) else part.args_as_json_str() if part.args else ''
-            item = Item(id=part.tool_call_id, kind='tool', name=REPL_TOOL, args=args, state='running')
+            item = Item(id=part.tool_call_id, kind='tool', name=MONTY_TOOL, args=args, state='running')
             return [ItemAdded(item=item)]
         if not isinstance(part, TextPart | ThinkingPart):
             return []
