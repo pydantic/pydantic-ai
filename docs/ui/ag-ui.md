@@ -555,6 +555,10 @@ AG-UI has no native representation for agent-generated files ([`FilePart`][pydan
 !!! warning "Behavior change"
     `preserve_file_data` used to gate honoring inbound client-submitted `UploadedFile` references. It is now representation-only. If your app set `AGUIAdapter(preserve_file_data=True)` to accept inbound uploaded files, you must now also set [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]`=True`, since the two concerns are now separate flags.
 
+### Structured content
+
+AG-UI has no structured user input, so a [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as an `ActivityMessage` with the reserved `pydantic_ai_structured_content` activity type, holding its `value`, the rendered `content`, and its `tag` and `description` when set, and loaded back from one. Text beside it in the same prompt comes back as a separate prompt part of the same request. A frontend that drops activity messages also drops the item, so keep the history on the server when it matters. See [Structured input](../input.md#structured-input).
+
 ### System prompts and instructions
 
 Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.

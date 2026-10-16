@@ -43,6 +43,7 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -6988,6 +6989,51 @@ def test_dump_messages_text_content() -> None:
     assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
         [{'role': 'user', 'content': 'hello'}]
     )
+
+
+def test_structured_content_round_trips_as_an_activity_message() -> None:
+    """AG-UI has no structured user input, so the item travels as a reserved activity and comes back whole.
+
+    The text beside it comes back as its own prompt part in the same request, as an uploaded file does.
+    """
+    item = StructuredContent({'url': '/products/42'}, tag='ui_state', description='The page the user is on.')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
+
+    dumped = AGUIAdapter.dump_messages(messages)
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in dumped] == snapshot(
+        [
+            {
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_structured_content',
+                'content': {
+                    'value': {'url': '/products/42'},
+                    'content': """\
+The page the user is on.
+<ui_state>{"url":"/products/42"}</ui_state>\
+""",
+                    'tag': 'ui_state',
+                    'description': 'The page the user is on.',
+                },
+            },
+            {'role': 'user', 'content': 'Why did the total jump?'},
+        ]
+    )
+    [request] = AGUIAdapter.load_messages(dumped)
+    assert request.parts == [
+        UserPromptPart(content=[item], timestamp=IsDatetime()),
+        UserPromptPart(content='Why did the total jump?', timestamp=IsDatetime()),
+    ]
+
+
+def test_load_messages_skips_a_malformed_structured_content_activity() -> None:
+    """A structured content payload without a value is client-sent noise, not grounds to fail the request."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ActivityMessage(id='a1', activity_type='pydantic_ai_structured_content', content={'content': 'no value'}),
+            UserMessage(id='u1', content='Hi'),
+        ]
+    )
+    assert [part.content for message in messages for part in message.parts] == ['Hi']
 
 
 # region multimodal and coverage tests

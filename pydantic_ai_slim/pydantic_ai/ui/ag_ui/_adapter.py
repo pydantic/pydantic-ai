@@ -37,6 +37,7 @@ from ...messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -62,6 +63,8 @@ from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
+    structured_content_from_payload,
+    structured_content_payload,
     tool_availability_delta_from_payload,
 )
 from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
@@ -102,6 +105,7 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
+        STRUCTURED_CONTENT_ACTIVITY_TYPE,
         TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
@@ -621,6 +625,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
+                    elif activity_msg.activity_type == STRUCTURED_CONTENT_ACTIVITY_TYPE:
+                        if (structured := structured_content_from_payload(activity_msg.content)) is not None:
+                            builder.add(UserPromptPart(content=[structured]))
                     elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
                         # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                         # They carry their own message ids, so the activity's id isn't kept on them.
@@ -747,7 +754,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     user_content.append(TextInputContent(type='text', text=part.content))
                 else:
                     for item in part.content:
-                        if isinstance(item, UploadedFile) and preserve_file_data:
+                        if isinstance(item, StructuredContent):
+                            # AG-UI has no structured user input content. We repurpose ActivityMessage
+                            # with a reserved `pydantic_ai_*` activity_type for round-trip fidelity.
+                            flush_user_content()
+                            result.append(
+                                ActivityMessage(
+                                    id=_new_message_id(),
+                                    activity_type=STRUCTURED_CONTENT_ACTIVITY_TYPE,
+                                    content=structured_content_payload(item),
+                                )
+                            )
+                        elif isinstance(item, UploadedFile) and preserve_file_data:
                             # AG-UI has no native uploaded-file message type. We repurpose
                             # ActivityMessage with a reserved `pydantic_ai_*` activity_type
                             # for round-trip fidelity. See UploadedFileActivityContent.

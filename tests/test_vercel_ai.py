@@ -51,6 +51,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -8049,6 +8050,42 @@ async def test_convert_user_prompt_part_text_content():
     assert ui_parts == snapshot(
         [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
     )
+
+
+async def test_structured_content_round_trips_as_a_data_part():
+    """A structured item is a `data-structured-content` part of the user message and comes back in its place."""
+    item = StructuredContent({'url': '/products/42'})
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
+
+    [ui_message] = VercelAIAdapter.dump_messages(messages)
+    assert ui_message.parts == snapshot(
+        [
+            DataUIPart(
+                type='data-structured-content',
+                data={'value': {'url': '/products/42'}, 'content': '{"url":"/products/42"}'},
+            ),
+            TextUIPart(text='Why did the total jump?', state='done'),
+        ]
+    )
+    [request] = VercelAIAdapter.load_messages([ui_message])
+    assert request.parts == [UserPromptPart(content=[item, 'Why did the total jump?'], timestamp=IsDatetime())]
+
+
+async def test_load_messages_skips_a_malformed_structured_content_part():
+    """A structured content payload without a value is client-sent noise, not grounds to fail the request."""
+    [request] = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='u1',
+                role='user',
+                parts=[
+                    DataUIPart(type='data-structured-content', data={'content': 'no value'}),
+                    TextUIPart(text='Hi'),
+                ],
+            )
+        ]
+    )
+    assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
 
 
 async def test_adapter_dump_messages_thinking_with_metadata():

@@ -20,6 +20,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic_core import to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
@@ -32,6 +33,7 @@ from pydantic_ai.messages import (
     ForceDownloadMode,
     ModelMessage,
     ModelRequest,
+    StructuredContent,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
@@ -238,6 +240,36 @@ def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart |
     """
     try:
         return _COMPACTION_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
+
+
+_STRUCTURED_CONTENT_ADAPTER: TypeAdapter[StructuredContent] = TypeAdapter(StructuredContent)
+
+
+def structured_content_payload(item: StructuredContent) -> dict[str, Any]:
+    """Serialize a structured content item as a UI payload, omitting `tag` and `description` when unset.
+
+    The value is dumped as JSON-compatible data. Like `TextContent.metadata`, `metadata` does not travel.
+    """
+    payload: dict[str, Any] = {'value': to_jsonable_python(item.value), 'content': item.content}
+    if item.tag is not None:
+        payload['tag'] = item.tag
+    if item.description is not None:
+        payload['description'] = item.description
+    return payload
+
+
+def structured_content_from_payload(payload: Mapping[str, Any]) -> StructuredContent | None:
+    """Build a [`StructuredContent`][pydantic_ai.messages.StructuredContent] from a UI payload.
+
+    Like `compaction_part_from_payload`, validation here is shape hygiene at the UI boundary, not a security gate:
+    the item is user content, which the client could send as text anyway. Malformed data returns `None` and the
+    item is skipped, rather than raising out of `load_messages` and taking the whole request with it.
+    """
+    fields = {key: payload[key] for key in ('value', 'content', 'tag', 'description') if key in payload}
+    try:
+        return _STRUCTURED_CONTENT_ADAPTER.validate_python(fields)
     except ValidationError:
         return None
 

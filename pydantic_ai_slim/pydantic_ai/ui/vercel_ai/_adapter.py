@@ -32,6 +32,7 @@ from ...messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -56,6 +57,8 @@ from .._adapter import (
     compaction_part_from_payload,
     compaction_payload,
     resolve_allow_uploaded_files,
+    structured_content_from_payload,
+    structured_content_payload,
     tool_availability_delta_from_payload,
 )
 from .._utils import get_ui_message_id, set_ui_message_id
@@ -63,6 +66,7 @@ from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    STRUCTURED_CONTENT_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
@@ -404,6 +408,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, DataUIPart):
                         if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
+                        elif part.type == STRUCTURED_CONTENT_DATA_TYPE and _is_str_dict(part.data):
+                            if (structured := structured_content_from_payload(part.data)) is not None:
+                                user_prompt_content.append(structured)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -1144,6 +1151,8 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, StructuredContent):
+                ui_parts.append(DataUIPart(type=STRUCTURED_CONTENT_DATA_TYPE, data=structured_content_payload(item)))
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):

@@ -74,6 +74,9 @@ COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
 
+STRUCTURED_CONTENT_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_structured_content'
+"""Activity type for `StructuredContent` in a user prompt, stored as AG-UI ActivityMessages."""
+
 TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
 """Activity type for tool availability changes stored as AG-UI ActivityMessages."""
 

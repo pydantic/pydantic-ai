@@ -49,7 +49,7 @@ from dataclasses import replace
 from typing import Literal, TypeGuard
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
+from pydantic_ai.messages import CachePoint, StructuredContent, TextContent, ToolReturn, UserContent
 from pydantic_ai_harness.guardrails._shared import GuardrailResult
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 
@@ -96,8 +96,16 @@ def _carries_no_model_content(part: UserContent) -> bool:
 
 
 def _rewrite_text_part(part: str | TextContent, text: str) -> str | TextContent:
-    """Put `text` back in `part`, keeping the part's shape and any `TextContent.metadata`."""
-    return text if isinstance(part, str) else replace(part, content=text)
+    """Put `text` back in `part`, keeping the part's shape and any `TextContent.metadata`.
+
+    A `StructuredContent` whose text changed becomes a `TextContent`, since a model that takes structured
+    input natively would still be sent its unredacted `value`.
+    """
+    if isinstance(part, str):
+        return text
+    if isinstance(part, StructuredContent):
+        return part if text == part.content else TextContent(text, metadata=part.metadata)
+    return replace(part, content=text)
 
 
 def _merge_span(

@@ -46,6 +46,7 @@ from pydantic_ai import (
     RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
+    StructuredContent,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -181,6 +182,122 @@ def test_text_content():
     text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
     assert text_content.content == 'Pydantic AI!'
     assert text_content.metadata == {'foo': 'bar'}
+
+
+class _UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+@pytest.mark.parametrize(
+    'item, expected',
+    [
+        pytest.param(StructuredContent({'url': '/p/42', 'n': [1, None]}), '{"url":"/p/42","n":[1,null]}', id='json'),
+        pytest.param(
+            StructuredContent({'note': '</ui_state> & more'}, tag='ui_state'),
+            r'<ui_state>{"note":"\u003c/ui_state\u003e \u0026 more"}</ui_state>',
+            id='json-tag-escaped',
+        ),
+        pytest.param(
+            StructuredContent(_UIState(url='/p/42', cart_total=949.0), format='xml', tag='ui_state'),
+            '<ui_state>\n  <url>/p/42</url>\n  <cart_total>949.0</cart_total>\n</ui_state>',
+            id='xml',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], tag='ids', description='The ids the user selected.'),
+            'The ids the user selected.\n<ids>[1,2]</ids>',
+            id='description',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], format=lambda value: f'{len(value)} ids', tag='ids', description='Unused.'),
+            '2 ids',
+            id='function',
+        ),
+        pytest.param(StructuredContent({'a': 1}, content='given'), 'given', id='given-content'),
+    ],
+)
+def test_structured_content_renders_once(item: StructuredContent, expected: str):
+    """The text sent to text models is rendered when the item is created, and kept as given when it is passed in."""
+    assert item.content == expected
+
+
+def test_structured_content_subclass_renders_its_own_way():
+    """A subclass carries its rendering, so it doesn't have to be passed each time the item is created."""
+
+    class UIStateContent(StructuredContent):
+        value: _UIState
+
+        def render(self) -> str:
+            return f'<ui_state url="{self.value.url}" />'
+
+    assert UIStateContent(_UIState(url='/p/42', cart_total=1)).content == '<ui_state url="/p/42" />'
+
+
+def test_structured_content_rejects_an_invalid_tag():
+    with pytest.raises(ValueError, match=r"`StructuredContent\.tag` must be a valid XML tag name, got 'ui state'"):
+        StructuredContent({}, tag='ui state')
+
+
+def test_structured_content_round_trips_through_json():
+    """The stored text comes back byte-for-byte, so a reloaded history is sent exactly as before, and the value as JSON data.
+
+    The subclass and its `render` don't survive the round-trip; the text they produced does.
+    """
+
+    class UIStateContent(StructuredContent):
+        def render(self) -> str:
+            return 'custom'
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        StructuredContent(_UIState(url='/p/42', cart_total=949.0), tag='ui_state'),
+                        UIStateContent({'a': 1}, metadata={'source': 'app'}),
+                        TextContent('plain'),
+                        'Why did the total jump?',
+                    ]
+                )
+            ]
+        )
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'content': '<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                'metadata': None,
+                'kind': 'structured-content',
+                'value': {'url': '/p/42', 'cart_total': 949.0},
+                'tag': 'ui_state',
+                'description': None,
+            },
+            {
+                'content': 'custom',
+                'metadata': {'source': 'app'},
+                'kind': 'structured-content',
+                'value': {'a': 1},
+                'tag': None,
+                'description': None,
+            },
+            {'content': 'plain', 'metadata': None, 'kind': 'text-content'},
+            'Why did the total jump?',
+        ]
+    )
+    loaded = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert loaded[0].parts[0].content == snapshot(  # pyright: ignore[reportAttributeAccessIssue]
+        [
+            StructuredContent(
+                content='<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                value={'url': '/p/42', 'cart_total': 949.0},
+                tag='ui_state',
+            ),
+            StructuredContent(content='custom', value={'a': 1}, metadata={'source': 'app'}),
+            TextContent(content='plain'),
+            'Why did the total jump?',
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -3597,7 +3714,9 @@ def test_user_prompt_part_content_items_must_be_user_content():
     assert UserPromptPart([image]).content == [image]
 
     # Every member of the union is accepted, so adding one cannot be forgotten here.
-    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+    assert UserPromptPart(
+        ['hello', StructuredContent({}), TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()]
+    )
 
 
 def test_user_content_types_matches_union():
