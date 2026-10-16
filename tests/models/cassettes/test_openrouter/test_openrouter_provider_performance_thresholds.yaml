@@ -1,0 +1,116 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "227"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: z-ai/glm-5.3-flash
+        stream: false
+        messages:
+        - role: user
+          content: Who are you? One sentence.
+        max_tokens: 300
+        provider:
+          sort: price
+          preferred_min_throughput:
+            p75: 50.0
+          preferred_max_latency: 0.35
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1791905772-7hQthimhXXzimI4tNeNf
+        object: chat.completion
+        created: 1791905772
+        model: z-ai/glm-5.3-flash
+        provider: Relace
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: >-
+              I am a GLM large language model developed by Z.ai, trained on diverse text data
+              to engage in helpful conversations while maintaining accuracy and safety.
+            refusal: null
+            reasoning: |-
+              The user is asking "Who are you?" and explicitly wants a one-sentence response. They're clearly looking for a quick, concise identity summary rather than a lengthy explanation.
+
+              My core identity is a GLM large language model developed by Z.ai. The key challenge is fitting this into one sentence while staying accurate and natural.
+
+              The sentence should include three elements: what I am (an AI/LLM), who made me (Z.ai), and my purpose (helping users). I need to phrase this conversationally without technical jargon.
+
+              Checking against my knowledge base: This aligns with my training regarding my origin and function. The wording should feel approachable yet informative.
+
+              The phrasing seems solid - it establishes my identity, origin, and utility in one clean sentence. Ready to finalize this response.
+            reasoning_details:
+            - type: reasoning.text
+              text: |-
+                The user is asking "Who are you?" and explicitly wants a one-sentence response. They're clearly looking for a quick, concise identity summary rather than a lengthy explanation.
+
+                My core identity is a GLM large language model developed by Z.ai. The key challenge is fitting this into one sentence while staying accurate and natural.
+
+                The sentence should include three elements: what I am (an AI/LLM), who made me (Z.ai), and my purpose (helping users). I need to phrase this conversationally without technical jargon.
+
+                Checking against my knowledge base: This aligns with my training regarding my origin and function. The wording should feel approachable yet informative.
+
+                The phrasing seems solid - it establishes my identity, origin, and utility in one clean sentence. Ready to finalize this response.
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 19
+          completion_tokens: 193
+          total_tokens: 212
+          cost: 0.00009726
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00009726
+            upstream_inference_prompt_cost: 7.6e-7
+            upstream_inference_completions_cost: 0.0000965
+          completion_tokens_details:
+            reasoning_tokens: 203
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-13T15:36:16.389733+00:00
