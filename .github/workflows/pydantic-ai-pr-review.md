@@ -195,7 +195,7 @@ pre-agent-steps:
       fi
       [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
       msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
-      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
+      if mkdir -p "$(dirname "$SAFE_OUTPUTS")" && jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
         echo "$msg" >> "$GITHUB_STEP_SUMMARY"
       else
         echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"

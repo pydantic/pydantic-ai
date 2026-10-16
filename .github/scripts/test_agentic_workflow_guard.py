@@ -9,6 +9,7 @@ shapes. The final test asserts the live repository is clean.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -93,6 +94,40 @@ def test_ci_review_deduplicates_both_footer_formats(body: str | None, commit_id:
         check=True,
     )
     assert int(result.stdout) == expected
+
+
+def test_ci_review_stale_preflight_writes_noop_before_safe_outputs_setup(tmp_path: Path):
+    """The host preflight runs before safe-output setup, outside the model/VCR path."""
+    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
+    steps = lock['jobs']['agent']['steps']
+    preflight = next(step for step in steps if step.get('name') == 'Skip a PR that closed or moved on while queued')
+    prepare = next(step for step in steps if step.get('name') == 'Prepare Safe Outputs Directories')
+    safe_outputs = tmp_path / 'gh-aw' / 'safeoutputs' / 'outputs.jsonl'
+    assert not safe_outputs.parent.exists()
+
+    gh = tmp_path / 'gh'
+    gh.write_text('#!/bin/sh\nprintf "closed at new-head\\n"\n', encoding='utf-8')
+    gh.chmod(0o755)
+    search_path = os.environ['PATH']
+    env: dict[str, str] = {
+        **os.environ,
+        'PATH': f'{tmp_path}:{search_path}',
+        'RUNNER_TEMP': str(tmp_path),
+        'SAFE_OUTPUTS': str(safe_outputs),
+        'PR': 'repos/pydantic/pydantic-ai/pulls/10450',
+        'HEAD_SHA': 'old-head',
+        'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary.md'),
+    }
+    result = subprocess.run(['bash', '-c', preflight['run']], env=env, text=True, capture_output=True, check=True)
+    assert safe_outputs.exists(), result.stdout + result.stderr
+    original = safe_outputs.read_bytes()
+    assert json.loads(original) == {
+        'type': 'noop',
+        'message': 'Not reviewing old-head: the PR is now closed at new-head.',
+    }
+
+    subprocess.run(['bash', '-c', prepare['run']], env=env, check=True)
+    assert safe_outputs.read_bytes() == original
 
 
 def _write(path: Path, text: str) -> Path:
