@@ -281,7 +281,7 @@ class TestOnOutputValidateError:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=77, output_tokens=7),
+                    usage=RequestUsage(input_tokens=94, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2299,7 +2299,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=73, output_tokens=6),
+                    usage=RequestUsage(input_tokens=90, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2458,7 +2458,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 1}')],
-                    usage=RequestUsage(input_tokens=71, output_tokens=4),
+                    usage=RequestUsage(input_tokens=88, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2610,7 +2610,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 99}')],
-                    usage=RequestUsage(input_tokens=72, output_tokens=5),
+                    usage=RequestUsage(input_tokens=89, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2823,7 +2823,7 @@ class TestDefaultOutputErrorHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 7}')],
-                    usage=RequestUsage(input_tokens=72, output_tokens=5),
+                    usage=RequestUsage(input_tokens=89, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),

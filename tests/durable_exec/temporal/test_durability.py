@@ -5292,7 +5292,7 @@ def _retry_feedback_model(messages: list[ModelMessage], info: AgentInfo) -> Mode
         or (
             isinstance(part, UserPromptPart)
             and isinstance(part.content, str)
-            and part.content.startswith(_RETRY_FEEDBACK_TAGS)
+            and any(tag in part.content for tag in _RETRY_FEEDBACK_TAGS)
         )
     ]
     _retry_feedback_shown.append(shown)
@@ -5468,6 +5468,7 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
             [
                 UserPromptPart(
                     content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
 </validation_errors>\
@@ -5478,6 +5479,7 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
             [
                 UserPromptPart(
                     content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
 </validation_errors>\
