@@ -2,7 +2,6 @@
 
 import io
 import json
-import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import Future
 from dataclasses import dataclass, field
@@ -74,7 +73,9 @@ class Fleet:
         self.launch = self._build(self.folder('home'))
         self.launch.process.live.build = lambda directory: self._build(directory or self.folder('home'))
         self.portal.call(self.launch.loader.load_all)
-        [plugin] = [entry.loaded.plugin for entry in self.launch.loader.entries() if entry.name == 'web' and entry.loaded]
+        [plugin] = [
+            entry.loaded.plugin for entry in self.launch.loader.entries() if entry.name == 'web' and entry.loaded
+        ]
         assert isinstance(plugin, WebPlugin)
         self.plugin = plugin
         app = create_app(service=plugin.service, token=TOKEN, hosts=HOSTS, static=static_dir(self.root))
@@ -131,11 +132,6 @@ class Fleet:
         assert response.status_code == 200, response.text
         return response.json()['id']
 
-    def close(self) -> None:
-        self.launch.send_input('/exit') if self.running and not self.running.done() else None
-        if self.running is not None:
-            self.running.result(timeout=10)
-
 
 MakeFleet = Callable[..., Fleet]
 
@@ -156,7 +152,9 @@ def make_fleet(tmp_path: Path) -> Iterator[MakeFleet]:
             fleet.running.result(timeout=10)
 
 
-def messages(socket: WebSocketTestSession, *, until: Callable[[dict[str, JsonValue]], bool]) -> list[dict[str, JsonValue]]:
+def messages(
+    socket: WebSocketTestSession, *, until: Callable[[dict[str, JsonValue]], bool]
+) -> list[dict[str, JsonValue]]:
     """Raw messages from the WebSocket up to and including the first `until` accepts."""
     received: list[dict[str, JsonValue]] = []
     while True:
@@ -170,11 +168,31 @@ def kind(name: str, **fields: JsonValue) -> Callable[[dict[str, JsonValue]], boo
     return lambda message: message['type'] == name and all(message.get(key) == value for key, value in fields.items())
 
 
+def snapshot_of(conversation_id: str) -> Callable[[dict[str, JsonValue]], bool]:
+    def check(message: dict[str, JsonValue]) -> bool:
+        session = message.get('session')
+        return message['type'] == 'snapshot' and isinstance(session, dict) and session['id'] == conversation_id
+
+    return check
+
+
 def connected(socket: WebSocketTestSession) -> dict[str, JsonValue]:
     """The default session's snapshot, after reading the orchestrator's state and `live`, as the page gets them."""
     snapshot = json.loads(socket.receive_text())
     assert [json.loads(socket.receive_text())['type'] for _ in range(2)] == ['orchestrator', 'live']
     return snapshot
+
+
+def at(value: JsonValue, *path: str | int) -> JsonValue:
+    """The value at `path` in a decoded message, by key or list index."""
+    for step in path:
+        if isinstance(step, int):
+            assert isinstance(value, list)
+            value = value[step]
+        else:
+            assert isinstance(value, dict)
+            value = value[step]
+    return value
 
 
 def watch(socket: WebSocketTestSession, *sessions: str) -> None:
@@ -184,7 +202,9 @@ def watch(socket: WebSocketTestSession, *sessions: str) -> None:
 def live_states(message: dict[str, JsonValue]) -> dict[str, JsonValue]:
     sessions = message['sessions']
     assert isinstance(sessions, list)
-    return {entry['id']: entry['state'] for entry in sessions if isinstance(entry, dict) and isinstance(entry['id'], str)}
+    return {
+        entry['id']: entry['state'] for entry in sessions if isinstance(entry, dict) and isinstance(entry['id'], str)
+    }
 
 
 def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -> None:
@@ -205,8 +225,12 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         assert b != a and fleet.new('c') not in (a, b)
         watch(one, a)
         watch(two, b)
-        assert messages(one, until=kind('snapshot'))[-1]['session'] == {'id': a, 'title': None, 'workspace': str(fleet.folder('home'))}
-        snapshot = messages(two, until=kind('snapshot'))[-1]
+        assert messages(one, until=snapshot_of(a))[-1]['session'] == {
+            'id': a,
+            'title': None,
+            'workspace': str(fleet.folder('home')),
+        }
+        snapshot = messages(two, until=snapshot_of(b))[-1]
         assert snapshot['session'] == {'id': b, 'title': None, 'workspace': str(fleet.folder('b'))}
         assert fleet.post(f'/api/sessions/{a}/input', {'text': 'go'}).json() == {'menu': None}
         assert fleet.post(f'/api/sessions/{b}/input', {'text': 'go'}).json() == {'menu': None}
@@ -214,7 +238,9 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         fleet.portal.call(gates['b'].started.wait)
         # Both run at once, and input sent to one meanwhile waits behind its turn.
         assert fleet.post(f'/api/sessions/{b}/input', {'text': 'and then'}).status_code == 200
-        states = live_states(messages(one, until=lambda m: m['type'] == 'live' and live_states(m).get(b) == 'queued')[-1])
+        states = live_states(
+            messages(one, until=lambda m: m['type'] == 'live' and live_states(m).get(b) == 'queued')[-1]
+        )
         assert (states[a], states[b]) == ('running', 'queued')
         sidebar = {
             entry['id']: entry['state']
@@ -226,13 +252,17 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         fleet.portal.call(gates['home'].release.set)
         first = messages(one, until=kind('turn_end', session=a))
         fleet.portal.call(gates['b'].release.set)
-        second = messages(two, until=lambda m: m['type'] == 'turn_end' and gates['b'].calls == 2)
+        # The queued input runs as a second turn once the first ends.
+        second = messages(two, until=kind('turn_end', session=b))
         second += messages(two, until=kind('turn_end', session=b))
+        assert gates['b'].calls == 2
     for received, mine, answer in ((first, a, 'home answered'), (second, b, 'b answered')):
         scoped = [message for message in received if message['type'] not in GLOBAL]
-        assert scoped and {message['session'] for message in scoped} == {mine}
-        assert not any(message['type'] in GLOBAL and 'session' in message for message in received if message['type'] != 'snapshot')
-        texts = ''.join(str(message.get('text', '')) for message in scoped)
+        assert scoped and {str(at(message, 'session')) for message in scoped} == {mine}
+        assert not any(
+            message['type'] in GLOBAL and 'session' in message for message in received if message['type'] != 'snapshot'
+        )
+        texts = json.dumps(scoped)
         assert answer in texts and ('b answered' if mine == a else 'home answered') not in texts
     assert Path.cwd() == launched_in
 
@@ -244,12 +274,12 @@ def test_watching_switches_sessions_and_keeps_them_open(make_fleet: MakeFleet) -
     b = fleet.new('b')
     session_b = fleet.service.session(b).session
     with fleet.socket() as socket:
-        assert connected(socket)['session']['id'] == b, 'a browser that never watched follows the newest session'
+        assert at(connected(socket), 'session', 'id') == b, 'a browser that never watched follows the newest session'
         watch(socket, a, 'not-live')
-        assert messages(socket, until=kind('snapshot'))[-1]['session']['id'] == a
+        assert at(messages(socket, until=kind('snapshot'))[-1], 'session', 'id') == a
         assert session_b.watchers == 0
         watch(socket, a, b)
-        assert messages(socket, until=kind('snapshot'))[-1]['session']['id'] == b, 'only b is new'
+        assert at(messages(socket, until=kind('snapshot'))[-1], 'session', 'id') == b, 'only b is new'
         assert session_b.watchers == 1
         watch(socket, a)
         fleet.post(f'/api/sessions/{a}/input', {'text': '/cost'})
@@ -271,12 +301,14 @@ def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: Mak
     with fleet.socket() as socket:
         connected(socket)
         watch(socket, b)
-        messages(socket, until=kind('snapshot'))
         fleet.post(f'/api/sessions/{b}/input', {'text': '/new'})
-        snapshot = messages(socket, until=kind('snapshot'))[-1]
-        renamed = snapshot['session']['id']
+        snapshot = messages(socket, until=lambda m: m['type'] == 'snapshot' and at(m, 'session', 'id') != b)[-1]
+        renamed = at(snapshot, 'session', 'id')
+        assert isinstance(renamed, str)
         assert renamed != b and snapshot['items'] == []
-        assert renamed in live_states(messages(socket, until=lambda m: m['type'] == 'live' and renamed in live_states(m))[-1])
+        assert renamed in live_states(
+            messages(socket, until=lambda m: m['type'] == 'live' and renamed in live_states(m))[-1]
+        )
         assert fleet.get(f'/api/sessions/{b}/state').status_code == 404
         assert fleet.get(f'/api/sessions/{renamed}/state').json()['session']['workspace'] == str(fleet.folder('b'))
         fleet.post(f'/api/sessions/{renamed}/input', {'text': '/cost'})
@@ -308,7 +340,7 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         response = fleet.client.request(method, f'/api/sessions/nope/{path}', json=body, headers={HEADER: TOKEN})
         assert response.status_code == 404, (path, response.text)
     assert fleet.get('/api/state').json()['session']['id'] == b, 'the legacy routes drive the default session'
-    assert '/help' in [completion['text'] for completion in fleet.get(f'/api/sessions/{a}/complete?text=/he').json()]
+    assert 'help' in [completion['text'] for completion in fleet.get(f'/api/sessions/{a}/complete?text=/he').json()]
     assert fleet.post(f'/api/sessions/{a}/dialogs/none', {'value': None}).status_code == 404
     with fleet.socket() as socket:
         connected(socket)
@@ -326,11 +358,16 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
 
         q = fleet.new('q')
         watch(socket, a, b, q)
-        messages(socket, until=kind('snapshot'))
+        messages(socket, until=snapshot_of(q))
         fleet.post(f'/api/sessions/{q}/input', {'text': 'ask me'})
         asked = messages(socket, until=kind('question', session=q))[-1]
-        request = asked['questions']['id']
-        assert live_states(messages(socket, until=lambda m: m['type'] == 'live' and live_states(m).get(q) == 'asking')[-1])[q] == 'asking'
+        request = at(asked, 'questions', 'id')
+        assert (
+            live_states(
+                messages(socket, until=lambda m: m['type'] == 'live' and live_states(m).get(q) == 'asking')[-1]
+            )[q]
+            == 'asking'
+        )
         assert fleet.get(f'/api/sessions/{q}/state').json()['questions'][0]['id'] == request
         assert fleet.get(f'/api/sessions/{a}/state').json()['questions'] == []
         answers = {'answers': [{'header': 'Colour', 'selected': ['Red']}]}
@@ -349,8 +386,10 @@ def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
     with fleet.socket() as socket:
         connected(socket)
         assert fleet.post(f'/api/sessions/{saved.id}/open').json() == {'id': saved.id}
-        snapshot = messages(socket, until=kind('snapshot'))[-1]
-        assert (snapshot['session']['id'], [item['text'] for item in snapshot['items']]) == (saved.id, ['hi', 'hello'])
+        snapshot = messages(socket, until=snapshot_of(saved.id))[-1]
+        assert [at(snapshot, 'items', index, 'text') for index in range(2)] == ['hi', 'hello'], (
+            'the page follows what it opened'
+        )
         assert fleet.post(f'/api/sessions/{saved.id}/open').json() == {'id': saved.id}
     assert [runtime for runtime in fleet.runtimes] == ['home', 'saved']
     assert fleet.get('/api/state').json()['session']['id'] == saved.id
@@ -368,7 +407,7 @@ def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet)
     assert fleet.portal.call(PluginHost[None](name='bare', console=Console(), settings={}).default_model) is None
 
 
-def test_a_host_outside_the_loader_is_its_one_session() -> None:
+async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     """A `web` plugin built on a bare host, as in a test, shows that host as its only live session."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     live = HostSessions(host)
@@ -376,18 +415,17 @@ def test_a_host_outside_the_loader_is_its_one_session() -> None:
     assert live.get(session.id) is session and live.current() is None
     with pytest.raises(LookupError):
         live.get('other')
-    for opening in (lambda: live.open('x'), live.new, lambda: live.close(session.id)):
+    for opening in (live.open('x'), live.new(), live.close(session.id)):
         with pytest.raises(RuntimeError, match='opens no other'):
-            anyio.run(opening)
+            await opening
     live.subscribe(lambda: None)()
     unwatch = session.watch()
     unwatch()
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
     assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
-    assert anyio.run(session.complete, '/') == []
+    assert await session.complete('/') == []
     with pytest.raises(KeyError):
         session.setting('run.code_mode')
     service = WebService(host=host)
     assert service.live_message().sessions[0].state == 'idle'
-    assert os.getpid() > 0

@@ -271,7 +271,7 @@ class WebService:
         default = self.default()
         directory = default.session.workspace if workspace is None else workspace_directory(workspace)
         try:
-            session = await self.live.new(directory)
+            session = await self.live.new(workspace=directory)
         except RuntimeError:
             if directory != default.session.workspace:
                 if not self.catalog.follows_workspace:

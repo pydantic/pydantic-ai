@@ -94,7 +94,7 @@ class HostSessions:
     async def open(self, conversation_id: str, /) -> LiveSession:
         raise RuntimeError(_OPENS_NONE)
 
-    async def new(self, workspace: Path | None = None) -> LiveSession:
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
         raise RuntimeError(_OPENS_NONE)
 
     async def close(self, live_id: str, /) -> None:
