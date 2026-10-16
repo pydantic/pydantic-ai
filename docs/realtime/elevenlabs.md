@@ -224,8 +224,9 @@ the two.
 No price is known for the platform, so [`usage.cost`][pydantic_ai.usage.RunUsage.cost] is always
 `None` and a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] can't be enforced. Look the
 cost up afterwards through the ElevenLabs conversations API: every
-[`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the conversation's id in
-`provider_details['conversation_id']`, and the live connection has it as
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] the conversation ends, cut off and lost ones included,
+carries the conversation's id in `provider_details['conversation_id']` (one still under way when the session
+itself closes has none), and the live connection has it as
 [`ElevenLabsAgentsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.conversation_id].
 
 ### Provider-specific quirks

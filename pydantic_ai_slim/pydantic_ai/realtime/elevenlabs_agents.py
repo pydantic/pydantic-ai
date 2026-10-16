@@ -37,7 +37,7 @@ import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 import httpx2
@@ -83,7 +83,7 @@ from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
+from ._lifecycle import LifecycleEvent, RealtimeFrame, ResponseEnded, StaleEvent
 from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
 from .codec import (
     AudioDelta,
@@ -1588,6 +1588,26 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
+        return self._name_conversation(self._lifecycle_frame(events))
+
+    def _name_conversation(self, frame: RealtimeFrame) -> RealtimeFrame:
+        """Name the conversation on every response the frame ends, as `_finalize_response` does on its terminal.
+
+        A response ends without a terminal when it is cut off or the connection drops, and it is the conversation id
+        that a consumer needs to look its cost up afterwards.
+        """
+        if self._conversation_id is None:
+            return frame
+        return [
+            replace(
+                event, provider_details={'conversation_id': self._conversation_id, **(event.provider_details or {})}
+            )
+            if isinstance(event, ResponseEnded)
+            else event
+            for event in frame
+        ]
+
+    def _lifecycle_frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         deferred, self._deferred_cut = self._deferred_cut, None
         ends_response = any(isinstance(event, ResponseDone) for event in events)
         if self._response_open and len(events) == 1 and isinstance(events[0], RealtimeResponseInterruptedEvent):
@@ -1627,7 +1647,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         else:
             message = f'{_PROVIDER_LABEL} connection closed: {error}'
         self._tail = None
-        return [*self._lifecycle.connection_lost(), RealtimeSessionErrorEvent(message=message, recoverable=False)]
+        return self._name_conversation(
+            [*self._lifecycle.connection_lost(), RealtimeSessionErrorEvent(message=message, recoverable=False)]
+        )
 
     async def _map_event(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         """Map one server frame to codec events; pings are answered here and yield nothing."""

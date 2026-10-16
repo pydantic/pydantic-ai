@@ -2449,13 +2449,16 @@ async def test_a_queue_timeout_close_says_so() -> None:
 
 
 async def test_a_dropped_connection_loses_the_response_under_way() -> None:
+    # It has no terminal to carry the conversation id, so the end of it does: the id is what a cost lookup needs.
     connection, ws = _connection()
     await connection.send('Hi')
     ws._incoming.append(json.dumps(_AUDIO))  # pyright: ignore[reportPrivateUsage]
     frames = [frame async for frame in connection.frames()]
     assert frames[-1] == snapshot(
         [
-            ResponseEnded(response_id='pydantic_ai_response_1', status='lost'),
+            ResponseEnded(
+                response_id='pydantic_ai_response_1', status='lost', provider_details={'conversation_id': 'conv_1'}
+            ),
             RealtimeSessionErrorEvent(
                 message='ElevenLabs Agents connection closed: received 1000 (OK); no close frame sent',
                 recoverable=False,
