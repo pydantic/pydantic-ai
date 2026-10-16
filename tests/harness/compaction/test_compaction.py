@@ -3259,7 +3259,7 @@ class TestCompactionSpan:
 
         comp: TieredCompaction[None] = TieredCompaction(tiers=[InPlace()], target_tokens=1)
         messages: list[ModelMessage] = [_user('first'), _assistant('a'), _user('second'), _assistant('b')]
-        await comp.before_model_request(_make_ctx_with_tracer(), _make_request_context(messages))
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
