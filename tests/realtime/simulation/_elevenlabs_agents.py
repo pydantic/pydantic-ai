@@ -38,7 +38,7 @@ import httpx2
 from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
 
-from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
+from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 from pydantic_ai.realtime import RealtimeModel, elevenlabs_agents as rt_elevenlabs
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
 from pydantic_ai.realtime.elevenlabs_agents import (
@@ -416,7 +416,7 @@ class ElevenLabsAgentsSimulation(Simulation):
     def build_model(self) -> RealtimeModel:
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(_rest))
         return ElevenLabsAgentsRealtimeModel(
-            AGENT_ID, provider=ElevenLabsAgentsProvider(api_key='simulated', http_client=client)
+            AGENT_ID, provider=ElevenLabsProvider(api_key='simulated', http_client=client)
         )
 
     def model_settings(self) -> RealtimeModelSettings:

@@ -61,7 +61,7 @@ A choice that forces a tool call — `'required'` or a list of tool names — ra
 ElevenLabs Agents. Applied to every response, including the one after a tool result, it would never let
 the model answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the
 session. Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of
-tool names as a restriction, like `ToolOrOutput`. On [ElevenLabs Agents](elevenlabs-agents.md#settings), a
+tool names as a restriction, like `ToolOrOutput`. On [ElevenLabs Agents](elevenlabs.md#settings), a
 restriction narrows the hosted agent's attached tools for the conversation, which needs the agent's
 *Tool IDs* override enabled. To choose the tools from the run context, filter them
 with a [filtered toolset](../toolsets.md#filtering-tools) or

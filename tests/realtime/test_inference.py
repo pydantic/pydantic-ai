@@ -150,6 +150,8 @@ def test_infer_realtime_model_elevenlabs_agents(env: TestEnv) -> None:
     model = infer_realtime_model('elevenlabs-agents:agent_0101test')
     assert type(model).__name__ == 'ElevenLabsAgentsRealtimeModel'
     assert model.model_name == 'agent_0101test'
+    # The model string names the model class; the provider is ElevenLabs' own.
+    assert getattr(model, '_provider').name == 'elevenlabs'
     assert getattr(model, '_provider').base_url == 'https://api.elevenlabs.io'
 
 

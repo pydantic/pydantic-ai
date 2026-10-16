@@ -41,7 +41,7 @@ with try_import() as azure_imports_successful:
 with try_import() as elevenlabs_agents_imports_successful:
     # The provider itself has no optional dependency; the realtime module needs `websockets`.
     import pydantic_ai.realtime.elevenlabs_agents  # noqa: F401  # pyright: ignore[reportUnusedImport]
-    from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.models import AbstractModel
@@ -332,8 +332,8 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
 @pytest.fixture
 def elevenlabs_agents_ws_cassette(
     request: pytest.FixtureRequest, elevenlabs_api_key: str
-) -> Iterator[tuple[ElevenLabsAgentsProvider, RealtimeCassette]]:
-    """An `ElevenLabsAgentsProvider` whose agent WebSocket is backed by a cassette.
+) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
+    """An `ElevenLabsProvider` whose agent WebSocket is backed by a cassette.
 
     The REST preflight around the WebSocket records an HTTP VCR cassette (`pytest.mark.vcr`) under the
     module-named cassette subdirectory, so the WebSocket cassette gets its own subdirectory, as for
@@ -342,7 +342,7 @@ def elevenlabs_agents_ws_cassette(
     if not elevenlabs_agents_imports_successful():  # pragma: no cover
         pytest.skip('websockets not installed')
     with _ws_cassette(request, 'elevenlabs_agents', subdir='test_elevenlabs_agents_ws_and_http') as cassette:
-        yield ElevenLabsAgentsProvider(api_key=elevenlabs_api_key), cassette
+        yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
 
 
 def _gateway_realtime_provider(kind: str, api_key: str | None) -> Provider[Any]:
@@ -516,7 +516,7 @@ def parity_ws_cassette(
     elif route == 'elevenlabs-agents':
         if not elevenlabs_agents_imports_successful():  # pragma: no cover
             pytest.skip('websockets not installed')
-        provider = ElevenLabsAgentsProvider(api_key=elevenlabs_api_key)
+        provider = ElevenLabsProvider(api_key=elevenlabs_api_key)
         provider_name = 'elevenlabs_agents'
         # The REST preflight records an HTTP VCR cassette under the module-named subdirectory, so the
         # WebSocket cassette takes its own, as in `elevenlabs_agents_ws_cassette`.

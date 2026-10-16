@@ -77,6 +77,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..models import ModelRequestParameters, get_user_agent
+from ..profiles.elevenlabs import elevenlabs_agents_realtime_model_profile
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -99,14 +100,14 @@ from .codec import (
     ToolResult,
 )
 from .model import RealtimeError, RealtimeModel
-from .profiles import RealtimeModelProfileSpec
+from .profiles import RealtimeModelProfile, RealtimeModelProfileSpec, merge_realtime_profile
 from .settings import RealtimeModelSettings
 
 if TYPE_CHECKING:
     import httpx
 
     from .._http import AsyncHTTPClient
-    from ..providers.elevenlabs_agents import ElevenLabsAgentsProvider
+    from ..providers.elevenlabs import ElevenLabsProvider
 
 __all__ = (
     'ElevenLabsAgentsRealtimeModel',
@@ -871,9 +872,9 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         agent_id: The ElevenLabs agent to converse with, e.g. `agent_0101k2...`. The agent must exist;
             Pydantic AI overrides its per-conversation configuration where the agent's Security-tab
             toggles allow, and fails loudly where they don't.
-        provider: The provider to use for authentication and API access. Defaults to `'elevenlabs-agents'`
+        provider: The provider to use for authentication and API access. Defaults to `'elevenlabs'`
             (reads `ELEVENLABS_API_KEY`); pass an
-            [`ElevenLabsAgentsProvider`][pydantic_ai.providers.elevenlabs_agents.ElevenLabsAgentsProvider] for a custom
+            [`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider] for a custom
             key, HTTP client, or regional (data-residency) base URL.
         settings: [Model settings][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModelSettings]
             used as defaults for realtime sessions.
@@ -885,7 +886,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     agent_id: str
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
-    _provider: ElevenLabsAgentsProvider = field(init=False, repr=False)
+    _provider: ElevenLabsProvider = field(init=False, repr=False)
 
     # Written out rather than generated because `profile` has to be an init argument handed to the
     # base constructor, while `RealtimeModel.profile` stays the *resolved* profile, exactly as on a
@@ -894,21 +895,21 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         self,
         agent_id: str,
         *,
-        provider: Provider[AsyncHTTPClient] | str = 'elevenlabs-agents',
+        provider: Provider[AsyncHTTPClient] | str = 'elevenlabs',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
         super().__init__(settings=settings, profile=profile)
         self.agent_id = agent_id
-        from ..providers.elevenlabs_agents import ElevenLabsAgentsProvider
+        from ..providers.elevenlabs import ElevenLabsProvider
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        if not isinstance(provider, ElevenLabsAgentsProvider):
+        if not isinstance(provider, ElevenLabsProvider):
             # The REST preflight and signed-URL auth below read the ElevenLabs-specific `api_key` off
             # the provider; a foreign one would fail with an `AttributeError` instead of the real mistake.
             raise UserError(
-                f"`ElevenLabsAgentsRealtimeModel` requires an `ElevenLabsAgentsProvider` or `provider='elevenlabs-agents'`; "
+                f"`ElevenLabsAgentsRealtimeModel` requires an `ElevenLabsProvider` or `provider='elevenlabs'`; "
                 f'got {provider.name!r}.'
             )
         self._provider = provider
@@ -921,6 +922,11 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     @property
     def system(self) -> str:
         return 'elevenlabs'
+
+    def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
+        # An agent id names no model, so the provider has nothing to say about one: what holds for every agent comes
+        # from here, ahead of the `profile=` argument.
+        return merge_realtime_profile(profile, elevenlabs_agents_realtime_model_profile(self.model_name))
 
     # --- REST preflight ---------------------------------------------------------------------------
 

@@ -73,7 +73,7 @@ with try_import() as imports_successful:
     import websockets
     from websockets.frames import Close
 
-    from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs
     from pydantic_ai.realtime.elevenlabs_agents import (
         ElevenLabsAgentsRealtimeConnection,
@@ -230,7 +230,7 @@ def _model(
     **kwargs: Any,
 ) -> ElevenLabsAgentsRealtimeModel:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(recorder))
-    provider = ElevenLabsAgentsProvider(api_key='test-api-key', http_client=client)
+    provider = ElevenLabsProvider(api_key='test-api-key', http_client=client)
     return ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=provider, settings=settings, **kwargs)
 
 
@@ -347,7 +347,7 @@ def test_profile() -> None:
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 def test_rejects_non_elevenlabs_provider() -> None:
-    with pytest.raises(UserError, match='requires an `ElevenLabsAgentsProvider`'):
+    with pytest.raises(UserError, match='requires an `ElevenLabsProvider`'):
         ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=OpenAIProvider(api_key='k'))  # type: ignore[arg-type]
 
 
@@ -515,7 +515,7 @@ async def test_preflight_transport_error_maps_to_realtime_error() -> None:
         raise httpx2.ConnectError('connection refused')
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(refuse))
-    provider = ElevenLabsAgentsProvider(api_key='test-api-key', http_client=client)
+    provider = ElevenLabsProvider(api_key='test-api-key', http_client=client)
     model = ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=provider)
     with pytest.raises(RealtimeError, match='Could not reach the ElevenLabs API'):
         async with _connect(model):

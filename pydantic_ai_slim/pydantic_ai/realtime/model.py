@@ -586,6 +586,9 @@ def infer_realtime_model(
     if model_kind == 'elevenlabs-agents':
         from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
 
+        # The model string names the model class; the provider is ElevenLabs' own.
+        if isinstance(resolved_provider, str):
+            resolved_provider = 'elevenlabs'
         return ElevenLabsAgentsRealtimeModel(model_name, provider=resolved_provider)
     # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
     if model_kind in ('google', 'google-cloud'):

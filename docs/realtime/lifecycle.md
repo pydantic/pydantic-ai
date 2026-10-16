@@ -143,7 +143,7 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
 - [xAI session length](xai.md#session-length)
-- [ElevenLabs Agents session behavior](elevenlabs-agents.md#feature-support-and-limitations)
+- [ElevenLabs Agents session behavior](elevenlabs.md#feature-support-and-limitations)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.

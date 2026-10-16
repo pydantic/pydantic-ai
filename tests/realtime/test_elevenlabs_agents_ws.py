@@ -65,7 +65,7 @@ from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
-    from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.realtime.elevenlabs_agents import (
         ElevenLabsAgentsRealtimeModel,
         ElevenLabsAgentsRealtimeModelSettings,
@@ -98,7 +98,7 @@ _CONTEXT_LIMIT_TOKENS = 1_048_576
 
 @pytest.mark.realtime_ws_hold_open
 async def test_tool_round_and_followup_turn(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], realtime_recording: bool
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], realtime_recording: bool
 ) -> None:
     """A text-in tool round against the hosted agent, then a follow-up turn.
 
@@ -212,7 +212,7 @@ async def test_tool_round_and_followup_turn(
 
 
 async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
 ) -> None:
     """With the preflight off, the agent calls a tool this run never defined.
 
@@ -265,7 +265,7 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
 
 
 async def test_text_in_audio_out_turn(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
 ) -> None:
     """The simplest session: a text turn answered with streamed audio and a final transcript."""
     provider, cassette = elevenlabs_agents_ws_cassette
@@ -314,7 +314,7 @@ async def test_text_in_audio_out_turn(
 
 
 async def test_audio_in_server_vad_turn(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], assets_path: Path
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], assets_path: Path
 ) -> None:
     """A spoken user turn: the agent's ASR transcribes it, its turn model ends it, and it answers.
 
@@ -374,7 +374,7 @@ _SILENCE_AFTER_BARGE_IN = 8.0
 
 @pytest.mark.realtime_ws_hold_open
 async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
     assets_path: Path,
     realtime_recording: bool,
 ) -> None:
@@ -441,7 +441,7 @@ async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply
 
 
 async def test_text_output_modality_returns_text(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
 ) -> None:
     """`output_modality='text'` maps to the toggle-gated text-only override and streams text parts."""
     provider, cassette = elevenlabs_agents_ws_cassette
@@ -480,7 +480,7 @@ async def test_text_output_modality_returns_text(
 
 
 async def test_settings_overrides_reach_the_initiation_frame(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
 ) -> None:
     """Each `elevenlabs_*` override rides in the initiation frame, and the first message is spoken.
 
@@ -595,7 +595,7 @@ def _rest_body(vcr: Cassette, index: int) -> dict[str, Any]:
 
 
 async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """`'sync'` on an agent with no tools: the run's tool is created, the agent re-pointed, the round works."""
     provider, cassette = elevenlabs_agents_ws_cassette
@@ -637,7 +637,7 @@ async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
 
 
 async def test_tool_sync_adopts_a_matching_unattached_tool(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """A workspace tool that already matches and no agent depends on is attached instead of duplicated."""
     provider, cassette = elevenlabs_agents_ws_cassette
@@ -668,7 +668,7 @@ async def test_tool_sync_adopts_a_matching_unattached_tool(
     'this recording (against a deleted dev agent) predates'
 )
 async def test_tool_sync_updates_a_stale_tool_in_place(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """An attached tool whose description drifted is patched under its id; the agent is left alone."""
     provider, cassette = elevenlabs_agents_ws_cassette
@@ -693,7 +693,7 @@ async def test_tool_sync_updates_a_stale_tool_in_place(
 
 
 async def test_tool_sync_detaches_extra_client_tools_and_keeps_server_tools(
-    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """A client tool the run does not define is detached; the agent's webhook tool stays attached first."""
     provider, cassette = elevenlabs_agents_ws_cassette

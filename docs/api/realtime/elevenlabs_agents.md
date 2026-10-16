@@ -15,7 +15,7 @@ the server after the handshake instead), and reconciles the session's tools with
 tools (error on mismatch by default, opt-in sync).
 Turn-taking is owned by ElevenLabs' server-side turn model: there is no manual turn control, no
 client-initiated interruption, and no session resumption. Authentication comes from an
-[`ElevenLabsAgentsProvider`][pydantic_ai.providers.elevenlabs_agents.ElevenLabsAgentsProvider], whose `base_url`
+[`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider], whose `base_url`
 selects the data-residency region.
 
 ::: pydantic_ai.realtime.elevenlabs_agents

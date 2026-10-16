@@ -22,7 +22,7 @@ pip/uv-add "pydantic-ai-slim[elevenlabs-agents-realtime]"
 ```
 
 Set `ELEVENLABS_API_KEY`, or pass an
-[`ElevenLabsAgentsProvider`][pydantic_ai.providers.elevenlabs_agents.ElevenLabsAgentsProvider] with `api_key=`. The
+[`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider] with `api_key=`. The
 key is required even for public agents, because the connect-time preflight authenticates with it.
 The provider's `base_url` doubles as the region switch: pass a
 [data-residency host](https://elevenlabs.io/docs/product-guides/administration/data-residency) such
@@ -182,7 +182,7 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 ## Gateway
 
 ElevenLabs is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
-through `provider='elevenlabs-agents'` or an `ElevenLabsAgentsProvider`.
+through `provider='elevenlabs-agents'` or an `ElevenLabsProvider`.
 
 ## Audio formats
 
