@@ -1235,7 +1235,8 @@ gone opens read-only, and so does, with `/web` from a terminal, a session saved 
 directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
-window's General section, the others a dialog. Its edits go through the menu's own source, as in
+window's General section, the others a dialog, except where a section lists the command, as Keys &
+accounts lists `/keys`, `/login`, and `/accounts`. Its edits go through the menu's own source, as in
 the terminal, which prints what each one saved. Any other bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
@@ -2499,6 +2500,8 @@ declare its `display.theme` and `display.spinner` rows, without the terminal pic
 previews or `/spinner`'s speed. `/model` declares the saved models, each opening the
 menu `/model settings NAME` shows, without its picker's fallback-chain editors, and
 `/effort` the active model's `/model settings` menu.
+`/keys`, `/accounts`, and `/login` declare theirs too: their actions ask through
+`Dialogs` in the terminal and the page alike.
 A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
 which loads the plugin again after an edit; `menu=` is for a command's menu over
 something else.
@@ -3351,6 +3354,11 @@ reaches your `resolve`, never `resolve_profile`. CLAI cannot see your tokens, so
 lists an account from the time it signed in until the user removes it there;
 removing one does not sign it out of your plugin, and the menu says so. Offer your
 own logout for that.
+
+The web UI's **Keys & accounts** section lists your accounts too, and renames,
+reorders, and removes them there. `handler` and `profile_handler` take no `Dialogs`,
+so signing in to your accounts from the page asks the user to run `/login NAME` in
+the terminal instead.
 
 ### Account usage: `usage`
 
