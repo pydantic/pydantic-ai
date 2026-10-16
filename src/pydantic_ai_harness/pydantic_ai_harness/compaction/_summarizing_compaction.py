@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
@@ -198,35 +200,56 @@ def _format_messages(
     skip_previous_summary: bool = False,
     tool_return_max_chars: int | None = 500,
 ) -> str:
-    """Render messages into a human-readable string for summarization.
+    """Render messages as a transcript of `<message>` elements for summarization.
 
+    Each part becomes its own element, with the transcript's own tags in its content
+    neutralized, so content such as tool output can't close its message and forge another.
     Tool returns are truncated to `tool_return_max_chars` characters with the shared
     truncation marker; `None` renders them whole.
     """
-    lines: list[str] = []
+    elements: list[str] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
             if _is_kept_user_message(msg):
                 continue
             for part in msg.parts:
                 if isinstance(part, UserPromptPart):
-                    lines.append(f'User: {_user_prompt_text(part)}')
+                    elements.append(_message_element('user', _user_prompt_text(part)))
                 elif isinstance(part, SystemPromptPart) and not (
                     skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX)
                 ):
-                    lines.append(f'System: {part.content}')
+                    elements.append(_message_element('system', part.content))
                 elif isinstance(part, ToolReturnPart):
                     content_str = tool_return_text(part)
                     if tool_return_max_chars is not None:
                         content_str = _truncate_with_marker(content_str, tool_return_max_chars)
-                    lines.append(f'Tool [{part.tool_name}]: {content_str}')
+                    elements.append(_message_element('tool_return', content_str, name=part.tool_name))
         else:
             for part in msg.parts:
                 if isinstance(part, TextPart):
-                    lines.append(f'Assistant: {part.content}')
+                    elements.append(_message_element('assistant', part.content))
                 elif isinstance(part, ToolCallPart):
-                    lines.append(f'Tool Call [{part.tool_name}]: {part.args}')
-    return '\n'.join(lines)
+                    elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
+    return '\n'.join(elements)
+
+
+_TRANSCRIPT_TAG = re.compile(r'<(/?)(messages?|previous-summary)\b', re.IGNORECASE)
+"""An opening or closing tag of the summarizer transcript's own markup, in any case."""
+
+
+def _neutralize_transcript_tags(content: str) -> str:
+    """Escape the transcript's own tags in *content*.
+
+    Content then can't open or close a message, the transcript, or the previous summary.
+    """
+    # TODO: switch to the core `wrap()` framing helper once it lands.
+    return _TRANSCRIPT_TAG.sub(lambda match: f'&lt;{match.group(1)}{match.group(2)}', content)
+
+
+def _message_element(role: str, content: str, *, name: str | None = None) -> str:
+    """One transcript entry: *content* in a `<message>` element tagged with its *role* and, for tools, *name*."""
+    name_attr = f' name="{html.escape(name)}"' if name is not None else ''
+    return f'<message role="{role}"{name_attr}>\n{_neutralize_transcript_tags(content)}\n</message>'
 
 
 def _user_prompt_text(part: UserPromptPart) -> str:
@@ -757,7 +780,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if previous_summary is not None:
             prompt = (
                 f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
-                f'<previous-summary>\n{previous_summary}\n</previous-summary>'
+                f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
             )
 
         model = self.model if self.model is not None else ctx.model
