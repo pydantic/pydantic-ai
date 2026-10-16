@@ -107,8 +107,8 @@ class LiveRuntimes(JoinedSessions):
 
     def remove(self, runtime: Served) -> None:
         """Stop counting `runtime`, once it has closed."""
-        if self._live.pop(runtime.live_session.id, None) is not None:
-            self.changed(runtime.live_session)
+        self._live.pop(runtime.live_session.id, None)
+        self.changed(runtime.live_session)
 
     def changed(self, session: LiveRuntime) -> None:
         if (live := self._live.get(session.id)) is not None:
