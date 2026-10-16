@@ -509,10 +509,13 @@ backends against `postgres:17`.
 
 ## Bounding snapshot growth
 
-Each step writes a new full-history snapshot keyed by an incrementing `seq`,
-and nothing is pruned by default. Within one long `Agent.run` the snapshot
-count equals the number of settled tool-call steps, so a long single run pays a
-growing storage cost.
+Each settled `CallToolsNode` writes a new full-history snapshot keyed by an
+incrementing `seq`, and nothing is pruned by default. `after_run` adds a
+snapshot only when the final history differs from the newest boundary snapshot,
+and a failing run saves its live history. With `capture_frontier=True`, an
+additional snapshot is written before each model request. Within one long
+`Agent.run`, the default snapshot count follows settled tool-call boundaries;
+frontier capture and error or final fallback paths can add snapshots.
 
 All five stores -- `InMemoryStepStore`, `FileStepStore`, `SqliteStepStore`,
 `MongoStepStore`, and `PostgresStepStore` -- accept an opt-in

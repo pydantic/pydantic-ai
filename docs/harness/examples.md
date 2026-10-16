@@ -6,14 +6,15 @@ description: "Example Pydantic AI Harness agents to read and copy: a coding agen
 # Examples
 
 The [`examples/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/examples)
-directory contains complete agents assembled from individual capabilities. They are
-meant to be read as much as run: every capability choice has the reasoning next to it,
-and each example writes out its full configuration so you can copy it into your own
-code and tweak it, without chasing imports.
+directory contains complete agents meant to be read as much as run. The coding agent
+combines the packaged `Coder` capability with `LocalWorkspace`; the research agent
+shows an agent assembled from individual capabilities. Each example writes out its
+full configuration so you can copy it into your own code and tweak it, without chasing
+imports.
 
 | Example | What it does |
 |---|---|
-| `coding_agent.py` | A coding agent for the current repo, built from the blocks that make up [`Coder`](coder.md) |
+| `coding_agent.py` | A coding agent for the current repo, combining [`Coder`](coder.md) with `LocalWorkspace` |
 | `research_agent.py` | A web-research agent that cites every claim, built from the blocks that make up [`Researcher`](researcher.md) |
 
 If you just want the assembled version, every packaged harness ([`Coder`](coder.md),
@@ -30,7 +31,7 @@ From the repo root:
 
 ```bash
 make install
-uv run examples/coding_agent.py
+uv run python src/pydantic_ai_harness/examples/coding_agent.py
 ```
 
 Each example states its default model at the top and reads the corresponding API key
