@@ -12267,13 +12267,20 @@ async def test_a_provider_tool_call_approved_by_the_handler() -> None:
 
     def approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         seen.append(requests)
-        return requests.build_results(approve_all=True)
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
 
     conn, events, messages = await _run_native_approval([HandleDeferredToolCalls(handler=approve)])
 
     assert seen == [
         DeferredToolRequests(
-            approvals=[ToolCallPart(tool_name='crm_lookup', args={'email': 'ada@example.com'}, tool_call_id='mcp_1')],
+            native_approvals=[
+                NativeToolCallPart(
+                    tool_name='crm_lookup',
+                    args={'email': 'ada@example.com'},
+                    tool_call_id='mcp_1',
+                    provider_name='fake',
+                )
+            ],
             metadata={'mcp_1': {'server': 'crm'}},
         )
     ]
@@ -12313,6 +12320,22 @@ async def test_a_provider_tool_call_the_handler_does_not_simply_approve_is_denie
     assert [(part.outcome, part.content) for part in _native_returns(messages)] == [('denied', reason)]
 
 
+async def test_a_provider_tool_call_is_not_approved_by_a_policy_for_function_tools() -> None:
+    # A handler written for the run's own tools approves what it was asked about: the provider's call isn't that.
+    def approve_function_tools(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    conn, _, _ = await _run_native_approval([HandleDeferredToolCalls(handler=approve_function_tools)])
+
+    assert conn.sent == [
+        NativeToolApproval(
+            'mcp_1',
+            approved=False,
+            reason="The 'crm_lookup' tool requires approval, which was not given during the realtime session.",
+        )
+    ]
+
+
 async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
     # An approval nobody gave isn't one: without a handler, the call is denied rather than left waiting.
     conn, events, _ = await _run_native_approval([])
@@ -12346,7 +12369,7 @@ async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str
 
     async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         await decide_now.wait()
-        return requests.build_results(approve_all=True)
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
 
     agent: Agent[None, str] = Agent()
     conn = _CoreProviderToolConnection() if core else _ProviderToolConnection()
@@ -12398,7 +12421,7 @@ async def test_a_wait_covers_an_approval_asked_between_responses() -> None:
 
     async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
         await decide_now.wait()
-        return requests.build_results(approve_all=True)
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
 
     agent: Agent[None, str] = Agent()
     conn = _CoreProviderToolConnection(request_only=True)

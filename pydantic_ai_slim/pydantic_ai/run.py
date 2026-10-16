@@ -1054,7 +1054,10 @@ class AgentRunResult(Generic[OutputDataT]):
             conversation_id=self.conversation_id,
             deferred_tool_requests=(
                 DeferredToolRequests(
-                    calls=list(output.calls), approvals=list(output.approvals), metadata=dict(output.metadata)
+                    calls=list(output.calls),
+                    approvals=list(output.approvals),
+                    metadata=dict(output.metadata),
+                    native_approvals=list(output.native_approvals),
                 )
                 if isinstance(output, DeferredToolRequests)
                 else None
