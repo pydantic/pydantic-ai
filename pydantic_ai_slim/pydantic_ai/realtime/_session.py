@@ -1760,20 +1760,19 @@ class RealtimeSession:
 
         Swapped for a copy, as the core does, so a snapshot already handed out doesn't change.
         """
-        if self._core is None or not (cut_responses := self._core.cut_responses):
+        if not (cut_responses := self._core.cut_responses):
             return
         for index, message in enumerate(self._history):
-            if not isinstance(message, ModelResponse) or message.provider_response_id is None:
-                continue
-            if (cut := cut_responses.pop(message.provider_response_id, None)) is None:
-                continue
-            cut_speech = iter([part for part in cut.parts if isinstance(part, SpeechPart)])
-            parts: list[ModelResponsePart] = []
-            for part in message.parts:
-                if isinstance(part, SpeechPart):
-                    part = replace(part, interrupted_at_ms=next(cut_speech, part).interrupted_at_ms)
-                parts.append(part)
-            self._replace_recorded_message(index, replace(message, parts=parts, state=cut.state))
+            if isinstance(message, ModelResponse) and message.provider_response_id in cut_responses:
+                cut = cut_responses.pop(message.provider_response_id)
+                cut_speech = iter([part for part in cut.parts if isinstance(part, SpeechPart)])
+                parts = [
+                    replace(part, interrupted_at_ms=next(cut_speech, part).interrupted_at_ms)
+                    if isinstance(part, SpeechPart)
+                    else part
+                    for part in message.parts
+                ]
+                self._replace_recorded_message(index, replace(message, parts=parts, state=cut.state))
 
     def new_messages(self) -> list[ModelMessage]:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
