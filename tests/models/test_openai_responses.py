@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import hmac
 import json
 import re
 import warnings
@@ -4829,13 +4830,41 @@ async def test_openai_previous_response_id_auto_continues_an_unchanged_history_a
     assert [item.get('content') for item in second_request['input']] == ['Again']
 
 
+async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
+    """With a key the digest is an HMAC, and a model with another key resends rather than continuing."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two'), _text_reply('resp_3', 'three')]
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    keyed = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=mock_client), history_digest_key=b'secret'
+    )
+    first = await Agent(keyed, model_settings=settings).run('Hello')
+    request, response = first.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert (
+        response.history_digest
+        == hmac.new(b'secret', ModelMessagesTypeAdapter.dump_json([request]), hashlib.sha256).hexdigest()
+    )
+
+    await Agent(keyed, model_settings=settings).run('Again', message_history=first.all_messages())
+    other = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=mock_client), history_digest_key=b'other'
+    )
+    await Agent(other, model_settings=settings).run('Again', message_history=first.all_messages())
+
+    _, same_key, other_key = get_mock_responses_kwargs(mock_client)
+    assert same_key['previous_response_id'] == 'resp_1'
+    assert 'previous_response_id' not in other_key
+
+
 async def test_openai_previous_response_id_concrete_seed_is_not_used_past_a_changed_history(openai_api_key: str):
     """A stale chain in the history also rules out the seed, which only applies before the first response."""
     response = ModelResponse(
         parts=[TextPart(content='A1')],
         provider_name='openai',
         provider_response_id='resp_1',
-        provider_details={'history_sha256': 'from a different history'},
+        history_digest='from a different history',
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Q')]),
@@ -4882,11 +4911,8 @@ async def test_openai_previous_response_id_records_the_history_on_a_streamed_res
         await result.get_output()
 
     request, response = result.all_messages()
-    assert isinstance(response, ModelResponse) and response.provider_details is not None
-    assert (
-        response.provider_details['history_sha256']
-        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
-    )
+    assert isinstance(response, ModelResponse)
+    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
 
 
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
@@ -5002,8 +5028,8 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                     'finish_reason': IsStr(),
                     'timestamp': IsDatetime(),
                     'service_tier': 'default',
-                    'history_sha256': IsStr(),
                 },
+                history_digest=IsStr(),
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5041,8 +5067,8 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                     'finish_reason': IsStr(),
                     'timestamp': IsDatetime(),
                     'service_tier': 'default',
-                    'history_sha256': IsStr(),
                 },
+                history_digest=IsStr(),
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5072,8 +5098,8 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                     'finish_reason': IsStr(),
                     'timestamp': IsDatetime(),
                     'service_tier': 'default',
-                    'history_sha256': IsStr(),
                 },
+                history_digest=IsStr(),
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -16958,11 +16984,8 @@ async def test_background_response_keeps_its_history_across_the_resume(allow_mod
         result = await Agent(model=model).run('What is the meaning of life?', model_settings=settings)
 
     request, response = result.all_messages()
-    assert isinstance(response, ModelResponse) and response.provider_details is not None
-    assert (
-        response.provider_details['history_sha256']
-        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
-    )
+    assert isinstance(response, ModelResponse)
+    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
