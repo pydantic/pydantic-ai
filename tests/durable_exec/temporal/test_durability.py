@@ -4735,7 +4735,7 @@ async def test_durability_continuation_usage_limit_checked_inside_activity(clien
 # --- `BatchModel` rides the continuation loop: one activity per batch check, durable timers between ---
 
 _batch_wrapped_model = SlowBatchTestModel()
-_batch_model = BatchModel(_batch_wrapped_model, batch_settings=FAST_BATCH_SETTINGS)
+_batch_model = BatchModel(_batch_wrapped_model, **FAST_BATCH_SETTINGS)
 
 _batch_agent = Agent(
     _batch_model,

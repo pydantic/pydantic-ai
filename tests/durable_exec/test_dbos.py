@@ -4790,7 +4790,7 @@ async def test_dbos_durability_batch_model_in_workflow(dbos: DBOS) -> None:
     """
     wrapped = SlowBatchTestModel(pending_checks=2)
     agent = Agent(
-        BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS),
+        BatchModel(wrapped, **FAST_BATCH_SETTINGS),
         name='durability_batch',
         capabilities=[DBOSDurability()],
     )
@@ -4832,7 +4832,7 @@ async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> No
     checks the batch it records instead of submitting the request again.
     """
     wrapped = SlowBatchTestModel(pending_checks=1)
-    batch_model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    batch_model = BatchModel(wrapped, **FAST_BATCH_SETTINGS)
     agent = Agent(batch_model, name='durability_batch_resume', capabilities=[DBOSDurability()])
 
     request = ModelRequest(parts=[UserPromptPart(content='go')])

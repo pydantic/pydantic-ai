@@ -27,7 +27,7 @@ from typing import Any
 import httpx
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentRunResultEvent, PendingModelResponse
 from pydantic_ai.concurrency import ConcurrencyLimiter
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -1392,3 +1392,73 @@ async def test_a_repeated_cancellation_gives_up_on_a_hanging_suspended_job_cance
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, READINESS_WAIT_TIMEOUT)
+
+
+def _background_segments() -> list[_Segment]:
+    """A background job that's still queued on the first request, and done on the next."""
+    return [
+        _Segment(
+            events=_starts((0, 'partial')),
+            response=_response(
+                parts=['partial'],
+                provider_response_id='job1',
+                state='suspended',
+                input_tokens=1,
+                output_tokens=1,
+                provider_details={'background': True},
+            ),
+        ),
+        _Segment(
+            events=_starts((0, 'done')),
+            response=_response(
+                parts=['done'],
+                provider_response_id='job1',
+                state='complete',
+                input_tokens=1,
+                output_tokens=1,
+                provider_details={'background': True},
+            ),
+        ),
+    ]
+
+
+async def test_a_streamed_run_with_pending_output_ends_instead_of_waiting() -> None:
+    """With `PendingModelResponse` in the output type, a streamed run ends on a pending background job.
+
+    Running the agent again with the run's history checks on the same job straight away, rather than first waiting
+    out the poll interval, and finishes the run. A unit test: `FunctionModel` can't stream a suspended segment.
+    """
+    model = _FakeModel(_background_segments())
+    agent = Agent(model, output_type=[str, PendingModelResponse])
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    with Agent.using_sleep(record_sleep):
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+        assert isinstance(output, PendingModelResponse)
+        assert output.response.state == 'suspended'
+        assert output.response.provider_response_id == 'job1'
+        assert (len(model.segments), model.cancelled) == (1, [])
+
+        async with agent.run_stream_events(message_history=result.all_messages()) as stream:
+            events = [event async for event in stream]
+    final = events[-1]
+    assert isinstance(final, AgentRunResultEvent)
+    assert final.result.output == 'done'
+    assert (model.segments, model.cancelled, delays) == ([], [], [])
+
+
+async def test_a_streamed_run_without_pending_output_waits_for_the_job() -> None:
+    model = _FakeModel(_background_segments())
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    with Agent.using_sleep(record_sleep):
+        async with Agent(model).run_stream('Hello') as result:
+            assert await result.get_output() == 'done'
+    assert (model.segments, delays) == ([], [0.5])

@@ -4881,7 +4881,7 @@ async def test_prefect_durability_batch_model_in_flow() -> None:
     task_runs: list[tuple[str, str | None]] = []
     wrapped = SlowBatchTestModel(pending_checks=2, on_batch_call=_record_task_run(task_runs))
     agent = Agent(
-        BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS),
+        BatchModel(wrapped, **FAST_BATCH_SETTINGS),
         name='durability_batch',
         capabilities=[PrefectDurability()],
     )
@@ -4919,7 +4919,7 @@ async def test_prefect_durability_batch_model_resume_from_history() -> None:
     """
     task_runs: list[tuple[str, str | None]] = []
     wrapped = SlowBatchTestModel(pending_checks=1, on_batch_call=_record_task_run(task_runs))
-    batch_model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    batch_model = BatchModel(wrapped, **FAST_BATCH_SETTINGS)
     agent = Agent(batch_model, name='durability_batch_resume', capabilities=[PrefectDurability()])
 
     request = ModelRequest(parts=[UserPromptPart(content='go')])

@@ -149,11 +149,9 @@ async def test_openai_batch_model_agent_run(allow_model_requests: None, openai_a
     """
     model = BatchModel(
         OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key)),
-        batch_settings={
-            'max_requests': 1,
-            'poll_interval': batch_poll_interval(vcr),
-            'max_poll_interval': batch_poll_interval(vcr),
-        },
+        max_requests=1,
+        poll_interval=batch_poll_interval(vcr),
+        max_poll_interval=batch_poll_interval(vcr),
     )
     result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
 

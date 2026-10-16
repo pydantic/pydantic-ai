@@ -12,23 +12,32 @@ import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from typing import Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRequest, TextPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    NativeOutput,
+    PendingModelResponse,
+    PromptedOutput,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult, BatchSettings, EncodedBatchRequest
+from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult, EncodedBatchRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
-from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
 
 
 @pytest.mark.parametrize(
@@ -40,9 +49,9 @@ from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
         {'poll_interval': timedelta(minutes=20), 'max_poll_interval': timedelta(minutes=10)},
     ],
 )
-def test_batch_settings_are_validated(settings: BatchSettings) -> None:
+def test_batch_settings_are_validated(settings: dict[str, Any]) -> None:
     with pytest.raises(UserError, match='must be positive'):
-        BatchModel(TestModel(), batch_settings=settings)
+        BatchModel(TestModel(), **settings)
 
 
 def test_batch_model_needs_a_model_with_a_batch_api() -> None:
@@ -57,12 +66,12 @@ def test_batch_model_needs_a_model_with_a_batch_api() -> None:
 
 
 def test_batch_size_is_capped_by_the_provider_limit() -> None:
-    assert BatchModel(TestModel(), batch_settings={'max_requests': 1_000_000}).max_requests == 10_000
+    assert BatchModel(TestModel(), max_requests=1_000_000).max_requests == 10_000
 
 
 async def test_concurrent_runs_share_a_batch() -> None:
     wrapped = SlowBatchTestModel(pending_checks=2)
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3, 'max_wait': None}))
+    agent = Agent(BatchModel(wrapped, **FAST_POLLING, max_requests=3, max_wait=None))
 
     results = await asyncio.gather(*(agent.run(f'Hello {i}') for i in range(3)))
 
@@ -78,7 +87,7 @@ async def test_concurrent_runs_share_a_batch() -> None:
 
 async def test_a_partial_batch_is_submitted_after_max_wait() -> None:
     wrapped = SlowBatchTestModel()
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 10}))
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS, max_requests=10))
 
     result = await agent.run('Hello')
 
@@ -88,7 +97,7 @@ async def test_a_partial_batch_is_submitted_after_max_wait() -> None:
 
 async def test_flush_submits_without_waiting() -> None:
     wrapped = SlowBatchTestModel()
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_wait=None)
     agent = Agent(model)
 
     runs = [asyncio.create_task(agent.run(f'Hello {i}')) for i in range(2)]
@@ -111,7 +120,7 @@ async def test_cancelling_a_flush_only_stops_its_caller_waiting() -> None:
             return await super().batch_create(requests)
 
     wrapped = GatedBatchModel()
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_wait=None)
     agent = Agent(model)
 
     runs = [asyncio.create_task(agent.run(f'Hello {i}')) for i in range(2)]
@@ -129,7 +138,7 @@ async def test_cancelling_a_flush_only_stops_its_caller_waiting() -> None:
 
 async def test_a_cancelled_request_leaves_the_queue_before_submission() -> None:
     wrapped = SlowBatchTestModel()
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_wait=None)
     agent = Agent(model)
 
     kept = asyncio.create_task(agent.run('Keep me'))
@@ -147,11 +156,9 @@ async def test_a_cancelled_request_leaves_the_queue_before_submission() -> None:
 async def test_checks_back_off_up_to_the_maximum_interval() -> None:
     model = BatchModel(
         TestModel(),
-        batch_settings={
-            'max_wait': timedelta(milliseconds=1),
-            'poll_interval': timedelta(seconds=10),
-            'max_poll_interval': timedelta(seconds=30),
-        },
+        max_wait=timedelta(milliseconds=1),
+        poll_interval=timedelta(seconds=10),
+        max_poll_interval=timedelta(seconds=30),
     )
     pending = await _pending_response(model)
 
@@ -164,18 +171,72 @@ async def test_checks_back_off_up_to_the_maximum_interval() -> None:
 async def test_a_run_resumes_waiting_for_the_same_batch_from_history() -> None:
     """A history ending in a pending batch response picks the batch back up instead of submitting the request again."""
     wrapped = SlowBatchTestModel(pending_checks=1)
-    model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    model = BatchModel(wrapped, **FAST_BATCH_SETTINGS)
     pending = await _pending_response(model)
     assert pending.state == 'suspended'
     assert [batch.request_count for batch in wrapped.created] == [1]
 
     # A fresh `BatchModel` over the same provider model, as in a new process.
-    agent = Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS))
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS))
     result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('Hello')]), pending])
 
     assert result.output == 'success (no tool calls)'
     assert len(wrapped.created) == 1
     assert [message.state for message in result.all_messages() if isinstance(message, ModelResponse)] == ['complete']
+
+
+async def test_a_run_with_pending_output_ends_once_its_batch_is_submitted() -> None:
+    """With `PendingModelResponse` in the output type, a run ends instead of waiting, and resuming checks once."""
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS), output_type=[str, PendingModelResponse])
+
+    result = await agent.run('Hello')
+    assert isinstance(result.output, PendingModelResponse)
+    assert result.output.response == result.all_messages()[-1]
+    assert result.output.response.state == 'suspended'
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 0)
+
+    # A fresh `BatchModel` over the same provider model, as in a new process.
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS), output_type=[str, PendingModelResponse])
+    still_pending = await agent.run(message_history=result.all_messages())
+    assert isinstance(still_pending.output, PendingModelResponse)
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 1)
+    # The new check replaces the pending response, rather than being added after it.
+    assert len(still_pending.all_messages()) == len(result.all_messages())
+
+    finished = await agent.run(message_history=still_pending.all_messages())
+    assert finished.output == 'success (no tool calls)'
+    assert (len(wrapped.created), wrapped.status_checks, wrapped.canceled) == (1, 2, [])
+    assert [message.state for message in finished.all_messages() if isinstance(message, ModelResponse)] == ['complete']
+
+
+async def test_a_run_with_pending_output_ends_for_each_request_it_makes() -> None:
+    """Each model request of a run that calls a tool ends the run with a `PendingModelResponse` until it's answered."""
+    wrapped = SlowBatchTestModel()
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS), output_type=[str, PendingModelResponse])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    result = await agent.run('Where?')
+    pending_outputs = 0
+    while isinstance(result.output, PendingModelResponse):
+        pending_outputs += 1
+        result = await agent.run(message_history=result.all_messages())
+
+    assert result.output == snapshot('{"get_city":"Paris"}')
+    assert pending_outputs == 2
+    assert len(wrapped.created) == 2
+
+
+def test_pending_model_response_needs_another_output_type() -> None:
+    with pytest.raises(UserError, match='other than `PendingModelResponse`'):
+        Agent(TestModel(), output_type=PendingModelResponse)
+    with pytest.raises(UserError, match='`NativeOutput` cannot contain `PendingModelResponse`'):
+        Agent(TestModel(), output_type=NativeOutput([str, PendingModelResponse]))
+    with pytest.raises(UserError, match='`PromptedOutput` cannot contain `PendingModelResponse`'):
+        Agent(TestModel(), output_type=PromptedOutput([str, PendingModelResponse]))
 
 
 async def test_a_provider_continuation_keeps_its_content_across_batch_rounds() -> None:
@@ -190,9 +251,7 @@ async def test_a_provider_continuation_keeps_its_content_across_batch_rounds() -
         assert isinstance(messages[-1], ModelResponse) and messages[-1].text == 'The answer '
         return ModelResponse(parts=[TextPart('is 42.')], provider_response_id='seg2')
 
-    result = await Agent(BatchModel(FunctionModel(respond), batch_settings=FAST_BATCH_SETTINGS)).run(
-        'What is the answer?'
-    )
+    result = await Agent(BatchModel(FunctionModel(respond), **FAST_BATCH_SETTINGS)).run('What is the answer?')
 
     assert result.output == 'The answer is 42.'
     response = result.all_messages()[-1]
@@ -206,7 +265,7 @@ async def test_a_batch_error_reaches_the_run() -> None:
         raise ModelHTTPError(status_code=400, model_name='function', body={'error': 'bad request'})
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await Agent(BatchModel(FunctionModel(fail), batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
+        await Agent(BatchModel(FunctionModel(fail), **FAST_BATCH_SETTINGS)).run('Hello')
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == {'error': 'bad request'}
 
@@ -218,12 +277,12 @@ async def test_a_result_missing_from_the_batch_is_a_model_error() -> None:
             return []
 
     with pytest.raises(ModelAPIError, match='expired before the model ran it'):
-        await Agent(BatchModel(LosingModel(), batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
+        await Agent(BatchModel(LosingModel(), **FAST_BATCH_SETTINGS)).run('Hello')
 
 
 async def test_abandoning_every_request_cancels_the_batch() -> None:
     wrapped = SlowBatchTestModel(pending_checks=1000)
-    model = BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)
+    model = BatchModel(wrapped, **FAST_BATCH_SETTINGS)
     pending = await _pending_response(model)
 
     await model.cancel_suspended_response(pending)
@@ -233,7 +292,7 @@ async def test_abandoning_every_request_cancels_the_batch() -> None:
 
 async def test_cancelling_a_run_cancels_its_batch() -> None:
     wrapped = SlowBatchTestModel(pending_checks=1000)
-    run = asyncio.create_task(Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)).run('Hello'))
+    run = asyncio.create_task(Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS)).run('Hello'))
     await wrapped.wait_until(lambda m: m.status_checks > 0)
     run.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -245,7 +304,7 @@ async def test_cancelling_a_run_cancels_its_batch() -> None:
 async def test_cancelling_a_run_from_an_anyio_scope_cancels_its_batch() -> None:
     """The provider cancel makes a request, so it only completes if the re-delivered `anyio` cancellation can't stop it."""
     wrapped = SlowBatchTestModel(pending_checks=1000)
-    agent = Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS))
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS))
 
     async def run() -> None:
         await agent.run('Hello')
@@ -259,7 +318,7 @@ async def test_cancelling_a_run_from_an_anyio_scope_cancels_its_batch() -> None:
 
 
 async def test_a_response_that_is_not_waiting_is_cancelled_by_the_wrapped_model() -> None:
-    model = BatchModel(TestModel(), batch_settings=FAST_BATCH_SETTINGS)
+    model = BatchModel(TestModel(), **FAST_BATCH_SETTINGS)
     await model.cancel_suspended_response(ModelResponse(parts=[], state='suspended'))
 
 
@@ -284,7 +343,7 @@ async def test_model_request_batch_returns_responses_and_errors_in_request_order
             BatchRequest(custom_id=name, messages=[ModelRequest(parts=[UserPromptPart(name)])])
             for name in ('one', 'fail', 'two')
         ],
-        batch_settings=FAST_BATCH_SETTINGS,
+        **FAST_POLLING,
     )
 
     one, failed, two = responses
@@ -305,7 +364,7 @@ async def test_model_request_batch_splits_requests_by_the_provider_limit() -> No
     responses = await model_request_batch(
         model,
         [BatchRequest(custom_id=str(i), messages=[ModelRequest(parts=[UserPromptPart('Hello')])]) for i in range(5)],
-        batch_settings=FAST_BATCH_SETTINGS,
+        **FAST_POLLING,
     )
 
     assert len(responses) == 5
@@ -318,7 +377,7 @@ async def test_model_request_batch_cancels_unfinished_batches_when_cancelled() -
         model_request_batch(
             model,
             [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
-            batch_settings=FAST_BATCH_SETTINGS,
+            **FAST_POLLING,
         )
     )
     await model.wait_until(lambda m: m.status_checks > 0)
@@ -336,7 +395,7 @@ async def test_model_request_batch_cancels_unfinished_batches_under_an_anyio_can
         await model_request_batch(
             model,
             [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
-            batch_settings=FAST_BATCH_SETTINGS,
+            **FAST_POLLING,
         )
 
     async with anyio.create_task_group() as tg:
@@ -357,7 +416,7 @@ async def test_model_request_batch_does_not_cancel_batches_that_ended() -> None:
         await model_request_batch(
             model,
             [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
-            batch_settings=FAST_BATCH_SETTINGS,
+            **FAST_POLLING,
         )
 
     assert len(model.created) == 1
@@ -385,7 +444,7 @@ async def test_exiting_the_model_ends_its_queued_and_running_work() -> None:
 
     tasks_before = asyncio.all_tasks()
     wrapped = HangingModel(pending_checks=1)
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None, 'max_requests': 1})
+    model = BatchModel(wrapped, **FAST_POLLING, max_wait=None, max_requests=1)
     agent = Agent(model)
     async with model:
         checked = asyncio.create_task(agent.run('Check on me'))
@@ -404,7 +463,7 @@ async def test_exiting_the_model_ends_its_queued_and_running_work() -> None:
 
 async def test_only_the_outermost_exit_ends_queued_work() -> None:
     wrapped = SlowBatchTestModel()
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_wait=None)
     async with model:
         async with model:
             run = asyncio.create_task(Agent(model).run('Hello'))
@@ -457,9 +516,7 @@ async def test_a_failed_submission_reaches_every_request_in_the_batch() -> None:
         async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
             raise ModelHTTPError(status_code=500, model_name='test', body='batch creation failed')
 
-    agent = Agent(
-        BatchModel(FailingBatchModel(), batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None})
-    )
+    agent = Agent(BatchModel(FailingBatchModel(), **FAST_POLLING, max_requests=2, max_wait=None))
     results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
 
     assert [type(result).__name__ for result in results] == ['ModelHTTPError', 'ModelHTTPError']
@@ -485,7 +542,7 @@ async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
             return await super().batch_create([replace(request, body=next(tokens)) for request in requests])
 
     wrapped = ConstantBodyModel()
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 3, 'max_wait': None}))
+    agent = Agent(BatchModel(wrapped, **FAST_POLLING, max_requests=3, max_wait=None))
 
     results = await asyncio.gather(*(agent.run('Hello') for _ in range(3)))
 
@@ -496,7 +553,7 @@ async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
 
 async def test_requests_cancelled_before_submission_submit_nothing() -> None:
     wrapped = SlowBatchTestModel()
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_wait=None)
     run = asyncio.create_task(Agent(model).run('Hello'))
     await wrapped.wait_until(lambda m: m.encoded == 1)
     run.cancel()
@@ -509,7 +566,7 @@ async def test_requests_cancelled_before_submission_submit_nothing() -> None:
 
 async def test_abandoning_some_requests_keeps_the_batch_running() -> None:
     wrapped = SlowBatchTestModel(pending_checks=1000)
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_requests=2, max_wait=None)
     first, _ = await asyncio.gather(_pending_response(model), _pending_response(model))
 
     await model.cancel_suspended_response(first)
@@ -531,7 +588,7 @@ async def test_results_are_shared_by_the_requests_of_a_batch(monkeypatch: pytest
 
     wrapped = CountingResultsModel()
     wrapped.result_fetches = 0
-    agent = Agent(BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None}))
+    agent = Agent(BatchModel(wrapped, **FAST_POLLING, max_requests=2, max_wait=None))
 
     await asyncio.gather(agent.run('one'), agent.run('two'))
     await asyncio.gather(agent.run('three'), agent.run('four'))
@@ -546,7 +603,7 @@ async def test_flushing_an_empty_queue_does_nothing() -> None:
 
 
 async def test_a_ticket_for_another_response_is_not_waited_on() -> None:
-    model = BatchModel(TestModel(), batch_settings=FAST_BATCH_SETTINGS)
+    model = BatchModel(TestModel(), **FAST_BATCH_SETTINGS)
     pending = await _pending_response(model)
     assert model.continuation_delay(pending) is not None
     assert model.continuation_delay(replace(pending, provider_response_id='resp_other')) is None
@@ -569,7 +626,7 @@ async def test_a_request_checked_after_the_results_arrived_reads_them_from_memor
 
     wrapped = CountingResultsModel()
     wrapped.result_fetches = 0
-    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_requests': 2, 'max_wait': None})
+    model = BatchModel(wrapped, **FAST_POLLING, max_requests=2, max_wait=None)
     first, second = await asyncio.gather(_pending_response(model), _pending_response(model))
     prompt = ModelRequest(parts=[UserPromptPart('Hello')])
 
@@ -603,7 +660,7 @@ async def test_a_paused_turn_keeps_its_content_when_the_result_names_a_dated_mod
 
     wrapped = DatedModel()
     wrapped.calls = 0
-    result = await Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)).run('Hello')
+    result = await Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS)).run('Hello')
 
     assert result.output == 'segment 1 segment 2 '
 

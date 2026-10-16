@@ -28,7 +28,7 @@ from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
-from ._batch_settings import resolve_batch_settings
+from ._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, check_batch_settings
 from .wrapper import WrapperModel
 
 __all__ = (
@@ -37,7 +37,6 @@ __all__ = (
     'BatchRequest',
     'BatchResult',
     'BatchResultStatus',
-    'BatchSettings',
     'BatchStatus',
     'EncodedBatchRequest',
 )
@@ -141,33 +140,6 @@ class BatchResult:
     """The provider-native result or error, as JSON, when the request `'succeeded'` or `'errored'`."""
 
 
-class BatchSettings(TypedDict, total=False):
-    """When a [`BatchModel`][pydantic_ai.models.batch.BatchModel] submits the requests it has collected, and how often it checks on them.
-
-    A batch is submitted when it holds `max_requests` requests, when its oldest request has waited `max_wait`, or when
-    [`BatchModel.flush`][pydantic_ai.models.batch.BatchModel.flush] is called, whichever comes first.
-    """
-
-    max_requests: int
-    """The most requests one batch holds. Defaults to 100; the provider's own limit caps it."""
-
-    max_wait: timedelta | None
-    """How long the oldest queued request waits for others before its batch is submitted. Defaults to 30 seconds.
-
-    Later requests never extend it. `None` waits until the batch is full or
-    [`BatchModel.flush`][pydantic_ai.models.batch.BatchModel.flush] is called.
-    """
-
-    poll_interval: timedelta
-    """How long to wait before first checking a submitted batch for its result. Defaults to 30 seconds.
-
-    The interval grows by half after every check, up to `max_poll_interval`.
-    """
-
-    max_poll_interval: timedelta
-    """The longest wait between checks of a submitted batch. Defaults to 10 minutes."""
-
-
 _TICKET_KEY = 'batch'
 _RESULTS_CACHE_SIZE = 32
 _EXITED_MESSAGE = '`BatchModel` exited while the request was waiting for its batch.'
@@ -230,8 +202,9 @@ class BatchModel(WrapperModel):
     Batch APIs cost less, typically half, but a result can take up to a day. The agent runs as usual: each request is
     queued with other requests made in the same process, submitted in a batch, and checked on until its result arrives.
     Meanwhile the run's message history ends in a suspended response that records the batch, so a run resumed from
-    that history, in this process or another, waits for the same batch instead of submitting the request again. See
-    [Batch processing](../../batch.md) for a guide.
+    that history, in this process or another, waits for the same batch instead of submitting the request again. To
+    end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the
+    agent's `output_type`. See [Batch processing](../../batch.md) for a guide.
 
     Under [durable execution](../../durable_execution/overview.md), submitting a request and every check on its batch run
     as separate durable steps, so an interrupted run continues from the same batch when it's recovered.
@@ -254,19 +227,38 @@ class BatchModel(WrapperModel):
     max_poll_interval: timedelta
     """The longest wait between checks of a submitted batch."""
 
-    def __init__(self, wrapped: Model | KnownModelName, *, batch_settings: BatchSettings | None = None) -> None:
+    def __init__(
+        self,
+        wrapped: Model | KnownModelName,
+        *,
+        max_requests: int = 100,
+        max_wait: timedelta | None = timedelta(seconds=30),
+        poll_interval: timedelta = DEFAULT_POLL_INTERVAL,
+        max_poll_interval: timedelta = DEFAULT_MAX_POLL_INTERVAL,
+    ) -> None:
         """Wrap a model so its requests go through its provider's batch API.
+
+        A batch is submitted when it holds `max_requests` requests, when its oldest request has waited `max_wait`, or
+        when [`flush()`][pydantic_ai.models.batch.BatchModel.flush] is called, whichever comes first.
 
         Args:
             wrapped: The model to send batched requests to.
-            batch_settings: When to submit queued requests and how often to check on submitted batches.
+            max_requests: The most requests one batch holds. The provider's own limit caps it.
+            max_wait: How long the oldest queued request waits for others before its batch is submitted. Later
+                requests never extend it. `None` waits until the batch is full or `flush()` is called.
+            poll_interval: How long to wait before first checking a submitted batch for its result. The interval grows
+                by half after every check, up to `max_poll_interval`.
+            max_poll_interval: The longest wait between checks of a submitted batch.
         """
         super().__init__(wrapped)
-        settings = resolve_batch_settings(self.wrapped, batch_settings, max_requests=100)
-        self.max_requests = settings.max_requests
-        self.max_wait = settings.max_wait
-        self.poll_interval = settings.poll_interval
-        self.max_poll_interval = settings.max_poll_interval
+        if max_wait is not None and max_wait <= timedelta(0):
+            raise UserError('`max_wait` must be positive.')
+        self.max_requests = check_batch_settings(
+            self.wrapped, max_requests=max_requests, poll_interval=poll_interval, max_poll_interval=max_poll_interval
+        )
+        self.max_wait = max_wait
+        self.poll_interval = poll_interval
+        self.max_poll_interval = max_poll_interval
         # Queues hold futures, which belong to one event loop, so each loop gets its own.
         self._queues: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, _Queue]] = (
             weakref.WeakKeyDictionary()

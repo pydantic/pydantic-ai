@@ -113,11 +113,9 @@ async def test_gemini_batch_model_agent_run(allow_model_requests: None, gemini_a
     """
     model = BatchModel(
         GoogleModel(MODEL_NAME, provider=GoogleProvider(api_key=gemini_api_key)),
-        batch_settings={
-            'max_requests': 1,
-            'poll_interval': batch_poll_interval(vcr),
-            'max_poll_interval': batch_poll_interval(vcr),
-        },
+        max_requests=1,
+        poll_interval=batch_poll_interval(vcr),
+        max_poll_interval=batch_poll_interval(vcr),
     )
     result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
 
@@ -136,7 +134,8 @@ async def test_gemini_model_request_batch(allow_model_requests: None, gemini_api
     responses = await model_request_batch(
         model,
         [_request('one'), _request('two', {'max_tokens': 8, 'stop_sequences': ['OK']})],
-        batch_settings={'poll_interval': batch_poll_interval(vcr), 'max_poll_interval': batch_poll_interval(vcr)},
+        poll_interval=batch_poll_interval(vcr),
+        max_poll_interval=batch_poll_interval(vcr),
     )
     assert [response.text if isinstance(response, ModelResponse) else response for response in responses] == [
         'OK',

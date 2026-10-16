@@ -12,16 +12,26 @@ from datetime import timedelta
 
 import anyio
 import anyio.lowlevel
+from typing_extensions import TypedDict
 
-from pydantic_ai.models.batch import Batch, BatchRequest, BatchSettings, EncodedBatchRequest
+from pydantic_ai.models.batch import Batch, BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
 
-FAST_BATCH_SETTINGS: BatchSettings = {
-    'max_wait': timedelta(milliseconds=1),
-    'poll_interval': timedelta(milliseconds=1),
-    'max_poll_interval': timedelta(milliseconds=1),
-}
-"""Tiny but nonzero submission and poll intervals, so a test never waits out a real timer."""
+
+class FastPolling(TypedDict):
+    poll_interval: timedelta
+    max_poll_interval: timedelta
+
+
+class FastBatchSettings(FastPolling):
+    max_wait: timedelta
+
+
+FAST_POLLING: FastPolling = {'poll_interval': timedelta(milliseconds=1), 'max_poll_interval': timedelta(milliseconds=1)}
+"""Tiny but nonzero poll intervals, so a test never waits out a real timer."""
+
+FAST_BATCH_SETTINGS: FastBatchSettings = {**FAST_POLLING, 'max_wait': timedelta(milliseconds=1)}
+"""`FAST_POLLING`, plus a tiny but nonzero `max_wait`, for `BatchModel`."""
 
 READINESS_WAIT_TIMEOUT = 10
 

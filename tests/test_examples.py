@@ -1948,12 +1948,10 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         # Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals.
         return BatchModel(
             mock_infer_model(model.wrapped),
-            batch_settings={
-                'max_requests': model.max_requests,
-                'max_wait': timedelta(milliseconds=1),
-                'poll_interval': timedelta(milliseconds=1),
-                'max_poll_interval': timedelta(milliseconds=1),
-            },
+            max_requests=model.max_requests,
+            max_wait=timedelta(milliseconds=1),
+            poll_interval=timedelta(milliseconds=1),
+            max_poll_interval=timedelta(milliseconds=1),
         )
     elif isinstance(model, DecisionModel):
         return FunctionModel(

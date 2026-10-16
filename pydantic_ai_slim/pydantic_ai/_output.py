@@ -26,6 +26,7 @@ from .output import (
     OutputObjectDefinition,
     OutputSpec,
     OutputTypeOrFunction,
+    PendingModelResponse,
     PromptedOutput,
     TextOutput,
     TextOutputFunc,
@@ -448,6 +449,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
+    allows_pending_model_response: bool = False
 
     @property
     def mode(self) -> OutputMode:
@@ -458,7 +460,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         return self.text_processor is not None
 
     @classmethod
-    def build(  # noqa: C901
+    def build(
         cls,
         output_spec: OutputSpec[OutputDataT],
         *,
@@ -468,7 +470,25 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     ) -> OutputSchema[OutputDataT]:
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
+        # A pending response isn't something the model outputs, so it doesn't shape the output mode or schema.
+        allows_pending_model_response = PendingModelResponse in outputs
+        if allows_pending_model_response:
+            outputs = [output for output in outputs if output is not PendingModelResponse]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `PendingModelResponse`.')
+        schema = cls._build(outputs, name=name, description=description, strict=strict)
+        schema.allows_pending_model_response = allows_pending_model_response
+        return schema
 
+    @classmethod
+    def _build(  # noqa: C901
+        cls,
+        outputs: Sequence[OutputTypeOrFunction[OutputDataT]],
+        *,
+        name: str | None,
+        description: str | None,
+        strict: bool | None,
+    ) -> OutputSchema[OutputDataT]:
         # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
         # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
         none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
@@ -498,6 +518,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
+            if PendingModelResponse in flattened_outputs:
+                raise UserError(
+                    '`NativeOutput` cannot contain `PendingModelResponse`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), PendingModelResponse]`'
+                )
             if _messages.BinaryImage in flattened_outputs:
                 raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
@@ -524,6 +548,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
+                )
+            if PendingModelResponse in flattened_outputs:
+                raise UserError(
+                    '`PromptedOutput` cannot contain `PendingModelResponse`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), PendingModelResponse]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
                 raise UserError(

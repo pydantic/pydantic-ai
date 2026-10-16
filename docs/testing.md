@@ -283,7 +283,8 @@ from pydantic_ai.models.test import TestModel
 async def test_batch_agent():
     model = BatchModel(
         TestModel(custom_output_text='Paris'),
-        batch_settings={'max_wait': timedelta(milliseconds=1), 'poll_interval': timedelta(milliseconds=1)},
+        max_wait=timedelta(milliseconds=1),
+        poll_interval=timedelta(milliseconds=1),
     )
     result = await Agent(model).run('What is the capital of France?')
     assert result.output == 'Paris'

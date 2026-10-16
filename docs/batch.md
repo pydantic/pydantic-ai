@@ -24,7 +24,7 @@ from datetime import timedelta
 from pydantic_ai import Agent
 from pydantic_ai.models.batch import BatchModel
 
-model = BatchModel('{{ anthropic:medium }}', batch_settings={'max_requests': 500, 'max_wait': timedelta(seconds=10)})
+model = BatchModel('{{ anthropic:medium }}', max_requests=500, max_wait=timedelta(seconds=10))
 agent = Agent(model, instructions='Answer in one sentence.')
 
 
@@ -39,28 +39,49 @@ async def main():
 
 Tools, structured output, output validation and retries all work as usual; each model request in a run goes into whichever batch is being collected when it's made. A run that needs several model requests, for example to call tools, takes several batch round trips.
 
-[`BatchSettings`][pydantic_ai.models.batch.BatchSettings] controls when a batch is submitted: when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`BatchModel.flush()`][pydantic_ai.models.batch.BatchModel.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
+A batch is submitted when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`BatchModel.flush()`][pydantic_ai.models.batch.BatchModel.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
 
 Streaming isn't supported: a batch result arrives all at once. `BatchModel` needs an `asyncio` event loop, so it doesn't run under Trio.
 
 Requests waiting on the same submission or check share one task. When you use the model as an async context manager, for example through `async with agent:`, leaving it cancels those tasks, and requests still waiting on them fail with a [`UserError`][pydantic_ai.exceptions.UserError].
 
-### Waiting and resuming
+### Ending a run while it waits
 
-While a request waits for its batch, the run's message history ends in a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with `state='suspended'`, which records the batch. If the process stops while the run is waiting, run the agent again with that message history, in this process or another, and it picks the same batch back up instead of submitting the request again:
+A batch can take up to a day, which is longer than many processes should wait. Add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`, and a run ends as soon as its request has been submitted, with a `PendingModelResponse` as its output. The run's message history ends in the pending response, which records the batch, so you can store the history and run the agent again with it later, in this process or another. That run checks on the batch once: if the result has arrived, the run continues as usual, and otherwise it ends with a `PendingModelResponse` again.
 
-```python {title="batch_resume.py" gateway_toggle="skip"}
-from pydantic_ai import Agent, ModelMessagesTypeAdapter
+```python {title="batch_pending.py" gateway_toggle="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelMessagesTypeAdapter, PendingModelResponse
+from pydantic_ai.models.batch import BatchModel
 
 
-async def resume(agent: Agent, stored_messages: bytes) -> str:
+class City(BaseModel):
+    city: str
+    country: str
+
+
+agent = Agent(BatchModel('{{ anthropic:medium }}'), output_type=[City, PendingModelResponse])
+
+
+async def submit(question: str) -> bytes:
+    result = await agent.run(question)
+    return result.all_messages_json()  # (1)!
+
+
+async def collect(stored_messages: bytes) -> City | bytes:
     result = await agent.run(message_history=ModelMessagesTypeAdapter.validate_json(stored_messages))
+    if isinstance(result.output, PendingModelResponse):
+        return result.all_messages_json()  # (2)!
     return result.output
 ```
 
-To get hold of that message history while the run is waiting, use [message history storage](message-history.md) or run the agent under [durable execution](#durable-execution).
+1. Store this, for example in a database, and load it wherever you collect the results.
+2. The batch is still being processed: store the new history in place of the old one, and check again later.
 
-Cancelling a run that's waiting abandons its request. Pydantic AI cancels the provider batch once every request in it has been abandoned in the same process; requests the provider already completed may still be billed.
+A run that needs several model requests, for example to call tools, ends with a `PendingModelResponse` for each of them. This works for any request the provider keeps working on after it's been sent, including [OpenAI background mode](models/openai.md#background-mode).
+
+Without `PendingModelResponse` in the output type, a run waits for its batch, and you only get its message history once it ends. If your process may stop while a batch is processed, end runs with a `PendingModelResponse` or use [durable execution](#durable-execution). Cancelling a run that's waiting abandons its request: Pydantic AI cancels the provider batch once every request in it has been abandoned in the same process, and requests the provider already completed may still be billed.
 
 ### Durable execution
 
@@ -100,7 +121,7 @@ async def main():
             #> italy: The capital of Italy is Rome.
 ```
 
-Requests are split into as many batches as the provider requires, or as `batch_settings` limits them to; it also sets how often batches are checked on, as for `BatchModel`. Cancelling the call cancels the batches that haven't ended.
+Requests are split into as many batches as the provider requires, or as `max_requests` limits them to, and `poll_interval` and `max_poll_interval` set how often batches are checked on, as for `BatchModel`. Cancelling the call cancels the batches that haven't ended.
 
 ## Submit now, collect later
 

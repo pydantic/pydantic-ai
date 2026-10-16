@@ -24,7 +24,7 @@ from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
 from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
-from .models._batch_settings import resolve_batch_settings
+from .models._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, check_batch_settings
 
 __all__ = (
     'model_request',
@@ -114,12 +114,14 @@ async def model_request_batch(
     model: models.Model | models.KnownModelName | str,
     requests: Sequence[batch_models.BatchRequest],
     *,
-    batch_settings: batch_models.BatchSettings | None = None,
+    max_requests: int | None = None,
+    poll_interval: timedelta = DEFAULT_POLL_INTERVAL,
+    max_poll_interval: timedelta = DEFAULT_MAX_POLL_INTERVAL,
 ) -> list[messages.ModelResponse | ModelAPIError]:
     """Send requests through the model's batch API, and wait for their responses.
 
     Batch APIs cost less, typically half, but can take up to a day to finish. The requests are submitted in as few
-    batches as the provider accepts, or `batch_settings['max_requests']` allows, and each batch is checked on with a
+    batches as the provider accepts, or `max_requests` allows, and each batch is checked on with a
     growing interval until it ends. Cancelling the call cancels the batches that haven't ended.
 
     ```py title="model_request_batch_example.py"
@@ -152,15 +154,19 @@ async def model_request_batch(
     Args:
         model: The model to send the requests to. We allow `str` here since the actual list of allowed models changes frequently.
         requests: The requests to send, each with its own messages, settings and parameters. Their `custom_id`s must be unique.
-        batch_settings: The most requests per batch (by default the provider's limit) and how often to check on
-            batches, as for [`BatchModel`][pydantic_ai.models.batch.BatchModel]. `max_wait` doesn't apply.
+        max_requests: The most requests per batch. Defaults to the provider's limit, which also caps it.
+        poll_interval: How long to wait before first checking a batch. The interval grows by half after every check,
+            up to `max_poll_interval`.
+        max_poll_interval: The longest wait between checks of a batch.
 
     Returns:
         One item per request, in the same order: the request's response, or the
             [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with.
     """
     model_instance = models.infer_model(model)
-    resolved = resolve_batch_settings(model_instance, batch_settings, max_requests=None)
+    batch_size = check_batch_settings(
+        model_instance, max_requests=max_requests, poll_interval=poll_interval, max_poll_interval=max_poll_interval
+    )
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
 
@@ -176,14 +182,14 @@ async def model_request_batch(
     batches: list[batch_models.Batch] = []
     try:
         for group in groups.values():
-            for start in range(0, len(group), resolved.max_requests):
-                batches.append(await model_instance.batch_create(group[start : start + resolved.max_requests]))
+            for start in range(0, len(group), batch_size):
+                batches.append(await model_instance.batch_create(group[start : start + batch_size]))
         for index, batch in enumerate(batches):
             batches[index] = await _wait_for_batch(
                 model_instance,
                 batch,
-                poll_interval=resolved.poll_interval,
-                max_poll_interval=resolved.max_poll_interval,
+                poll_interval=poll_interval,
+                max_poll_interval=max_poll_interval,
             )
         results = {
             result.custom_id: result for batch in batches for result in await model_instance.batch_results(batch)

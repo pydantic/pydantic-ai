@@ -93,7 +93,7 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
-from .output import OutputDataT, OutputSpec
+from .output import OutputDataT, OutputSpec, PendingModelResponse
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
@@ -1140,12 +1140,13 @@ async def _check_resume_seed_usage(
         raise
 
 
-async def model_request(
+async def model_request(  # noqa: C901
     model: models.Model,
     *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
     on_progress: Callable[[_messages.ModelResponse], None],
+    return_pending: bool = False,
 ) -> _messages.ModelResponse:
     """Run the innermost non-streaming model request, resolving any continuation chain.
 
@@ -1170,6 +1171,9 @@ async def model_request(
         on_progress: Callback invoked with the merged response after each segment, so the
             caller can preserve partial progress when a later segment's error is converted
             to a retry.
+        return_pending: Return a suspended response the provider is still working on (one the model gives a
+            `continuation_delay` for) instead of waiting for it, once this call has made a request. Set when the
+            run's output type includes `PendingModelResponse`.
 
     Returns:
         The (merged) model response.
@@ -1190,11 +1194,14 @@ async def model_request(
     # re-issue (`last_mode is None`) counts as strict, harmless since both ceilings allow ≥1.
     last_mode: MergeMode | None = None
     response = seed
+    requested = False
     with set_current_run_context(run_context):
         while True:
             if response is None:
                 messages = base_messages
             elif response.state == 'suspended':
+                if return_pending and requested and model.continuation_delay(response) is not None:
+                    return response
                 job_id = response.provider_response_id
                 if last_mode == 'replace-same-id':
                     replace_count += 1
@@ -1214,7 +1221,9 @@ async def model_request(
                     # Giving up on a still-suspended job: cancel it before raising so it doesn't leak.
                     await cancel_suspended_job(model, response)
                     raise exceptions.UnexpectedModelBehavior(limit_message)
-                if delay := model.continuation_delay(response):
+                # A run that returns pending responses checks on a resumed one straight away: it was left waiting
+                # when the previous run ended.
+                if (delay := model.continuation_delay(response)) and (requested or not return_pending):
                     try:
                         await _agent_graph_sleep(delay)
                     except BaseException:
@@ -1231,6 +1240,7 @@ async def model_request(
                 new_response = await model.request(
                     messages, request_context.model_settings, request_context.model_request_parameters
                 )
+                requested = True
             except BaseException:
                 # The broad catch is deliberate: `BaseException` also covers `CancelledError`,
                 # `KeyboardInterrupt`, and `SystemExit`, and we must cancel the server-side
@@ -1279,6 +1289,7 @@ async def model_request_stream(
     *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
+    return_pending: bool = False,
 ) -> AsyncGenerator[models.StreamedResponse]:
     """Open the innermost streaming model request, stitching any continuation chain.
 
@@ -1300,6 +1311,7 @@ async def model_request_stream(
         model: The model to call.
         request_context: The merged request context.
         run_context: The current run context.
+        return_pending: End the stream on a response the provider is still working on, as `model_request` does.
 
     Yields:
         A `StreamedResponse` to iterate inside the durable boundary.
@@ -1325,6 +1337,7 @@ async def model_request_stream(
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
             request_context=request_context,
+            return_pending=return_pending,
         )
         try:
             yield sr
@@ -1455,7 +1468,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `AgentStream` and the model-request hooks wrap it once. The step is counted in
             # `ctx.state.usage.requests` when its response is committed, not here.
             try:
-                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                async with model_request_stream(
+                    req_ctx.model,
+                    request_context=req_ctx,
+                    run_context=run_context,
+                    return_pending=ctx.deps.output_schema.allows_pending_model_response,
+                ) as sr:
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
@@ -1732,7 +1750,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             capture_model_request_span_context(req_ctx)
             try:
                 response = await model_request(
-                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
+                    req_ctx.model,
+                    request_context=req_ctx,
+                    run_context=run_context,
+                    on_progress=on_progress,
+                    return_pending=ctx.deps.output_schema.allows_pending_model_response,
                 )
                 _handler_response = response
                 _handler_usage_recorded = True
@@ -2308,6 +2330,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
 
         async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+            if self.model_response.state == 'suspended' and output_schema.allows_pending_model_response:
+                # The provider is still working on the response, and the run was asked to end rather than wait.
+                pending = PendingModelResponse(response=self.model_response)
+                self._next_node = self._handle_final_result(ctx, result.FinalResult(cast(NodeRunEndT, pending)), [])
+                return
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
