@@ -203,7 +203,7 @@ async def test_attempt_ceiling():
 
 
 async def test_outer_error_hook_is_not_handed_control_flow():
-    """An outer `on_model_request_error` is never called with an inner hook's `RetryModelRequest` or `ModelRetry`."""
+    """An outer `on_model_request_error` is never called with an inner hook's `RetryModelRequest`."""
     outer_errors: list[Exception] = []
     calls: list[int] = []
 
@@ -227,9 +227,7 @@ async def test_outer_error_hook_is_not_handed_control_flow():
         async def on_model_request_error(
             self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
-            if request_context.attempt == 1:
-                raise RetryModelRequest()
-            raise ModelRetry('try again')
+            raise RetryModelRequest()
 
     agent = Agent(FunctionModel(fn), deps_type=type(None), capabilities=[Outer(), Inner()])
     result = await agent.run('x')

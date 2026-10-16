@@ -721,10 +721,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 continue
             try:
                 return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)
-            except (ModelRetry, RetryModelRequest):
-                # Control flow, not a replacement error: a capability asking for a prompted retry or
-                # another attempt has answered for the whole chain. Handing it to the next capability
-                # as `error` would let an outer one recover from — or re-wrap — the request to retry.
+            except RetryModelRequest:
+                # Control flow, not a replacement error: a capability asking for another attempt has
+                # answered for the whole chain. Handing it to the next capability as `error` would let
+                # an outer one recover from — or re-wrap — the request for another attempt.
                 raise
             except Exception as new_error:
                 error = new_error

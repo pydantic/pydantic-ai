@@ -897,7 +897,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | Core output validation fails | Return validated output |
 | [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | Core output processing fails | Return any output result |
 
-With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception. [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] and [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] are the exception: they answer for the whole chain and propagate straight away, rather than being handed to the next capability as its error.
+With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception. [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] is the exception: it answers for the whole chain and propagates straight away, rather than being handed to the next capability as its error.
 
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field

@@ -1133,7 +1133,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 return await _call_entry(
                     entry, 'on_model_request_error', ctx, request_context=request_context, error=error
                 )
-            except (ModelRetry, RetryModelRequest):
+            except RetryModelRequest:
                 # Control flow, not a replacement error: see `CombinedCapability.on_model_request_error`.
                 raise
             except Exception as new_error:
