@@ -41,7 +41,7 @@ from pydantic_ai_harness import Shell
 
 Path('./workspace').mkdir(exist_ok=True)
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('./workspace'),
         Shell(allowed_commands=['ls', 'cat', 'rg']),
@@ -209,7 +209,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Shell
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('./app'),
         Shell(allowed_commands=['npm', 'curl']),
@@ -296,7 +296,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Shell
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.'), Shell(persist_cwd=True, allowed_commands=['cd', 'ls', 'pwd'])],
 )
 ```
@@ -344,7 +344,7 @@ config file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-opus-5-5
+model: {{ anthropic:large }}
 capabilities:
   - Shell:
       allowed_commands: ['ls', 'cat', 'rg', 'pytest']

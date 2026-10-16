@@ -44,7 +44,7 @@ Then pass `ExaSearch` to an `Agent` via the `capabilities` parameter:
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaSearch()])
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
@@ -191,7 +191,7 @@ deferred call's metadata.
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaAgent
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaAgent()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaAgent()])
 ```
 
 By default (`execution='inline'`) the capability resolves its own deferred
@@ -210,7 +210,7 @@ from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai_harness import ExaAgent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[ExaAgent(execution='external')],
 )
@@ -282,7 +282,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import ExaSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         ExaSearch(),  # web_search, get_page
         PrefixTools(
@@ -396,7 +396,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 from pydantic_ai_harness import ExaSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch(), MCP('https://mcp.exa.ai/mcp')])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaSearch(), MCP('https://mcp.exa.ai/mcp')])
 ```
 
 ## Agent spec (YAML/JSON)
@@ -407,7 +407,7 @@ file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - ExaSearch:
       num_results: 3

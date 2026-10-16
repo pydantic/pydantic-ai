@@ -591,6 +591,28 @@ async def test_plugins_catalog_edits_only_a_declared_menu_one_edit_at_a_time(tmp
     assert harness.loader.settings_menu('declared') is None
 
 
+async def test_concurrent_unloads_end_a_plugin_once(tmp_path: Path) -> None:
+    """Two browser tabs, or the panel and the terminal, may unload the same plugin at once."""
+    harness = Harness(tmp_path)
+    harness.write('slow', end_body="await __import__('anyio').lowlevel.checkpoint()")
+    await harness.loader.load_all()
+    await asyncio.gather(harness.loader.unload('slow'), harness.loader.unload('slow'))
+    assert harness.text.count('slow stopped exit') == 1
+
+
+async def test_plugin_changes_run_one_at_a_time(tmp_path: Path) -> None:
+    """A disable that arrives while a reload is running waits for it, so it ends off, as saved."""
+    harness = Harness(tmp_path)
+    harness.write('slow', end_body="await __import__('anyio').lowlevel.checkpoint()")
+    await harness.loader.load_all()
+    await asyncio.gather(harness.loader.reload('slow'), harness.loader.disable('slow'))
+    [slow] = harness.loader.listing()
+    assert slow.status == 'off'
+    assert harness.text.count('slow stopped exit') == 2
+    with pytest.raises(ValueError, match='slow is disabled; enable it before reloading'):
+        await harness.loader.reload('slow')
+
+
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('rude', turn_end_body="raise RuntimeError('late')")

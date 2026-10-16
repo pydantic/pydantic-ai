@@ -25,7 +25,7 @@ from typing import Any, Literal
 import pytest
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._agent_graph import _interrupted_stream_response  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -1333,7 +1333,7 @@ async def test_iter_node_stream_early_break_records_suspended() -> None:
 
     Unlike the `run_stream` early break (which records via the composite's own detach path), exiting a
     `node.stream(...)` context sends `GeneratorExit` into the graph's model-request stream, where
-    `_resolve_interrupted_stream_state` records the trailing response as resumable `'suspended'` and leaves
+    `_interrupted_stream_response` records the trailing response as resumable `'suspended'` and leaves
     the server-side job alive — the graph-level detach branch.
     """
     model = _ScriptedModel(
@@ -1364,23 +1364,19 @@ async def test_iter_node_stream_early_break_records_suspended() -> None:
     assert messages[-1].provider_response_id == 'job1'
 
 
-async def test_resolve_interrupted_stream_state_detach_vs_error() -> None:
-    """`_resolve_interrupted_stream_state`: a `GeneratorExit` walk-away with a suspended partial is a
-    resumable detach (`'suspended'`, job left alive); any other error is a genuine failure (`'interrupted'`,
-    job best-effort cancelled).
+def test_interrupted_stream_response_detach_vs_error() -> None:
+    """`_interrupted_stream_response`: a `GeneratorExit` walk-away with a suspended partial is a
+    resumable detach (`'suspended'`); any other error is a genuine failure (`'interrupted'`), whose
+    still-live job the graph then best-effort cancels.
 
     Unit-tested directly on the graph helper: whether the `GeneratorExit`-vs-error branch fires depends on
     stream-teardown ordering (which handle is closed first) that the `run_stream`/`iter` early-break tests
     above don't deterministically drive, so the branch itself is pinned here.
     """
-    model = _ScriptedModel(segments=[])
     suspended = _suspended(texts=['partial '], provider_response_id='job1', input_tokens=1, output_tokens=1)
 
-    assert await _resolve_interrupted_stream_state(model, GeneratorExit(), suspended) == 'suspended'
-    assert model.cancelled == []  # detach leaves the job alive
-
-    assert await _resolve_interrupted_stream_state(model, RuntimeError('boom'), suspended) == 'interrupted'
-    assert model.cancelled == [suspended]  # genuine error cancels the still-live job
+    assert _interrupted_stream_response(GeneratorExit(), suspended).state == 'suspended'
+    assert _interrupted_stream_response(RuntimeError('boom'), suspended).state == 'interrupted'
 
 
 async def test_cancel_through_wrapper_model_delegates() -> None:
