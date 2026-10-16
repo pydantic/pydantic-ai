@@ -1,6 +1,7 @@
 # CLAI 2 reference
 
-Everything CLAI does, in detail. For an overview with screenshots, start with the
+CLAI is a separately installable terminal client for Pydantic AI. This page covers
+everything it does, in detail. For an overview with screenshots, start with the
 [README](../README.md). For writing plugins, see [PLUGINS.md](../PLUGINS.md).
 
 - [Quick reference](#quick-reference): [commands](#commands), [command-line options](#command-line-options), [settings](#settings), [environment variables](#environment-variables-at-a-glance), [files](#files)
@@ -138,6 +139,8 @@ Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2
 
 ### Start chatting
 
+Python 3.11+ is required.
+
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
@@ -166,8 +169,6 @@ The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
 ### File access and safety
-
-Python 3.11+ is required.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
@@ -2286,7 +2287,7 @@ or choose browser sign-in. See [PLUGINS.md](../PLUGINS.md#linear-issues-and-proj
 
 ### Built-in plugins at a glance
 
-A separately installable terminal client for Pydantic AI. The coding tools,
+The coding tools,
 `Coder(unrestricted_filesystem=True)`, are the built-in `coder` plugin: on by
 default, `/plugins disable coder` for a chat-only shell. The model can also ask
 you multiple-choice questions mid-run through the built-in `ask_user` plugin;
@@ -2295,7 +2296,7 @@ see [Questions from the model](#questions-from-the-model). The built-in
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
-plugin, [described below](#compacting-the-conversation), is on by default beside it:
+plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).

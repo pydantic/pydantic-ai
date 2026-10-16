@@ -3,7 +3,8 @@
 #
 #   src/pydantic_clai2/scripts/screenshots/capture.sh [TAPE...]
 #
-# Needs VHS (https://github.com/charmbracelet/vhs), pngquant, oxipng, and the JetBrains Mono font:
+# Needs the checkout's `.venv` (`make install`), plus VHS (https://github.com/charmbracelet/vhs),
+# pngquant, oxipng, and the JetBrains Mono font. On macOS:
 #   brew install vhs pngquant oxipng && brew install --cask font-jetbrains-mono
 #
 # Every tape runs the checkout's `clai2` in a fixed-size VHS terminal against a throwaway HOME and
@@ -16,6 +17,12 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
 images="$repo/src/pydantic_clai2/docs/images"
+[ -x "$repo/.venv/bin/clai2" ] || { echo "no $repo/.venv/bin/clai2: run make install" >&2; exit 1; }
+tools=""
+for tool in vhs pngquant oxipng git; do
+  found=$(command -v "$tool") || { echo "missing $tool; see the top of $0" >&2; exit 1; }
+  tools="$tools:$(dirname "$found")"
+done
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/clai2-shots.XXXXXX")
 root=$(cd "$root" && pwd -P)
@@ -25,6 +32,18 @@ home="$root/home"
 project="$home/code/weather"
 mkdir -p "$home/.config/pydantic-clai2/plugins" "$project" "$root/shots"
 cp "$here/demo_model.py" "$home/.config/pydantic-clai2/plugins/demo_model.py"
+
+# A clean environment: only what the terminal, VHS, Git, and the checkout's `clai2` need. Your own
+# Git configuration, API keys, and keychain stay out.
+run() {
+  env -i \
+    HOME="$home" XDG_CONFIG_HOME="$home/.config" CLAUDE_CONFIG_DIR="$home/.claude" CODEX_HOME="$home/.codex" \
+    PATH="$home/bin:$repo/.venv/bin$tools:/usr/bin:/bin" \
+    TERM=xterm-256color COLORTERM=truecolor LANG=en_US.UTF-8 \
+    PYTHONPATH="$here" PYTHON_KEYRING_BACKEND=demo_keyring.Keyring \
+    PROJECT="$project" \
+    "$@"
+}
 
 # A small project for the model to work on, with a short Git history.
 mkdir -p "$project/weather" "$project/tests"
@@ -114,18 +133,18 @@ class ForecastTests(unittest.TestCase):
     def test_unknown_city_falls_back(self):
         self.assertTrue(run('forecast', 'atlantis').startswith('Mon  Sunny'))
 EOF
-git -C "$project" init -q -b main
-git -C "$project" config user.name 'Demo User'
-git -C "$project" config user.email 'demo@example.com'
-git -C "$project" add weather/__init__.py weather/forecast.py
-git -C "$project" commit -q -m 'Add sample forecast data'
-git -C "$project" add .
-git -C "$project" commit -q -m 'Add the forecast command'
+run git -C "$project" init -q -b main
+run git -C "$project" config user.name 'Demo User'
+run git -C "$project" config user.email 'demo@example.com'
+run git -C "$project" add weather/__init__.py weather/forecast.py
+run git -C "$project" commit -q -m 'Add sample forecast data'
+run git -C "$project" add .
+run git -C "$project" commit -q -m 'Add the forecast command'
 
 # A second project, so the session browser has more than one repository.
 other="$home/code/shop-api"
 mkdir -p "$other"
-git -C "$other" init -q -b main
+run git -C "$other" init -q -b main
 echo '# shop-api' > "$other/README.md"
 
 # VHS keeps its headless browser under $HOME/.cache/rod; share the real one so it downloads once.
@@ -133,17 +152,6 @@ mkdir -p "$HOME/.cache/rod" "$home/.cache"
 ln -s "$HOME/.cache/rod" "$home/.cache/rod"
 # Tapes name each other and their screenshots relative to the directory VHS runs in.
 ln -s "$here/tapes" "$root/tapes"
-
-# A clean environment: only what the terminal, VHS, and the checkout's `clai2` need.
-run() {
-  env -i \
-    HOME="$home" XDG_CONFIG_HOME="$home/.config" CLAUDE_CONFIG_DIR="$home/.claude" CODEX_HOME="$home/.codex" \
-    PATH="$home/bin:$repo/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
-    TERM=xterm-256color COLORTERM=truecolor LANG=en_US.UTF-8 \
-    PYTHONPATH="$here" PYTHON_KEYRING_BACKEND=demo_keyring.Keyring \
-    PROJECT="$project" \
-    "$@"
-}
 
 # Every tape starts CLAI with `clai-demo`: the project as committed, and the settings a tape may change reset.
 mkdir -p "$home/bin"
@@ -173,6 +181,7 @@ if [ ${#tapes[@]} -eq 0 ]; then
   tapes=(resume model model-add accounts keys plugins set theme spinner system-prompt
     hero ask-user shell code-mode rewind usage fork)
 fi
+failed=""
 cd "$root"
 run vhs "$here/tapes/setup.tape" || run vhs "$here/tapes/setup.tape"
 for name in "${tapes[@]}"; do
@@ -180,7 +189,7 @@ for name in "${tapes[@]}"; do
   # VHS sometimes fails to start its headless browser; one retry gets past that.
   run vhs "$here/tapes/$name.tape" > "$root/shots/$name.log" 2>&1 ||
     run vhs "$here/tapes/$name.tape" > "$root/shots/$name.log" 2>&1 ||
-    echo "tape $name failed: see $root/shots/$name.log"
+    { echo "tape $name failed: see $root/shots/$name.log"; failed="$failed $name"; }
 done
 
 mkdir -p "$images"
@@ -191,3 +200,8 @@ for shot in "$root"/shots/*.png; do
   cp "$shot" "$images/"
   echo "wrote ${shot##*/}"
 done
+
+if [ -n "$failed" ]; then
+  echo "failed tapes:$failed" >&2
+  exit 1
+fi

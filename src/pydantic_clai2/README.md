@@ -5,7 +5,7 @@ A coding agent for your terminal, built on [Pydantic AI](https://pydantic.dev/do
 CLAI reads your code, edits files, and runs commands, and you see every step as it
 happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
 subscription, or bring an API key for OpenAI, Anthropic, or another provider Pydantic AI
-supports. Everything beyond the prompt is a plugin, so you can add tools,
+supports. The coding tools and integrations are plugins, so you can add tools,
 commands, and menus without forking anything.
 
 ![CLAI starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/hero.png)
@@ -59,7 +59,7 @@ You get the CLAI banner, a prompt at the bottom, and a status row under it with 
 model, the folder, and how much context the conversation uses. Type what you want and
 press Enter.
 
-The first model is `openai-codex:gpt-6-astra`, which runs on a ChatGPT subscription. Run
+The default model is `openai-codex:gpt-6-astra`, which runs on a ChatGPT subscription. Run
 `/login openai-codex` to sign in, or pick another model with `/model`
 ([see below](#models-and-accounts)).
 
@@ -78,7 +78,7 @@ A few keys to know:
 Type `/` to see every command, or `/help` for the full list.
 
 CLAI reads `AGENTS.md` or `CLAUDE.md` from the folder you start it in and follows what it
-says. If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
+says (not yet on Windows). If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
 
 ### Where CLAI keeps things
 
@@ -90,8 +90,8 @@ Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, 
 - `plugins/`: plugins you drop in
 - `input-history`: what you typed, for the Up arrow
 
-Sign-ins and API keys are encrypted, with the key kept in your system keychain (or in a
-plaintext file that only you can read, when there is no keychain). A
+Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
+keychain, they are saved unencrypted in a file only you can read. A
 repository can also pin settings for everyone who works in it with a
 `.clai/settings.json` file. See [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#files)
 and [project settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#project-settings)
@@ -118,8 +118,9 @@ There are two channels. Pick one with `/set updates.channel`:
 ```
 
 `/update` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
-first and installs in a new PowerShell window; start `clai2` again when it is done. If
-you added packages with `uv tool install --with`, add them again after updating. See
+first and installs in a new PowerShell window; start `clai2` again when it is done.
+`/update` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
+again afterwards. See
 [Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#updating)
 in the reference for the details.
 
@@ -219,7 +220,7 @@ your own answer. Esc declines; the model is told, and carries on with a choice i
 
 ### Run a shell command: `!`
 
-Start a line with `!` to run it in your shell without asking the model. The command and
+Start a line with `!` to run it as a shell command, without asking the model. The command and
 its output are saved, so the model sees them on your next prompt. Use `!!` for
 interactive programs, such as `!!python`, to give them the whole terminal.
 
@@ -313,9 +314,9 @@ starter file.
 
 ## Plugins
 
-Everything beyond the prompt is a plugin, including the coding tools. `/plugins` lists
-them all: press Space to turn one on or off, `c` to configure it, `r` to reload it, and
-`d` to remove it. Changes apply from your next prompt, with no restart.
+The coding tools are a plugin, and so are the integrations. `/plugins` lists them all:
+press Space to turn one on or off, `c` to configure it, `r` to reload it, and `d` to
+remove it. Changes apply from your next prompt, with no restart.
 
 ![The /plugins menu listing built-in plugins](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/plugins.png)
 
@@ -333,26 +334,34 @@ These are on from the start:
 Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
 `google_workspace`, and `logfire_mcp`.
 
-To install a plugin, clone it from Git, name any importable Python class, or drop a file
-in `~/.config/pydantic-clai2/plugins/`:
+To install a plugin, clone it from Git, name a plugin or a harness capability by its import
+path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
 ```
 
+The second line adds web search from
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
+
+```bash
+uv tool install pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+export EXA_API_KEY=...
+```
+
 Plugins are Python code that runs as you, so only install ones you trust.
 
 To write your own, read the [plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md).
-Or ask CLAI: it has a guide to its own plugin API, so "make a plugin that adds a
-`/standup` command" works.
+Or ask CLAI: it has a guide to its own plugin API, so you can ask it to "make a plugin
+that adds a `/standup` command".
 
 ## CLAI in your own code
 
 - `clai2 -p "Explain this repository"` runs one prompt and prints only the answer.
 - `clai2 --agent my_module:agent` chats with your own Pydantic AI agent.
 - `open_stock_agent(...)` gives your Python code CLAI's coding agent, without the terminal.
-- `chat(agent)` opens the CLAI terminal on any agent.
+- `chat(agent, deps=...)` opens the CLAI terminal on any agent.
 
 See [Using CLAI from code](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#using-clai-from-code)
 in the reference.

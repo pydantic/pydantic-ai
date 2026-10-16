@@ -5,7 +5,7 @@ Hide
 Type 'clai-demo' Enter
 Wait+Screen /\| ready/
 Type '/resume' Enter
-Wait+Screen /Rewrite the README/
+Wait+Screen /Shorter install and usage/
 Sleep 2s
 Show
 Sleep 1s
