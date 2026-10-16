@@ -146,8 +146,8 @@ def recorded_responses(
             if plan == 'replay':
                 connection_cassette = recorded.cassettes[len(recorded.connections) - 1]
             else:
-                connection_cassette = RealtimeCassette()
-                recorded.cassettes.append(connection_cassette)
+                connection_cassette = RealtimeCassette()  # pragma: no cover
+                recorded.cassettes.append(connection_cassette)  # pragma: no cover
         else:
             connection_cassette = cassette
         if plan == 'replay':
@@ -1000,7 +1000,18 @@ async def test_stream_cancel_during_receive(allow_model_requests: None, sockets:
 
 
 @pytest.mark.parametrize(
-    'failure', ['envelope', 'status', 'model_not_found', 'failed', 'steering', 'disconnect', 'send', 'timeout']
+    'failure',
+    [
+        'envelope',
+        'status',
+        'model_not_found',
+        'failed',
+        'failed_without_error',
+        'steering',
+        'disconnect',
+        'send',
+        'timeout',
+    ],
 )
 @pytest.mark.parametrize('stream', [False, True])
 async def test_errors(allow_model_requests: None, sockets: SocketHarness, failure: str, stream: bool):
@@ -1019,10 +1030,13 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
         if failure != 'envelope':
             error['status'] = 400
         socket.responses = deque([[error]])
-    elif failure == 'failed':
+    elif failure in ('failed', 'failed_without_error'):
         response = text_events()[-1]['response']
         assert isinstance(response, dict)
-        response.update(status='failed', error={'code': 'server_error', 'message': 'test failure'})
+        response.update(
+            status='failed',
+            error={'code': 'server_error', 'message': 'test failure'} if failure == 'failed' else None,
+        )
         socket.responses = deque([[{'type': 'response.failed', 'sequence_number': 0, 'response': response}]])
     elif failure == 'steering':
         socket.responses = deque(
@@ -1068,8 +1082,8 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
             assert raised.value.suggested_model_id == ('openai:gpt-5.2-pro' if failure == 'model_not_found' else None)
         elif failure == 'envelope':
             assert 'invalid_test: test failure' in str(raised.value)
-        elif failure == 'failed':
-            assert 'server_error' in str(raised.value)
+        elif failure in ('failed', 'failed_without_error'):
+            assert ('server_error' if failure == 'failed' else 'without an error payload') in str(raised.value)
             with pytest.raises(UserError, match='closed'):
                 await Agent(connected).run('recover')
 
@@ -1373,6 +1387,10 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
             await Agent(connected, model_settings=settings).run(
                 message_history=history or [ModelRequest(parts=[UserPromptPart('hello')])]
             )
+        if invalid == 'resume':
+            with pytest.raises(UserError, match='cannot be resumed over a WebSocket'):
+                async with connected.request_stream(history, None, ModelRequestParameters()):
+                    pytest.fail('A suspended response cannot produce a WebSocket stream')  # pragma: no cover
         assert sockets.opened[0].sent == []
 
 

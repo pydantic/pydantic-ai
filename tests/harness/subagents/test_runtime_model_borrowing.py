@@ -72,7 +72,7 @@ async def test_child_without_a_model_borrows_the_parent_run_model() -> None:
         )
 
     async def unused_parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('the run-level model should override the parent agent model')
+        raise AssertionError('the run-level model should override the parent agent model')  # pragma: no cover
 
     child = Agent(name='worker')
     parent = Agent(
@@ -131,9 +131,8 @@ async def test_background_child_reports_expired_inherited_model_after_parent_sco
         if prompt == 'inspect':
             started.set()
             await release.wait()
-            if not connected:
-                raise RuntimeError('connected model scope has closed')
-            return ModelResponse(parts=[TextPart('borrowed result')])
+            assert not connected
+            raise RuntimeError('connected model scope has closed')
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             return ModelResponse(parts=[TextPart('parent finished')])
         return ModelResponse(
@@ -152,7 +151,8 @@ async def test_background_child_reports_expired_inherited_model_after_parent_sco
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         response = await respond(messages, info)
-        for part in response.parts:
+        # The inherited background call raises after its connection scope closes.
+        for part in response.parts:  # pragma: no cover
             assert isinstance(part, TextPart)
             yield part.content
 
@@ -166,7 +166,7 @@ async def test_background_child_reports_expired_inherited_model_after_parent_sco
             connected = False
 
     async def unused_parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('the run-level model should override the parent agent model')
+        raise AssertionError('the run-level model should override the parent agent model')  # pragma: no cover
 
     owner = DelegationTasks(observer=observe)
     child = Agent(name='worker')
@@ -200,7 +200,7 @@ async def test_background_child_uses_its_own_model_after_parent_scope() -> None:
         nonlocal connected
         prompt = _user_prompt(messages)
         if not connected:
-            raise RuntimeError('connected model scope has closed')
+            raise RuntimeError('connected model scope has closed')  # pragma: no cover
         parent_calls.append(prompt)
         if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             return ModelResponse(parts=[TextPart('parent finished')])
@@ -239,7 +239,7 @@ async def test_background_child_uses_its_own_model_after_parent_scope() -> None:
             connected = False
 
     async def unused_parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise AssertionError('the run-level model should override the parent agent model')
+        raise AssertionError('the run-level model should override the parent agent model')  # pragma: no cover
 
     owner = DelegationTasks(observer=observe)
     child = Agent(FunctionModel(function=own_child, stream_function=own_child_stream), name='worker')
