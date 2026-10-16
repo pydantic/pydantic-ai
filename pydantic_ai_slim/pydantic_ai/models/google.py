@@ -135,8 +135,6 @@ except ImportError as _import_error:
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
-from . import _google_batch
-
 if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
@@ -536,6 +534,17 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
     return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
+def _batch_module():
+    """The batch module, imported on first use.
+
+    It relies on private `google-genai` converters, so an SDK release that moves one breaks only batch calls, not
+    `GoogleModel` as a whole.
+    """
+    from . import _google_batch
+
+    return _google_batch
+
+
 @dataclass(init=False)
 class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
@@ -716,26 +725,26 @@ class GoogleModel(Model[Client]):
         return 100_000
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
-        return await _google_batch.batch_encode(self, request)
+        return await _batch_module().batch_encode(self, request)
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _google_batch.batch_create(self, requests)
+            return await _batch_module().batch_create(self, requests)
 
     async def batch_status(self, batch: Batch) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _google_batch.batch_status(self, batch)
+            return await _batch_module().batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _google_batch.batch_results(self, batch)
+            return await _batch_module().batch_results(self, batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _google_batch.batch_cancel(self, batch)
+            return await _batch_module().batch_cancel(self, batch)
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
-        return _google_batch.batch_decode(self, result, request)
+        return _batch_module().batch_decode(self, result, request)
 
     async def count_tokens(
         self,

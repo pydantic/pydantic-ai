@@ -577,7 +577,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
-        """Retrieve the results of a batch job that has ended, keyed by each request's `custom_id`.
+        """Retrieve the results of a batch job that has ended.
+
+        There is one [`BatchResult`][pydantic_ai.models.batch.BatchResult] per request, matched to its request by
+        `custom_id` rather than by position.
 
         Raises a [`UserError`][pydantic_ai.exceptions.UserError] if `batch` hasn't ended; check with
         [`batch_status`][pydantic_ai.models.Model.batch_status] first.

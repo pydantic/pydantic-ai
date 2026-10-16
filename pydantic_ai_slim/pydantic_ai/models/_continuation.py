@@ -230,10 +230,12 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
     When the trigger is a workflow/task cancellation (e.g. Temporal), awaiting the (activity-wrapped)
     cancel from inside an already-cancelled scope would raise `CancelledError` before the cancel runs,
     silently leaking the job. So the cancel runs as a task of its own, which is waited for until it
-    completes, before the cancellation propagates: an `anyio` scope's cancellation is re-delivered at every
-    await unless shielded, and a native cancellation still interrupts a shielded wait, so it's waited for
-    again, until a second native cancellation gives up on it. Any error from the cancel itself is swallowed — a failing teardown must not replace the error
-    (or cancellation) that aborted the run.
+    completes before the cancellation propagates. An `anyio` scope's cancellation is re-delivered at
+    every await unless shielded, so the wait is shielded; a native cancellation still interrupts a
+    shielded wait, so the cancel is waited for again, until a second native cancellation gives up on it.
+
+    Any error from the cancel itself is swallowed: a failing teardown must not replace the error (or
+    cancellation) that aborted the run.
     """
     job = asyncio.ensure_future(model.cancel_suspended_response(response))
     cancelled: asyncio.CancelledError | None = None

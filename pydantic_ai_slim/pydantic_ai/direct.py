@@ -8,10 +8,9 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 from collections.abc import Iterator, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import TracebackType
@@ -212,7 +211,7 @@ async def _wait_for_batch(
     """Check on `batch` with a growing interval until it has ended, and return its final state."""
     delay = poll_interval.total_seconds()
     while batch.status != 'ended':
-        await asyncio.sleep(delay)
+        await anyio.sleep(delay)
         batch = await model.batch_status(batch)
         delay = min(delay * 1.5, max_poll_interval.total_seconds())
     return batch
@@ -220,9 +219,17 @@ async def _wait_for_batch(
 
 async def _cancel_batches(model: models.Model, batches: Sequence[batch_models.Batch]) -> None:
     """Cancel the batches that haven't ended, shielded so the cancellation that triggered it can't interrupt it."""
-    cancels = [model.batch_cancel(batch) for batch in batches if batch.status != 'ended']
     with anyio.CancelScope(shield=True):
-        await asyncio.gather(*cancels, return_exceptions=True)
+        async with anyio.create_task_group() as tg:
+            for batch in batches:
+                if batch.status != 'ended':
+                    tg.start_soon(_cancel_batch, model, batch)
+
+
+async def _cancel_batch(model: models.Model, batch: batch_models.Batch) -> None:
+    # Best effort: a failed cancel must not replace the error or cancellation that stopped the call.
+    with suppress(Exception):
+        await model.batch_cancel(batch)
 
 
 def model_request_sync(

@@ -215,6 +215,22 @@ async def test_cancelling_a_run_cancels_its_batch() -> None:
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
+async def test_cancelling_a_run_from_an_anyio_scope_cancels_its_batch() -> None:
+    """The provider cancel makes a request, so it only completes if the re-delivered `anyio` cancellation can't stop it."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    agent = Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS))
+
+    async def run() -> None:
+        await agent.run('Hello')
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run)
+        await wrapped.wait_until(lambda m: m.status_checks > 0)
+        tg.cancel_scope.cancel()
+
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
 async def test_a_response_that_is_not_waiting_is_cancelled_by_the_wrapped_model() -> None:
     model = BatchModel(TestModel(), batch_settings=FAST_BATCH_SETTINGS)
     await model.cancel_suspended_response(ModelResponse(parts=[], state='suspended'))
