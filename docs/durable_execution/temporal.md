@@ -293,12 +293,14 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
 from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai_harness.coder import Coder
 
 agent = Agent(
     '{{ openai:medium }}',
     name='coder',
     capabilities=[
-        LocalWorkspace('.'),  # plus Coder() or Shell(), which provide `run_command`
+        LocalWorkspace('.'),
+        Coder(),
         TemporalDurability(),
         SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30))),
     ],

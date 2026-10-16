@@ -17,13 +17,13 @@ Pydantic AI supports nine durable execution engines, plus a [builder](./backends
 | [DBOS](./dbos.md) | `pydantic-ai-slim[dbos]` | `DBOSDurability` from `pydantic_ai.durable_exec.dbos` |
 | [Prefect](./prefect.md) | `pydantic-ai-slim[prefect]` | `PrefectDurability` from `pydantic_ai.durable_exec.prefect` |
 | [Restate](./restate.md) | `restate_sdk[serde]` | `RestateAgent` from `restate.ext.pydantic` |
-| [AWS Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/) | `pydantic-ai-harness[aws-lambda]` | `AWSLambdaDurability` from `pydantic_ai_harness.aws_lambda` |
-| [Absurd](https://pydantic.dev/docs/ai/harness/absurd/) | `pydantic-ai-harness[absurd]` | `AbsurdDurability` from `pydantic_ai_harness.absurd` |
-| [pgtask](https://pydantic.dev/docs/ai/harness/pgtask/) | `pydantic-ai-harness[pgtask]` | `PGTaskDurability` from `pydantic_ai_harness.pgtask` |
+| [AWS Lambda](../harness/aws-lambda.md) | `pydantic-ai-harness[aws-lambda]` | `AWSLambdaDurability` from `pydantic_ai_harness.aws_lambda` |
+| [Absurd](../harness/absurd.md) | `pydantic-ai-harness[absurd]` | `AbsurdDurability` from `pydantic_ai_harness.absurd` |
+| [pgtask](../harness/pgtask.md) | `pydantic-ai-harness[pgtask]` | `PGTaskDurability` from `pydantic_ai_harness.pgtask` |
 | [Kitaru](./kitaru.md) | `kitaru[pydantic-ai]` | `KitaruAgent` from `kitaru.adapters.pydantic_ai` |
 | [Apache Airflow](./airflow.md) | `apache-airflow-providers-common-ai` | `AgentOperator(..., durable=True)` from `airflow.providers.common.ai.operators.agent` |
 
-Temporal, DBOS, Prefect, Restate, and AWS Lambda are co-maintained by the Pydantic and vendor teams. AWS Lambda, Absurd, and pgtask ship in [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/); Restate, Kitaru, and Airflow ship in the engine's own package.
+Temporal, DBOS, Prefect, Restate, and AWS Lambda are co-maintained by the Pydantic and vendor teams. AWS Lambda, Absurd, and pgtask ship in [Pydantic AI Harness](../harness/index.md); Restate, Kitaru, and Airflow ship in the engine's own package.
 
 !!! warning "One durable execution engine per agent"
     Each engine wraps every model request and tool call as its own durable unit, so attaching a second one, whether to the agent, for a single run, or through an agent spec, raises a [`UserError`][pydantic_ai.exceptions.UserError] before either is bound.

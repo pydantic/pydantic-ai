@@ -1,4 +1,4 @@
-"""`Coder` runs its workspace tools on Temporal, DBOS and Prefect, as the workspace guide's durable execution section says."""
+"""End-to-end coverage: the same `Coder` agent runs its workspace tools on Temporal, DBOS and Prefect."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from tests.docs_model_aliases import resolve_model_aliases
 from ._docs_examples import run_block
 from ._temporal import skip_temporal_sandbox_on_314
 
-# The examples the durable execution docs describe: the same `Coder` agent on each engine.
+# `Coder` on each engine, run end-to-end the way the workspace guide describes.
+# These are test scripts, not docs examples.
 CODER_TEMPORAL = """\
 import asyncio
 import uuid
@@ -122,7 +123,7 @@ async def _cleanup(ref: WorkspaceRef) -> None:
 
 def _run(source: str, workspace: Path) -> None:
     """Run `source` from `workspace`, the directory its `LocalWorkspace('.')` names."""
-    example = CodeExample.create(resolve_model_aliases(source), path=Path('coder_durable_example.md'))
+    example = CodeExample.create(resolve_model_aliases(source), path=Path('coder_durable_engine.py'))
     os.chdir(workspace)
     _, runs = run_block(example, cleanup=_cleanup)
     assert [(run.used_sandbox, set(run.outputs)) for run in runs] == [(True, {'shell', 'write_file', 'read_file'})]
