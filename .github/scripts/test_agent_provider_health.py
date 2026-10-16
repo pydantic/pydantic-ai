@@ -27,6 +27,7 @@ from agent_provider_health import (
     _mapping,  # pyright: ignore[reportPrivateUsage]
     _marker_from_body,  # pyright: ignore[reportPrivateUsage]
     _monitor_command,  # pyright: ignore[reportPrivateUsage]
+    _monitor_workflow_outcome,  # pyright: ignore[reportPrivateUsage]
     _parse_zai_quota,  # pyright: ignore[reportPrivateUsage]
     _reconcile_recovery,  # pyright: ignore[reportPrivateUsage]
     _run_result_from,  # pyright: ignore[reportPrivateUsage]
@@ -1996,6 +1997,68 @@ def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert result == 0
     assert client.posts == []
+
+
+def test_healthy_cancellation_skips_attempt_jobs() -> None:
+    """A healthy manual cancellation is expected and does not need job evidence."""
+    client = FakeGitHub()
+
+    def unexpected_attempt_jobs(run_id: str, attempt: int) -> list[dict[str, object]]:
+        raise AssertionError(f'unexpected attempt job lookup for {run_id} attempt {attempt}')
+
+    client.attempt_jobs = unexpected_attempt_jobs
+    result = _monitor_workflow_outcome(
+        client,
+        argparse.Namespace(run_id=42, conclusion='cancelled', dry_run=False),
+        health.Health(
+            'nightly-sweep',
+            'task-1',
+            'schedule',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+        1,
+        None,
+        'org/repo',
+    )
+
+    assert result == 0
+    assert client.posts == []
+
+
+def test_typed_cancellation_failure_still_fetches_attempt_jobs() -> None:
+    """Typed terminal failure metadata still requests trusted attempt evidence."""
+    client = FakeGitHub()
+    attempts: list[tuple[str, int]] = []
+
+    def record_attempt_jobs(run_id: str, attempt: int) -> list[dict[str, object]]:
+        attempts.append((run_id, attempt))
+        return []
+
+    client.attempt_jobs = record_attempt_jobs
+    result = _monitor_workflow_outcome(
+        client,
+        argparse.Namespace(run_id=43, conclusion='cancelled', dry_run=True),
+        health.Health(
+            'nightly-sweep',
+            'task-1',
+            'schedule',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+        1,
+        health.RunResult('nightly-sweep', 'task-1', 'schedule', 1, health.Failure('rate_limit', 429, None)),
+        'org/repo',
+    )
+
+    assert result == 0
+    assert attempts == [('43', 1)]
 
 
 @pytest.mark.parametrize(('conclusion', 'creates_incident'), [('failure', True), ('success', False)])

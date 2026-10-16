@@ -80,6 +80,24 @@ def test_assignments_are_deterministic_and_balance_descending_change_sizes(tmp_p
     ]
 
 
+def test_zero_line_files_are_evenly_partitioned_deterministically(tmp_path: Path):
+    """Zero-line files spread across every delegate and stay balanced in reverse order."""
+    files: list[FileChange] = [
+        {'filename': f'src/rename_{index:02}.py', 'additions': 0, 'deletions': 0} for index in range(11)
+    ]
+    first = _partition(tmp_path / 'first', files)
+    second = _partition(tmp_path / 'second', list(reversed(files)))
+
+    assignments = _assignments(first)
+    assert assignments == _assignments(second)
+    assert len(assignments) == 3
+    assert all(assignments)
+    assert max(map(len, assignments)) - min(map(len, assignments)) <= 1
+    assert sorted(path for assignment in assignments for path in assignment) == sorted(
+        file['filename'] for file in files
+    )
+
+
 def test_generated_files_are_excluded_from_orderings_and_assignments(tmp_path: Path):
     """Generated files do not appear in reviewer assignments."""
     files: list[FileChange] = [

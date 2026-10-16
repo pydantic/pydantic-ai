@@ -57,7 +57,10 @@ if [ "${1:-}" = "--partition-files" ]; then
         . as $state
         | (reduce range(1; $delegate_count) as $i
              (0; . as $best
-              | if $state.loads[$i] < $state.loads[$best] then $i else $best end)) as $best
+              | if $state.loads[$i] < $state.loads[$best]
+                   or ($state.loads[$i] == $state.loads[$best]
+                       and ($state.bins[$i] | length) < ($state.bins[$best] | length))
+                then $i else $best end)) as $best
         | .bins[$best] += [$file.filename]
         | .loads[$best] += (($file.additions // 0) + ($file.deletions // 0)))
     | {delegate_count: $delegate_count, bins: .bins}

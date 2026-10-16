@@ -832,7 +832,7 @@ def _monitor_workflow_outcome(
     repo: str,
 ) -> int:
     """Record only trusted host failures and typed, identity-matched provider outcomes."""
-    needs_failure_evidence = args.conclusion in ('failure', 'timed_out', 'cancelled') or (
+    needs_failure_evidence = args.conclusion in ('failure', 'timed_out') or (
         result is not None and result.failure is not None
     )
     jobs = client.attempt_jobs(str(args.run_id), run_attempt) if needs_failure_evidence else []
