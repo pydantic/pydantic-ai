@@ -186,6 +186,12 @@ class TemporalModel(WrapperModel):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]
 
+    def _refresh_http_client(self) -> None:
+        """Leave the wrapped models' HTTP clients alone.
+
+        Activities send the requests from the worker's event loop, not the workflow's.
+        """
+
     async def request(
         self,
         messages: list[ModelMessage],

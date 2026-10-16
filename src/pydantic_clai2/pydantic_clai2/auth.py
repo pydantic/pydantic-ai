@@ -7,8 +7,6 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio
 from anyio import fail_after
-from prompt_toolkit import PromptSession
-from prompt_toolkit.patch_stdout import patch_stdout
 from pydantic import TypeAdapter, ValidationError
 from rich.console import Console
 from termflow.tui import MenuBuilder, MenuItem
@@ -36,6 +34,7 @@ from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
@@ -43,7 +42,8 @@ CODEX = 'openai-codex'
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 
-ReadLine = Callable[[str], Awaitable[str]]
+ReadLine = Callable[[str], Awaitable[str | None]]
+"""Read one line after showing a prompt; `None` when the user cancels."""
 
 
 async def login_command(
@@ -137,15 +137,6 @@ async def _pick_login(plugins: Mapping[str, PluginLogin], runners: Runners) -> s
     return result.item.value
 
 
-async def read_line(message: str) -> str:
-    """Read one line with a throwaway prompt; logins run between turns, so nothing else owns the terminal.
-
-    Console output while the prompt is open (a failed callback listener) goes above it, not into it.
-    """
-    with patch_stdout():
-        return await PromptSession[str]().prompt_async(message)
-
-
 def code_from_paste(*, text: str, state: str) -> str:
     """Accept the redirect URL the browser landed on, or the bare authorization code."""
     params = {name: values[0] for name, values in parse_qs(urlparse(text).query).items()}
@@ -202,10 +193,10 @@ class CodexCredentials(OpenAICodexCredentialSource):
 class CodexAuth:
     """Conversation-owned login command and one cached native Codex provider per profile."""
 
-    def __init__(self, console: Console, *, read_line: ReadLine = read_line, login_timeout: float = 300) -> None:
-        """Defer all credential access until login or a Codex request."""
+    def __init__(self, console: Console, *, read_line: ReadLine | None = None, login_timeout: float = 300) -> None:
+        """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`."""
         self.console = console
-        self.read_line = read_line
+        self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.login_timeout = login_timeout
         self.source = CodexCredentials()
         self._providers: dict[str, OpenAICodexProvider] = {}
@@ -289,13 +280,13 @@ class CodexAuth:
             await asyncio.gather(callback, paste, return_exceptions=True)
 
     async def _exchange_paste(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
-        """Prompt until something is pasted; Ctrl-C or Ctrl-D abandons the login."""
-        try:
-            while not (text := (await self.read_line(_PASTE_PROMPT)).strip()):
-                pass
-        except (KeyboardInterrupt, EOFError):
-            raise UserError('Codex login cancelled.') from None
-        return await flow.exchange_code(code_from_paste(text=text, state=flow.state))
+        """Prompt until something is pasted; Esc or Ctrl-C abandons the login."""
+        while True:
+            text = await self.read_line(_PASTE_PROMPT)
+            if text is None:
+                raise UserError('Codex login cancelled.')
+            if text := text.strip():
+                return await flow.exchange_code(code_from_paste(text=text, state=flow.state))
 
     def forget(self, account: str) -> None:
         """Drop an account's cached provider after it signs out, so the next request asks to sign in."""

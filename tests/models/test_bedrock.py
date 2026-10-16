@@ -5,7 +5,7 @@ import json
 import os
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from itertools import count
 from threading import Barrier, Lock
@@ -31,6 +31,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestAttempt,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -63,6 +64,8 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -70,7 +73,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -85,6 +88,7 @@ with try_import() as imports_successful:
         BotoCoreError,
         ClientError,
         EndpointConnectionError,
+        EventStreamError,
         ParamValidationError,
         ReadTimeoutError,
     )
@@ -4412,6 +4416,43 @@ async def test_bedrock_stream_transport_error_mid_stream(
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.__cause__ is error
+
+
+async def test_bedrock_stream_first_event_error_falls_back(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """A throttling error as the first ConverseStream event fires `FallbackModel`'s default `fallback_on`.
+
+    Not a VCR test: Bedrock doesn't throttle on demand. https://github.com/pydantic/pydantic-ai/issues/10364
+    """
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        raise EventStreamError({'Error': {'Code': 'throttlingException', 'Message': 'slow down'}}, 'ConverseStream')
+        yield {}  # pragma: no cover
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+    agent = Agent(FallbackModel(model, TestModel(custom_output_text='from fallback')))
+
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+
+    assert output == 'from fallback'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='us.amazon.nova-micro-v1:0',
+                provider_name='bedrock',
+                outcome='error',
+                error='ModelAPIError: An error occurred (throttlingException) when calling the ConverseStream operation: slow down',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+            )
+        ]
+    )
 
 
 async def test_bedrock_stream_cancel_suppresses_urllib3_error(
