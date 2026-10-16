@@ -274,7 +274,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)`. A summary is a request to the run's model, so it counts
 toward the run's usage and cost. It uses only the model's own settings, not the agent's or the run's
 `model_settings`; to give it settings such as `openai_store=False`, pass `Coder(compaction=False)` and bind your own
-`FallbackCompaction` whose `SummarizingCompaction(model_settings=...)` sets them. To keep the previous behaviour, pass
+`FallbackCompaction` whose `SummarizingCompaction(model_settings=...)` sets them. To keep the previous behavior, pass
 `Coder(compaction=False)` and add `ClearToolResults(max_fraction=0.7)` yourself.
 
 ### Prompt caching
