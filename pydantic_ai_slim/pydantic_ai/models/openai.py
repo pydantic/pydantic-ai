@@ -380,10 +380,20 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _ChatCompletionChoice(chat_completion.Choice):
+    """Wraps a chat completion choice with a provider-tolerant finish reason."""
+
+    finish_reason: str | None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers may return finish reasons not yet known to the OpenAI schema."""
+
+
 class _ChatCompletion(chat.ChatCompletion):
-    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+    """Relaxes strict validation on fields that OpenAI-compatible providers may extend."""
 
     model_config = {'title': 'ChatCompletion'}
+
+    choices: list[_ChatCompletionChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    """Choices using a provider-tolerant finish reason so unknown values can be normalized downstream."""
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
