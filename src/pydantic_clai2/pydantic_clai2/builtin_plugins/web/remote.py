@@ -74,6 +74,7 @@ from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.repl_cells import is_repl_cell
+from pydantic_clai2.runtime.session_workspace import workspace_directory
 
 THEME = 'display.theme'
 CODE_MODE = 'run.code_mode'
@@ -131,6 +132,7 @@ class Remote:
             questions=self.answerer.questions,
             dialogs=self.dialogs.dialogs,
             theme=self.theme(),
+            follows_workspace=self.host.sessions is not None and self.host.sessions.follows_workspace,
         )
 
     def theme(self) -> ThemeInfo:
@@ -482,18 +484,40 @@ class Remote:
 
     async def transcript(self, conversation_id: str) -> Transcript:
         saved = await self.catalog.saved(conversation_id)
+        openable = self._continuable(saved.summary.workspace)
         return Transcript(
             id=saved.summary.id,
             title=saved.summary.title,
             workspace=saved.summary.workspace,
             items=history_items(saved.messages),
-            openable=saved.summary.workspace == self.host.status.workspace,
+            openable=openable,
+            missing=self.catalog.follows_workspace and not openable,
         )
+
+    def _continuable(self, workspace: str) -> bool:
+        """Whether `/resume` continues a session saved in `workspace`: here, or there while CLAI follows sessions."""
+        if workspace == self.host.status.workspace:
+            return True
+        if not self.catalog.follows_workspace:
+            return False
+        try:
+            workspace_directory(workspace)
+        except ValueError:
+            return False
+        return True
 
     def open(self, conversation_id: str) -> None:
         self.host.send_input(f'/resume {conversation_id}')
 
-    def new(self) -> None:
+    def new(self, workspace: str | None = None) -> None:
+        """Start a new session, in the directory `workspace` names when CLAI follows sessions' directories."""
+        if workspace is not None:
+            directory = str(workspace_directory(workspace))
+            if directory != self.host.status.workspace:
+                if not self.catalog.follows_workspace:
+                    raise ValueError(f'This CLAI works in {self.host.status.workspace}. Start CLAI in {directory}.')
+                self.host.send_input(f'/workspace {directory}')
+                return
         self.host.send_input('/new')
 
     async def rename(self, conversation_id: str, title: str) -> None:
@@ -504,7 +528,7 @@ class Remote:
         """Copy a session and switch to the copy."""
         copy = await self.catalog.fork(conversation_id)
         self.hub.publish(SessionsChanged())
-        if copy.workspace == self.host.status.workspace:
+        if self._continuable(copy.workspace):
             self.open(copy.id)
         return copy.id
 

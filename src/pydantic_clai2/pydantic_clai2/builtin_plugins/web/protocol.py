@@ -232,6 +232,8 @@ class Snapshot:
     questions: list[Questions]
     dialogs: list[Dialog]
     theme: ThemeInfo
+    follows_workspace: bool = False
+    """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
 
 
 @dataclass(kw_only=True)
@@ -531,7 +533,9 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it here; it refuses a session saved in another directory."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    missing: bool = False
+    """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
 
 
 @dataclass(kw_only=True)
