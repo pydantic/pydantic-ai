@@ -249,9 +249,10 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   `queued` means input waits while that session's turn runs; `asking` means a question its turn
   asked waits for the user.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
-  watches. The server answers with a `snapshot` for each newly watched live session; IDs that are not
-  live are ignored. A connection that never sends `watch` (an older page, `web/client.py`) watches
-  the default session, as before. A watched session is never closed for being idle.
+  watches. The server answers with a `snapshot` for each newly watched live session. An ID that is not
+  live yet stays watched: its `snapshot` comes once it opens. A connection that never sends `watch`
+  (an older page, `web/client.py`) watches the default session, as before, and gets its `snapshot`
+  when another session becomes the default. A watched session is never closed for being idle.
 - When a live session switches conversation (`/new` or `/resume` typed in it), its watchers get a
   `snapshot` for the new ID, and `live` changes.
 
@@ -277,7 +278,7 @@ or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, ren
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
-`/api/switch`, `/api/questions/…`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the
-default session: the one this page last opened or started while it stays live, else the most
-recently opened. `web/client.py`
-and the orchestrators of other CLAI versions use them.
+`/api/switch`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the default session: the
+one this page last opened or started while it stays live, else the most recently opened.
+`/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
+orchestrators of other CLAI versions use them.

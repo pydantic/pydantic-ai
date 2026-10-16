@@ -483,7 +483,11 @@ def _events(app: FastAPI, service: WebService) -> None:
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with service.hub.subscribe() as client:
             try:
-                await socket.send_text(dump(service.default().snapshot()))
+                try:
+                    await socket.send_text(dump(service.default().snapshot()))
+                except LookupError:
+                    pass  # No session is live, as while CLAI exits; `live` says so.
+                service.follow(client, snapshots=False)
                 await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 await socket.send_text(dump(service.live_message()))
                 async with anyio.create_task_group() as connection:

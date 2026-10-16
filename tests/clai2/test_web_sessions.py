@@ -393,8 +393,10 @@ def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
     saved = fleet.portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
     with fleet.socket() as socket:
         connected(socket)
+        watch(socket, saved.id)  # Not live yet: followed once it opens.
         assert fleet.post(f'/api/sessions/{saved.id}/open').json() == {'id': saved.id}
         snapshot = messages(socket, until=snapshot_of(saved.id))[-1]
+        assert fleet.service.session(saved.id).session.watchers == 1
         assert [at(snapshot, 'items', index, 'text') for index in range(2)] == ['hi', 'hello'], (
             'the page follows what it opened'
         )
@@ -440,23 +442,27 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
 
 
 def test_closing_a_watched_session_or_the_web_ui_stops_counting_its_browsers(make_fleet: MakeFleet) -> None:
-    """A session that closes leaves `live`; ending the launch session stops the web UI watching any."""
+    """A session that closes leaves `live`, and a browser that never sent `watch` follows the next default.
+
+    Ending the launch session stops the web UI counting any browser as a watcher.
+    """
     fleet = make_fleet()
     b = fleet.new('b')
     session_b = fleet.service.session(b).session
     session_a = fleet.launch.loader.live_session
-    with fleet.socket() as socket, fleet.socket() as other:
-        connected(other)  # Watches only the default session, which stays.
+    a = session_a.conversation.conversation_id
+    with fleet.socket() as socket, fleet.socket() as legacy:
+        assert at(connected(legacy), 'session', 'id') == b, 'the newest session is the default'
         connected(socket)
-        watch(socket, session_a.conversation.conversation_id or '', b)
-        messages(socket, until=snapshot_of(b))
-        assert session_b.watchers == 1
+        watch(socket, a, b)
+        assert {str(at(messages(socket, until=kind('snapshot'))[-1], 'session', 'id')) for _ in range(2)} == {a, b}
+        assert (session_a.watchers, session_b.watchers) == (1, 2)
         fleet.portal.call(fleet.launch.process.live.close, session_b.id)
         assert b not in live_states(
             messages(socket, until=lambda m: m['type'] == 'live' and b not in live_states(m))[-1]
         )
-        assert session_b.watchers == 0
-        assert session_a.watchers == 1
+        assert at(messages(legacy, until=snapshot_of(a))[-1], 'session', 'id') == a
+        assert (session_a.watchers, session_b.watchers) == (2, 0)
         fleet.exit()
         assert session_a.watchers == 0
 
@@ -478,3 +484,14 @@ async def test_a_bare_host_asks_as_its_session_and_has_no_default_once_empty(mon
     assert service.hub.default() is None
     result = await Agent(TestModel(), deps_type=type(None), capabilities=[Observer(service=service)]).run('hi')
     assert result.output == 'success (no tool calls)', 'a run no live session holds is not shown'
+
+
+def test_a_browser_connecting_while_no_session_is_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """As while CLAI exits: no snapshot, only the orchestrator and an empty `live`."""
+    host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
+    service = WebService(host=host)
+    monkeypatch.setattr(service.live, 'listing', list)
+    client = TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
+    with client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        assert json.loads(socket.receive_text())['type'] == 'orchestrator'
+        assert json.loads(socket.receive_text()) == {'type': 'live', 'sessions': []}

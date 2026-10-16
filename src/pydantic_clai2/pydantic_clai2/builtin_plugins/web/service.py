@@ -120,9 +120,10 @@ class WebService:
         """The theme browsers were last sent, so a command that changes it sends it again."""
         self._command_edits = Lock()
         """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
-        self._live_sent: LiveChanged | None = None
-        self._default_sent = None if (default := self._default()) is None else default.session.id
-        """The `LiveSession.id` of the default session browsers without `watch` were last sent."""
+        self._following = False
+        """Set while `follow` counts watchers, which tells the live sessions again."""
+        self._live_sent = self.live_message()
+        """The `live` message browsers were last sent; each connecting one gets it as it is then."""
         self._unsubscribe = self.live.subscribe(self.live_changed)
 
     def close(self) -> None:
@@ -199,38 +200,44 @@ class WebService:
         live = {session.id for session in self.live.listing()}
         for gone in self._channels.keys() - live:
             del self._channels[gone]
-            for client in self.hub.connected():
-                if (unwatch := client.unwatch.pop(gone, None)) is not None:
-                    unwatch()
         message = self.live_message()
         if message != self._live_sent:
             self._live_sent = message
             self.hub.publish(message)
-        # Another session became the default; one switching conversation sends its snapshot itself.
-        default = self._default()
-        if default is not None and default.session.id != self._default_sent:
-            self._default_sent = default.session.id
-            legacy = [client for client in self.hub.connected() if client.watching is None]
-            if legacy:
-                # A browser that never said which session it shows follows the default one, as it did before.
-                self.hub.send(legacy, dump(default.snapshot()))
+        for client in self.hub.connected():
+            self.follow(client)
 
     def watch(self, client: Client, conversation_ids: Sequence[str]) -> None:
         """Replace what `client` watches; it gets a snapshot of each live session it did not watch before."""
-        before: set[str] = set() if client.watching is None else client.watching
+        if client.watching is None:
+            # It showed the default session until now; each session it watches gets a snapshot.
+            self.unwatch(client)
         client.watching = set(conversation_ids)
-        held = {channel.id: channel for channel in self.channels()}
-        wanted = {held[conversation].session.id for conversation in client.watching if conversation in held}
-        for live_id in client.unwatch.keys() - wanted:
-            client.unwatch.pop(live_id)()
-        for conversation in client.watching:
-            channel = held.get(conversation)
-            if channel is None:
-                continue
-            if channel.session.id not in client.unwatch:
-                client.unwatch[channel.session.id] = channel.session.watch()
-            if conversation not in before:
-                self.hub.send([client], dump(channel.snapshot()))
+        self.follow(client)
+
+    def follow(self, client: Client, *, snapshots: bool = True) -> None:
+        """Count `client` as a watcher of exactly the live sessions it shows, sending each new one's snapshot.
+
+        It shows those it watches, or the default session until it sends `watch`. One it watches that is
+        not live yet is followed once it opens. A session switching conversation keeps its watchers; it
+        sends them its new snapshot itself.
+        """
+        if self._following:
+            return  # Counting a watcher tells the live sessions, which call `live_changed` again.
+        self._following = True
+        try:
+            held = {name: channel for channel in self.channels() for name in (channel.id, channel.shown)}
+            shown = {self._default_id()} if client.watching is None else client.watching
+            wanted = {held[name].session.id: held[name] for name in shown if name in held}
+            for live_id in client.unwatch.keys() - wanted.keys():
+                client.unwatch.pop(live_id)()
+            for live_id, channel in wanted.items():
+                if live_id not in client.unwatch:
+                    client.unwatch[live_id] = channel.session.watch()
+                    if snapshots:
+                        self.hub.send([client], dump(channel.snapshot()))
+        finally:
+            self._following = False
 
     def unwatch(self, client: Client) -> None:
         """`client` left: it no longer keeps any session from closing for being idle."""
@@ -266,11 +273,11 @@ class WebService:
 
         A CLAI that opens no other sessions starts it in the default session, as `open` does.
         """
-        default = self.default()
-        directory = default.session.workspace if workspace is None else workspace_directory(workspace)
+        directory = self.default().session.workspace if workspace is None else workspace_directory(workspace)
         try:
             session = await self.live.new(workspace=directory)
         except RuntimeError:
+            default = self.default()
             if directory != default.session.workspace:
                 if not self.catalog.follows_workspace:
                     raise ValueError(f'This CLAI works in {default.session.workspace}. Start CLAI in {directory}.')
