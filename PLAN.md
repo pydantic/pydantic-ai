@@ -164,7 +164,14 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    def member_run(self, record: DelegationTask) -> MemberRun: ...
    ```
    `MemberRun` bundles what `SubAgents._run_delegation` sets up for today's children, so hosts don't copy
-   private logic: capabilities, event stream handler, and run keyword arguments.
+   private logic: the resolved agent, capabilities, event stream handler, and run keyword arguments.
+   - **Agent resolution:** a member runs outside any tool `RunContext`, so it can't use the per-run `SubAgents`
+     roster. `member_run` resolves `record.agent_name` against `owner.agents`. The host registers its own agent
+     there as the general-purpose type, plus any specialist teammate types. `member_run` applies the resolved
+     `SubAgent`'s `read_only` (`ReadOnlyWorkspace`) and model, as `_run_delegation` does.
+   - **v1 limit:** types defined on disk (`.claude/agents`, `.agents`) are loaded per run into the `SubAgents`
+     roster today. They are available to teams only once the host loads them into `owner.agents`. PR 2 adds a
+     public helper that loads them from the workspace.
    - **Records:** `start` creates records with `background=True` and `backgroundable=True`. `reports()`, the
      shell's wake, `focused()` and Ctrl+B all key off `background`, so a member is never treated as foreground
      work. `start` refuses agent types listed in `one_shot`, because a teammate must be wakeable.
@@ -184,11 +191,10 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
      therefore find their conversation through `owner.records[DelegationTasks.child_id()].conversation_id`.
    - **Who provides the runner:** the host registers it when it constructs the owner. In `clai2`, `ChatApp`
      passes it to `Tasks`, which builds the owner. The runner reads the current `Session`'s deps, model and
-     local workspace lazily when it runs, the way `Tasks` already reads `conversation_id`. It also holds a
-     **per-member `RunUsage`**. Teams are therefore available only where `session.delegations` is set, which
-     today means stock agents. A member
-     therefore never borrows a spawning run's `RunContext`, which may already have ended. Usage rolls up into a
-     team total and is capped by the member's `UsageLimits`.
+     local workspace lazily when it runs, the way `Tasks` already reads `conversation_id`. A member therefore
+     never borrows a spawning run's `RunContext`, which may already have ended. The runner also holds a
+     **per-member `RunUsage`**, which rolls up into a team total and is capped by the member's `UsageLimits`.
+     Teams are available only where `session.delegations` is set, which today means stock agents.
    - **Restarts:** because the runner is registered on the owner rather than saved per task, a member reloaded
      from `directory=` after a restart can still be woken. With no runner registered, `start` and waking raise
      `RuntimeError`.
@@ -203,8 +209,7 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
      avoids re-parenting, `wait_children` deadlocks between two members, and cascade cancellation.
    - **Closing the old path:** `delegate()` refuses `resume` for records that have a `name`, with a
      `ModelRetry` pointing at `send_message`. Without this, another member's `delegate_task(resume=...)` would
-     re-parent the member and run it outside its own runner, usage and `max_active`. `clai2`'s
-     For a named record, both `TaskCatalog.resume` and the shell's own `/tasks resume ID` (`_app.py`
+     re-parent the member and run it outside its own runner, usage and `max_active`. For a named record, both `TaskCatalog.resume` and the shell's own `/tasks resume ID` (`_app.py`
      `tasks_command`, which today submits `resume_prompt` itself) wake the member through `member_runner`
      instead of `resume_prompt`.
    - **Why not extend `delegate()`:** its contract is tool-facing. It raises `ModelRetry`, takes a `str` prompt,
@@ -342,7 +347,7 @@ primitives, which is why its home is a question for maintainers.
 
 | Tool | Lead | Member | Notes |
 |---|---|---|---|
-| `spawn_teammate(name, agent, prompt, model?)` | ✓ | — | Agent types come from the `SubAgents` roster or disk definitions; no nested teams |
+| `spawn_teammate(name, agent, prompt, model?)` | ✓ | — | Agent types are the non-one-shot entries of `owner.agents` (§3.1); no nested teams |
 | `send_message(to: list[str], text)` | ✓ | ✓ | `to=['lead']` works; no implicit broadcast; one `DelegationTasks.send` per recipient (§3.1) |
 | `board_add(content, depends_on?) / board_list / board_get` | ✓ | ✓ | Team board tools over the `ClaimablePlanStore`; planning's `write_plan` and status tools are not exposed |
 | `claim_task(id?)` | ✓ (assign via `owner=`) | ✓ | `claim`; `None` = next available |
@@ -547,7 +552,8 @@ REST routes call `host.team`:
    - N concurrent claimers produce exactly one winner;
    - concurrent completions unblock dependents exactly once;
    - a concurrent `set_items` doesn't lose an owner.
-2. **harness `subagents`:** `DelegationTask.name`, `member_runner` with `start` and `member_run`, persisted member and lead
+2. **harness `subagents`:** `DelegationTask.name`, `member_runner` with `start` and `member_run` (including
+   agent resolution and a public disk-definition loader), persisted member and lead
    inboxes with `send` (new optional `receiving(message=)` callback, per-message acknowledgement, wake on
    settle), and `max_active`. Tests:
    - a message sent while the member's final response settles is delivered on the next wake;
