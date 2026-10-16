@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from typing import get_args, get_type_hints
 
 import pytest
 from pydantic import BaseModel
@@ -21,7 +22,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettingName, ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -31,6 +32,11 @@ with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as mcp_available:
+    from mcp import types as mcp_types
+
+    from pydantic_ai.mcp import _build_sampling_handler  # pyright: ignore[reportPrivateUsage]
 
 
 def _reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -192,3 +198,30 @@ def test_openai_profile_adds_ignored_settings(profile_drops_it: bool):
         if profile_drops_it
         else []
     )
+
+
+@pytest.mark.skipif(not mcp_available(), reason='mcp not installed')
+async def test_mcp_sampling_stays_silent_about_the_servers_stop_sequences():
+    """The server chose the `stop_sequences` of its sampling request, so only the user's own settings warn."""
+
+    @dataclass(init=False)
+    class StopIgnoringModel(FunctionModel):
+        unsupported_settings = frozenset({'timeout', 'stop_sequences'})
+
+    handler = _build_sampling_handler(StopIgnoringModel(_reply, model_name='ignoring', settings={'timeout': 5}))
+    params = mcp_types.CreateMessageRequestParams(
+        messages=[mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
+        maxTokens=42,
+        stopSequences=['STOP'],
+    )
+
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        await handler([], params, None)  # type: ignore[arg-type, misc]
+
+    assert [str(w.message).split(' and ')[0] for w in record] == [
+        "The `timeout` setting is not supported by model 'function:ignoring'"
+    ]
+
+
+def test_model_setting_name_lists_every_model_settings_field():
+    assert set(get_args(ModelSettingName)) == set(get_type_hints(ModelSettings))

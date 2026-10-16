@@ -39,7 +39,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._unsupported_settings import GUARANTEE_SETTINGS, warnings_suppressed
+from .._unsupported_settings import GUARANTEE_SETTINGS, SUPPRESSED_WARNINGS
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
 from ..messages import (
@@ -95,7 +95,7 @@ from ..profiles import (
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -524,7 +524,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     default), the standing prompt travels in a per-request channel rebuilt from those items, so the
     trim has to re-insert them or it is silently dropped from every subsequent request. See
     `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
-    unsupported_settings: ClassVar[frozenset[str]] = frozenset()
+    unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
 
     When a request sets one of them that changes what the request guarantees, like `timeout` or
@@ -1014,11 +1014,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> None:
         """Warn about each set setting that changes what the request guarantees and that this model ignores."""
-        if not model_settings or warnings_suppressed():
+        if not model_settings:
             return
         unsupported = self._unsupported_settings()
+        suppressed = SUPPRESSED_WARNINGS.get()
         for name, hint in GUARANTEE_SETTINGS.items():
-            if name not in model_settings or name not in unsupported:
+            if name not in model_settings or name not in unsupported or name in suppressed:
                 continue
             # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
             if name == 'parallel_tool_calls' and (

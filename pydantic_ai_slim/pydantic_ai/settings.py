@@ -684,6 +684,31 @@ class ModelSettings(TypedDict, total=False):
     """
 
 
+ModelSettingName: TypeAlias = Literal[
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'timeout',
+    'request_timeout',
+    'max_retries',
+    'parallel_tool_calls',
+    'tool_choice',
+    'seed',
+    'presence_penalty',
+    'frequency_penalty',
+    'logit_bias',
+    'stop_sequences',
+    'extra_headers',
+    'thinking',
+    'cache',
+    'service_tier',
+    'extra_body',
+]
+"""The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
+[`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
+
+
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
 
