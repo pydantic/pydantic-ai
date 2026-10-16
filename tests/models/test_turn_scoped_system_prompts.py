@@ -18,7 +18,7 @@ projection on both sides of the `supports_turn_scoped_system_prompts` flag.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -699,7 +699,7 @@ WEATHER_PARAMETERS = ModelRequestParameters(
 
 
 @contextmanager
-def converse_request_bodies(model: BedrockConverseModel) -> Iterator[list[dict[str, Any]]]:
+def converse_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
     """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too."""
     captured: list[dict[str, Any]] = []
 
