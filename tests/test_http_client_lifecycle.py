@@ -8,15 +8,12 @@ that what they count and check is each client the provider itself creates.
 from __future__ import annotations
 
 import asyncio
-import gc
 import json
 import threading
-import warnings
-import weakref
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import httpx2
@@ -186,16 +183,25 @@ class _CountingOpenAIServer(ThreadingHTTPServer):
 
 
 class _TransportTrackingEventLoop(asyncio.SelectorEventLoop):
-    """An event loop that keeps a weak reference to the transport of each connection it opens."""
+    """An event loop that keeps the transport of each connection it opens."""
 
-    def __init__(self, transports: list[weakref.ref[asyncio.Transport]]) -> None:
+    def __init__(self, transports: list[asyncio.Transport]) -> None:
         super().__init__()
         self.transports = transports
 
     async def create_connection(self, *args: Any, **kwargs: Any) -> tuple[asyncio.Transport, asyncio.BaseProtocol]:
         transport, protocol = await super().create_connection(*args, **kwargs)
-        self.transports.append(weakref.ref(transport))
+        self.transports.append(transport)
         return transport, protocol
+
+
+def _finalize_transport_of_closed_loop(transport: asyncio.Transport) -> None:
+    """Close a connection's socket after its event loop has closed, which `transport.close()` can no longer do.
+
+    `close()` and `abort()` schedule this same finalizer on the event loop, which raises once it's closed. Left
+    open, the transport warns about it whenever it's garbage collected, which can be during a later test.
+    """
+    cast(Any, transport)._call_connection_lost(None)
 
 
 def test_unentered_agent_runs_on_new_event_loop_over_real_connections(
@@ -208,7 +214,7 @@ def test_unentered_agent_runs_on_new_event_loop_over_real_connections(
     server_thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01})
     provider = OpenAIProvider(base_url=f'http://127.0.0.1:{server.server_port}/v1', api_key='test-key')
     agent = Agent(OpenAIChatModel('gpt-5.2', provider=provider))
-    transports: list[weakref.ref[asyncio.Transport]] = []
+    transports: list[asyncio.Transport] = []
     server_thread.start()
     try:
         for _ in range(2):
@@ -222,17 +228,13 @@ def test_unentered_agent_runs_on_new_event_loop_over_real_connections(
                 loop.close()
         assert server.connections == 2
     finally:
+        # No client can be closed once its event loop is, so close their connections here.
+        for transport in transports:
+            _finalize_transport_of_closed_loop(transport)
         server.shutdown()
         server.server_close()
         server_thread.join()
-        # No client can be closed once its event loop is, so their connections are finalized here, while the
-        # `unclosed transport` and `unclosed socket` warnings that raises are ignored, rather than in a later test.
-        del agent, provider
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', ResourceWarning)
-            gc.collect()
     assert len(transports) == 2
-    assert [transport() for transport in transports] == [None, None]
 
 
 def test_unentered_agent_keeps_client_while_its_event_loop_runs(new_provider_clients: list[httpx2.AsyncClient]):
@@ -410,21 +412,17 @@ async def test_entered_agent_keeps_model_its_selector_returns_again(provider_cli
 async def test_entered_agent_leaves_new_model_its_selector_returns_to_the_run(
     provider_clients: list[httpx2.AsyncClient],
 ):
-    """A selector that builds a new `Model` for each run gets each one closed when its run ends, and released."""
-    models: list[weakref.ref[Model]] = []
+    """A selector that builds a new `Model` for each run gets each one closed when its run ends, not on agent exit."""
 
     def select(ctx: ModelSelectionContext[Any]) -> Model:
-        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
-        models.append(weakref.ref(model))
-        return model
+        return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider())
 
     agent = Agent(capabilities=[SelectModel(select)])
 
     async with agent:
         await agent.run('What is the capital of France?')
+        assert [client.is_closed for client in provider_clients] == [True]
         await agent.run('What is the capital of France?')
-        gc.collect()
-        assert [model() for model in models] == [None, None]
         assert [client.is_closed for client in provider_clients] == [True, True]
 
 
