@@ -1226,13 +1226,14 @@ browser's light or dark mode, and any other palette paints the page as it paints
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
 and a change made in the terminal shows in the browser once the command ends.
 
-The **REPL** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
-cells: each cell's code as the model writes it, the tools it calls from the sandbox as they run
-(speculative launches marked), and what it printed and returned. Code mode keeps the REPL with
-the session between turns and on resume, so cells are numbered across the session, as a
-notebook numbers them, until a `restart: true` clears it. Its input runs your own cell with
-`/repl` between turns, shown as yours; your next prompt tells the model what you ran. A saved
-session keeps no sandbox call log, so its cells list the calls found in their code.
+The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
+cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes
+it, the tools it calls from the sandbox as they run (speculative launches marked), and what it
+printed and returned. Code mode keeps Monty's state with the session between turns and on resume,
+so cells are numbered across the session, as a notebook numbers them, until a `restart: true`
+clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
+prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
+the calls found in their code.
 
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
@@ -2302,7 +2303,7 @@ prompt the keyboard does:
   session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
   refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
-  its own copy of the session's `run_code` REPL, and a deleted session's REPL is deleted with it. Like opening `/resume`,
+  its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
