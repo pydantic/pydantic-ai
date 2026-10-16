@@ -264,16 +264,20 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
+| `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
 | `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
 | `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer a settings menu's dialog, as `/api/dialogs/…` |
 
 `POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
 optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
-the same `{"id": "<conversation id>"}`. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
+opens no other sessions (`/web` from a terminal), both switch the one session instead, with `/resume`
+or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
 `/api/switch`, `/api/questions/…`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the
-default session: the one the terminal is attached to, else the most recently opened. `web/client.py`
+default session: the one this page last opened or started while it stays live, else the most
+recently opened. `web/client.py`
 and the orchestrators of other CLAI versions use them.
