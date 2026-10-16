@@ -12,7 +12,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from .._mcp_server import MCPServer
 
 # `mcp` and `fastmcp` are gated on the `stackone` extra, so slim CI runs (no extras)
 # can't import these modules; ignore them at collection. A conditional expression rather
@@ -37,21 +37,12 @@ def run_context() -> RunContext[None]:
     )
 
 
-def _fastmcp_server(name: str) -> FastMCP:
-    """Create a test FastMCP server after resolving its settings forward references."""
-    from mcp.server.fastmcp.server import FastMCP, Settings
-
-    # The `mcp` SDK leaves the `lifespan` annotation on `Settings` as an unresolved forward reference,
-    # and `pydantic-settings` >= 2.15 warns about that at construction, which this suite's `error`
-    # warnings policy escalates. Drop the rebuild once `mcp` resolves the annotation itself.
-    Settings.model_rebuild()
-    return FastMCP(name)
-
-
 @pytest.fixture
-def stackone_server() -> FastMCP:
+def stackone_server() -> MCPServer:
     """In-process stand-in for StackOne's MCP endpoint in `individual` tool mode."""
-    server = _fastmcp_server('stackone-fake')
+    from .._mcp_server import MCPServer
+
+    server = MCPServer('stackone-fake')
 
     @server.tool()
     def bamboohr_list_employees(limit: int = 10) -> list[dict[str, str]]:
