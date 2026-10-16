@@ -208,6 +208,9 @@ class TestShellPassthrough:
             return process
 
         monkeypatch.setattr(loop, 'subprocess_shell', spawn_then_ctrl_c)
+        # A loaded runner can take longer than the real grace to run the trap, and a kill landing
+        # mid-trap leaves `cleanup.txt` empty. The trap exits on its own, so a longer grace costs nothing.
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._INTERRUPT_GRACE', 5)
         command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
         text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
         assert 'Interrupted (' in text

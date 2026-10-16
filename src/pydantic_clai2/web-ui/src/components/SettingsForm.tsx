@@ -49,7 +49,14 @@ export function SettingsForm({
         const [row = path, ...rest] = path.split('.')
         return [row, rest.length ? `${rest.join('.')}: ${text}` : text]
       })
-      setErrors((current) => ({ ...current, ...Object.fromEntries(byRow) }))
+      // A model-level validator rejects with no field path, which no row shows.
+      const known = new Set(rows.map((row) => row.key))
+      const matched = byRow.filter(([row]) => known.has(row))
+      if (matched.length === 0) {
+        onError(rejected.map(([, text]) => text).join(' '))
+        return
+      }
+      setErrors((current) => ({ ...current, ...Object.fromEntries(matched) }))
     } finally {
       setSaving(null)
     }
