@@ -82,6 +82,18 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
             raise e
 
 
+def get_function_serialization_name(func: Callable[..., Any]) -> str | None:
+    """Get the name that identifies a function in serialized data, like a dataset file.
+
+    Returns:
+        The function's `__name__`, or `None` if it doesn't have one that identifies it: a lambda has the name
+        `<lambda>`, while a `functools.partial` and other callable objects have no name, and the name of the function
+        a partial wraps doesn't capture its bound arguments.
+    """
+    name = getattr(func, '__name__', None)
+    return name if isinstance(name, str) and name.isidentifier() else None
+
+
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
