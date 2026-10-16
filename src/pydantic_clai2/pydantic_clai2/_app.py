@@ -33,7 +33,7 @@ from pydantic_clai2.plugins import (
     SessionEndReason,
     SessionStart,
 )
-from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins.loader import SessionPlugins
 from pydantic_clai2.runtime._session import (
     ModelDefaults,
     SessionModels,
@@ -116,7 +116,7 @@ async def open_stock_agent(
     with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
         console = Console(file=sink, force_terminal=False)
         store = SettingsStore(Path(config) / 'config.db')
-        loader = PluginLoader[None](
+        loader = SessionPlugins[None](
             store=store,
             console=console,
             commands=Commands(workspace=lambda: root),
@@ -322,7 +322,7 @@ async def chat(
                     fresh = True
 
 
-async def _serve_again(loader: PluginLoader[DepsT], web: WebHandoff | None, *, console: Console) -> None:
+async def _serve_again(loader: SessionPlugins[DepsT], web: WebHandoff | None, *, console: Console) -> None:
     """Serve `web` again, the web UI CLAI served before `/update` restarted it; nothing without one."""
     if web is not None:
         from pydantic_clai2.cli.web import serve_again
@@ -335,7 +335,7 @@ def _serving(shell: SessionRuntime[DepsT, OutputT]) -> WebHandoff | None:
     return None if shell.updates.relaunch is None else web_serving(shell.loader)
 
 
-def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> None:
+def _report_project_plugins(loader: SessionPlugins[DepsT], console: Console) -> None:
     waiting = [entry.name for entry in loader.entries() if entry.project and entry.loaded is None]
     if waiting:
         console.print(

@@ -215,8 +215,9 @@ class PluginCatalog(Protocol):
     """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `SessionPlugins` is one.
 
     Each action applies at once and is saved, as the same `/plugins` action is, in every live session
-    of this CLAI; a running turn keeps the plugins it started with. Adding and removing declarations goes through the prompt, with
-    `PluginHost.send_input`, as does a settings menu that is not declared (`/plugins configure NAME`).
+    of this CLAI; a running turn keeps the plugins it started with. Adding and removing declarations
+    goes through the prompt, with `PluginHost.send_input`, as does a settings menu that is not declared
+    (`/plugins configure NAME`).
     Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
     own `on_session_start` or `on_session_end`, which a change runs.
     """

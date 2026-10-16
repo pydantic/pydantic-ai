@@ -113,10 +113,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   guards, and deferred ends, and is its `host.plugins`. They all join the
   process's `ProcessPlugins` (`plugins/process_plugins.py`, held by `ClaiProcess`):
   declarations, staged `/plugins add` settings, open settings menus, the change
-  lock, and imports. A change runs in the session it came from under that lock
-  (`ProcessPlugins.change`), then every other live session `follow`s it, each under
-  the `turn()` rule above. `PluginLoader` is the former name of `SessionPlugins`;
-  built with `store=` and no `process=`, it gets a process of its own.
+  lock, and imports. `enable`, `disable`, `remove`, and `reload` run in the session
+  they came from under that lock (`ProcessPlugins.change`), then every other live
+  session `follow`s them, also when the origin failed; `/plugins add` and settings
+  edits are followed once saved. Each session follows under the `turn()` rule above.
+  `PluginLoader` is the former name of `SessionPlugins`, kept for tests; built with
+  `store=` and no `process=`, it gets a process of its own, as one-session hosts do.
 - **`Plugin.scope = 'process'` builds a plugin once per process.** `observability`,
   `workspaces`, and `web` are. The first session to load one builds it and fires
   `on_session_start`; it then joins every live session (capabilities, commands, and
@@ -126,8 +128,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `submit_prompt`, and `interrupt` follow the session being handled (moments,
   commands, and runs set it); its other attributes are the loading session's.
   `restart` keeps it. A process plugin that includes a session plugin (`web` and
-  `ask_user`) keeps it off in every session. The scope is internal until it is
-  documented for third parties.
+  `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
+  `LiveSessions` protocols are exported for third-party plugins; their `PLUGINS.md`
+  contract lands with the multi-session docs, so keep them stable meanwhile.
 - **A process holds many live sessions; a conversation is live in one.**
   `ClaiProcess.live` (`runtime/live_runtimes.py`) is `host.live`. `create_shell`
   adds each `SessionRuntime` and `SessionRuntime.close` removes it; close a
