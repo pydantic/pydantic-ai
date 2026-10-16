@@ -243,6 +243,13 @@ resuming the current conversation. Switching back to `stable` offers the latest 
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
+`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+typed in the page or in the terminal: the page shows uv's progress and the result. After
+an install, CLAI restarts with the web UI on the same port and token, so the page
+reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
+Like any command, `/update` entered while a turn runs waits for the turn to end.
+
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.

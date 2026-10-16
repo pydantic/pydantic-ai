@@ -32,7 +32,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
+from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -64,6 +64,7 @@ from pydantic_clai2.plugins import (
     TaskEvent,
     TurnEnd,
     TurnStart,
+    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
@@ -234,6 +235,7 @@ async def chat(
     session_id: str | None = None,
     fork_session: bool = False,
     worktree: Worktree | None = None,
+    web: WebHandoff | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -247,6 +249,8 @@ async def chat(
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
+    `web` is the web UI CLAI served before `/update` restarted it: the `web` plugin serves it again, with no
+    browser opening, so its open pages reconnect.
     """
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
@@ -273,6 +277,7 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
+    served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
@@ -304,6 +309,8 @@ async def chat(
                                     with shell.defer_identity() if browse else nullcontext():
                                         await shell.loader.load_all(fresh=fresh)
                                         _report_project_plugins(shell.loader, console)
+                                        await _serve_again(shell.loader, web, console=console)
+                                        web = None
                                         if restored:
                                             # Now that observability has subscribed and renderers have loaded.
                                             shell.session.record_resumed()
@@ -327,17 +334,12 @@ async def chat(
                             raise exc.exceptions[0] from None
                         raise
                     finally:
+                        served = _serving(shell)  # Before closing the plugins stops the web UI.
                         with transcript.capture(console):
                             await shell.loader.close(reason)
                 if not shell.reload_requested:
-                    if (executable := shell.updates.relaunch) is not None:
-                        summary = shell.session.summary
-                        raise Relaunch(
-                            executable=executable,
-                            session_id=summary.id if summary.revision else None,
-                            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
-                            new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
-                        )
+                    if (relaunch := shell.relaunch(web=served)) is not None:
+                        raise relaunch
                     return
                 shell.reload_requested = False
                 if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -774,6 +776,9 @@ def create_shell(
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
+    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
+    updates.capture = lambda: _web_serving(loader) is not None
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -887,6 +892,26 @@ def create_shell(
     return shell
 
 
+async def _serve_again(loader: PluginLoader[DepsT], web: WebHandoff | None, *, console: Console) -> None:
+    """Serve `web` again, the web UI CLAI served before `/update` restarted it; nothing without one."""
+    if web is not None:
+        from pydantic_clai2.cli.web import serve_again
+
+        console.print(await serve_again(loader, web), markup=False)
+
+
+def _web_serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+    """The port and token of the web UI the `web` plugin serves now; `None` while it serves none."""
+    from pydantic_clai2.cli.web import serving
+
+    return serving(loader)
+
+
+def _serving(shell: '_Shell[DepsT, OutputT]') -> WebHandoff | None:
+    """The web UI to serve again once `/update` restarts CLAI; `None` when it does not, or none runs."""
+    return None if shell.updates.relaunch is None else _web_serving(shell.loader)
+
+
 @dataclass(kw_only=True)
 class _ConversationFooter:
     """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
@@ -937,6 +962,19 @@ class _Shell(Generic[DepsT, OutputT]):
     _identity_pending: bool = field(default=False, init=False)
     _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
+
+    def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
+        """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
+        if (executable := self.updates.relaunch) is None:
+            return None
+        summary = self.session.summary
+        return Relaunch(
+            executable=executable,
+            session_id=summary.id if summary.revision else None,
+            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+            new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
+            web=web,
+        )
 
     @property
     def session_id(self) -> str | None:
