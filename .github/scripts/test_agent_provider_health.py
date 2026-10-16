@@ -1757,6 +1757,64 @@ def test_attempt_stage_uses_real_setup_and_no_step_job_shapes(
     assert health._stage_from_attempt_jobs(jobs) == expected  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize('name', ['Execute Claude Code CLI', 'Run agent', 'Run legacy engine'])
+def test_failed_execution_step_is_inference(name: str) -> None:
+    """Recognized execution anchors classify a failed execution step as inference."""
+    jobs: list[dict[str, object]] = [
+        {'name': 'agent', 'conclusion': 'failure', 'steps': [{'name': name, 'conclusion': 'failure'}]}
+    ]
+    assert health._stage_from_attempt_jobs(jobs) == 'inference'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_attempt_jobs_paginates_exact_attempt_and_uses_raw_page_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attempt jobs include later pages and stop on a short raw jobs page."""
+    requests: list[health.urllib.request.Request] = []
+    pages = [
+        {'jobs': [{'id': index} for index in range(100)]},
+        {'jobs': [{'id': 100, 'conclusion': 'failure'}]},
+    ]
+
+    def open_url(
+        _opener: health.urllib.request.OpenerDirector,
+        request: health.urllib.request.Request,
+        _data: object | None = None,
+        timeout: float = 30,
+    ) -> FakeHTTPResponse:
+        requests.append(request)
+        return FakeHTTPResponse(pages[len(requests) - 1])
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+    client = health.GitHubClient('org/repo', 'token')
+
+    jobs = client.attempt_jobs('run-42', 3)
+
+    assert len(jobs) == 101
+    assert jobs[-1] == {'id': 100, 'conclusion': 'failure'}
+    assert [request.full_url for request in requests] == [
+        f'{health.API_ROOT}/repos/org/repo/actions/runs/run-42/attempts/3/jobs?per_page=100&page=1',
+        f'{health.API_ROOT}/repos/org/repo/actions/runs/run-42/attempts/3/jobs?per_page=100&page=2',
+    ]
+
+
+def test_attempt_jobs_rejects_malformed_later_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed later page fails closed instead of returning partial jobs."""
+    pages = [{'jobs': [{'id': index} for index in range(100)]}, {'jobs': None}]
+
+    def open_url(
+        _opener: health.urllib.request.OpenerDirector,
+        _request: health.urllib.request.Request,
+        _data: object | None = None,
+        timeout: float = 30,
+    ) -> FakeHTTPResponse:
+        return FakeHTTPResponse(pages.pop(0))
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+    client = health.GitHubClient('org/repo', 'token')
+
+    with pytest.raises(ValueError, match='invalid attempt-jobs response'):
+        client.attempt_jobs('run-42', 3)
+
+
 def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest.MonkeyPatch) -> None:
     """Scheduled recovery closes elapsed windows but leaves future and unknown resets."""
     elapsed = _issue(1, health.IncidentMarker('provider', 'zai', 'rate_limit', '1', '2026-09-30T00:00:00Z'))

@@ -529,12 +529,18 @@ class GitHubClient:
             page += 1
 
     def attempt_jobs(self, run_id: str, attempt: int) -> list[dict[str, object]]:
-        response = self.request('GET', f'actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')
-        data = _mapping(response)
-        jobs = data.get('jobs') if data is not None else None
-        if not isinstance(jobs, list):
-            raise ValueError('GitHub returned an invalid attempt-jobs response')
-        return [job for item in jobs if (job := _mapping(item)) is not None]  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+        found: list[dict[str, object]] = []
+        page = 1
+        while True:
+            response = self.request('GET', f'actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}')
+            data = _mapping(response)
+            jobs = data.get('jobs') if data is not None else None
+            if not isinstance(jobs, list):
+                raise ValueError('GitHub returned an invalid attempt-jobs response')
+            found.extend(job for item in jobs if (job := _mapping(item)) is not None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+            if len(jobs) < 100:
+                return found
+            page += 1
 
     def default_branch(self) -> str | None:
         data = _mapping(self.request('GET', ''))
@@ -805,7 +811,7 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
                 return 'validation'
             if any(word in low for word in ('publish', 'output', 'post agent', 'ingest')):
                 return 'publication'
-            if name == 'Execute Claude Code CLI' or name == 'Run agent':
+            if name in ('Execute Claude Code CLI', 'Run agent', 'Run legacy engine'):
                 return 'inference'
             if execution is not None and index > execution:
                 return 'publication'
