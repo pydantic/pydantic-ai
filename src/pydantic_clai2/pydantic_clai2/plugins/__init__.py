@@ -317,6 +317,10 @@ class LiveSession(Protocol):
         """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
         ...
 
+    def command_menu(self, name: str, /) -> SettingsMenu | None:
+        """The menu bare `/NAME` opens in the session, built now, as `PluginHost.command_menu` builds it."""
+        ...
+
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
