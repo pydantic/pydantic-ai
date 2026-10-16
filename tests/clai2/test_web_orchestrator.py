@@ -450,7 +450,9 @@ def test_completion_in_the_orchestrator_chat(make_web: MakeWeb) -> None:
     assert texts('/model ') == ['session', 'saved:model']
     assert texts('/model sa') == ['saved:model']
     assert 'list' in texts('/workspaces ')
-    assert 'run.code_mode' in texts('/set ') and texts('/set model ') == [], "`/set model` picks the session's"
+    # `/set model` picks the session's model, so neither the key nor its values are offered.
+    assert 'run.code_mode' in texts('/set ') and 'model' not in texts('/set ') + texts('/settings mo')
+    assert texts('/set model ') == []
     assert texts('/fork ') == texts('/new ') == texts('/ ') == texts('hello') == []
     # The new routes take the token, as every other one does.
     assert web_.client.get('/api/orchestrator/complete?text=/').status_code == 403

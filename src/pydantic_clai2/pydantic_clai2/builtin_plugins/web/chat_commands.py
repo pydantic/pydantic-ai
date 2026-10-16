@@ -106,7 +106,11 @@ async def orchestrator_completions(host: PluginHost[None], text: str) -> list[Co
         return [
             CompletionInfo(text=choice, start=len(args[0]), display=choice) for choice in choices if args[0] in choice
         ]
-    return await completions(host, text) if name in SHARED and not picks_session_model(name, args) else []
+    if name not in SHARED or picks_session_model(name, args):
+        return []
+    # Nor is `model` offered as the setting to change, which would pick the session's.
+    found = await completions(host, text)
+    return [completion for completion in found if not picks_session_model(name, [*args[:-1], completion.text])]
 
 
 async def orchestrator_help(host: PluginHost[None]) -> str:
