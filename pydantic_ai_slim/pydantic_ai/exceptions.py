@@ -746,7 +746,8 @@ class UnsupportedSettingWarning(UserWarning):
     request has function tools), `extra_headers` and `extra_body`. Each field's `Supported by:` list names the
     models that honor it.
 
-    It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`.
+    It's emitted wherever the setting comes from: the run, the agent, a capability, the model's own `settings`, or an
+    MCP server's sampling request (its `stop_sequences`).
     To turn it into an error, use a warnings filter:
 
     ```python {test="skip"}
