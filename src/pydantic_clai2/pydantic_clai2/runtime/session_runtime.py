@@ -5,6 +5,7 @@ import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
@@ -57,6 +58,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime._session import (
     Session,
@@ -73,15 +75,16 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.ui import telemetry
-from pydantic_clai2.ui.menus.key_menu import keys_command
-from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
+from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
-from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
+from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, system_prompt_menu
 from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
+from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -106,10 +109,29 @@ _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or
 _RESTARTS = 'Restarts CLAI: enter it in the session the terminal shows'
 
 
+async def _default_model(
+    *, store: SettingsStore, models: ModelResolver, fallback: Model | str | None
+) -> Model | str | None:
+    """The model a new session starts with: the saved `model` setting, else the agent's own, `fallback`."""
+    saved = (await to_thread.run_sync(store.overrides)).get('model')
+    return await models.resolve(saved) if isinstance(saved, str) else fallback
+
+
 def _refuse_restart(args: list[str]) -> str:
     raise ValueError(
         '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
         'or with no terminal, in the session CLAI started with.'
+    )
+
+
+def _process(
+    *, process: ClaiProcess[DepsT] | None, store: SettingsStore | None, builtin_plugins: Sequence[PluginSettings]
+) -> ClaiProcess[DepsT]:
+    """The process a session joins: `process`, else a new one over `store` with `builtin_plugins`."""
+    if process is not None and store is not None:
+        raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
+    return process or ClaiProcess[DepsT].open(
+        store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
     )
 
 
@@ -146,11 +168,7 @@ def create_shell(
         if settings is not None
         else Settings(model=None)
     )
-    if process is not None and store is not None:
-        raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
-    process = process or ClaiProcess[DepsT].open(
-        store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
-    )
+    process = _process(process=process, store=store, builtin_plugins=builtin_plugins)
     store, conversations = process.store, process.conversations
     session = Session(
         agent,
@@ -173,13 +191,14 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
-    models.pool_accounts = lambda: context.settings.pool_accounts
+    def apply_setting(key: str, settings: Settings) -> None:
+        session_settings(key, settings)
+        # A model chosen outside the prompt, as from the web UI, shows at once, not at the next read; a running
+        # turn holds the change, and its model, until it ends.
+        shell.show_model()
 
-    async def default_model() -> Model | str | None:
-        """The model a new session starts with: the saved `model` setting, else the agent's own."""
-        saved = (await to_thread.run_sync(store.overrides)).get('model')
-        return await models.resolve(saved) if isinstance(saved, str) else agent.model
+    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
+    models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
         if args not in ([], ['on'], ['off']):
@@ -198,6 +217,13 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
+    def effort_menu() -> SettingsMenu:
+        # Model settings load provider SDKs; keep them off the startup path.
+        from pydantic_clai2.ui.menus.model_menu import model_settings_menu
+
+        model = session.model or _model_label(agent)
+        return model_settings_menu(store, model, settings_as=context.settings_model(model))
+
     sessions = Sessions(session=session, store=conversations, context=context, launched=launched, namer=process.namer)
     commands = Commands(workspace=lambda: Path(session.workspace))
     commands.register(
@@ -206,6 +232,7 @@ def create_shell(
             description='View or set reasoning effort: /effort [VALUE|reset]',
             handler=lambda args: effort_command(context, args, model=session.model or _model_label(agent)),
             complete=lambda args: effort_completions(context, args, model=session.model or _model_label(agent)),
+            menu=effort_menu,
         )
     )
     commands.register(
@@ -228,7 +255,11 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
+    commands.register(
+        Command(
+            name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True, menu=keys_menu
+        )
+    )
     commands.register(
         Command(
             name='login',
@@ -238,6 +269,7 @@ def create_shell(
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
             during_turn=True,
+            menu=models.accounts_menu,
         )
     )
     commands.register(
@@ -246,6 +278,7 @@ def create_shell(
             description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
             handler=models.accounts,
             during_turn=True,
+            menu=models.accounts_menu,
         )
     )
     set_ = Command(
@@ -275,6 +308,7 @@ def create_shell(
             description='View the system prompt and edit your own instructions, sent after the built-in ones',
             handler=lambda args: system_prompt_command(context, args, history=lambda: session.messages),
             during_turn=True,
+            menu=lambda: system_prompt_menu(context, history=lambda: session.messages),
         )
     )
     commands.register(
@@ -288,6 +322,7 @@ def create_shell(
             complete=lambda args: model_completions(context, args),
             during_turn=True,
             during_turn_subcommands=MODEL_SUBCOMMANDS,
+            menu=lambda: models_menu(context),
         )
     )
     # Deprecated spellings of `/model add`, `/model settings`, and `/model chains`, kept working for existing habits.
@@ -361,6 +396,7 @@ def create_shell(
             name='update',
             description='Install the newest CLAI from the updates.channel setting (stable or main)',
             handler=lambda args: shell.update(args),
+            menu=lambda: update_menu(context, updates, run=lambda text: shell.send_input(text)),
         )
     )
     commands.register(
@@ -392,7 +428,7 @@ def create_shell(
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
         running=lambda: shell.turning,
-        default_model=default_model,
+        default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         queued=lambda: shell.queued,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
@@ -1003,6 +1039,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
+    def show_model(self) -> None:
+        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed."""
+        model = self.session.model or _model_label(self.agent)
+        if model != self.status.model:
+            self.status.context_window = None
+            self.status.context_alert = False
+        self.status.model = model
+
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
         self.status.status_segments = (*self.loader.status_segments(), self.updates.segment, self._live_segment)
@@ -1028,11 +1072,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                model = self.session.model or _model_label(self.agent)
-                if model != self.status.model:
-                    self.status.context_window = None
-                    self.status.context_alert = False
-                self.status.model = model
+                self.show_model()
                 self.status.workspace = self.session.workspace
                 self._show_status_segments()
                 text = await self._next_input()

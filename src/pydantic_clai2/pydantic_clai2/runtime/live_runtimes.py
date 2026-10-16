@@ -183,9 +183,13 @@ class LiveRuntimes(JoinedSessions):
         """
         try:
             async with create_task_group() as group:
+                # Set at once: a browser may open a session as soon as the web UI it serves is up.
                 self._group = group
                 group.start_soon(self._close_idle_ones)
                 try:
+                    # A new sessions database switches to WAL on first use, which fails at once when two sessions'
+                    # first saves race, so make it before the sessions opened from here run.
+                    await self._conversations.listing(limit=1)
                     yield
                 finally:
                     self._group = None
