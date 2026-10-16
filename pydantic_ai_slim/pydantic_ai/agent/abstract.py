@@ -1184,6 +1184,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     )
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
+            # A model request hook (e.g. `after_model_request`) runs once the consumer is done with the
+            # stream, so its `ModelRetry` can only be seen here, after the response was already streamed.
+            if self.is_model_request_node(node) and isinstance(node._result, _agent_graph.ModelRequestNode):  # pyright: ignore[reportPrivateUsage]
+                raise exceptions.UnexpectedModelBehavior(
+                    'A model request hook rejected the streamed response with `ModelRetry`, and retries are not supported in `run_stream()`'
+                )
+
         if not yielded:
             raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
 
