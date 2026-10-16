@@ -162,6 +162,9 @@ async def model_request_batch(
             up to `max_poll_interval`.
         max_poll_interval: The longest wait between checks of a batch.
 
+    A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError]. To limit how
+    long the call waits, cancel it, for example with `asyncio.timeout`: that cancels the batches that haven't ended.
+
     Returns:
         One item per request, in the same order: the request's response, or the
             [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with.
@@ -172,6 +175,14 @@ async def model_request_batch(
     )
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
+    if any(
+        'request_timeout' in (settings.merge_model_settings(model_instance.settings, request.model_settings) or {})
+        for request in requests
+    ):
+        raise UserError(
+            '`model_request_batch` does not support `request_timeout`: a batch can take up to a day to finish. '
+            'To stop waiting, cancel the call, which cancels its batches.'
+        )
 
     groups: dict[str, list[batch_models.EncodedBatchRequest]] = {}
     for request in requests:

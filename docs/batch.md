@@ -41,6 +41,8 @@ Tools, structured output, output validation and retries all work as usual; each 
 
 A batch is submitted when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`BatchModel.flush()`][pydantic_ai.models.batch.BatchModel.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
 
+A [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] in the model settings covers the whole wait, from submission to result: when it passes, the run raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] and the request is withdrawn, which cancels its batch if no other request is waiting on it.
+
 Streaming isn't supported: a batch result arrives all at once. `BatchModel` needs an `asyncio` event loop, so it doesn't run under Trio.
 
 Requests waiting on the same submission or check share one task. When you use the model as an async context manager, for example through `async with agent:`, leaving it cancels those tasks, and requests still waiting on them fail with a [`UserError`][pydantic_ai.exceptions.UserError].
@@ -121,7 +123,7 @@ async def main():
             #> italy: The capital of Italy is Rome.
 ```
 
-Requests are split into as many batches as the provider requires, or as `max_requests` limits them to, and `poll_interval` and `max_poll_interval` set how often batches are checked on, as for `BatchModel`. Cancelling the call cancels the batches that haven't ended.
+Requests are split into as many batches as the provider requires, or as `max_requests` limits them to, and `poll_interval` and `max_poll_interval` set how often batches are checked on, as for `BatchModel`. Cancelling the call cancels the batches that haven't ended. A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError], since one request in a batch can't be timed out separately: to limit how long the call waits, cancel it, for example with `asyncio.timeout`.
 
 ## Submit now, collect later
 

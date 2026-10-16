@@ -28,7 +28,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.direct import model_request_batch
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRequestTimeout, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult, EncodedBatchRequest
@@ -317,6 +317,18 @@ async def test_cancelling_a_run_from_an_anyio_scope_cancels_its_batch() -> None:
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
+async def test_request_timeout_covers_the_wait_for_the_batch() -> None:
+    """The deadline spans the submission and every check, so the run stops waiting at it and cancels the batch."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS), model_settings={'request_timeout': 0.05})
+
+    with pytest.raises(ModelRequestTimeout):
+        await agent.run('Hello')
+
+    assert wrapped.status_checks > 0
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
 async def test_a_response_that_is_not_waiting_is_cancelled_by_the_wrapped_model() -> None:
     model = BatchModel(TestModel(), **FAST_BATCH_SETTINGS)
     await model.cancel_suspended_response(ModelResponse(parts=[], state='suspended'))
@@ -484,6 +496,11 @@ async def test_model_request_batch_validates_its_input() -> None:
         await model_request_batch(NoBatchModel(), [request])
     with pytest.raises(UserError, match='unique `custom_id`'):
         await model_request_batch(TestModel(), [request, request])
+    timed_request = BatchRequest(custom_id='timed', messages=request.messages, model_settings={'request_timeout': 60})
+    with pytest.raises(UserError, match='does not support `request_timeout`'):
+        await model_request_batch(TestModel(), [timed_request])
+    with pytest.raises(UserError, match='does not support `request_timeout`'):
+        await model_request_batch(TestModel(settings={'request_timeout': 60}), [request])
 
 
 async def test_in_memory_batches_belong_to_their_model_instance() -> None:

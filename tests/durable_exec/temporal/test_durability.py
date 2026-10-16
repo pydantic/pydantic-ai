@@ -34,6 +34,7 @@ from pydantic_ai import (
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PendingModelResponse,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
@@ -5122,6 +5123,62 @@ async def test_durability_batch_model_resume_from_history(client: Client):
     assert _batch_wrapped_model.status_checks == 1
     assert _scheduled_activity_count(history) == 1
     assert _timer_count(history) == 1
+
+
+@workflow.defn
+class DurabilityBatchPendingWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage] | None) -> AgentRunResult[str | PendingModelResponse]:
+        return await _batch_agent.run(
+            None if messages else 'go', message_history=messages, output_type=[str, PendingModelResponse]
+        )
+
+
+async def test_durability_batch_model_with_pending_output_ends_and_resumes(client: Client):
+    """With `PendingModelResponse` in the output type, each workflow run makes one batch call and ends.
+
+    The first run submits the request in one activity and returns the pending response without starting a timer.
+    The second run, resumed from that history in a new workflow, checks the batch once, again without a timer, and
+    finishes with the result.
+    """
+    _batch_wrapped_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchPendingWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        submit = await client.start_workflow(
+            DurabilityBatchPendingWorkflow.run,
+            args=[None],
+            id='DurabilityBatchPendingWorkflow_submit',
+            task_queue=TASK_QUEUE,
+        )
+        submitted = await submit.result()
+        submit_history = await submit.fetch_history()
+
+        assert isinstance(submitted.output, PendingModelResponse)
+        assert submitted.output.response.state == 'suspended'
+        assert submitted.output.response == submitted.all_messages()[-1]
+        assert len(_batch_wrapped_model.created) == 1
+        assert _batch_wrapped_model.status_checks == 0
+        assert _scheduled_activity_count(submit_history) == 1
+        assert _timer_count(submit_history) == 0
+
+        collect = await client.start_workflow(
+            DurabilityBatchPendingWorkflow.run,
+            args=[submitted.all_messages()],
+            id='DurabilityBatchPendingWorkflow_collect',
+            task_queue=TASK_QUEUE,
+        )
+        collected = await collect.result()
+        collect_history = await collect.fetch_history()
+
+    assert collected.output == 'success (no tool calls)'
+    assert len(_batch_wrapped_model.created) == 1
+    assert _batch_wrapped_model.status_checks == 1
+    assert _scheduled_activity_count(collect_history) == 1
+    assert _timer_count(collect_history) == 0
 
 
 _continuation_ceiling_model = ScriptedContinuationModel()
