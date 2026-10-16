@@ -48,6 +48,8 @@ export function App() {
   const [sidebar, setSidebar] = useState(true)
   const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
+  // Whether the preview opened while another CLAI ran it, so its banner can say when that turn ended.
+  const [watched, setWatched] = useState(false)
   // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
   const [opening, setOpening] = useState<Opening | null>(null)
   // The delegated task whose transcript the main pane shows instead of the session's.
@@ -279,10 +281,12 @@ export function App() {
       try {
         const saved = await api.transcript(session.id)
         if (request !== picked.current) return
-        if (saved.openable && !state.running) {
+        // Opening a session another CLAI runs would continue a copy of it, so it is watched instead.
+        if (saved.openable && !saved.busy && !state.running) {
           await open(session)
         } else {
           setPreview(saved)
+          setWatched(saved.busy)
           setOpening(null)
         }
       } catch (error) {
@@ -293,6 +297,23 @@ export function App() {
     },
     [state.running, showError, open],
   )
+
+  // That CLAI saves the session as its turn goes, so read it again every few seconds until the turn ends.
+  const watching = preview?.busy ? preview.id : null
+  useEffect(() => {
+    if (watching === null) return
+    const request = picked.current
+    const timer = window.setInterval(() => {
+      void api
+        .transcript(watching)
+        .then((saved) => {
+          if (request === picked.current)
+            setPreview((current) => (JSON.stringify(current) === JSON.stringify(saved) ? current : saved))
+        })
+        .catch(() => undefined)
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [watching])
 
   const openWorker = useCallback((id: string) => {
     setPreview(null)
@@ -461,14 +482,22 @@ export function App() {
             </header>
             {preview && (
               <div className="preview-banner">
-                {preview.openable
-                  ? 'A turn is running. You can switch to this session once it ends.'
-                  : preview.missing
-                    ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
-                    : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                {preview.busy
+                  ? 'Running in another CLAI. You can watch it here.'
+                  : preview.openable
+                    ? watched && !state.running
+                      ? 'Its turn in the other CLAI ended. You can continue it here.'
+                      : 'A turn is running. You can switch to this session once it ends.'
+                    : preview.missing
+                      ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                      : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
                 {preview.openable && !state.running && (
-                  <button className="primary small" onClick={() => void open(preview)}>
-                    Continue here
+                  <button
+                    className="primary small"
+                    onClick={() => void open(preview)}
+                    title={preview.busy ? 'The other CLAI keeps this session; continue a copy of it here' : undefined}
+                  >
+                    {preview.busy ? 'Continue in a copy' : 'Continue here'}
                   </button>
                 )}
                 <button className="ghost small" onClick={closePreview}>
@@ -504,7 +533,7 @@ export function App() {
                 <WorkersContext.Provider value={links}>
                   <Transcript
                     entries={entries}
-                    running={!preview && state.running}
+                    running={preview ? preview.busy : state.running}
                     empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
                   />
                 </WorkersContext.Provider>

@@ -647,6 +647,8 @@ class Transcript:
     """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    busy: bool = False
+    """Whether another live CLAI is running a turn in it, so `/resume` would continue a copy instead."""
 
 
 @dataclass(kw_only=True)

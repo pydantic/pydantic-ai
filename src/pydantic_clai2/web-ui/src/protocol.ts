@@ -267,6 +267,8 @@ export interface Transcript {
   openable: boolean
   /** CLAI would move to its directory, but that directory is gone. */
   missing: boolean
+  /** Another CLAI is running a turn in it, so opening it continues a copy. */
+  busy: boolean
 }
 
 export interface CompletionInfo {

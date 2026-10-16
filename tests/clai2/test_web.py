@@ -3,6 +3,7 @@
 import asyncio
 import html
 import io
+import os
 import re
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -29,7 +30,7 @@ from websockets.typing import Origin
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -551,8 +552,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     """A turn this CLAI runs shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
-    import os
-
     for title, pid in (('Live', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
             lambda title=title, pid=pid: store.save(
@@ -566,6 +565,42 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_a_session_busy_in_another_clai_is_watched_not_copied(make_web: 'MakeWeb') -> None:
+    """Reading a session another CLAI runs saves nothing; only opening it continues a copy, as `/resume` does."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
+    shell = web_.shell
+    store = shell.sessions.store
+    summary = ConversationSummary(
+        workspace=shell.session.workspace, title='Live', outcome='running', owner_pid=os.getpid()
+    )
+    live = web_.portal.call(lambda: store.save(summary=summary, messages=[ModelRequest.user_text_prompt('hi')]))
+
+    def saved() -> set[str]:
+        return {entry.id for entry in web_.portal.call(store.listing)}
+
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        before = saved()
+        transcript = web_.get(f'/api/sessions/{live.id}').json()
+        assert (transcript['openable'], transcript['busy'], [item['text'] for item in transcript['items']]) == (
+            True,
+            True,
+            ['hi'],
+        )
+        assert saved() == before, 'watching it saves no copy'
+
+        assert web_.post(f'/api/sessions/{live.id}/open').status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert snapshot.session.id not in before and snapshot.session.title == 'Live (fork)'
+        assert saved() == before | {snapshot.session.id}
+
+        web_.portal.call(lambda: store.save(summary=replace(live, outcome='completed'), messages=[]))
+        assert web_.get(f'/api/sessions/{live.id}').json()['busy'] is False, 'its turn there ended'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
 
 
 def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -1562,6 +1597,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         'items': [],
         'openable': False,
         'missing': False,
+        'busy': False,
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)
