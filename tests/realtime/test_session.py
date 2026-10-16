@@ -12410,3 +12410,23 @@ async def test_context_window_used_moves_with_the_usage_counted_in_the_same_fram
         await session.send('Hello')
         await session.wait_for_reply()
         assert (session.usage.input_tokens, session.context_window_used) == (10, 0.42)
+
+
+async def test_context_window_used_is_the_frames_latest_even_when_handling_stops_early() -> None:
+    """A limit tripped by a frame's first usage report stops the session handling the rest: the fraction is still the
+    frame's latest, as the usage counted is all of the frame's."""
+
+    class _TwoReports(FakeRealtimeConnection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [
+                SessionUsage(RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.4),
+                SessionUsage(RequestUsage(input_tokens=20), response_scoped=False, context_window_used=0.2),
+            ]
+            await asyncio.Event().wait()
+
+    session = RealtimeSession(_TwoReports([]), usage_limits=UsageLimits(input_tokens_limit=5))
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            async for _ in session:
+                pass
+    assert (session.usage.input_tokens, session.context_window_used) == (30, 0.2)

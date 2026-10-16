@@ -4033,8 +4033,7 @@ class RealtimeSession:
 
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
-        if event.context_window_used is not None:
-            self._reported_context_window_used = event.context_window_used
+        # (Its `context_window_used` was taken as its frame was applied, with the usage the core counted.)
         if event.response_scoped:
             self._begin_response()
         # (The core counts it into `usage`, with the request it is if responses aren't requests.)
