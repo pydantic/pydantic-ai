@@ -84,8 +84,9 @@ class Conversation(Protocol):
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
-        directory or when persistence is not configured. A conversation still running in another
-        process is not taken over: a fork of it is resumed, and the notice says so.
+        directory, when persistence is not configured, or when another live session of this CLAI holds
+        it. A conversation still running in another process is not taken over: a fork of it is resumed,
+        and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
@@ -365,11 +366,15 @@ class LiveSessions(Protocol):
 
         Concurrent calls for one conversation return the same session. Raises `LookupError` for an unknown
         conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        Do not await it from `on_session_start`: the new session waits for the plugins still loading.
         """
         ...
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
-        """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in."""
+        """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in.
+
+        Do not await it from `on_session_start`: the new session waits for the plugins still loading.
+        """
         ...
 
     async def close(self, live_id: str, /) -> None:

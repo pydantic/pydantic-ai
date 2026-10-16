@@ -6,7 +6,7 @@ Claude Code and Codex sessions.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -80,8 +80,6 @@ class Sessions(Generic[DepsT, OutputT]):
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
-        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
-        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
 
     @property
     def follows_workspace(self) -> bool:
@@ -96,7 +94,8 @@ class Sessions(Generic[DepsT, OutputT]):
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
         """
-        with self.claim(conversation_id):
+        # Held from before moving directory, so no other session resumes it meanwhile.
+        with self.session.claim(conversation_id):
             if self.relocate is not None and not allow_other_workspace:
                 workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
                 if workspace != self.session.workspace:

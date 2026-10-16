@@ -24,7 +24,7 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, SessionEnd, SessionEndReason
-from pydantic_clai2.plugins.process_plugins import JoinedSessions
+from pydantic_clai2.plugins.process_plugins import JoinedSessions, handling
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
@@ -213,6 +213,9 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
             other = await fleet.live.new()
             with pytest.raises(ValueError, match='is open in another live session'):
                 await fleet.runtimes[other.id].sessions.resume(saved.id)
+            # Plugins resume through `host.conversation`, which refuses it too.
+            with pytest.raises(ValueError, match='is open in another live session'):
+                await fleet.runtimes[other.id].session.resume(saved.id)
             # The session holding it may restore it again.
             assert 'Resumed Saved' in await fleet.runtimes[first.id].sessions.resume(saved.id)
             # While one session resumes a conversation, `open` waits for it, and no other session may take it.
@@ -459,6 +462,32 @@ async def test_a_session_that_ends_while_another_closes_is_skipped(tmp_path: Pat
                 Gate.release.set()
             assert not fleet.live.listing()
     assert sorted(Recorder.ended) == [('held', 'exit'), ('other', 'exit')]
+
+
+async def test_a_session_runs_as_the_one_being_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One session opening another does not make the new one run as the opener."""
+    fleet = Fleet(tmp_path, builtin=())
+    build = fleet.build
+    current: list[LiveSession | None] = []
+
+    def recording(directory: Path | None) -> SessionRuntime[None, str]:
+        runtime = build(directory)
+        serve = runtime.serve
+
+        async def serving(*, resume: str | None, ready: Callable[[], None]) -> None:
+            current.append(fleet.live.current())
+            await serve(resume=resume, ready=ready)
+
+        monkeypatch.setattr(runtime, 'serve', serving)
+        return runtime
+
+    fleet.live.build = recording
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            opener = await fleet.live.new(workspace=fleet.folder('opener'))
+            with handling(fleet.runtimes[opener.id].live_session):
+                opened = await fleet.live.new(workspace=fleet.folder('opened'))
+    assert current == [opener, opened]
 
 
 async def test_the_registry_counts_each_session_once(tmp_path: Path) -> None:

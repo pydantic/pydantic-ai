@@ -19,7 +19,7 @@ from anyio.abc import TaskGroup, TaskStatus
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
-from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime
+from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 
 IDLE_AFTER = 3600.0
@@ -186,9 +186,13 @@ class LiveRuntimes(JoinedSessions):
         """Reserve `conversation_id` while `holder` resumes it, so `open` waits and no other session resumes it.
 
         Raises `ValueError` when another live session holds it, or is opening or resuming it, or when
-        `holder` is already resuming one.
+        `holder` is already resuming another. Claiming again what `holder` claimed reserves nothing more.
         """
-        if holder.id in self._switching:
+        switching = self._switching.get(holder.id)
+        if switching is not None and switching is self._opening.get(conversation_id):
+            yield
+            return
+        if switching is not None:
             raise ValueError('This session is already switching to another conversation.')
         held = self.holding(conversation_id)
         if (held is not None and held is not holder) or conversation_id in self._opening:
@@ -238,7 +242,14 @@ class LiveRuntimes(JoinedSessions):
             runtime = self.build(workspace)
         finally:
             self._building = False
-        return await self._group.start(self._serve, runtime, resume)
+        if resume is None:
+            return await self._group.start(self._serve, runtime, resume)
+        # The conversation `open` reserved is this session's to resume.
+        self._switching[runtime.live_session.id] = self._opening[resume]
+        try:
+            return await self._group.start(self._serve, runtime, resume)
+        finally:
+            del self._switching[runtime.live_session.id]
 
     async def _serve(self, runtime: Served, resume: str | None, *, task_status: TaskStatus[LiveSession]) -> None:
         live = self._live[runtime.live_session.id]
@@ -249,7 +260,8 @@ class LiveRuntimes(JoinedSessions):
             self.changed(runtime.live_session)
 
         try:
-            with CancelScope() as live.scope:
+            # Its task starts in the caller's context, which may name another session as the one handled.
+            with CancelScope() as live.scope, handling(runtime.live_session):
                 await runtime.serve(resume=resume, ready=started)
         except Exception:
             if not live.ready:
