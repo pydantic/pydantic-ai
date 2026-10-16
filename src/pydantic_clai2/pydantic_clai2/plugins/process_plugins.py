@@ -474,9 +474,13 @@ class ProcessPlugins(Generic[DepsT]):
         return True
 
     async def close(self, reason: SessionEndReason, *, origin: 'SessionPlugins[DepsT]') -> None:
-        """End every process-scoped plugin, last loaded first, as the process stops; `origin` reports failures."""
+        """End every process-scoped plugin, last loaded first, as the process stops; `origin` reports failures.
+
+        Closed from inside a turn of `origin`, they end once that turn is over, as an unload would.
+        """
         for name in reversed(list(self._shared)):
             loaded = self._shared.pop(name)
             for session in self._sessions:
                 session.detach(name, loaded)
-            await origin.end(name, loaded, reason=reason)
+            if not origin.retire(name, loaded, reason=reason):
+                await origin.end(name, loaded, reason=reason)
