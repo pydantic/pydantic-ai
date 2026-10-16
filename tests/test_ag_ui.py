@@ -6991,10 +6991,11 @@ def test_dump_messages_text_content() -> None:
     )
 
 
-def test_structured_content_round_trips_as_an_activity_message() -> None:
-    """AG-UI has no structured user input, so the item travels as a reserved activity and comes back whole.
+def test_structured_content_round_trips_as_text_with_its_value() -> None:
+    """A structured item is text in the user message, which a frontend shows like any user text.
 
-    The text beside it comes back as its own prompt part in the same request, as an uploaded file does.
+    AG-UI has no structured user input, so the value, tag and description ride the message's `encrypted_value`,
+    keyed by the item's position, and the item loads back whole, in the same prompt as the text beside it.
     """
     item = StructuredContent({'url': '/products/42'}, tag='ui_state', description='The page the user is on.')
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
@@ -7003,38 +7004,82 @@ def test_structured_content_round_trips_as_an_activity_message() -> None:
     assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in dumped] == snapshot(
         [
             {
-                'role': 'activity',
-                'activity_type': 'pydantic_ai_structured_content',
-                'content': {
-                    'value': {'url': '/products/42'},
-                    'content': """\
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': """\
 The page the user is on.
 <ui_state>{"url":"/products/42"}</ui_state>\
 """,
-                    'tag': 'ui_state',
-                    'description': 'The page the user is on.',
-                },
-            },
-            {'role': 'user', 'content': 'Why did the total jump?'},
+                    },
+                    {'type': 'text', 'text': 'Why did the total jump?'},
+                ],
+                'encrypted_value': '{"pydantic_ai": {"structured_content": {"0": {"value": {"url": "/products/42"}, "tag": "ui_state", "description": "The page the user is on."}}}}',
+            }
         ]
     )
     [request] = AGUIAdapter.load_messages(dumped)
-    assert request.parts == [
-        UserPromptPart(content=[item], timestamp=IsDatetime()),
-        UserPromptPart(content='Why did the total jump?', timestamp=IsDatetime()),
-    ]
+    assert request.parts == [UserPromptPart(content=[item, 'Why did the total jump?'], timestamp=IsDatetime())]
+
+    # A prompt that is only the item is dumped as a plain string, and still loads back as the item.
+    [single] = AGUIAdapter.dump_messages([ModelRequest(parts=[UserPromptPart(content=[item])])])
+    assert isinstance(single, UserMessage) and isinstance(single.content, str)
+    [request] = AGUIAdapter.load_messages([single])
+    assert request.parts == [UserPromptPart(content=[item], timestamp=IsDatetime())]
 
 
-def test_load_messages_skips_a_malformed_structured_content_activity() -> None:
-    """A structured content payload without a value is client-sent noise, not grounds to fail the request."""
+@pytest.mark.parametrize(
+    'encrypted_value',
+    [
+        pytest.param('not json', id='not-json'),
+        pytest.param('{"pydantic_ai": {"structured_content": []}}', id='not-a-mapping'),
+        pytest.param('{"pydantic_ai": {"structured_content": {"0": "not a payload"}}}', id='not-a-payload'),
+        pytest.param('{"pydantic_ai": {"structured_content": {"0": {"tag": "bad tag", "value": 1}}}}', id='invalid'),
+        pytest.param(
+            '{"pydantic_ai": {"structured_content": {"x": {"value": 1}, "5": {"value": 1}}}}', id='no-such-item'
+        ),
+    ],
+)
+def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(encrypted_value: str) -> None:
+    """A client-sent payload that doesn't validate, or names no text item, is noise: the text loads as plain text."""
     messages = AGUIAdapter.load_messages(
-        [
-            ActivityMessage(id='a1', activity_type='pydantic_ai_structured_content', content={'content': 'no value'}),
-            UserMessage(id='u1', content='Hi'),
-        ]
+        [UserMessage(id='u1', content=[TextInputContent(type='text', text='Hi')], encrypted_value=encrypted_value)]
     )
     [request] = messages
     assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
+
+
+@requires_ag_ui('0.1.19')
+async def test_enqueued_structured_content_round_trips_through_stream() -> None:
+    """An enqueued structured item reaches a client that rebuilds history from the stream, and loads back whole."""
+    item = StructuredContent({'job': 42, 'status': 'done'}, tag='job')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue(item, 'Background job finished.')
+        return 'started'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19')
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)])
+    assert [item, 'Background job finished.'] in [
+        part.content for part in iter_message_parts(loaded, ModelRequest, UserPromptPart)
+    ]
 
 
 # region multimodal and coverage tests

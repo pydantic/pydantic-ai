@@ -105,15 +105,16 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
-        STRUCTURED_CONTENT_ACTIVITY_TYPE,
         TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
+        parse_encrypted_structured_content,
         parse_encrypted_tool_kind,
         rehydrate_tool_return_content,
+        structured_content_encrypted_value,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
@@ -450,15 +451,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         for msg in messages:
             checkpoint = builder.checkpoint()
             match msg:
-                case UserMessage(content=content):
+                case UserMessage(content=content, encrypted_value=encrypted_value):
+                    structured = parse_encrypted_structured_content(encrypted_value)
                     if isinstance(content, str):
-                        builder.add(UserPromptPart(content=content))
+                        loaded = structured_content_from_payload(structured[0], content) if 0 in structured else content
+                        builder.add(UserPromptPart(content=loaded if isinstance(loaded, str) else [loaded]))
                     else:
                         user_prompt_content: list[UserContent] = []
-                        for part in content:
+                        for index, part in enumerate(content):
                             match part:
                                 case TextInputContent(text=text):
-                                    user_prompt_content.append(text)
+                                    user_prompt_content.append(
+                                        structured_content_from_payload(structured[index], text)
+                                        if index in structured
+                                        else text
+                                    )
                                 case BinaryInputContent():
                                     if part.url:
                                         try:
@@ -625,9 +632,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
-                    elif activity_msg.activity_type == STRUCTURED_CONTENT_ACTIVITY_TYPE:
-                        if (structured := structured_content_from_payload(activity_msg.content)) is not None:
-                            builder.add(UserPromptPart(content=[structured]))
                     elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
                         # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                         # They carry their own message ids, so the activity's id isn't kept on them.
@@ -734,17 +738,22 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             | VideoInputContent
             | DocumentInputContent
         ] = []
+        # Positions in `user_content` of the text items that are `StructuredContent`, with what text can't carry.
+        structured_payloads: dict[int, dict[str, Any]] = {}
 
         def flush_user_content() -> None:
-            nonlocal user_content
+            nonlocal user_content, structured_payloads
             if not user_content:
                 return
+            encrypted_value = structured_content_encrypted_value(structured_payloads) if structured_payloads else None
             # Simplify to plain string if only a single text item.
             if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+                content: str | list[Any] = user_content[0].text
             else:
-                result.append(UserMessage(id=_new_message_id(), content=user_content))
+                content = user_content
+            result.append(UserMessage(id=_new_message_id(), content=content, encrypted_value=encrypted_value))
             user_content = []
+            structured_payloads = {}
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
@@ -755,16 +764,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 else:
                     for item in part.content:
                         if isinstance(item, StructuredContent):
-                            # AG-UI has no structured user input content. We repurpose ActivityMessage
-                            # with a reserved `pydantic_ai_*` activity_type for round-trip fidelity.
-                            flush_user_content()
-                            result.append(
-                                ActivityMessage(
-                                    id=_new_message_id(),
-                                    activity_type=STRUCTURED_CONTENT_ACTIVITY_TYPE,
-                                    content=structured_content_payload(item),
-                                )
-                            )
+                            # AG-UI has no structured user input, so the item is text the frontend shows,
+                            # and its value rides the message's `encrypted_value`.
+                            structured_payloads[len(user_content)] = structured_content_payload(item)
+                            user_content.append(TextInputContent(type='text', text=item.content))
                         elif isinstance(item, UploadedFile) and preserve_file_data:
                             # AG-UI has no native uploaded-file message type. We repurpose
                             # ActivityMessage with a reserved `pydantic_ai_*` activity_type
@@ -1033,8 +1036,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
-        - `StructuredContent` is always dumped as a separate `pydantic_ai_structured_content` activity
-          message, which reloads as a separate `UserPromptPart`, without its `metadata`.
+        - `StructuredContent` is dumped as a text item, with its value in the `UserMessage`'s
+          `encrypted_value`, and reloads without its `metadata`.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
           inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`

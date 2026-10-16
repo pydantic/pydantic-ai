@@ -74,9 +74,6 @@ COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
 
-STRUCTURED_CONTENT_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_structured_content'
-"""Activity type for `StructuredContent` in a user prompt, stored as AG-UI ActivityMessages."""
-
 TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
 """Activity type for tool availability changes stored as AG-UI ActivityMessages."""
 
@@ -247,6 +244,30 @@ def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | 
         return None
     namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
     return namespaced if is_str_dict(namespaced) else None
+
+
+def structured_content_encrypted_value(payloads: dict[int, dict[str, Any]]) -> str:
+    """Pack the structured content payloads of a `UserMessage`'s text items into its `encrypted_value` blob.
+
+    AG-UI has no structured user input, so a `StructuredContent` is sent as a text item the frontend shows, and
+    what text can't carry, keyed by the item's position in the message content, rides the message's
+    `encrypted_value` (a field every supported AG-UI version has on `UserMessage`), namespaced as in
+    `tool_kind_encrypted_value`.
+    """
+    entries = {str(index): payload for index, payload in payloads.items()}
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'structured_content': entries}})
+
+
+def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[int, Any]:
+    """Read the structured content payloads, by content position, from a `UserMessage`'s `encrypted_value`.
+
+    Client-supplied and untrusted: anything malformed reads as no payload, so the text loads as plain text.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    entries = namespaced.get('structured_content') if namespaced is not None else None
+    if not is_str_dict(entries):
+        return {}
+    return {int(index): payload for index, payload in entries.items() if index.isdigit()}
 
 
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:

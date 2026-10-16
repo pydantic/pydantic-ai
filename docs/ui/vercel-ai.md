@@ -245,7 +245,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## Structured content
 
-A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt round-trips as a `data-structured-content` part of the user message, holding its `value`, the rendered `content`, and its `tag` and `description` when set. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its `value` and its `content`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
+A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as a text part of the user message, so `useChat` shows its rendered text like any other user text. Its `value`, and its `tag` and `description` when set, ride the part's `providerMetadata` under `pydantic_ai.structured_content`, and the item loads back whole from it. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its text and its `value`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
 
 ## Enqueued messages
 

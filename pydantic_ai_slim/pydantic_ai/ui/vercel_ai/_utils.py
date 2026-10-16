@@ -51,8 +51,6 @@ TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
-STRUCTURED_CONTENT_DATA_TYPE = 'data-structured-content'
-"""Data part type for `StructuredContent` in a user message."""
 
 ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
 """Data chunk type for messages delivered into the run by `RunContext.enqueue`, encoded as `UIMessage`s."""

@@ -8052,17 +8052,18 @@ async def test_convert_user_prompt_part_text_content():
     )
 
 
-async def test_structured_content_round_trips_as_a_data_part():
-    """A structured item is a `data-structured-content` part of the user message and comes back in its place."""
+async def test_structured_content_round_trips_as_text_with_its_value():
+    """A structured item is a text part a frontend shows like any user text, with its value in the part's metadata."""
     item = StructuredContent({'url': '/products/42'})
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
 
     [ui_message] = VercelAIAdapter.dump_messages(messages)
     assert ui_message.parts == snapshot(
         [
-            DataUIPart(
-                type='data-structured-content',
-                data={'value': {'url': '/products/42'}, 'content': '{"url":"/products/42"}'},
+            TextUIPart(
+                text='{"url":"/products/42"}',
+                state='done',
+                provider_metadata={'pydantic_ai': {'structured_content': {'value': {'url': '/products/42'}}}},
             ),
             TextUIPart(text='Why did the total jump?', state='done'),
         ]
@@ -8071,21 +8072,54 @@ async def test_structured_content_round_trips_as_a_data_part():
     assert request.parts == [UserPromptPart(content=[item, 'Why did the total jump?'], timestamp=IsDatetime())]
 
 
-async def test_load_messages_skips_a_malformed_structured_content_part():
-    """A structured content payload without a value is client-sent noise, not grounds to fail the request."""
+async def test_load_messages_keeps_text_with_a_malformed_structured_content_payload():
+    """A client-sent payload that doesn't validate is noise: the text part loads as plain text."""
     [request] = VercelAIAdapter.load_messages(
         [
             UIMessage(
                 id='u1',
                 role='user',
                 parts=[
-                    DataUIPart(type='data-structured-content', data={'content': 'no value'}),
-                    TextUIPart(text='Hi'),
+                    TextUIPart(text='Hi', provider_metadata={'pydantic_ai': {'structured_content': 'not a payload'}}),
+                    TextUIPart(text='there', provider_metadata={'pydantic_ai': {'structured_content': {'tag': 'a b'}}}),
                 ],
             )
         ]
     )
-    assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
+    assert request.parts == [UserPromptPart(content=['Hi', 'there'], timestamp=IsDatetime())]
+
+
+async def test_enqueued_structured_content_round_trips_through_stream():
+    """An enqueued structured item reaches a client that rebuilds history from the stream, and loads back whole."""
+    item = StructuredContent({'job': 42, 'status': 'done'}, tag='job')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue(item, 'Background job finished.')
+        return 'started'
+
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    loaded = VercelAIAdapter.load_messages([user, _reduce_assistant_message(chunks, 'assistant-1')])
+    assert [item, 'Background job finished.'] in [
+        part.content for part in iter_message_parts(loaded, ModelRequest, UserPromptPart)
+    ]
 
 
 async def test_adapter_dump_messages_thinking_with_metadata():
