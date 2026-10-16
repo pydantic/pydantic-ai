@@ -91,7 +91,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (!value || disabled) return
     setText('')
     setSuggestions([])
-    const handle = local?.[value]
+    // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
+    const handle = local && Object.hasOwn(local, value) ? local[value] : undefined
     if (handle) {
       handle()
       return
