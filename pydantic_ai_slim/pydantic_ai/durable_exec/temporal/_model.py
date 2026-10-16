@@ -92,12 +92,6 @@ class TemporalModel(WrapperModel):
         # Use provided model if available, otherwise first registered model
         primary_model = model or next(iter(self._models_by_id.values()))
         super().__init__(primary_model)
-        for model in self._models_by_id.values():
-            if model._contains_live_connection:  # pyright: ignore[reportPrivateUsage]
-                raise UserError(
-                    'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
-                    'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
-                )
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
@@ -201,6 +195,12 @@ class TemporalModel(WrapperModel):
         if not workflow.in_workflow():
             return await super().request(messages, model_settings, model_request_parameters)
 
+        current_model = self._current_model()
+        if isinstance(current_model, Model) and current_model._contains_live_connection:
+            raise UserError(
+                'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
+                'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
+            )
         self._validate_model_request_parameters(model_request_parameters)
 
         model_id = self._current_model_id()
@@ -245,6 +245,12 @@ class TemporalModel(WrapperModel):
                 yield streamed_response
                 return
 
+        current_model = self._current_model()
+        if isinstance(current_model, Model) and current_model._contains_live_connection:
+            raise UserError(
+                'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
+                'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
+            )
         if run_context is None:
             raise UserError(
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'

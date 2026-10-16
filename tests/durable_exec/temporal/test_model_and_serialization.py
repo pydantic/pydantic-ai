@@ -1596,6 +1596,51 @@ async def test_temporal_agent_model_selection_by_instance(
         assert output == expected_output
 
 
+@pytest.mark.parametrize('placement', ['primary', 'registered', 'wrapped'])
+async def test_temporal_model_rejects_connected_model_in_workflow(placement: str) -> None:
+    """Reject before scheduling an activity, while keeping ordinary outside-workflow runs usable."""
+
+    class ConnectedTestModel(TestModel):
+        @property
+        def _contains_live_connection(self) -> bool:
+            return True
+
+    connected_model = ConnectedTestModel(custom_output_text='connected')
+    primary_model = connected_model if placement == 'primary' else TestModel()
+    registered_model = FallbackModel(connected_model, TestModel()) if placement == 'wrapped' else connected_model
+    selected = 'connected' if placement != 'primary' else None
+
+    agent = Agent(primary_model, name='connected_temporal_model')
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        agent,
+        name='connected_temporal_model',
+        models={'connected': registered_model} if placement != 'primary' else None,
+    )
+    result = await temporal_agent.run('Hello', model=selected)
+    assert result.output == 'connected'
+
+    temporal_model = temporal_agent.model
+    assert isinstance(temporal_model, TemporalModel)
+    parameters = ModelRequestParameters(
+        function_tools=[],
+        native_tools=[],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[],
+        output_object=None,
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    with (
+        temporal_model.using_model(selected),
+        patch('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', return_value=True),
+    ):
+        with pytest.raises(UserError, match='A connected Responses WebSocket model cannot be used'):
+            await temporal_model.request(messages, None, parameters)
+        with pytest.raises(UserError, match='A connected Responses WebSocket model cannot be used'):
+            async with temporal_model.request_stream(messages, None, parameters):
+                pass
+
+
 def test_temporal_model_profile_for_raw_strings():
     """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
 
