@@ -36,7 +36,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload
+from .._adapter import compaction_payload, enqueued_messages_for_client
 from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
@@ -107,6 +107,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     same wire as 6 (v7's data-stream protocol equals v6's)."""
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
+    manage_system_prompt: Literal['server', 'client'] = 'server'
+    """Who owns the system prompt, as [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+
+    With `'server'`, `SystemPromptPart`s delivered by [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue]
+    are left out of the enqueued messages sent to the frontend.
+    """
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
@@ -422,8 +428,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # A data part rather than chat messages: the AI SDK keeps it on the assistant message, so a
         # client that rebuilds history from the stream sends the messages back without rendering them.
         # Keyed on the enqueue call: run-scoped default IDs would repeat across deliveries in one run.
+        messages = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
+        if not messages:
+            return
         ui_messages = VercelAIAdapter.dump_messages(
-            event.messages,
+            messages,
             sdk_version=self.sdk_version,
             generate_message_id=lambda _message, role, index: f'{event.enqueue_id}-{role}-{index}',
         )

@@ -296,6 +296,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             accept=self.accept,
             sdk_version=self.sdk_version,
             server_message_id=self.server_message_id,
+            manage_system_prompt=self.manage_system_prompt,
         )
 
     @cached_property
@@ -330,6 +331,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         for msg in messages:
             checkpoint = builder.checkpoint()
+            enqueued: list[ModelMessage] = []
 
             if msg.role == 'system':
                 for part in msg.parts:
@@ -465,7 +467,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             builder.add(compaction_part)
                         elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
                             # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
-                            builder.messages.extend(cls.load_messages(_enqueued_ui_messages(part.data)))
+                            loaded = cls.load_messages(_enqueued_ui_messages(part.data))
+                            builder.messages.extend(loaded)
+                            enqueued.extend(loaded)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
@@ -641,7 +645,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             # may also append a synthetic `ModelRequest` carrying tool-return parts, which we skip
             # via the type filter so they land on the response, not the tool returns.
             target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
-            if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
+            # Enqueued messages carry their own id and metadata, so they're never the target.
+            if (target := builder.last_modified(checkpoint, of_type=target_type, exclude=enqueued)) is not None:
                 apply_message_metadata(target, msg.metadata)
                 set_ui_message_id(target, msg.id)
 

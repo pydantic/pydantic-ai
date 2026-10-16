@@ -9,6 +9,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
+from typing import Literal
 from uuid import uuid4
 
 from pydantic_core import to_json
@@ -38,7 +39,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload
+from .._adapter import compaction_payload, enqueued_messages_for_client
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -142,6 +143,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     This is the protocol's run ID, not the agent run ID that
     [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
     never wired together.
+    """
+
+    manage_system_prompt: Literal['server', 'client'] = 'server'
+    """Who owns the system prompt, as [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+
+    With `'server'`, `SystemPromptPart`s delivered by [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue]
+    are left out of the enqueued messages sent to the frontend.
     """
 
     _use_reasoning: bool = field(default=False, init=False)
@@ -458,7 +466,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         # An activity rather than chat messages: the client keeps it in its message list and sends it
         # back, but a UI only renders activity types it registered a renderer for.
-        messages = AGUIAdapter.dump_messages(event.messages, ag_ui_version=self.ag_ui_version)
+        enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
+        if not enqueued:
+            return
+        messages = AGUIAdapter.dump_messages(enqueued, ag_ui_version=self.ag_ui_version)
         yield ActivitySnapshotEvent(
             message_id=event.enqueue_id,
             activity_type=ENQUEUED_MESSAGES_ACTIVITY_TYPE,

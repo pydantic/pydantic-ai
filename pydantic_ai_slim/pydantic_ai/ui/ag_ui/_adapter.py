@@ -337,7 +337,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input,
+            accept=self.accept,
+            ag_ui_version=self.ag_ui_version,
+            manage_system_prompt=self.manage_system_prompt,
+        )
 
     @classmethod
     async def from_request(
@@ -617,11 +622,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             builder.add(compaction_part)
                     elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
                         # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                        # They carry their own message ids, so the activity's id isn't kept on them.
                         builder.messages.extend(
                             cls.load_messages(
                                 _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
                             )
                         )
+                        continue
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')

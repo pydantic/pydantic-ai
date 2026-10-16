@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     CustomEvent,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -11715,9 +11716,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
 
     They ride in a `data-enqueued-messages` part, which the AI SDK keeps on the assistant message without
-    rendering it, and load back as their own requests at the position they were delivered in. Inside, they
-    get the same handling as the rest of client-submitted history: an enqueued system prompt is stripped
-    when the server owns the system prompt.
+    rendering it, and load back as their own requests at the position they were delivered in. An enqueued
+    system prompt is only sent when the frontend owns the system prompt, since it would otherwise be
+    stripped on the way back in.
     """
 
     async def stream_function(
@@ -11753,38 +11754,29 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     ]
 
     enqueued_chunks = [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages']
-    assert enqueued_chunks == snapshot(
-        [
-            {
-                'type': 'data-enqueued-messages',
-                'id': IsStr(),
-                'data': {
-                    'messages': [
-                        {
-                            'id': IsStr(),
-                            'role': 'user',
-                            'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                            'parts': [{'type': 'text', 'text': 'Background result: 42', 'state': 'done'}],
-                        }
-                    ]
-                },
+    assert enqueued_chunks[0] == snapshot(
+        {
+            'type': 'data-enqueued-messages',
+            'id': IsStr(),
+            'data': {
+                'messages': [
+                    {
+                        'id': IsStr(),
+                        'role': 'user',
+                        'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
+                        'parts': [{'type': 'text', 'text': 'Background result: 42', 'state': 'done'}],
+                    }
+                ]
             },
-            {
-                'type': 'data-enqueued-messages',
-                'id': IsStr(),
-                'data': {
-                    'messages': [
-                        {
-                            'id': IsStr(),
-                            'role': 'system',
-                            'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                            'parts': [{'type': 'text', 'text': 'Announcement', 'state': 'done'}],
-                        }
-                    ]
-                },
-            },
-        ]
+        }
     )
+    # A server-owned system prompt isn't sent to the frontend at all: it would be stripped on the way back.
+    streamed = [
+        [(message['role'], part['text']) for message in chunk['data']['messages'] for part in message['parts']]
+        for chunk in enqueued_chunks
+    ]
+    announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
+    assert streamed == [[('user', 'Background result: 42')], *announcement]
     # Each delivery is keyed on its own enqueue call, so the nested message IDs don't collide.
     nested_ids = [message['id'] for chunk in enqueued_chunks for message in chunk['data']['messages']]
     assert len(set(nested_ids)) == len(nested_ids)
@@ -11798,24 +11790,70 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         SubmitMessage(id='chat-1', messages=client_ui),
         manage_system_prompt=manage_system_prompt,
     )
-    if manage_system_prompt == 'server':
-        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
-            loaded = reloaded.sanitize_messages(reloaded.messages)
-    else:
-        loaded = reloaded.sanitize_messages(reloaded.messages)
+    loaded = reloaded.sanitize_messages(reloaded.messages)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
     assert _model_visible(loaded) == _model_visible(expected)
-    announcement = [('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),
         ('response', [('tool-call', {})]),
         ('request', [('tool-return', 'started')]),
         ('request', [('user-prompt', 'Background result: 42')]),
-        *announcement,
+        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
         ('response', [('text', 'done')]),
     ]
+
+
+async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> None:
+    """A standalone stream defaults to a server-owned system prompt and keeps it off the wire.
+
+    Other parts of the same request, and whole responses, are still sent.
+    """
+    event = EnqueuedMessagesEvent(
+        enqueue_id='enqueue-1',
+        messages=(
+            ModelResponse(parts=[TextPart('synthetic')]),
+            ModelRequest(parts=[SystemPromptPart(content='hidden'), UserPromptPart(content='visible')]),
+        ),
+    )
+    event_stream = VercelAIEventStream()
+    chunks = [chunk async for chunk in event_stream.handle_enqueued_messages(event)]
+    assert [
+        [(message['role'], part['text']) for message in chunk.data['messages'] for part in message['parts']]
+        for chunk in chunks
+        if isinstance(chunk, DataChunk)
+    ] == [[('assistant', 'synthetic'), ('user', 'visible')]]
+
+
+def test_enqueued_messages_keep_their_own_message_ids() -> None:
+    """The assistant message's id lands on its own response, not on an enqueued message loaded before it."""
+    enqueued = VercelAIAdapter.dump_messages(
+        [ModelResponse(parts=[TextPart('synthetic')]), ModelRequest.user_text_prompt('injected')],
+        generate_message_id=lambda _message, role, index: f'enqueued-{role}-{index}',
+    )
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={'messages': [message.model_dump(mode='json', by_alias=True) for message in enqueued]},
+                ),
+                TextUIPart(text='reply'),
+            ],
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert [(message.kind, (message.metadata or {}).get('__pydantic_ai__')) for message in loaded] == snapshot(
+        [
+            ('response', {'ui_message_id': 'enqueued-assistant-0'}),
+            ('request', {'ui_message_id': 'enqueued-user-1'}),
+            ('response', {'ui_message_id': 'assistant-1'}),
+        ]
+    )
 
 
 def test_enqueued_messages_malformed_or_nested_payload_is_skipped() -> None:

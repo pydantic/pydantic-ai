@@ -9063,8 +9063,8 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
 
     They ride in a `pydantic_ai_enqueued_messages` activity, which the client keeps in its message list and
     only renders if it registered a renderer for that type, and load back as their own requests at the
-    position they were delivered in. Inside, they get the same handling as the rest of client-submitted
-    history: an enqueued system prompt is stripped when the server owns the system prompt.
+    position they were delivered in. An enqueued system prompt is only sent when the frontend owns the
+    system prompt, since it would otherwise be stripped on the way back in.
     """
     agent = _enqueuing_agent()
     user = UserMessage(id='user-1', content='Go')
@@ -9078,34 +9078,31 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     ]
 
     activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
-    assert activities == snapshot(
-        [
-            {
-                'type': 'ACTIVITY_SNAPSHOT',
-                'timestamp': IsInt(),
-                'messageId': IsStr(),
-                'activityType': 'pydantic_ai_enqueued_messages',
-                'content': {
-                    'messages': [
-                        {
-                            'id': IsStr(),
-                            'role': 'user',
-                            'content': 'Background result: 42',
-                        }
-                    ]
-                },
-                'replace': True,
+    assert activities[0] == snapshot(
+        {
+            'type': 'ACTIVITY_SNAPSHOT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'activityType': 'pydantic_ai_enqueued_messages',
+            'content': {
+                'messages': [
+                    {
+                        'id': IsStr(),
+                        'role': 'user',
+                        'content': 'Background result: 42',
+                    }
+                ]
             },
-            {
-                'type': 'ACTIVITY_SNAPSHOT',
-                'timestamp': IsInt(),
-                'messageId': IsStr(),
-                'activityType': 'pydantic_ai_enqueued_messages',
-                'content': {'messages': [{'id': IsStr(), 'role': 'system', 'content': 'Announcement'}]},
-                'replace': True,
-            },
-        ]
+            'replace': True,
+        }
     )
+    # A server-owned system prompt isn't sent to the frontend at all: it would be stripped on the way back.
+    streamed = [
+        [(message['role'], message['content']) for message in activity['content']['messages']]
+        for activity in activities
+    ]
+    announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
+    assert streamed == [[('user', 'Background result: 42')], *announcement]
     # Delivered after the tool result and before the step that responds to it, as in server history.
     types = [event['type'] for event in events]
     assert types.index('TOOL_CALL_RESULT') < types.index('ACTIVITY_SNAPSHOT') < types.index('TEXT_MESSAGE_CONTENT')
@@ -9113,22 +9110,17 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     reloaded = AGUIAdapter(
         agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
     )
-    if manage_system_prompt == 'server':
-        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
-            loaded = reloaded.sanitize_messages(reloaded.messages)
-    else:
-        loaded = reloaded.sanitize_messages(reloaded.messages)
+    loaded = reloaded.sanitize_messages(reloaded.messages)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
     assert _model_visible(loaded) == _model_visible(expected)
-    announcement = [('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),
         ('response', [('tool-call', {})]),
         ('request', [('tool-return', 'started')]),
         ('request', [('user-prompt', 'Background result: 42')]),
-        *announcement,
+        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
         ('response', [('text', 'done')]),
     ]
 
@@ -9141,6 +9133,20 @@ async def test_enqueued_messages_event_skipped_for_legacy_ag_ui() -> None:
         json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
     ]
     assert not any(event['type'] == 'ACTIVITY_SNAPSHOT' for event in events)
+
+
+def test_enqueued_messages_keep_their_own_message_ids() -> None:
+    """The activity's id isn't kept on the enqueued messages, which carry their own."""
+    activity = ActivityMessage(
+        id='activity-1',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'enqueued-1', 'role': 'user', 'content': 'injected'}]},
+    )
+
+    loaded = AGUIAdapter.load_messages([AssistantMessage(id='assistant-1', content='hello'), activity])
+    assert [(message.kind, (message.metadata or {}).get('__pydantic_ai__')) for message in loaded] == snapshot(
+        [('response', {'ui_message_id': 'assistant-1'}), ('request', {'ui_message_id': 'enqueued-1'})]
+    )
 
 
 def test_enqueued_messages_malformed_or_nested_payload_is_skipped() -> None:
