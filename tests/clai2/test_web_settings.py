@@ -85,6 +85,7 @@ def test_the_set_menu_edits_settings_from_the_page(make_web: MakeWeb) -> None:
         'secret': False,
         'note': '',
         'action': False,
+        'menu': False,
     }
     assert fields(web_, 'settings').keys() == rows.keys()
     with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:

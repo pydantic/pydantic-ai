@@ -2496,7 +2496,9 @@ the web UI shows the declared menu in the page when the bare command is typed th
 with its actions asking through the page's dialogs, so its edits must save and apply as
 the command's do. `/set` declares the `/set` menu itself; `/theme` and `/spinner`
 declare its `display.theme` and `display.spinner` rows, without the terminal pickers'
-previews or `/spinner`'s speed.
+previews or `/spinner`'s speed. `/model` declares the saved models, each opening the
+menu `/model settings NAME` shows, without its picker's fallback-chain editors, and
+`/effort` the active model's `/model settings` menu.
 A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
 which loads the plugin again after an edit; `menu=` is for a command's menu over
 something else.
@@ -2917,6 +2919,11 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `actions`, for rows that need more than one value typed or picked, such as
   choosing a `/keys` entry or signing in: the row's key maps to an async function
   that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `menus`, for rows that open another `SettingsMenu`, such as each saved model's
+  settings in `/model`'s menu: the row's key maps to a zero-argument callable that
+  builds it when it opens. Leaving it returns to this menu, in the terminal and in
+  the web UI, which shows it beneath the row. The keys are read as the menu opens, so
+  a row an action adds meanwhile opens its menu once the menu opens again.
 - `searchable`, whether typing filters the list (default `True`).
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
@@ -3664,7 +3671,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
