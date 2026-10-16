@@ -71,8 +71,29 @@ export interface Usage {
   requests: number
 }
 
+export interface Palette {
+  bg: string
+  fg: string
+  ansi: string[]
+}
+
+export interface ThemeInfo {
+  /** `default` is Pydantic's own colours, in the browser's light or dark mode. */
+  name: string
+  names: string[]
+  palette: Palette | null
+}
+
 export type ServerMessage =
-  | { type: 'snapshot'; session: SessionInfo; items: Item[]; running: boolean; status: StatusInfo; questions: Questions[] }
+  | {
+      type: 'snapshot'
+      session: SessionInfo
+      items: Item[]
+      running: boolean
+      status: StatusInfo
+      questions: Questions[]
+      theme: ThemeInfo
+    }
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
@@ -86,6 +107,7 @@ export type ServerMessage =
   | { type: 'question_closed'; id: string }
   | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null }
   | { type: 'title'; title: string | null }
+  | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'

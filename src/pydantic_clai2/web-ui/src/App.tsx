@@ -10,6 +10,7 @@ import { compact } from './format'
 import { SidebarIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
+import { isLight, paletteVariables } from './palette'
 import { initial, reduce } from './state'
 
 type Theme = 'dark' | 'light'
@@ -57,12 +58,21 @@ export function App() {
     }
   }, [])
 
+  // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
+  const palette = state.theme?.palette ?? null
+  const painted = useRef<string[]>([])
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
+    const root = document.documentElement
     localStorage.setItem('clai-theme', theme)
-    // The browser's own bar follows the page: Paraffin in dark mode, Paper in light.
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1d0214' : '#fdfcf6')
-  }, [theme])
+    for (const name of painted.current) root.style.removeProperty(name)
+    const variables = palette ? paletteVariables(palette) : {}
+    for (const [name, value] of Object.entries(variables)) root.style.setProperty(name, value)
+    painted.current = Object.keys(variables)
+    root.dataset.theme = palette ? (isLight(palette) ? 'light' : 'dark') : theme
+    // The browser's own bar follows the page.
+    const bar = palette ? palette.bg : theme === 'dark' ? '#1d0214' : '#fdfcf6'
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bar)
+  }, [theme, palette])
 
   useEffect(() => {
     document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
@@ -165,6 +175,10 @@ export function App() {
           theme={theme}
           connected={connection === 'open'}
           onTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          themeInfo={state.theme}
+          onPickTheme={(name) =>
+            void api.send(`/theme ${name}`).catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+          }
           onView={(session) => void view(session)}
           onCollapse={() => setSidebar(false)}
           onError={showError}

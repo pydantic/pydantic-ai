@@ -3,6 +3,7 @@
 import asyncio
 import html
 import io
+import re
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import Future
@@ -21,6 +22,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
+from termflow.themes import PALETTES
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 from websockets.typing import Origin
@@ -56,6 +58,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     StatusChanged,
     TextDelta,
+    ThemeChanged,
     TitleChanged,
     ToolDone,
     TurnEnded,
@@ -65,6 +68,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.ui.rendering import theme as terminal_theme
 
 TOKEN = 'secret-token'
 HOSTS = frozenset({'testserver'})
@@ -270,6 +274,40 @@ def test_switches(make_web: 'MakeWeb') -> None:
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
     assert web_.post('/api/switch', {'key': 'display.theme', 'on': True}).status_code == 422, 'only the run switches'
+
+
+def test_theme(make_web: 'MakeWeb') -> None:
+    """The browser paints the `/theme` palette, and hears when a command changes it."""
+    web_ = make_web(Agent(TestModel()))
+    theme = web_.get('/api/state').json()['theme']
+    assert (theme['name'], theme['palette']) == ('default', None)
+    assert {'default', 'tokyo_night', 'github_light'} <= set(theme['names'])
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/theme tokyo_night'})
+        changed = receive_until(socket, ThemeChanged)[1].theme
+        assert changed.name == 'tokyo_night'
+        assert changed.palette is not None
+        assert (changed.palette.bg, len(changed.palette.ansi)) == (PALETTES['tokyo_night'].bg, 16)
+        web_.post('/api/input', {'text': '/cost'})
+        messages, _ = receive_until(socket, Notice)
+        assert not any(isinstance(message, ThemeChanged) for message in messages), 'sent only when it changes'
+        web_.post('/api/input', {'text': '/theme default'})
+        changed = receive_until(socket, ThemeChanged)[1].theme
+        assert (changed.name, changed.palette) == ('default', None), "back to Pydantic's colours"
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_theme_slots_match_the_terminal() -> None:
+    """`web-ui/src/palette.ts` paints each role from the same ANSI slot as `ui/rendering/theme.py` does."""
+    source = (Path(__file__).parents[2] / 'src/pydantic_clai2/web-ui/src/palette.ts').read_text()
+    constants = {name: float(value) for name, value in re.findall(r'^const (\w+) = ([\d.]+)$', source, re.MULTILINE)}
+    roles = ('ACCENT', 'ERROR', 'THINKING', 'SUCCESS', 'WARNING', 'INFO')
+    terminal = {role: terminal_theme._SLOTS[getattr(terminal_theme, role).removeprefix('bold ')] for role in roles}  # pyright: ignore[reportPrivateUsage]
+    assert {role: constants[role] for role in roles} == terminal
+    assert constants['DIFF_TINT'] == terminal_theme._DIFF_TINT  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_failed_turn(make_web: 'MakeWeb') -> None:
@@ -521,8 +559,9 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }
-        status = client.get('/api/state', headers={HEADER: TOKEN}).json()['status']
-        assert (status['code_mode'], status['speculation']) == (None, None), 'no settings to read'
+        state = client.get('/api/state', headers={HEADER: TOKEN}).json()
+        assert (state['status']['code_mode'], state['status']['speculation']) == (None, None), 'no settings to read'
+        assert state['theme']['name'] == 'default'
 
 
 async def test_lifespan_passes_through() -> None:

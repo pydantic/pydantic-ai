@@ -476,7 +476,9 @@ pre {
 
 .sidebar-foot {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
@@ -1572,4 +1574,39 @@ pre {
 .switch[aria-disabled='true'] {
   cursor: default;
   opacity: 0.7;
+}
+
+/* Theme picker */
+
+.theme-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.theme-picker:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.theme-picker select {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.theme-picker option {
+  background: var(--surface-raised);
+  color: var(--text);
 }

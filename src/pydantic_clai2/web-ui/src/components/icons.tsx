@@ -108,3 +108,11 @@ export const CodeIcon = icon(
   </>,
 )
 export const BoltIcon = icon(<path d="M13 2 4 14h7l-1 8 9-12h-7Z" />)
+export const PaletteIcon = icon(
+  <>
+    <path d="M12 3a9 9 0 0 0 0 18c1.1 0 1.7-.9 1.3-1.9-.4-1-.1-2.1 1.2-2.1H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10Z" />
+    <circle cx="7.5" cy="11" r="1" fill="currentColor" />
+    <circle cx="10" cy="7" r="1" fill="currentColor" />
+    <circle cx="14.5" cy="7" r="1" fill="currentColor" />
+  </>,
+)
