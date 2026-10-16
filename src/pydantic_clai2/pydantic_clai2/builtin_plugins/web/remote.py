@@ -63,12 +63,15 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     TurnEnded,
     TurnStarted,
+    UpdateChanged,
+    UpdateInfo,
     Worktree,
     history_items,
     usage_info,
     user_text,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
+from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
@@ -83,6 +86,7 @@ from pydantic_clai2.plugins import (
     TaskCatalog,
     TaskEvent,
     TurnOutcome,
+    UpdateProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
@@ -139,6 +143,10 @@ class Remote:
         """Which side panel pages this page can frame; each page's headers are read once."""
         self._command_edits = Lock()
         """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
+        self.version = installed().label
+        self.update: UpdateInfo | None = None
+        """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
+        self._uv_output: list[str] = []
 
     # What the browser sees.
 
@@ -160,6 +168,8 @@ class Remote:
             tasks=self.tasks(),
             task_items=self.workers.items(),
             follows_workspace=self.host.sessions is not None and self.host.sessions.follows_workspace,
+            version=self.version,
+            update=self.update,
         )
 
     def theme(self) -> ThemeInfo:
@@ -282,6 +292,21 @@ class Remote:
             self.hub.publish(ThemeChanged(theme=self.theme()))
         self.publish_status()
         self.hub.publish(SettingsChanged())
+
+    def update_progress(self, event: UpdateProgress) -> None:
+        """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
+        if event.stage == 'installing':
+            self._uv_output = []
+            self.update = UpdateInfo(target=event.target)
+        elif event.stage == 'output':
+            self._uv_output.append(event.text)
+            self.update = UpdateInfo(target=event.target, line=event.text)
+        else:
+            if self._uv_output:
+                level = 'error' if event.stage == 'failed' else 'info'
+                self.hub.publish(Notice(text='\n'.join(self._uv_output), level=level, command='uv'))
+            self.update = UpdateInfo(target=event.target, restarting=True) if event.stage == 'restarting' else None
+        self.hub.publish(UpdateChanged(update=self.update))
 
     # What the browser does.
 
@@ -555,9 +580,9 @@ class Remote:
             raise LookupError('This CLAI does not save sessions.')
         return self.host.sessions
 
-    async def projects(self, query: str = '') -> list[Project]:
+    async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
-        entries = await self.catalog.listing(query=query)
+        entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
         workspaces = {entry.workspace for entry in entries} | {self.host.status.workspace}
         known = dict(self._identities)
 
@@ -610,6 +635,7 @@ class Remote:
             messages=summary.message_count,
             model=summary.model,
             current=current,
+            archived=summary.archived_at is not None,
         )
 
     async def transcript(self, conversation_id: str) -> Transcript:
@@ -664,6 +690,12 @@ class Remote:
 
     async def delete(self, conversation_id: str) -> None:
         await self.catalog.delete(conversation_id)
+        self.hub.publish(SessionsChanged())
+
+    async def archive(self, conversation_id: str, *, archived: bool) -> None:
+        """Archive a session, hiding it from the sidebar, or unarchive it."""
+        catalog = self.catalog
+        await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
 
@@ -728,7 +760,7 @@ def _submenu(menu: SettingsMenu, path: Sequence[str]) -> SettingsMenu:
     for key in path:
         build = menu.menus.get(key)
         if build is None:
-            raise LookupError(f'{menu.source.title} has no menu {key}.')
+            raise LookupError(f'{menu.source.title} has no menu {key!r}.')
         menu = build()
     return menu
 
@@ -761,7 +793,7 @@ def _menu_info(menu: SettingsMenu, path: Sequence[str]) -> MenuInfo:
 def _row(menu: SettingsMenu, key: str) -> FieldRow:
     row = next((row for row in menu.source.rows() if row.key == key), None)
     if row is None:
-        raise LookupError(f'{menu.source.title} has no setting {key}.')
+        raise LookupError(f'{menu.source.title} has no setting {key!r}.')
     return row
 
 
@@ -769,7 +801,7 @@ async def _set_row(menu: SettingsMenu, *, path: Sequence[str], key: str, value: 
     """Set a row as its menu does: empty text resets it, and a value the row rejects raises `ValueError`."""
     menu = await to_thread.run_sync(_submenu, menu, path)
     if key in menu.menus:
-        raise LookupError(f'{menu.source.title}: {key} opens a menu; it takes no value.')
+        raise LookupError(f'{menu.source.title}: {key!r} opens a menu; it takes no value.')
     row = await to_thread.run_sync(_row, menu, key)
     text = (value or '').strip()
     if not text:
@@ -784,7 +816,7 @@ async def _run_action(menu: SettingsMenu, *, path: Sequence[str], key: str, dial
     menu = await to_thread.run_sync(_submenu, menu, path)
     action = menu.actions.get(key)
     if action is None:
-        raise LookupError(f'{owner} has no action {key}.')
+        raise LookupError(f'{owner} has no action {key!r}.')
     return list(await action(dialogs))
 
 

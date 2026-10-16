@@ -519,16 +519,21 @@ class Session(Generic[DepsT, OutputT]):
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
+    async def resume(
+        self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True, unarchive: bool = True
+    ) -> str:
         """Restore a saved head without invoking the model or replaying tools.
 
         A session another live process is running is not taken over: its newest saved state is
         copied into a new saved session, which this one continues while the original keeps running.
 
         `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
-        startup restore that runs before the observability plugin subscribes.
+        startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
+        archived session archived, for a restore that continues in a fork of it.
         """
-        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        notice = await self._restore(
+            conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
+        )
         await self._publish()
         return notice
 
@@ -537,7 +542,9 @@ class Session(Generic[DepsT, OutputT]):
         if self._record_resumed is not None:
             self._record_resumed()
 
-    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
+    async def _restore(
+        self, conversation_id: str, *, allow_other_workspace: bool, record: bool, unarchive: bool
+    ) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -565,6 +572,11 @@ class Session(Generic[DepsT, OutputT]):
                 messages = interrupted_history(messages)
             summary = saved.summary
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if unarchive and busy is None and summary.archived_at is not None:
+                # The session being worked in is listed again. Saving new content lists one archived while open
+                # in another CLAI again.
+                await self.conversations.set_archived(conversation_id=summary.id, archived=False)
+                summary = replace(summary, archived_at=None)
             if busy is not None:
                 summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
                 self._copy_repl(saved.summary.id, summary.id)

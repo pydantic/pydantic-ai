@@ -134,6 +134,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_forced_tool_choice': True,
     'supports_forced_tool_choice_with_thinking': True,
     'thinking_tags': ('<think>', '</think>'),
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     # OpenAIModelProfile subclass defaults
@@ -214,6 +215,7 @@ def test_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -245,6 +247,7 @@ def test_anthropic_claude_opus_4_7():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'anthropic_supports_fast_speed': True,
@@ -281,6 +284,7 @@ def test_anthropic_claude_haiku_4_5():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -308,6 +312,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -844,6 +849,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_send_back_thinking_parts': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
@@ -918,6 +924,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -955,6 +962,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'forced_tool_choice_disables_thinking': True,
@@ -1159,6 +1167,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -1369,6 +1378,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
@@ -2097,6 +2107,7 @@ def test_anthropic_unknown_model_returns_some_profile():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -2239,6 +2250,7 @@ def test_vercel_anthropic_claude_sonnet():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -2358,6 +2370,7 @@ def test_heroku_returns_openai_transformer():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,

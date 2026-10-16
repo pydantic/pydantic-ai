@@ -2065,6 +2065,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
+            # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
+            # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
+            # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
+            # the rendered position is known (see the carried reasoning in `AnthropicModel._map_message`).
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )

@@ -252,7 +252,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
                 'type': 'function',
                 'function': {
                     'name': 'divide',
-                    'arguments': '{"numerator": 123, "denominator": 456, "on_inf": "infinity"}',
+                    'arguments': '{"numerator":123,"denominator":456,"on_inf":"infinity"}',
                 },
             }
         ]

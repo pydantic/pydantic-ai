@@ -295,11 +295,11 @@ def _answer(answer: Answer) -> AskUserAnswer:
 
 
 def _sessions(app: FastAPI, remote: Remote) -> None:
-    """The sidebar: list, read, open, start, rename, fork, and delete saved sessions."""
+    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
 
     @app.get('/api/sessions')
-    async def sessions(q: str = '') -> list[Project]:
-        return await _wait(remote.projects(q))
+    async def sessions(q: str = '', include_archived: bool = False) -> list[Project]:
+        return await _wait(remote.projects(q, include_archived=include_archived))
 
     @app.post('/api/sessions/new', status_code=204)
     async def new(body: NewSession | None = None) -> None:
@@ -320,6 +320,14 @@ def _sessions(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/sessions/{conversation_id}/fork')
     async def fork(conversation_id: str) -> Forked:
         return Forked(id=await _wait(remote.fork(conversation_id)))
+
+    @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
+    async def archive(conversation_id: str) -> None:
+        await _wait(remote.archive(conversation_id, archived=True))
+
+    @app.post('/api/sessions/{conversation_id}/unarchive', status_code=204)
+    async def unarchive(conversation_id: str) -> None:
+        await _wait(remote.archive(conversation_id, archived=False))
 
     @app.delete('/api/sessions/{conversation_id}', status_code=204)
     async def delete(conversation_id: str) -> None:
