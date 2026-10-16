@@ -45,10 +45,12 @@ pre-agent step:
 once before reviewing. It is the source of truth; do not re-derive
 severity bands or false-positive rules from your own priors.
 
-**Verdict mapping:** if any changed file remains unreviewed, submit `COMMENT`
-and name those files in the body. Otherwise, any HIGH or CRITICAL finding →
-`REQUEST_CHANGES`; MEDIUM-only or below → `APPROVE` (post comments anyway).
-No findings → `APPROVE`.
+**Verdict mapping:** any verified HIGH or CRITICAL finding requires
+`REQUEST_CHANGES`, even when review coverage is incomplete. Otherwise, incomplete
+coverage requires `COMMENT`; complete coverage with MEDIUM-only or lower findings
+requires `APPROVE` (post comments anyway). Name every unreviewed file in the
+review body for either verdict.
+Complete coverage with no findings → `APPROVE`.
 **Cap inline comments at 30 per run** — if
 more findings survive, keep the highest-severity 30 inline and list
 the rest briefly in the review body.
@@ -191,9 +193,10 @@ For each surviving finding, call `mcp__safeoutputs__create_pull_request_review_c
 
 After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_review`** with:
 
-- **type:** `COMMENT` if any changed file remains unreviewed. Otherwise,
-  `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived, else `APPROVE`.
-- **body:** Always opens with the `Reviewed at` line. If you are approving,
+- **type:** `REQUEST_CHANGES` if any HIGH or CRITICAL finding survived. Otherwise,
+  `COMMENT` if any changed file remains unreviewed, else `APPROVE`.
+- **body:** Always opens with the `Reviewed at` line. Name unreviewed files in
+  either verdict body. If you are approving,
   that line is most often the whole body. For `REQUEST_CHANGES`,
   include only the verdict + any cross-cutting feedback that can't be
   expressed inline (e.g. "the new module duplicates logic in `agent.py`
@@ -209,8 +212,9 @@ redundant review.
 
 **Bot-authored PRs:** GitHub forbids `APPROVE` / `REQUEST_CHANGES` from a
 bot reviewing another bot's PR. If the PR author is a bot, submit a
-`COMMENT` review with the verdict in the body. The incomplete-review rule
-also requires `COMMENT` and the unreviewed file list in the body.
+`COMMENT` review with the verdict in the body. Include the unreviewed file list
+when coverage is incomplete, including when HIGH or CRITICAL findings require
+`REQUEST_CHANGES` from a non-bot author.
 
 ## What not to do (recap)
 

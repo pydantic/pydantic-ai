@@ -465,10 +465,12 @@ Determine severity AFTER investigating the finding, not before.
   on small helpers, narrow refactor opportunities.
 - 💬 **NITPICK** — truly optional. Naming preferences, comment polish.
 
-**Verdict mapping:** if any changed file remains unreviewed, submit `COMMENT`
-and name those files in the body. Otherwise, any HIGH or CRITICAL finding →
-`REQUEST_CHANGES`; MEDIUM-only or below → `APPROVE` (post comments anyway).
-No findings → `APPROVE`.
+**Verdict mapping:** any verified HIGH or CRITICAL finding requires
+`REQUEST_CHANGES`, even when review coverage is incomplete. Otherwise, incomplete
+coverage requires `COMMENT`; complete coverage with MEDIUM-only or lower findings
+requires `APPROVE` (post comments anyway). Name every unreviewed file in the
+review body for either verdict.
+Complete coverage with no findings → `APPROVE`.
 
 **Cap inline comments at 30 per run.** If more findings survive, keep the
 highest-severity 30 inline and list the rest briefly in the review body.

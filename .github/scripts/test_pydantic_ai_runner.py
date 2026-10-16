@@ -31,7 +31,7 @@ from typing import Any, cast
 import httpx2
 import pytest
 import yaml
-from anthropic import AsyncAnthropic, RateLimitError
+from anthropic import APITimeoutError, AsyncAnthropic, RateLimitError
 from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
 from tenacity import stop_after_attempt, wait_none
@@ -76,6 +76,23 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+
+
+@pytest.mark.subprocess(reason='the staged shim must import without repository sibling modules on PYTHONPATH')
+def test_shim_cli_imports_from_isolated_staged_package(tmp_path: Path):
+    scripts_dir = Path(__file__).parent
+    staged_package = tmp_path / 'pydantic_ai_gh_aw_shim'
+    shutil.copytree(scripts_dir / 'pydantic_ai_gh_aw_shim', staged_package)
+    result = subprocess.run(
+        [sys.executable, '-P', '-c', 'from pydantic_ai_gh_aw_shim import cli'],
+        capture_output=True,
+        check=False,
+        env={**os.environ, 'PYTHONPATH': str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
@@ -2514,6 +2531,21 @@ def test_failure_metadata_classifies_typed_errors(
 def test_failure_metadata_classifies_wrapped_transport_timeout():
     error = shim.ModelAPIError('test-model', 'ReadTimeout')
     error.__cause__ = httpx2.ReadTimeout('read timed out')
+
+    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+
+    assert details == {'kind': 'timeout'}
+
+
+def test_failure_metadata_classifies_anthropic_timeout_wrapped_by_model_api_error():
+    try:
+        raise httpx2.ReadTimeout('read timed out')
+    except httpx2.ReadTimeout as transport_error:
+        try:
+            raise APITimeoutError(request=httpx2.Request('POST', 'https://example.com')) from transport_error
+        except APITimeoutError as sdk_error:
+            error = shim.ModelAPIError('test-model', 'APITimeoutError')
+            error.__cause__ = sdk_error
 
     details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
 

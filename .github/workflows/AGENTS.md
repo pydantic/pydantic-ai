@@ -252,13 +252,23 @@ pass before the controller closes that provider incident. Scheduled recovery clo
 only provider rate-limit or quota-exhaustion incidents after a known reset time elapses.
 
 For workflow or task recovery, dispatch the affected workflow from the repository's
-default branch. Set `recovery_issue` to the incident number. Provide `aw_context` for
-PR-targeted workflows such as `CI Review` and `Pydantic AI UI Security Review`.
-Verify the fresh run executed the agent and model. Inspect the affected host stage and
-output. Link that evidence to the incident and close it manually. A green run that skips
-the model or affected stage is not proof. Resolve closed-PR tasks as retired only after
-API verification and representative workflow recovery. Record why each task is retired.
-Do not describe retired tasks as same-target recoveries.
+default branch. Set `recovery_issue` to the incident number.
+
+For **CI Review**, provide `aw_context` as JSON with `item_type` set to
+`pull_request` and `item_number` set to the PR number. Verify the fresh run executed
+the agent and model.
+
+For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
+Manual dispatch does not provide `github.event.pull_request.number`, which this
+workflow requires to run its agent and publish results. After the corrected workflow
+is deployed, complete the existing UI Security review Environment approval for the
+fresh PR run.
+
+Inspect the affected host stage and output. Link that evidence to the incident and
+close it manually. A green run that skips the model or affected stage is not proof.
+Resolve closed-PR tasks as retired only after API verification and representative
+workflow recovery. Record why each task is retired. Do not describe retired tasks as
+same-target recoveries.
 
 Unknown or malformed quota, missing reset time, and credential or configuration
 incidents need operator attention rather than automatic recovery.

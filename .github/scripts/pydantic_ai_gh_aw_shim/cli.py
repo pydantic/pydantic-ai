@@ -46,16 +46,15 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Annotated, Any, TypeAlias, cast
 
 import httpx2
 import logfire
-from anthropic import AsyncAnthropic
+from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
-from triage_models import snapshot_candidates
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
@@ -229,7 +228,14 @@ def require_safe_output(output: str) -> str:
         else:
             sink_path = None
         if sink_path is not None and sink_path.is_file():
-            candidates = snapshot_candidates(str(snapshot_path), limit=10)
+            snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
+            candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
+            candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
+                [candidate['number'] for candidate in candidate_rows]
+            )
+            if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
+                raise ValueError('Attention snapshot contains too many or duplicate candidates')
+            candidates = set(candidate_numbers)
             if candidates:
                 recorded: set[int] = set()
                 entry_adapter = TypeAdapter(dict[str, object])
@@ -246,7 +252,7 @@ def require_safe_output(output: str) -> str:
                             continue
                         if parsed_number > 0 and str(parsed_number) == item_number:
                             recorded.add(parsed_number)
-                missing = sorted(candidates.keys() - recorded)
+                missing = sorted(candidates - recorded)
                 if missing:
                     missing_ids = ', '.join(str(number) for number in missing)
                     logger.warning(
@@ -1009,7 +1015,7 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
         kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
         kind = 'timeout'
-    elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, httpx2.TimeoutException):
+    elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, (APITimeoutError, httpx2.TimeoutException)):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code
