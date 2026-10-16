@@ -2516,8 +2516,8 @@ prompt the keyboard does:
   refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
   from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
   `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do
-  resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only archived
-  sessions, and `archived=None` both. As in `/resume`, a fork gets its own copy of the session's
+  resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only
+  archived sessions, and `archived=None` both. As in `/resume`, a fork gets its own copy of the session's
   Monty state, and a deleted session's state is deleted with it. Like opening `/resume`, `listing`
   queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even

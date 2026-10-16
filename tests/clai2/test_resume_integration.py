@@ -285,7 +285,7 @@ async def test_simultaneous_service_failures_remain_grouped(tmp_path: Path, monk
         finally:
             raise ValueError('worker cleanup failed')
 
-    async def broken_command(self: Sessions[None, str], args: list[str]) -> str:
+    async def broken_command(self: Sessions[None, str], args: list[str], *, unarchive: bool = True) -> str:
         await entered.wait()
         raise ValueError('browser failed')
 
@@ -300,6 +300,7 @@ async def test_simultaneous_service_failures_remain_grouped(tmp_path: Path, monk
             resume='',
         )
     assert len(caught.value.exceptions) == 2
+    assert 'browser failed' in [str(error) for error in caught.value.exceptions]
 
 
 async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
