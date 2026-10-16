@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import re
+import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from typing import Any
@@ -137,6 +138,12 @@ class FakeWebSocket:
 SOURCE_INFO = {'source': 'unknown', 'version': get_user_agent()}
 
 
+_NO_CONTEXT_USAGE = pytest.mark.filterwarnings(
+    "ignore:The ElevenLabs agent .* doesn't send `context_usage`:UserWarning"
+)
+"""For a test of an agent configuration that leaves out its `client_events`."""
+
+
 def agent_json(
     *,
     overrides: dict[str, Any] | None = None,
@@ -151,7 +158,8 @@ def agent_json(
             'agent': {
                 'language': 'en',
                 'prompt': {'prompt': 'Existing', 'tools': tools or [], 'tool_ids': tool_ids or []},
-            }
+            },
+            'conversation': {'client_events': ['audio', 'agent_response', 'user_transcript', 'context_usage']},
         },
         'platform_settings': {
             'auth': {'enable_auth': False},
@@ -409,6 +417,23 @@ async def test_an_agent_without_platform_settings_permits_no_override() -> None:
             pass  # pragma: no cover
 
 
+async def test_an_agent_without_context_usage_reports_warns_once() -> None:
+    # An agent left at ElevenLabs' default `client_events` reports no context usage, and its spoken replies end on a
+    # quiet stretch: the session works, but says once what turning the reports on gets.
+    agent = agent_json()
+    del agent['conversation_config']['conversation']
+    model = _model(RestRecorder(agent))
+    with pytest.warns(UserWarning, match=r"doesn't send `context_usage` reports"):
+        with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
+            async with _connect(model):
+                pass
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
+            async with _connect(model):
+                pass
+
+
 async def test_no_instructions_inherits_the_agent_prompt_silently() -> None:
     # Without local instructions the ElevenLabs-side prompt is inherited: no override is sent, and no
     # override permission is required.
@@ -489,6 +514,7 @@ async def test_custom_llm_extra_body_requires_its_sibling_toggle() -> None:
             pass  # pragma: no cover
 
 
+@_NO_CONTEXT_USAGE
 async def test_bare_agent_response_without_platform_settings_is_tolerated() -> None:
     # `GET agent` responses are mirrored just far enough for the preflight: a response missing the
     # `conversation_config`/`platform_settings` sections means no overrides permitted and no tools.
@@ -500,6 +526,7 @@ async def test_bare_agent_response_without_platform_settings_is_tolerated() -> N
     assert ws.sent_frames() == [{'type': 'conversation_initiation_client_data', 'source_info': SOURCE_INFO}]
 
 
+@_NO_CONTEXT_USAGE
 async def test_bare_agent_response_denies_custom_llm_extra_body() -> None:
     model = _model(RestRecorder({'agent_id': AGENT_ID}))
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_custom_llm_extra_body={'temperature': 0.1})
@@ -1461,6 +1488,7 @@ def test_schemas_match_against_server_normalization(
     assert rt_elevenlabs._schemas_match(local, remote) is expected  # pyright: ignore[reportPrivateUsage]
 
 
+@_NO_CONTEXT_USAGE
 async def test_tool_sync_with_a_bare_agent_response_makes_no_requests() -> None:
     # A `GET agent` response without a `conversation_config` reports no tools at all.
     ws = FakeWebSocket([HANDSHAKE_FRAME])
@@ -1476,6 +1504,7 @@ async def test_tool_sync_with_a_bare_agent_response_makes_no_requests() -> None:
     ]
 
 
+@_NO_CONTEXT_USAGE
 async def test_tool_sync_with_a_promptless_agent_makes_no_requests() -> None:
     # An agent config without a prompt section has no tools to reconcile; with no local tools either,
     # sync has nothing to do.
@@ -1492,6 +1521,7 @@ async def test_tool_sync_with_a_promptless_agent_makes_no_requests() -> None:
     ]
 
 
+@_NO_CONTEXT_USAGE
 @pytest.mark.parametrize(
     'agent',
     [

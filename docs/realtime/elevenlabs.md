@@ -215,7 +215,7 @@ Telephony (`ulaw_8000`) agents are not supported.
 ElevenLabs reports the LLM's context consumption only, as `input_tokens`, and only when
 `context_usage` is in the agent's `conversation.client_events` list (it is not by default, and adding it
 is recommended: it also tells the session where a spoken response ends, see
-[Provider-specific quirks](#provider-specific-quirks)). A report arrives with the end of each response's
+[Provider-specific quirks](#provider-specific-quirks); a session on an agent without it warns once). A report arrives with the end of each response's
 audio and counts toward the session's usage without belonging to any one response. When ElevenLabs
 answers a turn with a fallback LLM, the report names that model and its context window. The context window it names is kept on
 [`ElevenLabsAgentsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.context_limit_tokens],

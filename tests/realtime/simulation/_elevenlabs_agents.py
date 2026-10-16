@@ -73,7 +73,10 @@ def _agent_config() -> dict[str, Any]:
     """The `GET /v1/convai/agents/{id}` response: the prompt override is permitted, and no client tools."""
     return {
         'agent_id': AGENT_ID,
-        'conversation_config': {'agent': {'prompt': {'prompt': 'Existing', 'tools': [], 'tool_ids': []}}},
+        'conversation_config': {
+            'agent': {'prompt': {'prompt': 'Existing', 'tools': [], 'tool_ids': []}},
+            'conversation': {'client_events': ['audio', 'agent_response', 'context_usage']},
+        },
         'platform_settings': {'overrides': {'conversation_config_override': {'agent': {'prompt': {'prompt': True}}}}},
     }
 

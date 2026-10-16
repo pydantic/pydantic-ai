@@ -138,6 +138,13 @@ stretch, or at the next frame of any other kind (verified live: each result the 
 `agent_tool_response`, so the next reply's calls never follow these directly).
 """
 
+_CONTEXT_USAGE_MISSING = (
+    "The ElevenLabs agent {agent_id!r} doesn't send `context_usage` reports, so the session has no context usage, "
+    'and a spoken reply is taken to end after a second without audio rather than with its last audio. Add '
+    "`context_usage` to the agent's `conversation.client_events` (its Advanced tab in the ElevenLabs dashboard) for "
+    'both.'
+)
+
 _MCP_APPROVAL_DENIED = (
     'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot '
     'do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval '
@@ -274,10 +281,17 @@ class _AgentSectionConfig(BaseModel):
     prompt: _AgentPromptConfig | None = None
 
 
+class _ConversationSettings(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    client_events: list[str] | None = None
+
+
 class _ConversationConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     agent: _AgentSectionConfig | None = None
+    conversation: _ConversationSettings | None = None
 
 
 class _AgentAuthSettings(BaseModel):
@@ -310,6 +324,12 @@ class _AgentPreflight(BaseModel):
             return {}
         permissions = self.platform_settings.overrides.get('conversation_config_override')
         return cast('dict[str, Any]', permissions) if isinstance(permissions, dict) else {}
+
+    @property
+    def sends_context_usage(self) -> bool:
+        """Whether the agent sends `context_usage` reports, which aren't among its default `client_events`."""
+        conversation = self.conversation_config.conversation if self.conversation_config is not None else None
+        return conversation is not None and 'context_usage' in (conversation.client_events or ())
 
     @property
     def custom_llm_extra_body_allowed(self) -> bool:
@@ -900,6 +920,8 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: ElevenLabsProvider = field(init=False, repr=False)
+    _warned_context_usage: bool = field(default=False, init=False, repr=False)
+    """Whether a session has warned that the agent sends no `context_usage` reports (once per model)."""
 
     # Written out rather than generated because `profile` has to be an init argument handed to the
     # base constructor, while `RealtimeModel.profile` stays the *resolved* profile, exactly as on a
@@ -914,6 +936,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     ) -> None:
         super().__init__(settings=settings, profile=profile)
         self.agent_id = agent_id
+        self._warned_context_usage = False
         from ..providers.elevenlabs import ElevenLabsProvider
 
         if isinstance(provider, str):
@@ -1328,6 +1351,9 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         # One REST round-trip yields the override-permission allowlist, the client tools, and the
         # agent's auth mode, so every fail-loudly check happens before the socket is dialed.
         agent = await self._fetch_agent()
+        if not agent.sends_context_usage and not self._warned_context_usage:
+            self._warned_context_usage = True
+            warnings.warn(_CONTEXT_USAGE_MISSING.format(agent_id=self.agent_id), UserWarning, stacklevel=3)
         # The agent's client tools are reconciled with every tool of the run, as they are workspace
         # state shared with every conversation; a `tool_choice` restriction is this conversation's, and
         # narrows the attached tools through the `tool_ids` override below.
