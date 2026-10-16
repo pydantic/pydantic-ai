@@ -191,12 +191,15 @@ class TaskRouter:
             self.partial_truncated.add(record.id)
         if event is not None:
             progress.observe(event)
-        if (view := self.view(record.conversation_id)) is not None:
-            # A resumed task runs again, with the plugins of the session that resumed it.
-            if isinstance(event, DelegationStartEvent):
-                self.started[record.id] = view
-            else:
-                self.started.setdefault(record.id, view)
+        view = self.view(record.conversation_id)
+        # A child runs with its parent's plugins; a resumed task, with those of the session that resumed it.
+        if record.parent_id is not None and (parent := self.started.get(record.parent_id)) is not None:
+            self.started.setdefault(record.id, parent)
+        elif view is not None and isinstance(event, DelegationStartEvent):
+            self.started[record.id] = view
+        elif view is not None:
+            self.started.setdefault(record.id, view)
+        if view is not None:
             await view.deliver(update)
 
 

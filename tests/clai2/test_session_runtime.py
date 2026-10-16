@@ -188,6 +188,12 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     await router.observe(DelegationTaskEvent(task=record, event=start))
     assert router.started == {record.id: a}
     assert a.running() and not b.running()
+    # A child runs with its parent's plugins, whichever session holds the conversation when it starts.
+    child = task(task_id='c' * 32, parent_id=record.id, conversation_id='b')
+    router.started[record.id] = b
+    await router.observe(DelegationTaskEvent(task=child, event=start))
+    assert router.started[child.id] is b and not a.runs(child)
+    router.started[record.id] = a
     # With no session holding its conversation, a task's events reach none, and its progress is still kept.
     held['a'] = 'a'
     router.progress.clear()
