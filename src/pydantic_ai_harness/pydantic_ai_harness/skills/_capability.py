@@ -20,6 +20,7 @@ from pydantic_ai_harness.skills._loader import (
     SkillCatalog,
     SkillDefinition,
     SkippedSkill,
+    UnknownNames,
     load_skill_libraries,
     same_skill,
     skip_duplicate_name,
@@ -37,6 +38,7 @@ class _SkillSource:
     exclude: frozenset[str]
     missing_directories: MissingDirectories
     duplicate_names: DuplicateNames
+    unknown_names: UnknownNames
     workspace: Workspace | None
     """The `workspace=` the libraries are read from, or `None` for the run's workspace."""
 
@@ -96,6 +98,9 @@ class Skills(AbstractCapability[AgentDepsT]):
     duplicate_names: DuplicateNames
     """`'error'` fails the run when two different `SKILL.md` files share a name; `'keep_first'` keeps the first."""
 
+    unknown_names: UnknownNames
+    """`'error'` fails the run on an `include` or `exclude` name no library has; `'skip'` ignores that name."""
+
     workspace: WorkspaceBackend | None
     """Where the libraries live, when not in the run's workspace; see `__init__`."""
 
@@ -114,6 +119,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         exclude: None = None,
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
     ) -> None: ...
 
@@ -126,6 +132,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         exclude: Collection[str] | None = None,
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
     ) -> None: ...
 
@@ -137,6 +144,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         exclude: Collection[str] | None = None,
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
     ) -> None:
         """Configure the skill libraries to read at the start of each run.
@@ -153,6 +161,9 @@ class Skills(AbstractCapability[AgentDepsT]):
             duplicate_names: `'error'` (the default) fails the run when two different `SKILL.md` files
                 share a name. `'keep_first'` keeps the one from the earlier directory and skips the
                 other with a warning, the way coding agents layer project skills over personal ones.
+            unknown_names: `'error'` (the default) fails the run when an `include` or `exclude` name
+                matches no skill. `'skip'` ignores that name, for a selection shared by projects that
+                do not all have every skill it names.
             workspace: A workspace backend to read the libraries from instead of the run's, such as
                 `LocalWorkspaceBackend('/app')` for skills shipped with the code while the agent
                 works in a sandbox. It is read in-process only in this release: a durable engine
@@ -165,16 +176,21 @@ class Skills(AbstractCapability[AgentDepsT]):
             raise ValueError(f"missing_directories must be 'error' or 'skip', not {missing_directories!r}.")
         if duplicate_names not in get_args(DuplicateNames):
             raise ValueError(f"duplicate_names must be 'error' or 'keep_first', not {duplicate_names!r}.")
+        if unknown_names not in get_args(UnknownNames):
+            raise ValueError(f"unknown_names must be 'error' or 'skip', not {unknown_names!r}.")
 
         self.directories = self._normalize_directories(directories)
         self.include = self._normalize_selection('include', include) if include is not None else None
         self.exclude = self._normalize_selection('exclude', exclude) if exclude is not None else frozenset()
         self.missing_directories = missing_directories
         self.duplicate_names = duplicate_names
+        self.unknown_names = unknown_names
         self.workspace = workspace
         own = secondary_workspace(workspace, 'Skills')
         self._sources = (
-            _SkillSource(self.directories, self.include, self.exclude, missing_directories, duplicate_names, own),
+            _SkillSource(
+                self.directories, self.include, self.exclude, missing_directories, duplicate_names, unknown_names, own
+            ),
         )
 
     def __repr__(self) -> str:
@@ -182,7 +198,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         return (
             f'{type(self).__name__}('
             f'directories={self.directories!r}, include={self.include!r}, exclude={self.exclude!r}, '
-            f'missing_directories={self.missing_directories!r}, duplicate_names={self.duplicate_names!r})'
+            f'missing_directories={self.missing_directories!r}, duplicate_names={self.duplicate_names!r}, '
+            f'unknown_names={self.unknown_names!r})'
         )
 
     @staticmethod
@@ -255,8 +272,9 @@ class Skills(AbstractCapability[AgentDepsT]):
 
         Raises:
             UserError: A configuration without `workspace=` needs `workspace`, and none was passed.
-            ValueError: A configuration problem that would also fail a run, such as an unknown
-                `include` name or, with `duplicate_names='error'`, two skills with one name.
+            ValueError: A configuration problem that would also fail a run, such as, with
+                `unknown_names='error'`, an unknown `include` name or, with `duplicate_names='error'`,
+                two skills with one name.
         """
         run_workspace = secondary_workspace(workspace, 'Skills.load')
         if run_workspace is None and any(source.workspace is None for source in self._sources):
@@ -278,6 +296,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                 exclude=source.exclude,
                 missing_directories=source.missing_directories,
                 duplicate_names=source.duplicate_names,
+                unknown_names=source.unknown_names,
             )
             messages.extend(skipped)
             for skill in skills:
