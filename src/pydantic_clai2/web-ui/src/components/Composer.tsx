@@ -12,15 +12,17 @@ interface Props {
   model: string
   disabled: boolean
   placeholder: string
+  /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
+  draft: string
+  onDraft: (draft: string) => void
   onError: (message: string) => void
 }
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, model, disabled, placeholder, onError },
+  { running, model, disabled, placeholder, draft: text, onDraft: setText, onError },
   ref,
 ) {
-  const [text, setText] = useState('')
   const [suggestions, setSuggestions] = useState<CompletionInfo[]>([])
   const [selected, setSelected] = useState(0)
   const [models, setModels] = useState<string[] | null>(null)
@@ -28,6 +30,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const request = useRef(0)
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
+
+  // The composer moves from the new-session hero to the bottom bar when the first message lands; keep typing there.
+  useEffect(() => area.current?.focus(), [])
 
   useEffect(() => {
     const element = area.current

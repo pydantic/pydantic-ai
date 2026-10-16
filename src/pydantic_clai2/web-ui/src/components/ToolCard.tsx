@@ -1,4 +1,5 @@
-import { memo, useState } from 'react'
+import { memo, useContext } from 'react'
+import { OpenCardsContext } from '../openCards'
 import { highlight } from '../markdown'
 import type { Diff, Item } from '../protocol'
 import { DiffView, diffStats } from './DiffView'
@@ -17,6 +18,26 @@ function parseArgs(args: string): Args {
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value))
 const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
+
+export interface Call {
+  name: string
+  argument: string
+}
+
+// The tools code mode puts in the sandbox (`write_file` and `edit_file` stay native). The two alternatives
+// inside the string never match the same text, so a run of backslashes cannot backtrack exponentially.
+const CALL = /\b(read_file|list_files|grep|shell)\(\s*(?:\w+\s*=\s*)?(?:([rRbBfFuU]{0,2})(["'])((?:\\.|(?!\3|\\).)*)\3)?/g
+
+/** The tool calls inside a `run_code` script, with their first literal argument, as code mode makes them.
+ * Comment lines are skipped; a raw string keeps its backslashes, as a regex pattern needs them. */
+export function codeCalls(code: string): Call[] {
+  const lines = code.split('\n').filter((line) => !line.trim().startsWith('#'))
+  return [...lines.join('\n').matchAll(CALL)].map((match) => {
+    const raw = /r/i.test(match[2] ?? '')
+    const body = match[4] ?? ''
+    return { name: match[1] ?? '', argument: raw ? body : body.replace(/\\(["'\\])/g, '$1') }
+  })
+}
 
 interface Summary {
   icon: React.ReactNode
@@ -45,6 +66,13 @@ function summarize(item: Item, args: Args): Summary {
     case 'list_files':
       return { icon: <FileIcon size={14} />, verb: running ? 'Listing' : 'Listed', subject: str(args.path) || '.', mono: false }
     case 'run_code': {
+      const calls = codeCalls(str(args.code))
+      const [only] = calls
+      if (calls.length === 1 && only?.argument) {
+        // A script around one call reads as that call.
+        const key = only.name === 'shell' ? 'command' : only.name === 'grep' ? 'pattern' : 'path'
+        return summarize({ ...item, name: only.name }, { [key]: only.argument })
+      }
       const first = str(args.code).split('\n').find((line) => line.trim() && !line.trim().startsWith('#'))
       return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: first?.trim() ?? 'code', mono: true }
     }
@@ -98,7 +126,8 @@ function codeResult(text: string): string {
 
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
-  const [open, setOpen] = useState(false)
+  const cards = useContext(OpenCardsContext)
+  const open = cards.open.has(raw.id)
   const args = parseArgs(raw.args)
   const item = { ...raw, diffs: argumentDiffs(raw, args) }
   const summary = summarize(item, args)
@@ -113,7 +142,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const firstLine = summary.subject.split('\n')[0] ?? ''
   return (
     <div className={`tool ${open ? 'open' : ''} ${item.state}`}>
-      <button className="row-toggle tool-row" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id)} aria-expanded={open}>
         <span className="tool-icon">{summary.icon}</span>
         <span className={item.state === 'running' ? 'shimmer verb' : 'verb'}>{summary.verb}</span>
         <span className={summary.mono ? 'subject mono' : 'subject'} title={summary.subject}>
