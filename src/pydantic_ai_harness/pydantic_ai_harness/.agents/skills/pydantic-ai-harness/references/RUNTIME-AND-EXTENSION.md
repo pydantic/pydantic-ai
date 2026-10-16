@@ -69,8 +69,7 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
 - `InMemoryStepStore()`: process-local; tests.
 - `FileStepStore(directory)`: `<directory>/<run_id>/` with JSON/JSONL files.
 - `SqliteStepStore(database='runs.db')`, or `connection=` a `sqlite3.Connection` opened with
-  `check_same_thread=False`. Stores each message once rather than repeating the history in every
-  snapshot, and deletes stored messages along with the last snapshot that references them.
+  `check_same_thread=False`.
 - `MongoStepStore(client=AsyncMongoClient | db_url=..., database=...)`: needs `uv add
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first
