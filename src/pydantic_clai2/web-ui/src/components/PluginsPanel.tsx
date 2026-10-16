@@ -259,7 +259,7 @@ function Detail({
           {on && row.has_menu ? (
             <MenuNote row={row} />
           ) : (
-            <p className="plugin-empty">{on ? 'It takes no settings.' : 'Turn it on to see its settings.'}</p>
+            <p className="plugin-empty">{on ? 'It has no settings form.' : 'Turn it on to see its settings.'}</p>
           )}
         </>
       )}

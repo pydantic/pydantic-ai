@@ -54,6 +54,7 @@ export function App() {
   const [sidePanel, setSidePanel] = useState(() => localStorage.getItem('clai-side-panel'))
   const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem('clai-side-panel-width')) || 440)
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
+  const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
 
@@ -152,9 +153,11 @@ export function App() {
     document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
   }, [state.session?.title])
 
-  // A switch of the live session ends any read-only preview, and the wait for it if it is the one picked.
+  // A switch of the live session ends any read-only preview, drops a transcript still on its way so it cannot
+  // reopen it, and ends the wait for it if it is the one picked.
   const sessionId = state.session?.id
   useEffect(() => {
+    picked.current++
     setPreview(null)
     setOpening((current) => (current?.id === sessionId ? null : current))
   }, [sessionId])
@@ -173,6 +176,13 @@ export function App() {
   }, [])
   const showError = useCallback((message: string) => showToast(message, 'error'), [showToast])
   const showNotice = useCallback((message: string) => showToast(message, 'info'), [showToast])
+
+  // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
+  const closePreview = useCallback(() => {
+    picked.current++
+    setPreview(null)
+    setOpening(null)
+  }, [])
 
   const open = useCallback(
     async (session: Opening) => {
@@ -267,6 +277,8 @@ export function App() {
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
       local={local}
+      draft={draft}
+      onDraft={setDraft}
       onError={showError}
     />
   )
@@ -351,7 +363,7 @@ export function App() {
                 Continue here
               </button>
             )}
-            <button className="ghost small" onClick={() => setPreview(null)}>
+            <button className="ghost small" onClick={closePreview}>
               Back to current
             </button>
           </div>

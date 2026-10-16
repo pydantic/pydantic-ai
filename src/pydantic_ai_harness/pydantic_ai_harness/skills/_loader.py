@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from pydantic_ai.workspaces import FileEntry, Workspace
 from pydantic_ai_harness._workspace import workspace_path
@@ -35,7 +35,6 @@ _BEHAVIORAL_FRONTMATTER_FIELDS = frozenset(
         'arguments',
         'context',
         'dependencies',
-        'disable-model-invocation',
         'disallowed-tools',
         'effort',
         'hooks',
@@ -43,7 +42,6 @@ _BEHAVIORAL_FRONTMATTER_FIELDS = frozenset(
         'paths',
         'shell',
         'tools',
-        'user-invocable',
         'when_to_use',
     }
 )
@@ -54,6 +52,17 @@ class _SkillFrontmatter(BaseModel):
 
     name: str | None = None
     description: str
+    disable_model_invocation: bool = Field(default=False, alias='disable-model-invocation')
+    user_invocable: bool = Field(default=True, alias='user-invocable')
+
+    @field_validator('disable_model_invocation', 'user_invocable', mode='before')
+    @classmethod
+    def _yaml_boolean(cls, value: object) -> object:
+        # Frontmatter is loaded without implicit types, so a YAML boolean arrives as text. Only YAML 1.2's
+        # spellings count: `yes` or `1` failing the skill is safer than guessing for a field that gates invocation.
+        if isinstance(value, str) and value.lower() in ('true', 'false'):
+            return value.lower() == 'true'
+        raise ValueError(f'must be `true` or `false`, not {value!r}')
 
     @field_validator('description', mode='after')
     @classmethod
@@ -65,7 +74,10 @@ class _SkillFrontmatter(BaseModel):
 
 
 MissingDirectories: TypeAlias = Literal['error', 'skip']
-"""What `Skills` does with a library directory that does not exist: fail the run, or skip it."""
+"""What `Skills` does with a library path that is not a library: fail the run, or skip it.
+
+A path is not a library when it does not exist, is not a directory, or is itself a skill package.
+"""
 
 DuplicateNames: TypeAlias = Literal['error', 'keep_first']
 """What `Skills` does when two valid skills with different `SKILL.md` files share a name.
@@ -92,6 +104,19 @@ class SkillDefinition:
 
     ignored_behavioral_fields: tuple[str, ...]
     """Frontmatter fields such as `allowed-tools` whose behavior `Skills` does not implement."""
+
+    model_invocable: bool = True
+    """Whether the model may load it; `False` when its frontmatter has `disable-model-invocation: true`.
+
+    A run leaves such a skill out of the model's catalog. `Skills.load` still returns it, for a host
+    that lets a person invoke it.
+    """
+
+    user_invocable: bool = True
+    """Whether a host should let a person invoke it; `False` when its frontmatter has `user-invocable: false`.
+
+    `Skills` itself only offers skills to the model, so this is for a host, such as one with a `/skill-name` command.
+    """
 
     path: str
     """Absolute workspace path of the `SKILL.md` it was read from."""
@@ -131,21 +156,48 @@ class SkillDefinition:
         return f'{heading}\n\n{body}' if body else heading
 
 
+SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 'skill_package']
+"""Why `Skills` left a path out of the catalog.
+
+- `'invalid'`: a `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name.
+- `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
+- `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
+- `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class SkippedSkill:
+    """A `SKILL.md` or skill library path that `Skills` left out, and why."""
+
+    path: str
+    """Absolute workspace path of the skipped `SKILL.md`, or of the skipped library."""
+
+    reason: SkipReason
+    """Why it was left out."""
+
+    message: str
+    """A sentence naming the path and the problem, as a run's `UserWarning` says it."""
+
+    def __str__(self) -> str:
+        return self.message
+
+
 @dataclass(frozen=True, kw_only=True)
 class SkillCatalog:
-    """The skills `Skills.load` read, and a message for each `SKILL.md` it left out.
+    """The skills `Skills.load` read, and each `SKILL.md` or library it left out.
 
     Run-time advice, such as frontmatter fields whose behavior is not implemented, is not included:
     a run emits it as a `UserWarning`, and each skill's `ignored_behavioral_fields` lists its own.
     """
 
     skills: tuple[SkillDefinition, ...]
-    """The selected, valid skills, in catalog order."""
+    """The selected, valid skills, in catalog order, including those the model may not load."""
 
-    skipped: tuple[str, ...]
-    """One message per `SKILL.md` left out: malformed, or named like a valid skill found earlier.
+    skipped: tuple[SkippedSkill, ...]
+    """Each `SKILL.md` or library path left out, in the order it was found.
 
-    A run emits each as a `UserWarning`; a host showing skills to a person can show them instead.
+    A run emits each `message` as a `UserWarning`; a host showing skills to a person can show them instead.
     """
 
 
@@ -238,26 +290,36 @@ async def _discover_skills(workspace: Workspace, libraries: Sequence[str]) -> li
 
 async def _libraries(
     workspace: Workspace, directories: Sequence[str | Path], missing_directories: MissingDirectories
-) -> list[str]:
-    """The configured libraries that exist, in order, each listed once."""
+) -> tuple[list[str], list[SkippedSkill]]:
+    """The configured libraries that exist, in order, each listed once, and the paths skipped as not libraries."""
     libraries: list[str] = []
+    skipped: list[SkippedSkill] = []
+    seen: set[str] = set()
     for configured in directories:
         library = await workspace.resolve(workspace_path(Path(configured)))
-        if library in libraries:
+        if library in seen:
             continue
+        seen.add(library)
         entry = await _stat(workspace, library)
         if entry is None:
             if missing_directories == 'skip':
                 continue
             raise ValueError(f'Skill library directory does not exist in the workspace: {configured}')
-        if not entry.is_dir:
-            raise ValueError(f'Skill library path is not a directory: {configured}')
-        if await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
+        if entry.is_dir and not await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
+            libraries.append(library)
+            continue
+        # The model's tools can create either mid-session, so with 'skip' they must not fail every later run.
+        if missing_directories == 'skip':
+            reason: SkipReason = 'skill_package' if entry.is_dir else 'not_a_directory'
+            problem = 'it is a skill package, not a library' if entry.is_dir else 'it is not a directory'
+            skipped.append(SkippedSkill(path=library, reason=reason, message=f'Skipping {library}: {problem}.'))
+        elif entry.is_dir:
             raise ValueError(
                 f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
             )
-        libraries.append(library)
-    return libraries
+        else:
+            raise ValueError(f'Skill library path is not a directory: {configured}')
+    return libraries, skipped
 
 
 async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]) -> bool:
@@ -275,11 +337,15 @@ async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]
     return await first_workspace.read_bytes(first_path) == await second_workspace.read_bytes(second_path)
 
 
-def skip_duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> str:
-    """The warning for `skipped`, whose name an earlier `SKILL.md`, `kept`, has; raises when duplicates are errors."""
+def skip_duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> SkippedSkill:
+    """The entry for `skipped`, whose name an earlier `SKILL.md`, `kept`, has; raises when duplicates are errors."""
     if duplicate_names == 'error':
         raise ValueError(f'Duplicate skill name {name!r}: {kept} and {skipped}.')
-    return f'Skipping {skipped}: skill name {name!r} is already taken by {kept}.'
+    return SkippedSkill(
+        path=skipped,
+        reason='duplicate_name',
+        message=f'Skipping {skipped}: skill name {name!r} is already taken by {kept}.',
+    )
 
 
 def _validate_name(name: str, source: str) -> str:
@@ -317,6 +383,8 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
         description=frontmatter.description,
         body=body,
         ignored_behavioral_fields=ignored_fields,
+        model_invocable=not frontmatter.disable_model_invocation,
+        user_invocable=frontmatter.user_invocable,
         path=skill_file,
     )
 
@@ -329,15 +397,15 @@ async def load_skill_libraries(
     exclude: Collection[str],
     missing_directories: MissingDirectories,
     duplicate_names: DuplicateNames,
-) -> tuple[list[SkillDefinition], list[str]]:
+) -> tuple[list[SkillDefinition], list[SkippedSkill]]:
     """Discover immediate child skill packages under configured directories in `workspace`.
 
     Relative directories resolve against the workspace's working directory. Returns the parsed
-    skills and a message for each skipped `SKILL.md`. A skill found twice, through a symlinked
+    skills and an entry for each skipped `SKILL.md` or library path. A skill found twice, through a symlinked
     library or skill directory or as a byte-identical `SKILL.md`, counts once. Names are compared
     after parsing, so an invalid `SKILL.md` does not hide a valid one with the same name.
     """
-    libraries = await _libraries(workspace, directories, missing_directories)
+    libraries, skipped = await _libraries(workspace, directories, missing_directories)
     discovered = await _discover_skills(workspace, libraries)
     available_names = frozenset(name for name, _ in discovered)
     normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
@@ -348,7 +416,6 @@ async def load_skill_libraries(
         normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
     )
 
-    skipped: list[str] = []
     by_name: dict[str, SkillDefinition] = {}
     for name, skill_file in discovered:
         if name not in selected_names:
@@ -361,7 +428,7 @@ async def load_skill_libraries(
             skill = parse_skill(text, skill_file)
         except ValueError as error:
             # A model-editable skill should not make unrelated valid skills unusable.
-            skipped.append(f'Skipping {skill_file}: {error}')
+            skipped.append(SkippedSkill(path=skill_file, reason='invalid', message=f'Skipping {skill_file}: {error}'))
             continue
         if (previous := by_name.get(skill.name)) is None:
             by_name[skill.name] = skill

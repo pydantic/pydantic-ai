@@ -39,12 +39,12 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 reviewer = ApprovalReviewer(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     tools=['run_shell'],
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
 )
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     capabilities=[reviewer],
     output_type=[str, DeferredToolRequests],
 )
@@ -112,9 +112,9 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     capabilities=[
-        ApprovalReviewer('anthropic:claude-haiku-5-5', question='Could this destroy data or leak secrets?'),
+        ApprovalReviewer('{{ anthropic:small }}', question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
     ],
 )
@@ -152,11 +152,11 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ApprovalReviewer(
-            'anthropic:claude-haiku-5-5',
+            '{{ anthropic:small }}',
             tools={'risk': 'low'},
             question='Could this command delete or overwrite data, reach the network, or expose secrets?',
         ),
@@ -207,13 +207,13 @@ def unsure(response: ModelResponse) -> bool:
 
 
 reviewer = ApprovalReviewer(
-    FallbackModel('typesafe:jev-latest', 'anthropic:claude-haiku-5-5', fallback_on=[ModelAPIError, unsure]),
+    FallbackModel('typesafe:jev-latest', '{{ anthropic:small }}', fallback_on=[ModelAPIError, unsure]),
     tools=['run_shell'],
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
 )
 ```
 
-The handler runs on every model in the chain, and a language model reports no `confidence`, so Haiku's answer stands. Tune the bar on labelled calls of your own, as in [tuning a threshold on your own data](../models/decision.md#tuning-a-threshold-on-your-own-data), and once you have, pin the Jev version you tuned it against (`typesafe:jev-1.13.0`) rather than `jev-latest`. Jev treats the text it judges as data rather than as hostile, so arguments written to steer its answer can move it ([what Jev answers badly](../models/typesafe.md#what-jev-answers-badly)): keep the [safety boundary](#safety-boundary) in place, as with any reviewer.
+The handler runs on every model in the chain, and a language model reports no `confidence`, so the fallback model's answer stands. Tune the bar on labelled calls of your own, as in [tuning a threshold on your own data](../models/decision.md#tuning-a-threshold-on-your-own-data), and once you have, pin the Jev version you tuned it against (`typesafe:jev-1.13.0`) rather than `jev-latest`. Jev treats the text it judges as data rather than as hostile, so arguments written to steer its answer can move it ([what Jev answers badly](../models/typesafe.md#what-jev-answers-badly)): keep the [safety boundary](#safety-boundary) in place, as with any reviewer.
 
 ## Composition
 
@@ -233,7 +233,7 @@ A durable operation is addressed by the capability's `id`, and `ApprovalReviewer
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 reviewer = ApprovalReviewer(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     id='shell-reviewer',
     tools=['run_shell'],
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
@@ -265,7 +265,7 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReview, ApprovalReview
 
 reviews: list[ApprovalReview] = []
 reviewer = ApprovalReviewer(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     question='Could this destroy data or leak secrets?',
     on_review=reviews.append,
 )
