@@ -143,12 +143,12 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert azure_model.model_name == 'gpt-realtime'
 
 
-def test_infer_realtime_model_elevenlabs(env: TestEnv) -> None:
+def test_infer_realtime_model_elevenlabs_agents(env: TestEnv) -> None:
     # ElevenLabs' "model name" is a hosted agent id: the suffix is carried through as-is.
     env.set('ELEVENLABS_API_KEY', 'test')
 
-    model = infer_realtime_model('elevenlabs:agent_0101test')
-    assert type(model).__name__ == 'ElevenLabsRealtimeModel'
+    model = infer_realtime_model('elevenlabs-agents:agent_0101test')
+    assert type(model).__name__ == 'ElevenLabsAgentsRealtimeModel'
     assert model.model_name == 'agent_0101test'
     assert getattr(model, '_provider').base_url == 'https://api.elevenlabs.io'
 
@@ -272,7 +272,8 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 def test_infer_realtime_model_unknown_provider() -> None:
     with pytest.raises(
-        UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, `google-cloud`, and `elevenlabs`'
+        UserError,
+        match='Supported providers are `openai`, `azure`, `xai`, `google`, `google-cloud`, and `elevenlabs-agents`',
     ):
         infer_realtime_model('anthropic:voice')
 

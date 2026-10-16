@@ -4,14 +4,14 @@ import os
 from typing import TYPE_CHECKING
 
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client, warn_if_legacy_httpx_client
-from pydantic_ai.profiles.elevenlabs import elevenlabs_realtime_model_profile
+from pydantic_ai.profiles.elevenlabs_agents import elevenlabs_agents_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
 
 
-class ElevenLabsProvider(Provider[AsyncHTTPClient]):
+class ElevenLabsAgentsProvider(Provider[AsyncHTTPClient]):
     """Provider for the ElevenLabs API.
 
     ElevenLabs has no async SDK client that fits Pydantic AI's transports, so the provider's `client`
@@ -26,7 +26,7 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
 
     @property
     def name(self) -> str:
-        return 'elevenlabs'
+        return 'elevenlabs-agents'
 
     @property
     def base_url(self) -> str:
@@ -43,7 +43,7 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
-        return elevenlabs_realtime_model_profile(model_name)
+        return elevenlabs_agents_realtime_model_profile(model_name)
 
     def __init__(
         self,
@@ -69,7 +69,7 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
         if not api_key:
             raise missing_api_key_error(
                 'Set the `ELEVENLABS_API_KEY` environment variable or pass it via '
-                '`ElevenLabsProvider(api_key=...)` to use the ElevenLabs provider.'
+                '`ElevenLabsAgentsProvider(api_key=...)` to use the ElevenLabs provider.'
             )
         self._api_key = api_key
         self._base_url = base_url.rstrip('/')

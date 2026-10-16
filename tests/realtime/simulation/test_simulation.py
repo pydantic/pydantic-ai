@@ -30,7 +30,7 @@ with try_import() as imports_successful:
         run_state_machine_as_test,  # pyright: ignore[reportUnknownVariableType]
     )
 
-    from ._elevenlabs import ElevenLabsMachine, ElevenLabsOptions, ElevenLabsSimulation
+    from ._elevenlabs_agents import ElevenLabsAgentsMachine, ElevenLabsAgentsOptions, ElevenLabsAgentsSimulation
     from ._findings import FINDINGS_BY_ID, KNOWN_FINDINGS
     from ._gemini import GeminiBehavior, GeminiMachine, GeminiSimulation
     from ._live import LiveMachine, LiveSimulation
@@ -64,7 +64,7 @@ def exploration_settings() -> settings:
         pytest.param(XaiMachine, id='xai'),
         pytest.param(GeminiMachine, id='gemini'),
         pytest.param(LiveMachine, id='gpt-live'),
-        pytest.param(ElevenLabsMachine, id='elevenlabs'),
+        pytest.param(ElevenLabsAgentsMachine, id='elevenlabs-agents'),
     ]
     if imports_successful()
     else [],
@@ -2191,8 +2191,8 @@ def test_xai_server_vad_answers_every_turn() -> None:
 # --- ElevenLabs Agents ------------------------------------------------------------------------------
 
 
-def test_baseline_elevenlabs_conversation() -> None:
-    def scenario(sim: ElevenLabsSimulation) -> None:
+def test_baseline_elevenlabs_agents_conversation() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.call_tool()
         sim.wait_for_reply()
@@ -2209,13 +2209,13 @@ def test_baseline_elevenlabs_conversation() -> None:
         sim.send_text(respond=False)
         sim.settle()
 
-    run_clean(ElevenLabsSimulation(), scenario)
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-def test_elevenlabs_barge_in_keeps_the_truncated_reply_with_the_reply_it_cut() -> None:
+def test_elevenlabs_agents_barge_in_keeps_the_truncated_reply_with_the_reply_it_cut() -> None:
     """Recorded: the reply still being generated is cut to what was heard, and that `agent_response` ends it."""
 
-    def scenario(sim: ElevenLabsSimulation) -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.speak(chunks=2)
         sim.send_audio()
@@ -2225,11 +2225,11 @@ def test_elevenlabs_barge_in_keeps_the_truncated_reply_with_the_reply_it_cut() -
         sim.finish()
         sim.settle()
 
-    run_clean(ElevenLabsSimulation(), scenario)
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-def test_elevenlabs_barge_in_on_a_delivered_reply_corrects_nothing_recorded() -> None:
-    def scenario(sim: ElevenLabsSimulation) -> None:
+def test_elevenlabs_agents_barge_in_on_a_delivered_reply_corrects_nothing_recorded() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.speak()
         sim.finish()
@@ -2237,32 +2237,32 @@ def test_elevenlabs_barge_in_on_a_delivered_reply_corrects_nothing_recorded() ->
         sim.user_says()
         sim.settle()
 
-    run_clean(ElevenLabsSimulation(), scenario)
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-def test_elevenlabs_hold_audio_while_queued_is_no_reply() -> None:
-    def scenario(sim: ElevenLabsSimulation) -> None:
+def test_elevenlabs_agents_hold_audio_while_queued_is_no_reply() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.deliver()
         sim.send_text()
         sim.speak()
         sim.finish()
         sim.settle()
 
-    run_clean(ElevenLabsSimulation(elevenlabs=ElevenLabsOptions(queued=True)), scenario)
+    run_clean(ElevenLabsAgentsSimulation(elevenlabs=ElevenLabsAgentsOptions(queued=True)), scenario)
 
 
-def test_elevenlabs_drop_ends_the_session() -> None:
-    def scenario(sim: ElevenLabsSimulation) -> None:
+def test_elevenlabs_agents_drop_ends_the_session() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.speak()
         sim.drop()
         sim.settle()
 
-    run_clean(ElevenLabsSimulation(), scenario)
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-def test_scenario_elevenlabs_edges() -> None:
-    def scenario(sim: ElevenLabsSimulation) -> None:
+def test_scenario_elevenlabs_agents_edges() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.speak(deliver=False)
         sim.send_text(ticks=1)
@@ -2279,4 +2279,4 @@ def test_scenario_elevenlabs_edges() -> None:
         sim.finish_tool()
         sim.settle()
 
-    run_tolerant(ElevenLabsSimulation(options=SessionOptions(latency=True)), scenario)
+    run_tolerant(ElevenLabsAgentsSimulation(options=SessionOptions(latency=True)), scenario)

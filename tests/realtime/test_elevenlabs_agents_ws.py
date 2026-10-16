@@ -1,6 +1,6 @@
 """Cassette-backed tests for the ElevenLabs Agents realtime provider, exercising the real protocol.
 
-These complement the network-free `test_elevenlabs.py` unit tests: the fakes there pin the
+These complement the network-free `test_elevenlabs_agents.py` unit tests: the fakes there pin the
 ElevenLabs-specific preflight and event mapping cheaply, while this replays a recorded agent
 conversation end-to-end through [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to prove the
 real protocol: the override initiation, the tool round-trip against a real workspace client tool,
@@ -11,12 +11,12 @@ dev agents (all override toggles enabled, `context_usage` added to `conversation
 16 kHz PCM in and out, `turn.turn_timeout` raised to 30 s so the silence a microphone streams after
 a short reply does not prompt an "are you still there" turn): one with a `get_weather` client tool
 attached for the tool rounds, and one with no tools for the plain turns (the default
-`elevenlabs_tool_sync='error'` would otherwise report the attached tool as undefined by the run).
+`elevenlabs_agents_tool_sync='error'` would otherwise report the attached tool as undefined by the run).
 Their ids are baked in below; point `ELEVENLABS_TEST_AGENT_ID` and `ELEVENLABS_TEST_TOOLLESS_AGENT_ID`
 at your own agents to re-record. The REST preflight records through ordinary HTTP VCR alongside the
 WebSocket cassette:
 
-    uv run --env-file .env pytest --record-mode=rewrite --inline-snapshot=create tests/realtime/test_elevenlabs_ws.py
+    uv run --env-file .env pytest --record-mode=rewrite --inline-snapshot=create tests/realtime/test_elevenlabs_agents_ws.py
 
 The `'sync'` mode tests each need a specific agent state at record time, and the mode lists every
 workspace tool over REST, so record them one at a time (`-k`) on an otherwise empty workspace, in
@@ -65,8 +65,11 @@ from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
-    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
-    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, ElevenLabsRealtimeModelSettings
+    from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
+    from pydantic_ai.realtime.elevenlabs_agents import (
+        ElevenLabsAgentsRealtimeModel,
+        ElevenLabsAgentsRealtimeModelSettings,
+    )
 
 pytestmark = [
     pytest.mark.vcr,
@@ -95,19 +98,19 @@ _CONTEXT_LIMIT_TOKENS = 1_048_576
 
 @pytest.mark.realtime_ws_hold_open
 async def test_tool_round_and_followup_turn(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], realtime_recording: bool
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], realtime_recording: bool
 ) -> None:
     """A text-in tool round against the hosted agent, then a follow-up turn.
 
     Covers, against real frames: the preflight tool comparison passing against the
-    server-normalized stored schema (default `elevenlabs_tool_sync='error'`), the prompt-override
+    server-normalized stored schema (default `elevenlabs_agents_tool_sync='error'`), the prompt-override
     initiation frame, `client_tool_call`/`client_tool_result`, streamed audio with the
     `agent_response` turn boundary, and one `context_usage` report per turn accumulating into
     run-level usage. Each report trails its turn boundary, so the test waits for the second one
     before closing, and pins both counts.
     """
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(AGENT_ID, provider=provider)
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=provider)
     agent = Agent(instructions=INSTRUCTIONS)
 
     @agent.tool_plain
@@ -198,7 +201,7 @@ async def test_tool_round_and_followup_turn(
     # ElevenLabs reports LLM context consumption only (no output tokens or credits reach the
     # socket), once per turn *after* the turn boundary, so it accumulates into the run total
     # without attaching to a specific response: the two recorded reports sum into `input_tokens`.
-    # The limit stays off the usage (see `ElevenLabsRealtimeConnection.context_limit_tokens`), and
+    # The limit stays off the usage (see `ElevenLabsAgentsRealtimeConnection.context_limit_tokens`), and
     # the latest report against it is the window fraction.
     assert session.usage.input_tokens == _TURN_ONE_CONTEXT_TOKENS + _TURN_TWO_CONTEXT_TOKENS
     assert session.usage.output_tokens == 0
@@ -208,7 +211,7 @@ async def test_tool_round_and_followup_turn(
 
 
 async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
 ) -> None:
     """With the preflight off, the agent calls a tool this run never defined.
 
@@ -216,9 +219,9 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
     unknown-tool error, the call and the error land in history like any other round, the error text
     goes back to the agent as the tool result, and the agent recovers in speech.
     """
-    provider, cassette = elevenlabs_ws_cassette
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
-    model = ElevenLabsRealtimeModel(AGENT_ID, provider=provider, settings=settings)
+    provider, cassette = elevenlabs_agents_ws_cassette
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
+    model = ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=provider, settings=settings)
     agent = Agent(instructions=INSTRUCTIONS)
 
     events: list[Any] = []
@@ -260,10 +263,12 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
     assert isinstance(final.parts[-1], SpeechPart) and final.parts[-1].transcript
 
 
-async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
+async def test_text_in_audio_out_turn(
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
+) -> None:
     """The simplest session: a text turn answered with streamed audio and a final transcript."""
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
@@ -307,15 +312,15 @@ async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsPr
 
 
 async def test_audio_in_server_vad_turn(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], assets_path: Path
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], assets_path: Path
 ) -> None:
     """A spoken user turn: the agent's ASR transcribes it, its turn model ends it, and it answers.
 
     ElevenLabs owns turn-taking, so there is no commit or VAD event on the client side: the user's
     utterance surfaces as one final transcript once the server has decided the turn is over.
     """
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
     agent = Agent(instructions='Reply in a few words.')
     # 16 kHz mono PCM16, the agent's configured input format; a second of trailing silence lets the
     # server-side turn model close the utterance.
@@ -367,7 +372,7 @@ _SILENCE_AFTER_BARGE_IN = 8.0
 
 @pytest.mark.realtime_ws_hold_open
 async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
     assets_path: Path,
     realtime_recording: bool,
 ) -> None:
@@ -379,8 +384,8 @@ async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply
     playback of a finished reply. So the interrupted response is finalized with the truncated text as
     its transcript, marked interrupted, and carries no correction, and the next turn is unaffected.
     """
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
     agent = Agent(
         instructions='You are a voice assistant. Asked for a story, tell it at length straight away, without questions.'
     )
@@ -432,12 +437,12 @@ async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply
 
 
 async def test_text_output_modality_returns_text(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
 ) -> None:
     """`output_modality='text'` maps to the toggle-gated text-only override and streams text parts."""
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(
-        TOOLLESS_AGENT_ID, provider=provider, settings=ElevenLabsRealtimeModelSettings(output_modality='text')
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(
+        TOOLLESS_AGENT_ID, provider=provider, settings=ElevenLabsAgentsRealtimeModelSettings(output_modality='text')
     )
     agent = Agent(instructions='Answer in two or three words.')
 
@@ -471,22 +476,22 @@ async def test_text_output_modality_returns_text(
 
 
 async def test_settings_overrides_reach_the_initiation_frame(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette],
 ) -> None:
     """Each `elevenlabs_*` override rides in the initiation frame, and the first message is spoken.
 
     A configured first message makes the agent speak before any user input, so the session's first
     turn is that greeting; a text turn then follows to prove the overridden conversation still works.
     """
-    provider, cassette = elevenlabs_ws_cassette
-    settings = ElevenLabsRealtimeModelSettings(
-        elevenlabs_first_message='Welcome to the demo.',
-        elevenlabs_language='en',
-        elevenlabs_llm='gemini-2.5-flash',
-        elevenlabs_voice_id='EXAVITQu4vr4xnSDxMaL',
-        elevenlabs_tts={'stability': 0.5, 'speed': 1.0},
+    provider, cassette = elevenlabs_agents_ws_cassette
+    settings = ElevenLabsAgentsRealtimeModelSettings(
+        elevenlabs_agents_first_message='Welcome to the demo.',
+        elevenlabs_agents_language='en',
+        elevenlabs_agents_llm='gemini-2.5-flash',
+        elevenlabs_agents_voice_id='EXAVITQu4vr4xnSDxMaL',
+        elevenlabs_agents_tts={'stability': 0.5, 'speed': 1.0},
     )
-    model = ElevenLabsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider, settings=settings)
+    model = ElevenLabsAgentsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider, settings=settings)
     agent = Agent(instructions='Answer in two or three words.')
 
     events: list[Any] = []
@@ -543,7 +548,7 @@ def _weather_agent() -> Agent:
     return agent
 
 
-async def _weather_turn(agent: Agent, model: ElevenLabsRealtimeModel) -> tuple[list[Any], list[Any]]:
+async def _weather_turn(agent: Agent, model: ElevenLabsAgentsRealtimeModel) -> tuple[list[Any], list[Any]]:
     """One text turn that triggers `get_weather`; returns the session events and the history."""
     events: list[Any] = []
     async with agent.realtime(model).session(audio_retention='output_audio') as session:
@@ -586,12 +591,14 @@ def _rest_body(vcr: Cassette, index: int) -> dict[str, Any]:
 
 
 async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """`'sync'` on an agent with no tools: the run's tool is created, the agent re-pointed, the round works."""
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(
-        SYNC_CREATE_AGENT_ID, provider=provider, settings=ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(
+        SYNC_CREATE_AGENT_ID,
+        provider=provider,
+        settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync'),
     )
     events, messages = await _weather_turn(_weather_agent(), model)
 
@@ -626,12 +633,14 @@ async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
 
 
 async def test_tool_sync_adopts_a_matching_unattached_tool(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """A workspace tool that already matches and no agent depends on is attached instead of duplicated."""
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(
-        SYNC_ADOPT_AGENT_ID, provider=provider, settings=ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(
+        SYNC_ADOPT_AGENT_ID,
+        provider=provider,
+        settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync'),
     )
     events, messages = await _weather_turn(_weather_agent(), model)
 
@@ -655,12 +664,14 @@ async def test_tool_sync_adopts_a_matching_unattached_tool(
     'this recording (against a deleted dev agent) predates'
 )
 async def test_tool_sync_updates_a_stale_tool_in_place(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """An attached tool whose description drifted is patched under its id; the agent is left alone."""
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(
-        SYNC_UPDATE_AGENT_ID, provider=provider, settings=ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(
+        SYNC_UPDATE_AGENT_ID,
+        provider=provider,
+        settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync'),
     )
     events, messages = await _weather_turn(_weather_agent(), model)
 
@@ -678,12 +689,14 @@ async def test_tool_sync_updates_a_stale_tool_in_place(
 
 
 async def test_tool_sync_detaches_extra_client_tools_and_keeps_server_tools(
-    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsAgentsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
     """A client tool the run does not define is detached; the agent's webhook tool stays attached first."""
-    provider, cassette = elevenlabs_ws_cassette
-    model = ElevenLabsRealtimeModel(
-        SYNC_DETACH_AGENT_ID, provider=provider, settings=ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    provider, cassette = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(
+        SYNC_DETACH_AGENT_ID,
+        provider=provider,
+        settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync'),
     )
     events, messages = await _weather_turn(_weather_agent(), model)
 

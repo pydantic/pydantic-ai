@@ -240,6 +240,6 @@ The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
 [`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.openai_live`](realtime/openai_live.md),
 [`pydantic_ai.realtime.google`](realtime/google.md), [`pydantic_ai.realtime.xai`](realtime/xai.md),
-[`pydantic_ai.realtime.azure`](realtime/azure.md), and [`pydantic_ai.realtime.elevenlabs`](realtime/elevenlabs.md).
+[`pydantic_ai.realtime.azure`](realtime/azure.md), and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
 
 ::: pydantic_ai.realtime

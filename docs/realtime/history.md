@@ -214,7 +214,7 @@ History follows the order of the provider's own conversation:
 
 - A spoken turn sits where the provider added it, and text, images, and tool results where they reached
   it. A turn the user started while the model was still answering, but which the provider only committed
-  after that answer ended, is recorded after the answer. Gemini Live, GPT-Live, and ElevenLabs don't say
+  after that answer ended, is recorded after the answer. Gemini Live, GPT-Live, and ElevenLabs Agents don't say
   where an input joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the
   reply to it, and something sent while a reply is owed (requested, or already being spoken) is recorded
   after that reply. On Gemini Live and GPT-Live, a spoken turn's transcript is complete when the reply to it

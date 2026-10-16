@@ -42,7 +42,7 @@ ends the session, including from [a tool that hangs up](tools.md#ending-the-sess
 The connection is opened when the `session()` context is entered, and the shared
 `handshake_timeout` setting (default 30 seconds) bounds how long the session waits for the
 provider handshake: each handshake event on OpenAI, Azure OpenAI, and xAI, the whole session
-setup on Gemini, and the conversation initiation metadata on ElevenLabs. A handshake that times
+setup on Gemini, and the conversation initiation metadata on ElevenLabs Agents. A handshake that times
 out raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (see [Errors](#errors)).
 
@@ -143,12 +143,12 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
 - [xAI session length](xai.md#session-length)
-- [ElevenLabs session behavior](elevenlabs.md#feature-support-and-limitations)
+- [ElevenLabs Agents session behavior](elevenlabs-agents.md#feature-support-and-limitations)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
 
-ElevenLabs is the exception to surviving the cap with a policy: a conversation ends at the agent's
+ElevenLabs Agents is the exception to surviving the cap with a policy: a conversation ends at the agent's
 configured maximum duration and cannot be resumed, so `reconnect` raises there rather than
 silently opening a conversation that remembers nothing.
 

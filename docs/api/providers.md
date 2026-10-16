@@ -26,7 +26,7 @@
 
 ::: pydantic_ai.providers.xai
 
-::: pydantic_ai.providers.elevenlabs
+::: pydantic_ai.providers.elevenlabs_agents
 
 ::: pydantic_ai.providers.deepseek
 

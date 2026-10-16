@@ -1,29 +1,28 @@
 # ElevenLabs Agents
 
-[`ElevenLabsRealtimeModel`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModel] connects an
+[`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] connects an
 agent to the [ElevenLabs Agents platform](https://elevenlabs.io/docs/agents-platform/overview),
 where the conversation runs on a hosted agent. Start with the
 [realtime quickstart](overview.md#quickstart).
 
-ElevenLabs offers no direct speech-to-speech model. Its Agents platform runs a cascaded pipeline
-(realtime ASR, a configurable LLM, ElevenLabs TTS, and a server-side turn-taking model) behind a
-pre-provisioned agent, and the agent WebSocket is the only conversational API. The model therefore
-wraps a *hosted agent* addressed by its `agent_id` — Pydantic AI takes ownership of as much of
-the conversation as ElevenLabs allows per conversation (see
-[Configuration ownership](#configuration-ownership)).
+ElevenLabs Agents runs a cascaded pipeline (realtime ASR, a configurable LLM, ElevenLabs TTS, and
+a server-side turn-taking model) behind a pre-provisioned agent, which the conversation reaches
+over the agent WebSocket. The model wraps that *hosted agent*, addressed by its `agent_id`, and
+Pydantic AI takes ownership of as much of the conversation as ElevenLabs allows per conversation
+(see [Configuration ownership](#configuration-ownership)).
 
 ## Setup
 
-To use ElevenLabs agents, install `pydantic-ai-slim` with the `elevenlabs-realtime` optional group,
+To use ElevenLabs Agents, install `pydantic-ai-slim` with the `elevenlabs-agents-realtime` optional group,
 which bundles the realtime WebSocket transport — the REST calls around the WebSocket go through
 Pydantic AI's own HTTP client, so no ElevenLabs SDK is required:
 
 ```bash
-pip/uv-add "pydantic-ai-slim[elevenlabs-realtime]"
+pip/uv-add "pydantic-ai-slim[elevenlabs-agents-realtime]"
 ```
 
 Set `ELEVENLABS_API_KEY`, or pass an
-[`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider] with `api_key=`. The
+[`ElevenLabsAgentsProvider`][pydantic_ai.providers.elevenlabs_agents.ElevenLabsAgentsProvider] with `api_key=`. The
 key is required even for public agents, because the connect-time preflight authenticates with it.
 The provider's `base_url` doubles as the region switch: pass a
 [data-residency host](https://elevenlabs.io/docs/product-guides/administration/data-residency) such
@@ -33,7 +32,7 @@ to keep both the REST calls and the WebSocket inside a region.
 ## Model names
 
 Use the id of an agent created in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or
-through the ElevenLabs API, for example `agent_0101k2...`, or `elevenlabs:agent_0101k2...` as a
+through the ElevenLabs API, for example `agent_0101k2...`, or `elevenlabs-agents:agent_0101k2...` as a
 model string. The agent's own configuration decides the ASR setup, audio formats, turn-taking, and
 which per-conversation overrides are permitted. Every
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] is stamped with the agent id as its
@@ -53,7 +52,7 @@ fails loudly where it does not:
   are sent in the conversation-initiation override payload. Every override is gated by a per-field
   toggle under *Settings* > *Security* > *Overrides* in the agents dashboard
   (`platform_settings.overrides` via the API); the preflight checks each override setting against
-  the agent's allowlist before dialing. The raw `elevenlabs_config_override` escape hatch is the one
+  the agent's allowlist before dialing. The raw `elevenlabs_agents_config_override` escape hatch is the one
   exception; see [Settings](#settings).
 - **Tools**: client tools are workspace entities referenced by the agent, so they cannot be
   declared inline per conversation. By default the preflight errors when the session's tools and
@@ -63,40 +62,40 @@ fails loudly where it does not:
 
 ## Settings
 
-[`ElevenLabsRealtimeModelSettings`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings] —
+[`ElevenLabsAgentsRealtimeModelSettings`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModelSettings] —
 the realtime counterpart of [model run settings](../agent.md#model-run-settings) — extends the
 [shared settings](overview.md#shared-settings) with the agent's per-conversation overrides
 (greeting, language, voice, TTS delivery, the pipeline LLM), dynamic variables, and the tool
 synchronization mode:
 
 ```python
-from pydantic_ai.realtime.elevenlabs import (
-    ElevenLabsRealtimeModel,
-    ElevenLabsRealtimeModelSettings,
+from pydantic_ai.realtime.elevenlabs_agents import (
+    ElevenLabsAgentsRealtimeModel,
+    ElevenLabsAgentsRealtimeModelSettings,
 )
 
-settings = ElevenLabsRealtimeModelSettings(
-    elevenlabs_voice_id='EXAVITQu4vr4xnSDxMaL',
-    elevenlabs_language='de',
-    elevenlabs_first_message='Hallo! Wie kann ich helfen?',
-    elevenlabs_tts={'stability': 0.4, 'speed': 1.05},
+settings = ElevenLabsAgentsRealtimeModelSettings(
+    elevenlabs_agents_voice_id='EXAVITQu4vr4xnSDxMaL',
+    elevenlabs_agents_language='de',
+    elevenlabs_agents_first_message='Hallo! Wie kann ich helfen?',
+    elevenlabs_agents_tts={'stability': 0.4, 'speed': 1.05},
 )
-model = ElevenLabsRealtimeModel('agent_0101k2example', settings=settings)
+model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 ```
 
 | Setting | Purpose |
 | --- | --- |
-| `elevenlabs_first_message`, `elevenlabs_language` | The greeting the agent opens with and the conversation language |
-| `elevenlabs_voice_id`, `elevenlabs_tts` | The provider voice and the TTS delivery knobs (model, stability, speed, similarity boost) |
-| `elevenlabs_llm` | The LLM the ElevenLabs pipeline runs, e.g. `gpt-5.2` |
-| `elevenlabs_dynamic_variables` | Values substituted into `{{placeholders}}` in the agent's prompts and messages |
-| `elevenlabs_custom_llm_extra_body` | Extra request body for an agent backed by a custom LLM; gated by its own security toggle |
-| `elevenlabs_user_id` | Opaque end-user identifier for ElevenLabs-side analytics |
-| `elevenlabs_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
-| `elevenlabs_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
+| `elevenlabs_agents_first_message`, `elevenlabs_agents_language` | The greeting the agent opens with and the conversation language |
+| `elevenlabs_agents_voice_id`, `elevenlabs_agents_tts` | The provider voice and the TTS delivery knobs (model, stability, speed, similarity boost) |
+| `elevenlabs_agents_llm` | The LLM the ElevenLabs pipeline runs, e.g. `gpt-5.2` |
+| `elevenlabs_agents_dynamic_variables` | Values substituted into `{{placeholders}}` in the agent's prompts and messages |
+| `elevenlabs_agents_custom_llm_extra_body` | Extra request body for an agent backed by a custom LLM; gated by its own security toggle |
+| `elevenlabs_agents_user_id` | Opaque end-user identifier for ElevenLabs-side analytics |
+| `elevenlabs_agents_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
+| `elevenlabs_agents_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
 
 Each `elevenlabs_*` override setting requires its toggle on the agent, as described above.
-`elevenlabs_config_override` is the one setting deliberately not checked against the permission
+`elevenlabs_agents_config_override` is the one setting deliberately not checked against the permission
 allowlist — being raw is its point — so a field the agent does not permit there surfaces as the
 server closing the socket (code 1008, naming the field) after the handshake, not as a local
 [`UserError`][pydantic_ai.exceptions.UserError].
@@ -119,7 +118,7 @@ Of the shared settings:
 
 ## Tool synchronization
 
-`elevenlabs_tool_sync` controls how the session's
+`elevenlabs_agents_tool_sync` controls how the session's
 [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]s are reconciled with the agent's client tools
 at connect time:
 
@@ -173,7 +172,7 @@ parameter's description only when the local schema declares one.
 | Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
 | Native tools | Unsupported | Server-side tools live on the agent, outside the session |
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
-| Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable, and a profile value would not be used: the live limit is `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`, and `session.context_window_used` is the ratio from the same reports |
+| Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable, and a profile value would not be used: the live limit is `ElevenLabsAgentsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`, and `session.context_window_used` is the ratio from the same reports |
 | Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |
 | State-restoring reconnect | Unsupported | Conversations cannot be resumed, at the cap or after a drop; `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
 
@@ -183,7 +182,7 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 ## Gateway
 
 ElevenLabs is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
-through `provider='elevenlabs'` or an `ElevenLabsProvider`.
+through `provider='elevenlabs-agents'` or an `ElevenLabsAgentsProvider`.
 
 ## Audio formats
 
@@ -193,9 +192,9 @@ Audio formats are fixed per agent, not per conversation. The model profile defau
 agent configured differently (e.g. 24 kHz), pass the actual rates via `profile=`:
 
 ```python
-from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
+from pydantic_ai.realtime.elevenlabs_agents import ElevenLabsAgentsRealtimeModel
 
-model = ElevenLabsRealtimeModel(
+model = ElevenLabsAgentsRealtimeModel(
     'agent_0101k2example',
     profile={'audio_input_sample_rate': 24000, 'audio_output_sample_rate': 24000},
 )
@@ -209,7 +208,7 @@ ElevenLabs reports the LLM's context consumption only, as `input_tokens`, and on
 `context_usage` is in the agent's `conversation.client_events` list (it is not by default). A report
 arrives after each turn and counts toward the session's usage without belonging to any one
 response. The context window it names is kept on
-[`ElevenLabsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.context_limit_tokens],
+[`ElevenLabsAgentsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.context_limit_tokens],
 and [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used] is the ratio of
 the two.
 
@@ -218,7 +217,7 @@ No price is known for the platform, so [`usage.cost`][pydantic_ai.usage.RunUsage
 cost up afterwards through the ElevenLabs conversations API: every
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the conversation's id in
 `provider_details['conversation_id']`, and the live connection has it as
-[`ElevenLabsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.conversation_id].
+[`ElevenLabsAgentsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.conversation_id].
 
 ## Provider-specific quirks
 

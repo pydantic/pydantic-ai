@@ -1,10 +1,10 @@
 """Tests for the ElevenLabs Agents realtime provider, all network-free.
 
-ElevenLabs has no direct realtime conversational model: the adapter wraps a hosted agent, so unlike
+The adapter wraps a hosted ElevenLabs agent, so unlike
 the sibling provider tests these cover the REST preflight (override-permission checks, tool
 sync-or-error) against a mocked HTTP transport, plus the adapter's own codec (event mapping, send
 framing, ping/pong, interruption bookkeeping) against hand-built frames mirroring live captures.
-The real protocol end-to-end is covered by the cassette-backed `test_elevenlabs_ws.py`.
+The real protocol end-to-end is covered by the cassette-backed `test_elevenlabs_agents_ws.py`.
 """
 
 from __future__ import annotations as _annotations
@@ -73,12 +73,12 @@ with try_import() as imports_successful:
     import websockets
     from websockets.frames import Close
 
-    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
-    from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
-    from pydantic_ai.realtime.elevenlabs import (
-        ElevenLabsRealtimeConnection,
-        ElevenLabsRealtimeModel,
-        ElevenLabsRealtimeModelSettings,
+    from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
+    from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs
+    from pydantic_ai.realtime.elevenlabs_agents import (
+        ElevenLabsAgentsRealtimeConnection,
+        ElevenLabsAgentsRealtimeModel,
+        ElevenLabsAgentsRealtimeModelSettings,
     )
 
 with try_import() as openai_imports_successful:
@@ -91,10 +91,10 @@ AGENT_ID = 'agent_0101test'
 
 def test_elevenlabs_public_exports_are_curated() -> None:
     assert rt_elevenlabs.__all__ == (
-        'ElevenLabsRealtimeModel',
-        'ElevenLabsRealtimeModelSettings',
-        'ElevenLabsRealtimeConnection',
-        'ElevenLabsTTSSettings',
+        'ElevenLabsAgentsRealtimeModel',
+        'ElevenLabsAgentsRealtimeModelSettings',
+        'ElevenLabsAgentsRealtimeConnection',
+        'ElevenLabsAgentsTTSSettings',
     )
 
 
@@ -221,12 +221,12 @@ class RestRecorder:
 def _model(
     recorder: RestRecorder,
     *,
-    settings: ElevenLabsRealtimeModelSettings | None = None,
+    settings: ElevenLabsAgentsRealtimeModelSettings | None = None,
     **kwargs: Any,
-) -> ElevenLabsRealtimeModel:
+) -> ElevenLabsAgentsRealtimeModel:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(recorder))
-    provider = ElevenLabsProvider(api_key='test-api-key', http_client=client)
-    return ElevenLabsRealtimeModel(AGENT_ID, provider=provider, settings=settings, **kwargs)
+    provider = ElevenLabsAgentsProvider(api_key='test-api-key', http_client=client)
+    return ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=provider, settings=settings, **kwargs)
 
 
 HANDSHAKE_FRAME: dict[str, Any] = {
@@ -240,12 +240,12 @@ HANDSHAKE_FRAME: dict[str, Any] = {
 
 
 def _connect(
-    model: ElevenLabsRealtimeModel,
+    model: ElevenLabsAgentsRealtimeModel,
     *,
     instructions: str | None = None,
     tools: list[ToolDefinition] | None = None,
-    model_settings: ElevenLabsRealtimeModelSettings | None = None,
-) -> AbstractAsyncContextManager[ElevenLabsRealtimeConnection]:
+    model_settings: ElevenLabsAgentsRealtimeModelSettings | None = None,
+) -> AbstractAsyncContextManager[ElevenLabsAgentsRealtimeConnection]:
     messages: list[ModelMessage] = [ModelRequest(parts=[], instructions=instructions)]
     return model.connect(
         messages=messages,
@@ -342,15 +342,15 @@ def test_profile() -> None:
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 def test_rejects_non_elevenlabs_provider() -> None:
-    with pytest.raises(UserError, match='requires an `ElevenLabsProvider`'):
-        ElevenLabsRealtimeModel(AGENT_ID, provider=OpenAIProvider(api_key='k'))  # type: ignore[arg-type]
+    with pytest.raises(UserError, match='requires an `ElevenLabsAgentsProvider`'):
+        ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=OpenAIProvider(api_key='k'))  # type: ignore[arg-type]
 
 
 # --- settings the WebSocket cannot honor ---------------------------------------------------------
 
 
 async def test_reconnect_policy_raises() -> None:
-    model = _model(RestRecorder(agent_json()), settings=ElevenLabsRealtimeModelSettings(reconnect={}))
+    model = _model(RestRecorder(agent_json()), settings=ElevenLabsAgentsRealtimeModelSettings(reconnect={}))
     with pytest.raises(UserError, match='cannot be resumed after a drop'):
         async with _connect(model):
             pass  # pragma: no cover
@@ -359,7 +359,7 @@ async def test_reconnect_policy_raises() -> None:
 async def test_turn_detection_config_raises() -> None:
     model = _model(RestRecorder(agent_json()))
     with pytest.raises(UserError, match='own turn-taking server-side'):
-        async with _connect(model, model_settings=ElevenLabsRealtimeModelSettings(turn_detection=False)):
+        async with _connect(model, model_settings=ElevenLabsAgentsRealtimeModelSettings(turn_detection=False)):
             pass  # pragma: no cover
 
 
@@ -367,14 +367,16 @@ async def test_turn_detection_true_is_accepted() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(RestRecorder(agent_json()))
     with patched_connect(ws):
-        async with _connect(model, model_settings=ElevenLabsRealtimeModelSettings(turn_detection=True)):
+        async with _connect(model, model_settings=ElevenLabsAgentsRealtimeModelSettings(turn_detection=True)):
             pass
 
 
 async def test_disabling_input_transcription_raises() -> None:
     model = _model(RestRecorder(agent_json()))
     with pytest.raises(UserError, match='cannot disable input transcription'):
-        async with _connect(model, model_settings=ElevenLabsRealtimeModelSettings(input_transcription_model=None)):
+        async with _connect(
+            model, model_settings=ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None)
+        ):
             pass  # pragma: no cover
 
 
@@ -413,17 +415,17 @@ async def test_no_instructions_inherits_the_agent_prompt_silently() -> None:
 
 async def test_initiation_payload_builds_every_permitted_override() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
-    settings = ElevenLabsRealtimeModelSettings(
+    settings = ElevenLabsAgentsRealtimeModelSettings(
         output_modality='text',
-        elevenlabs_voice_id='voice_1',
-        elevenlabs_language='de',
-        elevenlabs_first_message='Hallo!',
-        elevenlabs_llm='gpt-5.2',
-        elevenlabs_tts={'stability': 0.4, 'speed': 1.1},
-        elevenlabs_dynamic_variables={'plan': 'starter'},
-        elevenlabs_user_id='user-42',
-        elevenlabs_custom_llm_extra_body={'temperature': 0.1},
-        elevenlabs_config_override={'conversation': {'max_duration_seconds': 120}},
+        elevenlabs_agents_voice_id='voice_1',
+        elevenlabs_agents_language='de',
+        elevenlabs_agents_first_message='Hallo!',
+        elevenlabs_agents_llm='gpt-5.2',
+        elevenlabs_agents_tts={'stability': 0.4, 'speed': 1.1},
+        elevenlabs_agents_dynamic_variables={'plan': 'starter'},
+        elevenlabs_agents_user_id='user-42',
+        elevenlabs_agents_custom_llm_extra_body={'temperature': 0.1},
+        elevenlabs_agents_config_override={'conversation': {'max_duration_seconds': 120}},
     )
     model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED, custom_llm_extra_body=True)))
     with patched_connect(ws):
@@ -450,13 +452,13 @@ async def test_initiation_payload_builds_every_permitted_override() -> None:
 
 
 async def test_each_settings_override_requires_its_toggle() -> None:
-    cases: list[tuple[ElevenLabsRealtimeModelSettings, str]] = [
-        (ElevenLabsRealtimeModelSettings(elevenlabs_voice_id='v'), r'tts\.voice_id'),
-        (ElevenLabsRealtimeModelSettings(elevenlabs_language='de'), r'agent\.language'),
-        (ElevenLabsRealtimeModelSettings(elevenlabs_first_message='Hi'), r'agent\.first_message'),
-        (ElevenLabsRealtimeModelSettings(elevenlabs_llm='gpt-5.2'), r'agent\.prompt\.llm'),
-        (ElevenLabsRealtimeModelSettings(elevenlabs_tts={'stability': 0.4}), r'tts\.stability'),
-        (ElevenLabsRealtimeModelSettings(output_modality='text'), r'conversation\.text_only'),
+    cases: list[tuple[ElevenLabsAgentsRealtimeModelSettings, str]] = [
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_voice_id='v'), r'tts\.voice_id'),
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_language='de'), r'agent\.language'),
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_first_message='Hi'), r'agent\.first_message'),
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_llm='gpt-5.2'), r'agent\.prompt\.llm'),
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tts={'stability': 0.4}), r'tts\.stability'),
+        (ElevenLabsAgentsRealtimeModelSettings(output_modality='text'), r'conversation\.text_only'),
     ]
     for settings, toggle_pattern in cases:
         model = _model(RestRecorder(agent_json()))
@@ -467,7 +469,7 @@ async def test_each_settings_override_requires_its_toggle() -> None:
 
 async def test_custom_llm_extra_body_requires_its_sibling_toggle() -> None:
     model = _model(RestRecorder(agent_json()))
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_custom_llm_extra_body={'temperature': 0.1})
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_custom_llm_extra_body={'temperature': 0.1})
     with pytest.raises(UserError, match=r'platform_settings\.overrides\.custom_llm_extra_body'):
         async with _connect(model, model_settings=settings):
             pass  # pragma: no cover
@@ -486,7 +488,7 @@ async def test_bare_agent_response_without_platform_settings_is_tolerated() -> N
 
 async def test_bare_agent_response_denies_custom_llm_extra_body() -> None:
     model = _model(RestRecorder({'agent_id': AGENT_ID}))
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_custom_llm_extra_body={'temperature': 0.1})
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_custom_llm_extra_body={'temperature': 0.1})
     with pytest.raises(UserError, match='custom_llm_extra_body'):
         async with _connect(model, model_settings=settings):
             pass  # pragma: no cover
@@ -508,8 +510,8 @@ async def test_preflight_transport_error_maps_to_realtime_error() -> None:
         raise httpx2.ConnectError('connection refused')
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(refuse))
-    provider = ElevenLabsProvider(api_key='test-api-key', http_client=client)
-    model = ElevenLabsRealtimeModel(AGENT_ID, provider=provider)
+    provider = ElevenLabsAgentsProvider(api_key='test-api-key', http_client=client)
+    model = ElevenLabsAgentsRealtimeModel(AGENT_ID, provider=provider)
     with pytest.raises(RealtimeError, match='Could not reach the ElevenLabs API'):
         async with _connect(model):
             pass  # pragma: no cover
@@ -559,7 +561,7 @@ WEATHER_TOOL_REMOTE: dict[str, Any] = {
 
 
 async def test_tool_mismatch_errors_by_default() -> None:
-    # Default `elevenlabs_tool_sync='error'`: every difference between the session's tools and the
+    # Default `elevenlabs_agents_tool_sync='error'`: every difference between the session's tools and the
     # agent's client tools is reported in one error.
     remote = dict(
         WEATHER_TOOL_REMOTE, description='Different description.', parameters={'type': 'object', 'properties': {}}
@@ -668,7 +670,7 @@ async def test_forcing_tool_choice_raises_before_any_rest_call(tool_choice: Any)
     # after the tool result included; that is refused up front, before the preflight spends a request.
     recorder = RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE]))
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(tool_choice=tool_choice)
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice=tool_choice)
     with pytest.raises(UserError, match="can't force a tool call"):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass  # pragma: no cover
@@ -720,7 +722,7 @@ async def test_tool_choice_restricts_the_attached_tools_per_conversation(tool_ch
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(tool_choice=tool_choice)
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice=tool_choice)
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL, TIME_TOOL], model_settings=settings):
             pass
@@ -748,7 +750,7 @@ async def test_tool_choice_restriction_requires_the_tool_ids_override() -> None:
         },
     )
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(tool_choice='none')
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice='none')
     with pytest.raises(
         UserError,
         match=r'does not permit the `agent\.prompt\.tool_ids` conversation override required by the `tool_choice` setting',
@@ -760,7 +762,7 @@ async def test_tool_choice_restriction_requires_the_tool_ids_override() -> None:
 async def test_tool_choice_auto_is_the_default_and_accepted() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
-    settings = ElevenLabsRealtimeModelSettings(tool_choice='auto')
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice='auto')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -769,7 +771,7 @@ async def test_tool_choice_auto_is_the_default_and_accepted() -> None:
 async def test_tool_sync_off_trusts_the_agent() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(RestRecorder(agent_json()))
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -818,7 +820,7 @@ async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() ->
     }
     ws = HeldOpenWebSocket([HANDSHAKE_FRAME, call_frame, reply_frame])
     model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
     agent: Agent[None, str] = Agent()
     events: list[Any] = []
     with patched_connect(ws):
@@ -882,7 +884,7 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[new_tool, WEATHER_TOOL, unchanged_tool], model_settings=settings):
             pass
@@ -939,7 +941,7 @@ async def test_tool_sync_patch_only_skips_the_repoint() -> None:
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -970,7 +972,7 @@ async def test_tool_sync_adopts_a_matching_unattached_workspace_tool() -> None:
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1004,7 +1006,7 @@ async def test_tool_sync_does_not_adopt_a_tool_another_agent_depends_on() -> Non
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1036,7 +1038,7 @@ async def test_tool_sync_leaves_a_differing_unattached_tool_alone() -> None:
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1067,7 +1069,7 @@ async def test_tool_sync_follows_the_paginated_tool_listing() -> None:
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1100,7 +1102,7 @@ async def test_tool_sync_stops_on_a_repeated_pagination_cursor() -> None:
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1128,7 +1130,7 @@ async def test_tool_sync_preserves_attached_ids_the_listing_does_not_report() ->
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[ToolDefinition(name='book_table')], model_settings=settings):
             pass
@@ -1150,7 +1152,7 @@ async def test_tool_sync_replaces_a_client_tool_missing_from_the_listing() -> No
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1168,7 +1170,7 @@ async def test_tool_sync_with_matching_tools_makes_no_extra_requests() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     recorder = RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE], tool_ids=['tool_1']))
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -1189,7 +1191,7 @@ async def test_tool_sync_requires_parameter_descriptions() -> None:
     )
     recorder = RestRecorder(agent_json())
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with pytest.raises(UserError, match=r'requires a description for every tool parameter, and `city` has none'):
         async with _connect(model, tools=[bare], model_settings=settings):
             pass  # pragma: no cover
@@ -1220,7 +1222,7 @@ async def test_tool_sync_validation_reports_every_offender_and_writes_nothing() 
     )
     recorder = RestRecorder(agent_json())
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL, bare, unexpressable], model_settings=settings):
             pass  # pragma: no cover
@@ -1424,7 +1426,7 @@ async def test_tool_sync_with_a_bare_agent_response_makes_no_requests() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     recorder = RestRecorder({'agent_id': AGENT_ID})
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, model_settings=settings):
             pass
@@ -1440,7 +1442,7 @@ async def test_tool_sync_with_a_promptless_agent_makes_no_requests() -> None:
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     recorder = RestRecorder({'agent_id': AGENT_ID, 'conversation_config': {'agent': {}}})
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, model_settings=settings):
             pass
@@ -1470,7 +1472,7 @@ async def test_tool_sync_creates_local_tools_on_a_toolless_agent(agent: dict[str
         },
     )
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[ToolDefinition(name='book_table')], model_settings=settings):
             pass
@@ -1639,7 +1641,7 @@ async def test_handshake_timeout_raises_realtime_error() -> None:
     model = _model(RestRecorder(agent_json()))
     with patched_connect(ws):
         with pytest.raises(RealtimeError, match="timed out waiting for a 'conversation_initiation_metadata'"):
-            async with _connect(model, model_settings=ElevenLabsRealtimeModelSettings(handshake_timeout=0.01)):
+            async with _connect(model, model_settings=ElevenLabsAgentsRealtimeModelSettings(handshake_timeout=0.01)):
                 pass  # pragma: no cover
 
 
@@ -1701,9 +1703,11 @@ async def test_ulaw_telephony_format_is_rejected() -> None:
 # --- send ----------------------------------------------------------------------------------------
 
 
-def _connection(incoming: Sequence[dict[str, Any] | str] = ()) -> tuple[ElevenLabsRealtimeConnection, FakeWebSocket]:
+def _connection(
+    incoming: Sequence[dict[str, Any] | str] = (),
+) -> tuple[ElevenLabsAgentsRealtimeConnection, FakeWebSocket]:
     ws = FakeWebSocket(list(incoming))
-    return ElevenLabsRealtimeConnection(ws, conversation_id='conv_1'), ws  # type: ignore[arg-type]
+    return ElevenLabsAgentsRealtimeConnection(ws, conversation_id='conv_1'), ws  # type: ignore[arg-type]
 
 
 # Every finalized response of a connection that knows its conversation carries the id in
@@ -1804,7 +1808,7 @@ async def test_agent_response_is_the_turn_boundary() -> None:
 async def test_a_connection_without_a_conversation_id_leaves_provider_details_unset() -> None:
     # The id is only attached when the handshake reported one; nothing is invented otherwise.
     ws = FakeWebSocket([{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}}])
-    connection = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = ElevenLabsAgentsRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(connection)
     assert events == [OutputTranscript(text='Hello!', is_final=True), ResponseDone()]
 
@@ -1821,7 +1825,7 @@ async def test_text_output_mode_streams_chat_parts_then_finalizes() -> None:
             {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}},
         ]
     )
-    connection = ElevenLabsRealtimeConnection(ws, text_output=True)  # type: ignore[arg-type]
+    connection = ElevenLabsAgentsRealtimeConnection(ws, text_output=True)  # type: ignore[arg-type]
     events = await collect_codec_events(connection)
     assert events == [
         OutputTranscript(text='Hel', output_text=True),
@@ -2141,7 +2145,7 @@ async def test_pong_send_failure_is_fatal() -> None:
             raise websockets.exceptions.ConnectionClosedError(None, None)
 
     ws = FailingSend([{'type': 'ping', 'ping_event': {'event_id': 1}}, HANDSHAKE_FRAME])
-    connection = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = ElevenLabsAgentsRealtimeConnection(ws)  # type: ignore[arg-type]
     # `collect_codec_events` asserts and strips the trailing non-recoverable close event itself, so
     # nothing else was yielded, and the frame scripted after the ping was never consumed.
     assert await collect_codec_events(connection) == []
@@ -2160,7 +2164,7 @@ async def test_binary_frames_are_skipped() -> None:
                 return b'\x00\x01'
             return await super().recv()
 
-    connection = ElevenLabsRealtimeConnection(BinaryThenClose())  # type: ignore[arg-type]
+    connection = ElevenLabsAgentsRealtimeConnection(BinaryThenClose())  # type: ignore[arg-type]
     assert await collect_codec_events(connection) == []
 
 
@@ -2177,7 +2181,7 @@ async def test_server_hangup_is_a_fatal_error_event() -> None:
 
 
 async def _frames(
-    connection: ElevenLabsRealtimeConnection, ws: FakeWebSocket, incoming: Sequence[dict[str, Any]]
+    connection: ElevenLabsAgentsRealtimeConnection, ws: FakeWebSocket, incoming: Sequence[dict[str, Any]]
 ) -> list[RealtimeFrame]:
     """The frames the connection makes of `incoming`, up to (not including) the final hang-up frame."""
     ws._incoming.extend(json.dumps(frame) for frame in incoming)  # pyright: ignore[reportPrivateUsage]
@@ -2427,7 +2431,7 @@ async def test_tool_sync_gives_the_agent_its_own_copy_of_a_shared_tool() -> None
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -2461,7 +2465,7 @@ async def test_tool_sync_adopts_the_first_unattached_tool_that_matches_and_is_un
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='sync')
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass
@@ -2494,7 +2498,7 @@ async def test_tool_choice_none_leaves_out_client_tools_the_run_does_not_define(
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(tool_choice='none', elevenlabs_tool_sync='off')
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice='none', elevenlabs_agents_tool_sync='off')
     with patched_connect(ws):
         async with _connect(model, model_settings=settings):
             pass
@@ -2512,7 +2516,7 @@ async def test_an_allow_list_that_leaves_nothing_out_needs_no_override() -> None
     )
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(recorder)
-    settings = ElevenLabsRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
     with patched_connect(ws):
         async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
             pass

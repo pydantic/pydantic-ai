@@ -54,7 +54,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live', 'elevenlabs']
+ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live', 'elevenlabs_agents']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -692,9 +692,9 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
-    if provider == 'elevenlabs':
+    if provider == 'elevenlabs_agents':
         # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
-        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
+        from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs
 
         return rt_elevenlabs.websockets, 'connect'
     from google.genai import live

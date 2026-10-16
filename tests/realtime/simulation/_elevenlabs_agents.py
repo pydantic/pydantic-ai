@@ -36,13 +36,13 @@ import httpx2
 from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
 
-from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
 from pydantic_ai.realtime import RealtimeModel
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
-from pydantic_ai.realtime.elevenlabs import (
-    ElevenLabsRealtimeConnection,
-    ElevenLabsRealtimeModel,
-    ElevenLabsRealtimeModelSettings,
+from pydantic_ai.realtime.elevenlabs_agents import (
+    ElevenLabsAgentsRealtimeConnection,
+    ElevenLabsAgentsRealtimeModel,
+    ElevenLabsAgentsRealtimeModelSettings,
 )
 from pydantic_ai.realtime.lifecycle import RealtimeFrame, StaleEvent
 from pydantic_ai.realtime.settings import RealtimeModelSettings
@@ -60,7 +60,7 @@ HOLD = base64.b64encode(b'\x00\x20' * 1600).decode()
 
 
 @dataclass
-class ElevenLabsOptions:
+class ElevenLabsAgentsOptions:
     """How the simulated agent behaves."""
 
     queued: bool = False
@@ -83,10 +83,10 @@ def _rest(request: httpx2.Request) -> httpx2.Response:
     return httpx2.Response(200, json={'signed_url': f'wss://api.elevenlabs.io/signed?agent_id={AGENT_ID}'})
 
 
-class ElevenLabsServer:
+class ElevenLabsAgentsServer:
     """The simulated ElevenLabs Agents service."""
 
-    def __init__(self, options: ElevenLabsOptions) -> None:
+    def __init__(self, options: ElevenLabsAgentsOptions) -> None:
         self.options = options
         self.truth = GroundTruth()
         self.network = Network(self)
@@ -323,10 +323,10 @@ class ElevenLabsServer:
         self._next_event += 1
 
 
-class ElevenLabsSimulation(Simulation):
+class ElevenLabsAgentsSimulation(Simulation):
     """A session with a hosted ElevenLabs agent over the simulated ElevenLabs Agents service."""
 
-    provider = 'elevenlabs'
+    provider = 'elevenlabs-agents'
     output_bytes_per_ms = 32
     """The agent's output is 16 kHz PCM16."""
 
@@ -335,11 +335,11 @@ class ElevenLabsSimulation(Simulation):
         *,
         seed: int = 0,
         options: SessionOptions | None = None,
-        elevenlabs: ElevenLabsOptions | None = None,
+        elevenlabs: ElevenLabsAgentsOptions | None = None,
         strict: bool | None = None,
     ) -> None:
         super().__init__(seed=seed, options=options, strict=strict)
-        self.server = ElevenLabsServer(elevenlabs or ElevenLabsOptions())
+        self.server = ElevenLabsAgentsServer(elevenlabs or ElevenLabsAgentsOptions())
         if self.options.latency:
             self.server.network.latency = lambda: self.rng.choice((0, 0, 0, 1, 2, 4))
 
@@ -349,11 +349,13 @@ class ElevenLabsSimulation(Simulation):
 
     def build_model(self) -> RealtimeModel:
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(_rest))
-        return ElevenLabsRealtimeModel(AGENT_ID, provider=ElevenLabsProvider(api_key='simulated', http_client=client))
+        return ElevenLabsAgentsRealtimeModel(
+            AGENT_ID, provider=ElevenLabsAgentsProvider(api_key='simulated', http_client=client)
+        )
 
     def model_settings(self) -> RealtimeModelSettings:
         # The simulated agent has no client tools of its own: the session's are trusted rather than synced.
-        settings: ElevenLabsRealtimeModelSettings = {'elevenlabs_tool_sync': 'off'}
+        settings: ElevenLabsAgentsRealtimeModelSettings = {'elevenlabs_agents_tool_sync': 'off'}
         return settings
 
     @contextmanager
@@ -363,7 +365,7 @@ class ElevenLabsSimulation(Simulation):
 
     def observe_connection(self, connection: Any) -> None:
         """Note each frame as the connection handles it, and check the lifecycle stream it makes."""
-        assert isinstance(connection, ElevenLabsRealtimeConnection)
+        assert isinstance(connection, ElevenLabsAgentsRealtimeConnection)
         map_event = connection._map_event  # pyright: ignore[reportPrivateUsage]
 
         async def mapped(data: dict[str, Any]) -> list[RealtimeCodecEvent]:
@@ -464,19 +466,19 @@ class ElevenLabsSimulation(Simulation):
         return True
 
 
-class ElevenLabsMachine(SessionMachine):  # pragma: lax no cover (driven only by randomized exploration)
+class ElevenLabsAgentsMachine(SessionMachine):  # pragma: lax no cover (driven only by randomized exploration)
     """Randomized traces against the simulated ElevenLabs Agents service."""
 
-    provider_options = st.builds(ElevenLabsOptions, queued=st.booleans())
+    provider_options = st.builds(ElevenLabsAgentsOptions, queued=st.booleans())
 
     @staticmethod
     def make_simulation(seed: int, options: SessionOptions, provider_options: Any) -> Simulation:
-        return ElevenLabsSimulation(seed=seed, options=options, elevenlabs=provider_options)
+        return ElevenLabsAgentsSimulation(seed=seed, options=options, elevenlabs=provider_options)
 
     @property
-    def el_sim(self) -> ElevenLabsSimulation:
+    def el_sim(self) -> ElevenLabsAgentsSimulation:
         sim = self.s
-        assert isinstance(sim, ElevenLabsSimulation)
+        assert isinstance(sim, ElevenLabsAgentsSimulation)
         return sim
 
     def alive(self) -> bool:

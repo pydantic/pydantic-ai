@@ -1,8 +1,7 @@
 """ElevenLabs Agents provider for realtime speech-to-speech sessions.
 
-ElevenLabs offers no direct realtime conversational model: its Agents platform runs a cascaded
-pipeline (realtime ASR + a configurable LLM + ElevenLabs TTS + a server-side turn-taking model)
-behind a pre-provisioned agent, and the only conversational API is the agent WebSocket
+ElevenLabs Agents runs a cascaded pipeline (realtime ASR + a configurable LLM + ElevenLabs TTS + a
+server-side turn-taking model) behind a pre-provisioned agent, reached over the agent WebSocket
 (`wss://api.elevenlabs.io/v1/convai/conversation?agent_id=...`). So unlike the other realtime
 providers, the model here wraps a *hosted agent* addressed by its `agent_id`, and Pydantic AI takes
 ownership of as much of the conversation as ElevenLabs allows per-conversation:
@@ -12,21 +11,21 @@ ownership of as much of the conversation as ElevenLabs allows per-conversation:
   is gated by a per-field toggle in the agent's Security tab (`platform_settings.overrides`); the
   connect-time preflight fetches the agent and raises a [`UserError`][pydantic_ai.exceptions.UserError]
   naming the exact toggle when an override the session needs is not permitted. (The raw
-  `elevenlabs_config_override` escape hatch skips this check by design and is judged by the server
+  `elevenlabs_agents_config_override` escape hatch skips this check by design and is judged by the server
   after the handshake instead.) When the Pydantic AI
   agent defines no instructions, the ElevenLabs-side prompt is inherited silently.
 - Tool declarations cannot be sent inline per-conversation: client tools are workspace entities
   referenced from the agent. By default the preflight *errors on mismatch* between the session's
   [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]s and the agent's client tools; the opt-in
-  `elevenlabs_tool_sync='sync'` setting instead creates/updates the workspace tools and re-points the
+  `elevenlabs_agents_tool_sync='sync'` setting instead creates/updates the workspace tools and re-points the
   agent's `tool_ids` over REST before dialing.
 - Turn-taking, VAD, ASR configuration, audio formats, and platform settings (auth, privacy,
   guardrails, knowledge bases) stay owned by the ElevenLabs agent configuration.
 
-Requires the `websockets` package, available via the `elevenlabs-realtime` optional group (REST
+Requires the `websockets` package, available via the `elevenlabs-agents-realtime` optional group (REST
 preflight uses Pydantic AI's own HTTP client, so no ElevenLabs SDK is needed):
 
-    pip install "pydantic-ai-slim[elevenlabs-realtime]"
+    pip install "pydantic-ai-slim[elevenlabs-agents-realtime]"
 """
 
 from __future__ import annotations as _annotations
@@ -51,8 +50,8 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `websockets` package to use the ElevenLabs realtime model, '
-        'you can use the `elevenlabs-realtime` optional group - '
-        '`pip install "pydantic-ai-slim[elevenlabs-realtime]"`'
+        'you can use the `elevenlabs-agents-realtime` optional group - '
+        '`pip install "pydantic-ai-slim[elevenlabs-agents-realtime]"`'
     ) from _import_error
 
 from .._http import legacy_httpx
@@ -107,19 +106,19 @@ if TYPE_CHECKING:
     import httpx
 
     from .._http import AsyncHTTPClient
-    from ..providers.elevenlabs import ElevenLabsProvider
+    from ..providers.elevenlabs_agents import ElevenLabsAgentsProvider
 
 __all__ = (
-    'ElevenLabsRealtimeModel',
-    'ElevenLabsRealtimeModelSettings',
-    'ElevenLabsRealtimeConnection',
-    'ElevenLabsTTSSettings',
+    'ElevenLabsAgentsRealtimeModel',
+    'ElevenLabsAgentsRealtimeModelSettings',
+    'ElevenLabsAgentsRealtimeConnection',
+    'ElevenLabsAgentsTTSSettings',
 )
 
 _PROVIDER_LABEL = 'ElevenLabs Agents'
 
 
-class ElevenLabsTTSSettings(TypedDict, total=False):
+class ElevenLabsAgentsTTSSettings(TypedDict, total=False):
     """Per-conversation TTS overrides, each gated by its own override toggle on the agent."""
 
     model_id: str
@@ -132,7 +131,7 @@ class ElevenLabsTTSSettings(TypedDict, total=False):
     """Voice similarity boost (0-1)."""
 
 
-class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
+class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to ElevenLabs Agents realtime sessions.
 
     Every `elevenlabs_*` field below that maps to a `conversation_config_override` entry requires the
@@ -149,24 +148,24 @@ class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
     has no session resumption), so each of those raises rather than silently under-delivering.
     """
 
-    elevenlabs_voice_id: str
+    elevenlabs_agents_voice_id: str
     """Voice used for audio output (the `tts.voice_id` override)."""
-    elevenlabs_language: str
+    elevenlabs_agents_language: str
     """Conversation language code, e.g. `de` (the `agent.language` override)."""
-    elevenlabs_first_message: str
+    elevenlabs_agents_first_message: str
     """The greeting the agent opens with (the `agent.first_message` override)."""
-    elevenlabs_llm: str
+    elevenlabs_agents_llm: str
     """The LLM the ElevenLabs agent pipeline runs, e.g. `gpt-5.2` (the `agent.prompt.llm` override)."""
-    elevenlabs_tts: ElevenLabsTTSSettings
+    elevenlabs_agents_tts: ElevenLabsAgentsTTSSettings
     """TTS model and voice-delivery knobs (the `tts.*` overrides)."""
-    elevenlabs_dynamic_variables: dict[str, str | int | float | bool]
+    elevenlabs_agents_dynamic_variables: dict[str, str | int | float | bool]
     """Values substituted into `{{placeholders}}` in the agent's prompts and messages."""
-    elevenlabs_custom_llm_extra_body: dict[str, Any]
+    elevenlabs_agents_custom_llm_extra_body: dict[str, Any]
     """Extra body merged into the agent's custom-LLM request. Gated by the agent's
     `custom_llm_extra_body` security toggle (a sibling of the override toggles)."""
-    elevenlabs_user_id: str
+    elevenlabs_agents_user_id: str
     """Opaque end-user identifier attached to the conversation for ElevenLabs-side analytics."""
-    elevenlabs_tool_sync: Literal['error', 'sync', 'off']
+    elevenlabs_agents_tool_sync: Literal['error', 'sync', 'off']
     """How to reconcile the session's tools with the agent's client tools at connect time.
 
     - `'error'` (default): raise [`UserError`][pydantic_ai.exceptions.UserError] describing every
@@ -180,7 +179,7 @@ class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
       A call to a tool the session does not define reaches the tool manager like any other call and
       is answered with the standard unknown-tool error, which lands in the session's history.
     """
-    elevenlabs_config_override: dict[str, Any]
+    elevenlabs_agents_config_override: dict[str, Any]
     """Raw values deep-merged last into `conversation_config_override`, the escape hatch mirroring
     `google_config_overrides`. Not preflight-checked against the override toggles; the server still
     rejects non-permitted fields."""
@@ -479,7 +478,7 @@ class _ContextUsagePayload(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     # The payload also names the pipeline LLM (`model`); it is deliberately not read, see
-    # `ElevenLabsRealtimeConnection.model_name`.
+    # `ElevenLabsAgentsRealtimeConnection.model_name`.
     context_tokens: int | None = None
     context_limit_tokens: int | None = None
 
@@ -614,7 +613,7 @@ def _elevenlabs_parameters(tool_name: str, schema: dict[str, Any]) -> dict[str, 
             f'Cannot sync tool {tool_name!r}: '
             + '; '.join(problems)
             + '. Add parameter descriptions (e.g. in the function docstring) or simplify the parameter '
-            "types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_tool_sync='off'`."
+            "types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`."
         )
     return result
 
@@ -830,18 +829,18 @@ def _validate_audio_format(wire_format: str | None, *, expected_rate: int, direc
 
 
 @dataclass(init=False)
-class ElevenLabsRealtimeModel(RealtimeModel):
+class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     """ElevenLabs Agents realtime model, wrapping a hosted agent addressed by its `agent_id`.
 
     Args:
         agent_id: The ElevenLabs agent to converse with, e.g. `agent_0101k2...`. The agent must exist;
             Pydantic AI overrides its per-conversation configuration where the agent's Security-tab
             toggles allow, and fails loudly where they don't.
-        provider: The provider to use for authentication and API access. Defaults to `'elevenlabs'`
+        provider: The provider to use for authentication and API access. Defaults to `'elevenlabs-agents'`
             (reads `ELEVENLABS_API_KEY`); pass an
-            [`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider] for a custom
+            [`ElevenLabsAgentsProvider`][pydantic_ai.providers.elevenlabs_agents.ElevenLabsAgentsProvider] for a custom
             key, HTTP client, or regional (data-residency) base URL.
-        settings: [Model settings][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings]
+        settings: [Model settings][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModelSettings]
             used as defaults for realtime sessions.
         profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
             merged over the provider's. For ElevenLabs this is how per-agent audio formats are
@@ -851,7 +850,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
     agent_id: str
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
-    _provider: ElevenLabsProvider = field(init=False, repr=False)
+    _provider: ElevenLabsAgentsProvider = field(init=False, repr=False)
 
     # Written out rather than generated because `profile` has to be an init argument handed to the
     # base constructor, while `RealtimeModel.profile` stays the *resolved* profile, exactly as on a
@@ -860,21 +859,21 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         self,
         agent_id: str,
         *,
-        provider: Provider[AsyncHTTPClient] | str = 'elevenlabs',
+        provider: Provider[AsyncHTTPClient] | str = 'elevenlabs-agents',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
         super().__init__(settings=settings, profile=profile)
         self.agent_id = agent_id
-        from ..providers.elevenlabs import ElevenLabsProvider
+        from ..providers.elevenlabs_agents import ElevenLabsAgentsProvider
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        if not isinstance(provider, ElevenLabsProvider):
+        if not isinstance(provider, ElevenLabsAgentsProvider):
             # The REST preflight and signed-URL auth below read the ElevenLabs-specific `api_key` off
             # the provider; a foreign one would fail with an `AttributeError` instead of the real mistake.
             raise UserError(
-                f"`ElevenLabsRealtimeModel` requires an `ElevenLabsProvider` or `provider='elevenlabs'`; "
+                f"`ElevenLabsAgentsRealtimeModel` requires an `ElevenLabsAgentsProvider` or `provider='elevenlabs-agents'`; "
                 f'got {provider.name!r}.'
             )
         self._provider = provider
@@ -1011,7 +1010,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         return _CreatedToolResponse.model_validate_json(response.content).id
 
     async def _sync_tools(self, agent: _AgentPreflight, tools: Sequence[ToolDefinition]) -> list[str]:
-        """Make the agent's client tools match the session's tools over REST (`elevenlabs_tool_sync='sync'`).
+        """Make the agent's client tools match the session's tools over REST (`elevenlabs_agents_tool_sync='sync'`).
 
         Creates missing workspace client tools, updates differing ones (`PATCH /v1/convai/tools/{id}`
         takes the same `tool_config` body as create, verified live), and re-points the agent's
@@ -1145,7 +1144,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
 
     # --- Configuration assembly -------------------------------------------------------------------
 
-    def _check_settings(self, settings: ElevenLabsRealtimeModelSettings) -> None:
+    def _check_settings(self, settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
         """Reject shared settings whose intent the agent WebSocket cannot honor."""
         if settings.get('reconnect') is not None:
             raise UserError(
@@ -1167,7 +1166,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
 
     @staticmethod
     def _requested_overrides(
-        instructions: str, settings: ElevenLabsRealtimeModelSettings, tool_ids: list[str] | None
+        instructions: str, settings: ElevenLabsAgentsRealtimeModelSettings, tool_ids: list[str] | None
     ) -> list[tuple[tuple[str, ...], Any, str]]:
         """The `conversation_config_override` entries the session asks for, each with its source."""
         requested: list[tuple[tuple[str, ...], Any, str]] = []
@@ -1177,16 +1176,18 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             # When the Pydantic AI agent defines instructions, the prompt override MUST
             # be permitted; without instructions the ElevenLabs-side prompt is inherited silently.
             requested.append((('agent', 'prompt', 'prompt'), instructions, 'the agent instructions'))
-        if (llm := settings.get('elevenlabs_llm')) is not None:
-            requested.append((('agent', 'prompt', 'llm'), llm, 'the `elevenlabs_llm` setting'))
-        if (first_message := settings.get('elevenlabs_first_message')) is not None:
-            requested.append((('agent', 'first_message'), first_message, 'the `elevenlabs_first_message` setting'))
-        if (language := settings.get('elevenlabs_language')) is not None:
-            requested.append((('agent', 'language'), language, 'the `elevenlabs_language` setting'))
-        if (voice_id := settings.get('elevenlabs_voice_id')) is not None:
-            requested.append((('tts', 'voice_id'), voice_id, 'the `elevenlabs_voice_id` setting'))
-        for key, value in settings.get('elevenlabs_tts', {}).items():
-            requested.append((('tts', key), value, f'the `elevenlabs_tts` {key!r} setting'))
+        if (llm := settings.get('elevenlabs_agents_llm')) is not None:
+            requested.append((('agent', 'prompt', 'llm'), llm, 'the `elevenlabs_agents_llm` setting'))
+        if (first_message := settings.get('elevenlabs_agents_first_message')) is not None:
+            requested.append(
+                (('agent', 'first_message'), first_message, 'the `elevenlabs_agents_first_message` setting')
+            )
+        if (language := settings.get('elevenlabs_agents_language')) is not None:
+            requested.append((('agent', 'language'), language, 'the `elevenlabs_agents_language` setting'))
+        if (voice_id := settings.get('elevenlabs_agents_voice_id')) is not None:
+            requested.append((('tts', 'voice_id'), voice_id, 'the `elevenlabs_agents_voice_id` setting'))
+        for key, value in settings.get('elevenlabs_agents_tts', {}).items():
+            requested.append((('tts', key), value, f'the `elevenlabs_agents_tts` {key!r} setting'))
         if settings.get('output_modality', 'audio') == 'text':
             requested.append((('conversation', 'text_only'), True, "`output_modality='text'`"))
         return requested
@@ -1196,7 +1197,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         *,
         instructions: str,
         agent: _AgentPreflight,
-        settings: ElevenLabsRealtimeModelSettings,
+        settings: ElevenLabsAgentsRealtimeModelSettings,
         tool_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Build `conversation_initiation_client_data`, preflight-checking every override's toggle."""
@@ -1213,7 +1214,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                     "(the agent's Security tab in the ElevenLabs dashboard), or remove the conflicting input."
                 )
             _set_override(overrides, path, value)
-        if config_override := settings.get('elevenlabs_config_override'):
+        if config_override := settings.get('elevenlabs_agents_config_override'):
             _deep_merge(overrides, config_override)
 
         payload: dict[str, Any] = {
@@ -1223,17 +1224,17 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         }
         if overrides:
             payload['conversation_config_override'] = overrides
-        if (extra_body := settings.get('elevenlabs_custom_llm_extra_body')) is not None:
+        if (extra_body := settings.get('elevenlabs_agents_custom_llm_extra_body')) is not None:
             if not agent.custom_llm_extra_body_allowed:
                 raise UserError(
                     f'The ElevenLabs agent {self.agent_id!r} does not permit `custom_llm_extra_body`. '
                     'Enable the toggle at `platform_settings.overrides.custom_llm_extra_body` '
-                    "(the agent's Security tab), or remove the `elevenlabs_custom_llm_extra_body` setting."
+                    "(the agent's Security tab), or remove the `elevenlabs_agents_custom_llm_extra_body` setting."
                 )
             payload['custom_llm_extra_body'] = extra_body
-        if (dynamic_variables := settings.get('elevenlabs_dynamic_variables')) is not None:
+        if (dynamic_variables := settings.get('elevenlabs_agents_dynamic_variables')) is not None:
             payload['dynamic_variables'] = dynamic_variables
-        if (user_id := settings.get('elevenlabs_user_id')) is not None:
+        if (user_id := settings.get('elevenlabs_agents_user_id')) is not None:
             payload['user_id'] = user_id
         return payload
 
@@ -1244,8 +1245,8 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         messages: Sequence[ModelMessage],
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncGenerator[ElevenLabsRealtimeConnection]:
-        settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+    ) -> AsyncGenerator[ElevenLabsAgentsRealtimeConnection]:
+        settings = cast('ElevenLabsAgentsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         self._check_settings(settings)
         instructions = get_instructions(messages, model_request_parameters) or ''
         tools = model_request_parameters.function_tools or []
@@ -1264,7 +1265,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         # The agent's client tools are reconciled with every tool of the run, as they are workspace
         # state shared with every conversation; a `tool_choice` restriction is this conversation's, and
         # narrows the attached tools through the `tool_ids` override below.
-        tool_sync = settings.get('elevenlabs_tool_sync', 'error')
+        tool_sync = settings.get('elevenlabs_agents_tool_sync', 'error')
         attached_ids = agent.tool_ids
         if tool_sync == 'error':
             if mismatches := _tool_mismatches(tools, agent.client_tools):
@@ -1272,8 +1273,8 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 raise UserError(
                     f'The tools of the ElevenLabs agent {self.agent_id!r} do not match this agent run:\n'
                     f'{details}\n'
-                    "Update the agent's client tools to match, opt into `elevenlabs_tool_sync='sync'` to "
-                    "sync them from Pydantic AI, or set `elevenlabs_tool_sync='off'` to trust the agent."
+                    "Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to "
+                    "sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent."
                 )
         elif tool_sync == 'sync':
             attached_ids = await self._sync_tools(agent, tools)
@@ -1321,7 +1322,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                 direction='output',
                 model_name=self.agent_id,
             )
-            yield ElevenLabsRealtimeConnection(
+            yield ElevenLabsAgentsRealtimeConnection(
                 ws,
                 conversation_id=metadata.conversation_id,
                 text_output=settings.get('output_modality', 'audio') == 'text',
@@ -1343,7 +1344,7 @@ class _CascadeLifecycle(InferredLifecycle):
     untranscribed_audio_is_a_turn = False
 
 
-class ElevenLabsRealtimeConnection(RealtimeConnection):
+class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to an ElevenLabs Agents conversation."""
 
     # `OSError` covers the socket-level failures (reset, broken pipe) that `websockets` lets through.
@@ -1394,7 +1395,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
 
         The LLM behind the agent only surfaces in the opt-in `context_usage` event, which arrives
         after the turn boundary, so it cannot be attributed to the response it served. The session
-        falls back to [`ElevenLabsRealtimeModel.model_name`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModel.model_name].
+        falls back to [`ElevenLabsAgentsRealtimeModel.model_name`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel.model_name].
         """
         return None
 
@@ -1606,7 +1607,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         if event_type == 'client_tool_call':
             call = _ClientToolCallEvent.model_validate(data).client_tool_call
             # Every call goes through, including one naming a tool this run does not define (possible
-            # with `elevenlabs_tool_sync='off'`, or after a dashboard edit that races the preflight):
+            # with `elevenlabs_agents_tool_sync='off'`, or after a dashboard edit that races the preflight):
             # the session's tool manager answers it with the standard unknown-tool error, so the call
             # and its outcome land in history and reach consumers like any other.
             # The calls end the response that makes them (the agent goes on in a response of its own once their

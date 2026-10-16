@@ -68,7 +68,7 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs'})
+ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs-agents'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
 GEMINI = frozenset({'gemini'})
 
@@ -226,7 +226,7 @@ UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     ),
     evidence='simulated',
     codes=frozenset({'history.order'}),
-    providers=GEMINI | {'gpt-live', 'elevenlabs'},
+    providers=GEMINI | {'gpt-live', 'elevenlabs-agents'},
     matches=_sent_before_reply_content,
     accepted=True,
 )

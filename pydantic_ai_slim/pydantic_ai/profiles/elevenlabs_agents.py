@@ -6,13 +6,13 @@ if TYPE_CHECKING:
     from ..realtime.profiles import RealtimeModelProfile
 
 
-def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for an ElevenLabs agent.
 
     The "model name" is an ElevenLabs agent id (e.g. `agent_0101...`), so nothing about the model can
     be inferred from it: every capability fact below describes the Agents platform itself, which is
     the same for every agent. What *does* vary per agent (the audio formats) is validated against
-    the profile at connect time (see `ElevenLabsRealtimeModel.connect`), and the `profile=` argument
+    the profile at connect time (see `ElevenLabsAgentsRealtimeModel.connect`), and the `profile=` argument
     is the escape hatch for agents configured away from ElevenLabs' defaults.
     """
     return {
@@ -45,14 +45,14 @@ def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'responses_are_requests': True,
         # Usage arrives as `context_usage`, once per user turn and after the `agent_response`
         # boundary, so it is never attached to a `ModelResponse`: the response usage measures nothing
-        # about the context. The live fraction is `ElevenLabsRealtimeConnection.context_limit_tokens`
+        # about the context. The live fraction is `ElevenLabsAgentsRealtimeConnection.context_limit_tokens`
         # against the reported `context_tokens` instead.
         'response_usage_covers_context': False,
         # The LLM behind a hosted agent is configured on the agent (and overridable per conversation
-        # via `elevenlabs_llm`), so no context window can be inferred from the agent id and the
+        # via `elevenlabs_agents_llm`), so no context window can be inferred from the agent id and the
         # genai-prices lookup is skipped. A pinned value would go unused too, since the session's
         # token-usage fallback is off (`response_usage_covers_context`); the live limit is
-        # `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`,
+        # `ElevenLabsAgentsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`,
         # and `context_window_used` is the ratio from the same report.
         'context_window': None,
         # `vad_score` events exist but there is no speech start/stop pair.

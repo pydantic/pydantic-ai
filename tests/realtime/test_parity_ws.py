@@ -45,7 +45,10 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import AzureRealtimeModel
-    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, ElevenLabsRealtimeModelSettings
+    from pydantic_ai.realtime.elevenlabs_agents import (
+        ElevenLabsAgentsRealtimeModel,
+        ElevenLabsAgentsRealtimeModelSettings,
+    )
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
@@ -55,8 +58,10 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
-_Route = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google', 'elevenlabs']
-_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'elevenlabs']
+_Route = Literal[
+    'openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google', 'elevenlabs-agents'
+]
+_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'elevenlabs-agents']
 
 # ElevenLabs wraps a hosted agent, so its "model name" is the id of the dev agent the cassettes were
 # recorded against (deleted after recording; the id is not a secret and pins the recorded REST paths).
@@ -222,10 +227,10 @@ REALTIME_PARITY_CASES = [
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
-        id='elevenlabs',
-        model_kind='elevenlabs',
+        id='elevenlabs-agents',
+        model_kind='elevenlabs-agents',
         model_name=_ELEVENLABS_AGENT_ID,
-        route='elevenlabs',
+        route='elevenlabs-agents',
         supports_image_input=False,
         supports_manual_turn_control=False,
         supports_interruption=False,
@@ -252,7 +257,7 @@ def _marks(case: RealtimeParityCase, *, spoken: bool = False) -> tuple[pytest.Ma
     the Azure key works again. Azure's text scenario still runs from its existing recording.
     """
     marks: list[pytest.MarkDecorator] = []
-    if case.route == 'elevenlabs':
+    if case.route == 'elevenlabs-agents':
         marks.append(pytest.mark.vcr)
     if spoken and case.route == 'azure':
         marks.append(pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded'))
@@ -303,14 +308,14 @@ def _model(
     if case.model_kind == 'xai':
         assert isinstance(provider, XaiProvider)
         return XaiRealtimeModel(case.model_name, provider=provider, settings=settings)
-    if case.model_kind == 'elevenlabs':
+    if case.model_kind == 'elevenlabs-agents':
         # The hosted agent's tools are workspace state, so one dev agent (with `get_weather` attached)
         # serves every scenario, the tool-free ones included, with the connect-time tool comparison
         # off. That comparison is the provider's own contract, pinned by its cassette tests.
-        elevenlabs_settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off')
+        elevenlabs_settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
         if text_output and case.supports_text_output:
             elevenlabs_settings['output_modality'] = 'text'
-        return ElevenLabsRealtimeModel(case.model_name, provider=provider, settings=elevenlabs_settings)
+        return ElevenLabsAgentsRealtimeModel(case.model_name, provider=provider, settings=elevenlabs_settings)
     return GoogleRealtimeModel(case.model_name, provider=provider, settings=settings)
 
 

@@ -517,8 +517,8 @@ def infer_realtime_model(
     """Infer a realtime model from a `provider:model` identifier.
 
     The provider is one of `openai`, `azure`, `xai`, `google` (the Gemini Developer API),
-    `google-cloud` (Vertex AI), or `elevenlabs` (whose "model name" is an agent id, e.g.
-    `elevenlabs:agent_0101...`) — e.g. `openai:gpt-realtime` — or a
+    `google-cloud` (Vertex AI), or `elevenlabs-agents` (whose "model name" is an agent id, e.g.
+    `elevenlabs-agents:agent_0101...`) — e.g. `openai:gpt-realtime` — or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
     `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
     the provider string is passed to the realtime model as its `provider`, so authentication and the
@@ -583,10 +583,10 @@ def infer_realtime_model(
         from .xai import XaiRealtimeModel
 
         return XaiRealtimeModel(model_name, provider=resolved_provider)
-    if model_kind == 'elevenlabs':
-        from .elevenlabs import ElevenLabsRealtimeModel
+    if model_kind == 'elevenlabs-agents':
+        from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
 
-        return ElevenLabsRealtimeModel(model_name, provider=resolved_provider)
+        return ElevenLabsAgentsRealtimeModel(model_name, provider=resolved_provider)
     # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
     if model_kind in ('google', 'google-cloud'):
         from .google import GoogleRealtimeModel
@@ -596,6 +596,6 @@ def infer_realtime_model(
         return GoogleRealtimeModel(model_name, provider=resolved_provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, `google`, `google-cloud`, and `elevenlabs`, or `gateway/openai` / `gateway/google` to '
+        '`xai`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / `gateway/google` to '
         'route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
     )
