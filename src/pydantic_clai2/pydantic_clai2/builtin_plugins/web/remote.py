@@ -406,26 +406,28 @@ class Remote:
         """Open a plugin's own settings menu in the terminal, as `/plugins configure NAME` typed there does."""
         self.host.send_input(f'/plugins configure {self._plugin(name).name}')
 
-    async def plugin_menu(self, name: str) -> MenuInfo:
-        """A plugin's declared settings menu, with every row's current value."""
+    async def plugin_menu(self, name: str, *, path: Sequence[str] = ()) -> MenuInfo:
+        """A plugin's declared settings menu, or the one `path`'s rows open from it, with every row's current value."""
         menu = self.plugin_catalog.settings_menu(self._plugin(name).name)
         if menu is None:
             raise LookupError(f'{name} declares no settings menu here; open its own in the terminal.')
         # Its source may read the keyring or files, so it runs off the loop, as the terminal's menu does.
-        return await to_thread.run_sync(_menu_info, menu)
+        return await to_thread.run_sync(_menu_info, menu, path)
 
-    async def edit_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
+    async def edit_menu(self, name: str, key: str, value: str | None, *, path: Sequence[str] = ()) -> MenuEdited:
         """Set a row of a plugin's declared menu to `value`, or reset it with `None` or empty text, as its menu does.
 
         Raises `ValueError` with the row's own message when the menu rejects the value; nothing is saved then.
         """
-        return await self._edit(name, partial(_set_row, key=key, value=value))
+        return await self._edit(name, partial(_set_row, path=path, key=key, value=value), path)
 
-    async def run_menu_action(self, name: str, key: str) -> MenuEdited:
+    async def run_menu_action(self, name: str, key: str, *, path: Sequence[str] = ()) -> MenuEdited:
         """Run what a row of a plugin's declared menu does when chosen, asking through this page's dialogs."""
-        return await self._edit(name, partial(_run_action, key=key, dialogs=self.dialogs, owner=name))
+        return await self._edit(name, partial(_run_action, path=path, key=key, dialogs=self.dialogs, owner=name), path)
 
-    async def _edit(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
+    async def _edit(
+        self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
+    ) -> MenuEdited:
         """One edit, after which the plugin loads again if it saved new settings; shown here and in the terminal."""
         if name == self.host.name:
             raise ValueError(SERVING)
@@ -437,7 +439,9 @@ class Remote:
         finally:
             self.hub.publish(PluginsChanged())
         menu = catalog.settings_menu(name)
-        return MenuEdited(messages=messages, menu=None if menu is None else await to_thread.run_sync(_menu_info, menu))
+        return MenuEdited(
+            messages=messages, menu=None if menu is None else await to_thread.run_sync(_menu_info, menu, path)
+        )
 
     def answer_dialog(self, dialog_id: str, value: str | None) -> None:
         """Answer a settings menu's open dialog, or cancel it with `None`."""
@@ -446,34 +450,44 @@ class Remote:
     # Commands' own menus, such as `/set`'s, which the page shows instead of the terminal.
 
     def _command_menu(self, name: str) -> SettingsMenu:
+        """Build the menu bare `/NAME` declares; building may read files, as `/model`'s does, so call it off the loop."""
         menu = self.host.command_menu(name)
         if menu is None:
             raise LookupError(f'/{name} has no menu to show here.')
         return menu
 
-    async def command_menu(self, name: str) -> MenuInfo:
-        """The menu bare `/NAME` opens, as the command declares it, with every row's current value."""
-        return await to_thread.run_sync(_menu_info, self._command_menu(name))
+    def _command_info(self, name: str, path: Sequence[str]) -> MenuInfo:
+        return _menu_info(self._command_menu(name), path)
 
-    async def edit_command_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
+    async def command_menu(self, name: str, *, path: Sequence[str] = ()) -> MenuInfo:
+        """The menu bare `/NAME` opens, or the one `path`'s rows open from it, with every row's current value."""
+        return await to_thread.run_sync(self._command_info, name, path)
+
+    async def edit_command_menu(
+        self, name: str, key: str, value: str | None, *, path: Sequence[str] = ()
+    ) -> MenuEdited:
         """Set a row of a command's menu to `value`, or reset it with `None` or empty text, as the terminal's menu does."""
-        return await self._edit_command(name, partial(_set_row, key=key, value=value))
+        return await self._edit_command(name, partial(_set_row, path=path, key=key, value=value), path)
 
-    async def run_command_menu_action(self, name: str, key: str) -> MenuEdited:
+    async def run_command_menu_action(self, name: str, key: str, *, path: Sequence[str] = ()) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
-        return await self._edit_command(name, partial(_run_action, key=key, dialogs=self.dialogs, owner=f'/{name}'))
+        action = partial(_run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}')
+        return await self._edit_command(name, action, path)
 
-    async def _edit_command(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
+    async def _edit_command(
+        self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
+    ) -> MenuEdited:
         """One edit, printed in the terminal too, after which every page reads the settings again."""
-        menu = self._command_menu(name)
         async with self._command_edits:
+            menu = await to_thread.run_sync(self._command_menu, name)
             try:
                 messages = await edit(menu)
             finally:
                 self._settings_changed()
         for message in messages:
             self.host.console.print(message, markup=False, highlight=False)
-        return MenuEdited(messages=messages, menu=await to_thread.run_sync(_menu_info, menu))
+        # Built again: the edit may have changed what it lists, as adding or removing a model does.
+        return MenuEdited(messages=messages, menu=await to_thread.run_sync(self._command_info, name, path))
 
     # The sidebar's workers: the delegated tasks.
 
@@ -714,8 +728,19 @@ def _form(info: PluginInfo) -> PluginForm | None:
     return PluginForm(json_schema=schema, values=info.settings.model_dump(mode='json', by_alias=True))
 
 
-def _menu_info(menu: SettingsMenu) -> MenuInfo:
-    """Every row of `menu` with its current value; reads the menu's source, so call it off the loop."""
+def _submenu(menu: SettingsMenu, path: Sequence[str]) -> SettingsMenu:
+    """The menu reached from `menu` by choosing each row of `path` in turn; builds them, so call it off the loop."""
+    for key in path:
+        build = menu.menus.get(key)
+        if build is None:
+            raise LookupError(f'{menu.source.title} has no menu {key}.')
+        menu = build()
+    return menu
+
+
+def _menu_info(menu: SettingsMenu, path: Sequence[str]) -> MenuInfo:
+    """Every row of the menu at `path` with its current value; reads the menu's source, so call it off the loop."""
+    menu = _submenu(menu, path)
     source = menu.source
     return MenuInfo(
         title=source.title,
@@ -731,6 +756,7 @@ def _menu_info(menu: SettingsMenu) -> MenuInfo:
                 secret=row.secret,
                 note=row.note,
                 action=row.key in menu.actions,
+                menu=row.key in menu.menus,
                 button=row.button,
             )
             for row in source.rows()
@@ -745,8 +771,11 @@ def _row(menu: SettingsMenu, key: str) -> FieldRow:
     return row
 
 
-async def _set_row(menu: SettingsMenu, *, key: str, value: str | None) -> list[str]:
+async def _set_row(menu: SettingsMenu, *, path: Sequence[str], key: str, value: str | None) -> list[str]:
     """Set a row as its menu does: empty text resets it, and a value the row rejects raises `ValueError`."""
+    menu = await to_thread.run_sync(_submenu, menu, path)
+    if key in menu.menus:
+        raise LookupError(f'{menu.source.title}: {key} opens a menu; it takes no value.')
     row = await to_thread.run_sync(_row, menu, key)
     text = (value or '').strip()
     if not text:
@@ -756,8 +785,9 @@ async def _set_row(menu: SettingsMenu, *, key: str, value: str | None) -> list[s
     return [await to_thread.run_sync(menu.source.apply, row, text)]
 
 
-async def _run_action(menu: SettingsMenu, *, key: str, dialogs: Dialogs, owner: str) -> list[str]:
+async def _run_action(menu: SettingsMenu, *, path: Sequence[str], key: str, dialogs: Dialogs, owner: str) -> list[str]:
     """Run a row's action, asking through `dialogs`; `owner`, the plugin or `/command`, names the menu in errors."""
+    menu = await to_thread.run_sync(_submenu, menu, path)
     action = menu.actions.get(key)
     if action is None:
         raise LookupError(f'{owner} has no action {key}.')

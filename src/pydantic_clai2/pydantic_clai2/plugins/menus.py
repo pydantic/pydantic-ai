@@ -112,6 +112,8 @@ class Dialogs(Protocol):
         the dialog stays open until it accepts the text or the text is empty. `description` says
         more above the input, such as where to find the value, with a link to open. `multiline`
         takes text with line breaks, such as instructions, in a text editor; it is never masked.
+        Without it, an `initial` of several lines is still edited over several lines where the
+        surface can, as the web UI does.
         """
         ...
 
@@ -146,5 +148,10 @@ class SettingsMenu:
     source: FieldSource
     actions: Mapping[str, Action] = field(default_factory=dict[str, Action])
     """Row key to what choosing that row does, instead of editing its value."""
+    menus: 'Mapping[str, Callable[[], SettingsMenu]]' = field(default_factory=dict[str, 'Callable[[], SettingsMenu]'])
+    """Row key to the menu choosing that row opens, built when it opens; leaving it returns to this one.
+
+    Read as this menu opens, so a row an action adds meanwhile opens its menu once this one opens again.
+    """
     searchable: bool = True
     """Whether typing filters the terminal list. A short menu may prefer single-key shortcuts instead."""

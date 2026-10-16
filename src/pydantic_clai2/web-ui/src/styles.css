@@ -3329,6 +3329,205 @@ textarea.setting-input {
   }
 }
 
+/* Settings: Models. A row that opens another menu, such as a saved model's settings, shows it beneath, inset. */
+
+.setting-open svg {
+  transition: transform 0.12s ease;
+}
+
+.setting-open[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.setting-submenu {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.setting-submenu .setting:last-child {
+  border-bottom: 0;
+}
+
+.setting-submenu .setting-select,
+.setting-submenu .setting.inline .setting-input {
+  width: 180px;
+}
+
+.settings-pane.models .setting-select {
+  width: 300px;
+}
+
+.settings-pane.models .setting-submenu .setting-select {
+  width: 180px;
+}
+
+/* A dialog's text keeps its line breaks and indentation, as the terminal's panel shows them. */
+.dialog-description p,
+.dialog-shown p {
+  white-space: pre-wrap;
+}
+
+/* Settings: the MCP servers section. */
+
+.mcp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mcp-head .settings-group-title {
+  margin: 0;
+}
+
+.mcp-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mcp-server {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-server:last-child {
+  border-bottom: 0;
+}
+
+.mcp-dot {
+  flex: none;
+  align-self: flex-start;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.mcp-dot.running {
+  background: var(--green);
+}
+
+.mcp-dot.ready {
+  border: 1.5px solid var(--green);
+  background: transparent;
+}
+
+.mcp-dot.error {
+  background: var(--red);
+}
+
+.mcp-dot.sign-in {
+  background: var(--amber);
+}
+
+.mcp-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mcp-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.mcp-state {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.mcp-state.running {
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  color: var(--text);
+}
+
+.mcp-state.error {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  color: var(--red);
+}
+
+.mcp-state.sign-in {
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  color: var(--text);
+}
+
+.mcp-target,
+.mcp-trust-text code {
+  overflow: hidden;
+  color: var(--muted);
+  font: 12px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mcp-info .setting-note {
+  margin: 0;
+}
+
+.mcp-empty {
+  margin: 0;
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mcp-trust {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+
+.mcp-trust.trusted {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.mcp-trust-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mcp-trust-text strong {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.mcp-trust-text code {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
 /* Usage & session tools: /usage and /cost cards, the command palette, and multi-line and read-only dialogs. */
 
 .usage-card {

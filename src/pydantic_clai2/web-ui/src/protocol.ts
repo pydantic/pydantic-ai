@@ -352,6 +352,8 @@ export interface MenuField {
   action: boolean
   /** What the action's button says; `Change…` when empty. */
   button: string
+  /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
+  menu: boolean
 }
 
 /** A workspace as the sidebar lists it; never its token. */

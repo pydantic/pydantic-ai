@@ -68,7 +68,8 @@ separately.
   into the form and written into the JSON.
 - **JSON Configuration** opens `$VISUAL` or `$EDITOR` (default `vi`) on the
   server's JSON, with a one-line input as a fallback when no editor runs. The
-  preview says whether it is valid and why not.
+  preview says whether it is valid and why not. In the web UI it is a multi-line
+  field in the page.
 - **OAuth sign-in** appears for `http` and `sse` servers. Switching it on sets
   `"auth": "oauth"`, allows 330 seconds for the handshake, and drops any
   `Authorization` header. After saving, `/mcp auth NAME` signs in: FastMCP runs
@@ -92,6 +93,17 @@ between prompts. A server that cannot connect is marked `error` and left out of
 the prompt instead of failing it; `/mcp logs NAME` shows why. `/mcp stop`
 disconnects the server and disables it until `/mcp start`. The model sees tools
 prefixed by server name, for example `local_search`.
+
+In the web UI, the Settings window's **MCP servers** section (`#settings/mcp`, or bare
+`/mcp` typed in the composer) is the same command in the page. It lists each server with
+its state (`running`, `ready`, `stopped`, `error`, or needing its OAuth sign-in), what it
+runs, and where it is defined. **Add server** opens the form above as dialogs, and a
+server's **Manage** offers the subcommands that apply to it: start or connect, stop,
+restart, its tools, its recent logs, sign in or out, edit, and remove (after a
+confirmation). Each runs as typing it would, and the terminal prints the result. When the
+repository has project MCP files, a banner shows whether they are trusted, and **Review**
+shows each file's contents before you trust or revoke them. The section is `/mcp`'s
+declared menu, `pydantic_clai2.mcp.servers_menu`, asking through `Dialogs`.
 
 Only install servers you trust. Stdio servers run programs with your user
 permissions, launched as an executable plus arguments without a shell. Remote
@@ -1233,9 +1245,10 @@ directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the t
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, `/system_prompt` its System prompt section, `/update` its About section,
-the others a dialog. Its edits go through the menu's own source, as in
-the terminal, which prints what each one saved. Any other bare command that opens a terminal
-menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
+the others a dialog, except where a section lists the command, as Keys & accounts lists `/keys`,
+`/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go through the menu's own
+source, as in the terminal, which prints what each one saved. Any other bare command that opens a
+terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
@@ -1271,6 +1284,9 @@ runs; reloading the page shows it at once.
 The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
 left; each has its own address, such as `#settings/general` or `#settings/plugins`. **General** is `/set`'s
 menu, from `host.command_menu('set')`, grouped by the part of each key before its dot.
+**MCP servers** (`#settings/mcp`) is `/mcp`'s menu, from `host.command_menu('mcp')`: one row
+per server, each an action whose dialogs run `/mcp`'s subcommands; see
+[Connect MCP servers](#connect-mcp-servers).
 **System prompt** is `/system_prompt`'s menu, the one the terminal runs: your instructions in a
 multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and the full system
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
@@ -2471,7 +2487,10 @@ zero-argument callable returning a `SettingsMenu` (see
 [Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)). The terminal
 still runs `handler`; the web UI shows that menu in the page when the bare command is
 typed there, editing the same values through the same `FieldSource`, with its actions
-asking through the page's dialogs. `/set`, `/theme`, and `/spinner` declare theirs.
+asking through the page's dialogs. `/set`, `/theme`, `/spinner`, `/model`, and `/effort`
+declare theirs.
+`/keys`, `/accounts`, and `/login` declare theirs too: their actions ask through
+`Dialogs` in the terminal and the page alike.
 A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
 which loads the plugin again after an edit; `menu=` is for a command's menu over
 something else.
@@ -2888,6 +2907,11 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `actions`, for rows that need more than one value typed or picked, such as
   choosing a `/keys` entry or signing in: the row's key maps to an async function
   that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `menus`, for rows that open another `SettingsMenu`, such as each saved model's
+  settings in `/model`'s menu: the row's key maps to a zero-argument callable that
+  builds it when it opens. Leaving it returns to this menu, in the terminal and in
+  the web UI, which shows it beneath the row. The keys are read as the menu opens, so
+  a row an action adds meanwhile opens its menu once the menu opens again.
 - `searchable`, whether typing filters the list (default `True`).
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
@@ -3321,6 +3345,11 @@ lists an account from the time it signed in until the user removes it there;
 removing one does not sign it out of your plugin, and the menu says so. Offer your
 own logout for that.
 
+The web UI's **Keys & accounts** section lists your accounts too, and renames,
+reorders, and removes them there. `handler` and `profile_handler` take no `Dialogs`,
+so signing in to your accounts from the page asks the user to run `/login NAME` in
+the terminal instead.
+
 ### Account usage: `usage`
 
 Set `usage` on your `PluginLogin` to show each account's current usage in
@@ -3640,7 +3669,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
