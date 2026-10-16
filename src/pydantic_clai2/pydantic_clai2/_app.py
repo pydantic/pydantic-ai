@@ -648,6 +648,7 @@ def create_shell(
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
             during_turn=True,
+            args_during_turn=True,
         )
     )
     commands.register(

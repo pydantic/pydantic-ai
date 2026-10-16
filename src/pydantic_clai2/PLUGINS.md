@@ -1245,7 +1245,8 @@ history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
-and a change made in the terminal shows in the browser once the command ends.
+which applies at once, even while a turn runs, and a change made in the terminal shows in the
+browser once the command ends.
 
 The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
 cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes

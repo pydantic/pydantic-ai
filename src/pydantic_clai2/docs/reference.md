@@ -315,7 +315,8 @@ accounts it started with. `/model settings` edits to the running model apply to 
 next model request in the same turn. `/resume` can browse, rename, and delete
 sessions mid-turn, but a running conversation cannot be swapped out: picking one
 tells you to enter `/resume ID`, which restores it once the turn ends. With
-arguments, these commands queue like any other.
+arguments, these commands queue like any other, except `/theme NAME`, which
+repaints at once as the picker does.
 
 `/plugins` runs right away during a turn too, with or without arguments, so
 `/plugins disable NAME` does not wait behind the turn or your queued messages.
