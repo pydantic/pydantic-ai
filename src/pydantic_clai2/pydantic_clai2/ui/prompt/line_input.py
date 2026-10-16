@@ -56,7 +56,8 @@ class LineInput:
         prompt = theme.sgr(theme.ACCENT) + truncate(self.prompt, width) + '\x1b[0m'
         if self.hidden:
             count = len(self.answer.text)
-            return prompt, (f'[{count} characters]' if count else '') + '\x1b[7m \x1b[27m'
+            shown = f'[{count} character{"" if count == 1 else "s"}]' if count else ''
+            return prompt, shown + '\x1b[7m \x1b[27m'
         return prompt, *self.answer.rows(width=width, limit=_ANSWER_ROWS)
 
     def feed(self, key: str | Paste) -> str | None:
@@ -68,6 +69,9 @@ class LineInput:
         elif key != 'ctrl-r':
             # The answer has no history to search.
             self.answer.edit(key)
+        if self.hidden:
+            # The count's cursor is always at the end, so a hidden answer is only ever edited there.
+            self.answer.cursor = len(self.answer.text)
         return None
 
     def run(self, *, surface: PromptSurface, keys: Callable[[], QuestionKey]) -> str | None:

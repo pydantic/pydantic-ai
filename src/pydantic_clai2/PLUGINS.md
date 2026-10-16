@@ -2704,7 +2704,9 @@ from pydantic_clai2.ui.prompt.line_input import read_line
 
 async def sign_in(host: PluginHost, authorization_url: str) -> str:
     host.console.print(authorization_url, markup=False, highlight=False)
-    pasted = await read_line('Or paste the address your browser ended on (Esc cancels): ', console=host.console)
+    pasted = await read_line(
+        'Or paste the address your browser ended on (Esc cancels): ', console=host.console, hidden=True
+    )
     if pasted is None:
         return 'Sign-in cancelled.'
     ...

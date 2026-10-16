@@ -117,6 +117,17 @@ def test_long_answer_wraps_and_keeps_the_cursor_in_view() -> None:
     assert LineInput(prompt='Paste: ', hidden=True).frame(width=40)[1] == '\x1b[7m \x1b[27m'
 
 
+def test_hidden_answers_are_edited_only_at_the_end() -> None:
+    """The count cannot show where a moved cursor is, so moving it would edit text the user cannot see."""
+    line = LineInput(prompt='Code: ', hidden=True)
+    for key in ['a', 'left', 'b', 'home', 'c', 'left', 'backspace']:
+        line.feed(key)
+    assert line.answer.text == 'ab'
+    assert Text.from_ansi(line.frame(width=40)[1]).plain == '[2 characters] '
+    line.feed('backspace')
+    assert Text.from_ansi(line.frame(width=40)[1]).plain == '[1 character] '
+
+
 async def test_without_the_live_editor_it_is_a_plain_prompt() -> None:
     console = Console(file=io.StringIO())
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
