@@ -12071,6 +12071,16 @@ async def test_closing_records_the_usage_the_provider_reports_as_its_session_end
     assert session.context_window_used == 0.25
 
 
+async def test_closing_records_a_response_report_on_a_provider_whose_responses_are_requests() -> None:
+    """Such a provider counts a request as it records a response: a report made at the close only adds usage."""
+    conn = _EndingConnection([SessionUsage(RequestUsage(input_tokens=10))])
+    async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(request_limit=0)) as session:
+        pass
+
+    assert session.usage.input_tokens == 10
+    assert session.usage.requests == 0
+
+
 async def test_a_session_that_never_read_still_ends_the_provider_session() -> None:
     conn = _EndingConnection([SessionUsage(RequestUsage(audio_seconds=2), response_scoped=False)])
     async with RealtimeSession(conn, _noop_runner) as session:
@@ -12138,3 +12148,19 @@ async def test_usage_reported_as_the_session_ends_counts_against_the_limits() ->
     with pytest.raises(UsageLimitExceeded):
         async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(input_tokens_limit=5)):
             pass
+
+
+async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_report() -> None:
+    """A version 1 connection whose model makes requests of its own (as GPT-Live's backend does) counts each report."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Hi.', is_final=True),
+            SessionUsage(RequestUsage(input_tokens=1)),
+            SessionUsage(RequestUsage(input_tokens=2)),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, profile=RealtimeModelProfile(responses_are_requests=False))
+    async with session:
+        await drain_events(session)
+    assert (session.usage.requests, session.usage.input_tokens) == (2, 3)

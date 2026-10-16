@@ -26,7 +26,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
@@ -43,7 +43,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 
 followup = agent.run_sync(
@@ -64,7 +64,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -97,7 +97,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -123,7 +123,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 
 
 async def run_in_prepared_sprite() -> str:
@@ -177,7 +177,7 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
     raise error
 
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder(), hooks])
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder(), hooks])
 ```
 
 Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists until deleted. So a run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the Sprite behind. Its id is logged at INFO as `Created Sprite <id>` when it is created; delete it with `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id=...))`.
@@ -219,7 +219,7 @@ with workflow.unsafe.imports_passed_through():
 
 CLIENT = AsyncSpritesClient(token=os.environ['SPRITE_TOKEN'])
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='sprites_coder',
     capabilities=[SpritesSandbox(client=CLIENT), Coder(), TemporalDurability()],
 )

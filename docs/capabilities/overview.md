@@ -189,7 +189,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking, WebSearch
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     instructions='You are a research assistant. Be thorough and cite sources.',
     capabilities=[
         Thinking(effort='high'),
@@ -221,7 +221,7 @@ def refund_status(order_id: str) -> str:
     return f'Order {order_id}: refund issued on 2026-05-01.'
 
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[refunds])
+agent = Agent('{{ openai:medium }}', capabilities=[refunds])
 ```
 
 Add `defer_loading=True` and the bundle becomes an [on-demand capability](on-demand.md) that stays collapsed to a one-line catalog entry until the model loads it — like [Agent Skills](on-demand.md#loading-skills-from-markdown-files), which you can wrap in a `Capability` directly. See [The `Capability` convenience class](on-demand.md#the-capability-convenience-class) for the full API. For behavior beyond instructions, tools, and toolsets — lifecycle hooks, model settings, native tools — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as covered in [Building Custom Capabilities](custom.md).
@@ -430,16 +430,16 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch, XSearch
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     capabilities=[
         # Native when supported; DuckDuckGo fallback on unsupported models
         WebSearch(local='duckduckgo'),
         # Native when supported; markdownify-based fallback on unsupported models
         WebFetch(local=True),
         # Native when supported; direct image-model fallback otherwise
-        ImageGeneration(fallback_image_model='openai:gpt-image-1.5'),
+        ImageGeneration(fallback_image_model='{{ openai:image }}'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_subagent_model='xai:grok-4.3'),
+        XSearch(fallback_subagent_model='{{ xai:medium }}'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],
