@@ -455,7 +455,7 @@ Not every SDK can take the setting per request:
 
 | Model | Supported | Notes |
 |---|---|---|
-| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client. Requests over a [Responses WebSocket connection](models/openai.md#websocket-mode) aren't retried by the SDK, so the setting doesn't apply to them |
+| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client. |
 | Anthropic | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
 | Groq | ✅ | Full feature support |
 | Cohere | ✅ | Full feature support |

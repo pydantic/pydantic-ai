@@ -44,6 +44,7 @@ CURATED = {
     'posthog',
     'grain',
     'linear',
+    'web',
 }
 OPT_IN = {
     'herdr',
@@ -59,6 +60,7 @@ OPT_IN = {
     'posthog',
     'pylon',
     'slack',
+    'web',
 }
 
 

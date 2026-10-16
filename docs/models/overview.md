@@ -131,9 +131,15 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
+You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block.
 
-An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='{{ openai:medium }}')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
+What happens without that block depends on where a run's model comes from:
+
+- **The agent's own model, or a `Model` instance passed to a run:** the provider creates its HTTP client along with the model, and every run reuses it. Nothing closes the client until you enter and exit the agent, model or provider. An agent created with `defer_model_check=True` treats its model name like a model name passed to a run.
+- **A model name passed to a run**, as in `agent.run(..., model='{{ openai:medium }}')`, or returned by a [model selector](../capabilities/select-model.md): the run creates a new provider, with a new HTTP client, and closes the client when it ends, so no connections are reused. Inside `async with agent:`, the agent instead creates one provider per model name and reuses it for later runs until the block exits. A [`resolve_model_id`](../capabilities/resolve-model-id.md) capability can resolve the same name differently for each run, so with one, each run resolves the name again.
+- **A `Model` instance a model selector returns:** each run enters and exits the model, which closes its provider's HTTP client at the end of the run and creates a new one for the next. Enter the model yourself (`async with model:`) to keep the client open across runs.
+
+An HTTP client's connections belong to the event loop that opened them, so a client that stays open between runs can't be used from another event loop. Repeated [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] calls in one thread share an event loop, but a second `asyncio.run(agent.run(...))` with an agent that isn't entered fails with `RuntimeError: Event loop is closed`. When each run gets its own event loop, enter the agent inside it, so the client is closed before its event loop is, and the next one creates a new client.
 
 Pydantic AI only ever closes an HTTP client it created itself. A client you pass in is yours to close, whether it's an `http_client` or a provider SDK client, such as `openai_client`, `anthropic_client` (including `AsyncAnthropicVertex`), Google's `client`, or `xai_client`.
 
@@ -515,8 +521,9 @@ When the agent is [instrumented](../logfire.md), the model request (`chat`) span
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
 !!! note "Non-streaming only"
-    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
-    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
+    Response-based fallback only works with non-streamed requests. A streamed response has already reached you by the time it could be judged, so response handlers aren't applied to it: it's accepted as is, and a `UserWarning` is emitted. Exception-based fallback still applies while the stream is being opened.
+
+    A request is streamed whenever something consumes the run's events: [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] (which the [UI adapters](../ui/overview.md) use), [`agent.iter()`][pydantic_ai.agent.Agent.iter] with `node.stream()`, and [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] or [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] with an `event_stream_handler`, an [`agent.on_event`][pydantic_ai.agent.Agent.on_event] listener, or a capability that reacts to events, like the [event stream hooks](../hooks.md#event-stream-hooks).
 
 The `fallback_on` parameter accepts:
 

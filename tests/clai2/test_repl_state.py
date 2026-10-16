@@ -194,22 +194,26 @@ async def test_busy_session_resumes_as_a_fork_with_a_copy(workspace: Path) -> No
     assert dump(workspace, resumed.conversation_id).read_bytes() == b'state'
 
 
-async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    script = Script()
-    await turn(workspace, script, 'set', session_id=SESSION_ID)
-    assert dump(workspace, SESSION_ID).exists()
-
+def catalog(workspace: Path) -> 'Sessions[None, str]':
+    """The saved sessions as `/resume` and `PluginHost.sessions` manage them, from a shell on another session."""
     store = SqliteConversationStore(database=workspace / 'sessions.db')
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(workspace / 'config.db'),
         apply_setting=lambda key, settings: None,
     )
-    service = Sessions(
+    return Sessions(
         session=Session(Agent(TestModel()), deps=None, conversations=store, workspace=workspace),
         store=store,
         context=context,
     )
+
+
+async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = Script()
+    await turn(workspace, script, 'set', session_id=SESSION_ID)
+    assert dump(workspace, SESSION_ID).exists()
+    service = catalog(workspace)
 
     def delete(browser: SessionBrowser) -> str:
         browser.reload()
@@ -220,6 +224,20 @@ async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch
     monkeypatch.setattr(SessionBrowser, 'run', delete)
     assert await service.command([]) == ''
     assert not dump(workspace, SESSION_ID).exists()
+
+
+async def test_the_session_catalog_forks_and_deletes_the_state(workspace: Path) -> None:
+    """A fork or delete from `host.sessions`, as the web UI's sidebar makes, treats the REPL as `/resume` does."""
+    script = Script()
+    await turn(workspace, script, 'set', session_id=SESSION_ID)
+    service = catalog(workspace)
+    copy = await service.fork(SESSION_ID)
+    await turn(workspace, script, 'get', resume=copy.id)
+    assert script.results[-1] == '42', 'the copy continues from the REPL the original had'
+
+    await service.delete(SESSION_ID)
+    assert not dump(workspace, SESSION_ID).exists()
+    assert dump(workspace, copy.id).exists(), 'the copy keeps its own'
 
 
 async def test_unreadable_state_starts_a_fresh_repl(workspace: Path) -> None:
