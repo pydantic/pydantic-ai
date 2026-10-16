@@ -156,18 +156,18 @@ Tools from third-party services, most through the service's own hosted MCP serve
 |---|---|---|
 | [GitHub](github.md) | Harness | Read and change GitHub repositories, issues, pull requests, and other accessible resources. |
 | [Linear](linear.md) | Harness | Read and change Linear issues, projects, teams, and comments. |
-| [Notion](notion.md) | Harness | Search and change Notion workspace content. |
-| [Google Workspace](google-workspace.md) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
-| [StackOne](stackone.md) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
-| [Slack](slack.md) | Harness | Give an agent Slack messages, channels, and canvas tools. |
-| [Ordinal](ordinal.md) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
-| [Grain](grain.md) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
-| [Day AI](day-ai.md) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
-| [PostHog](posthog.md) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |
-| [Pylon](pylon.md) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
-| [LocalStack](localstack.md) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](macroscope.md) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
+| [LocalStack](localstack.md) | Harness | An emulated AWS environment with AWS CLI tools |
+| [Google Workspace](google-workspace.md) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
+| [Notion](notion.md) | Harness | Search and change Notion workspace content. |
+| [Slack](slack.md) | Harness | Give an agent Slack messages, channels, and canvas tools. |
+| [Day AI](day-ai.md) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
+| [Grain](grain.md) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Pylon](pylon.md) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
+| [StackOne](stackone.md) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
+| [PostHog](posthog.md) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |
 | [Logfire MCP](logfire-mcp.md) | Harness | Query Logfire telemetry and manage observability resources. |
+| [Ordinal](ordinal.md) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
 
 ### Web & research
 

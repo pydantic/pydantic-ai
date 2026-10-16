@@ -171,18 +171,18 @@ Tools from third-party services, most through the service's own hosted MCP serve
 |---|---|---|
 | [GitHub](pydantic_ai_harness/github/) | Harness | Read and change GitHub repositories, issues, pull requests, and other accessible resources. |
 | [Linear](pydantic_ai_harness/linear/) | Harness | Read and change Linear issues, projects, teams, and comments. |
-| [Notion](pydantic_ai_harness/notion/) | Harness | Search and change Notion workspace content. |
-| [Google Workspace](pydantic_ai_harness/google_workspace/) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
-| [StackOne](pydantic_ai_harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
-| [Slack](pydantic_ai_harness/slack/) | Harness | Give an agent Slack messages, channels, and canvas tools. |
-| [Ordinal](pydantic_ai_harness/ordinal/) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
-| [Grain](pydantic_ai_harness/grain/) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
-| [Day AI](pydantic_ai_harness/day_ai/) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
-| [PostHog](pydantic_ai_harness/posthog/) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |
-| [Pylon](pydantic_ai_harness/pylon/) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
-| [LocalStack](pydantic_ai_harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](pydantic_ai_harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
+| [LocalStack](pydantic_ai_harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
+| [Google Workspace](pydantic_ai_harness/google_workspace/) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
+| [Notion](pydantic_ai_harness/notion/) | Harness | Search and change Notion workspace content. |
+| [Slack](pydantic_ai_harness/slack/) | Harness | Give an agent Slack messages, channels, and canvas tools. |
+| [Day AI](pydantic_ai_harness/day_ai/) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
+| [Grain](pydantic_ai_harness/grain/) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Pylon](pydantic_ai_harness/pylon/) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
+| [StackOne](pydantic_ai_harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
+| [PostHog](pydantic_ai_harness/posthog/) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |
 | [Logfire MCP](pydantic_ai_harness/logfire_mcp/) | Harness | Query Logfire telemetry and manage observability resources. |
+| [Ordinal](pydantic_ai_harness/ordinal/) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
 
 ### Web & research
 
