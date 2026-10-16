@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 from uuid import uuid4
 
-from anyio import get_cancelled_exc_class, move_on_after
+from anyio import get_cancelled_exc_class, move_on_after, to_thread
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai._context_size import context_tokens
@@ -46,6 +46,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
 from pydantic_clai2.runtime.repl_cells import REPL_CELL, ReplCell
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
@@ -260,6 +261,7 @@ def fork_summary(source: ConversationSummary) -> ConversationSummary:
         tags=source.tags,
         title_source=source.title_source,
         model=source.model,
+        checkout=source.checkout,
     )
 
 
@@ -338,6 +340,8 @@ class Session(Generic[DepsT, OutputT]):
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
         self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self._identity: ProjectIdentity | None = None
+        """The Git checkout `workspace` is in, read once, when a session is first saved here."""
         self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
         self._published = (self.conversation_id, self.title)
@@ -458,7 +462,7 @@ class Session(Generic[DepsT, OutputT]):
             title_source=source.title_source,
             model=self.model,
         )
-        self.summary = await self.conversations.save(summary=copy, messages=self._messages)
+        self.summary = await self.conversations.save(summary=await self._with_checkout(copy), messages=self._messages)
         self._copy_repl(source.id, self.summary.id)
         telemetry.record('conversation forked', messages=len(self._messages))
         await self._publish()
@@ -497,8 +501,9 @@ class Session(Generic[DepsT, OutputT]):
         self._running = True
         try:
             if self.conversations is not None:
+                summary = replace(self.summary, outcome='ready', run_id=None, model=self.model)
                 self.summary = await self.conversations.save(
-                    summary=replace(self.summary, outcome='ready', run_id=None, model=self.model), messages=messages
+                    summary=await self._with_checkout(summary), messages=messages
                 )
             self._messages = list(messages)
         finally:
@@ -578,6 +583,18 @@ class Session(Generic[DepsT, OutputT]):
         """Refuse a conversation from another directory unless the `/resume` browser confirmed it."""
         if workspace != self.workspace:
             raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
+
+    async def _with_checkout(self, summary: ConversationSummary) -> ConversationSummary:
+        """`summary` with the Git checkout of this session's directory, so browsers can group it once that is gone.
+
+        Git is read once, off the event loop. A session resumed from another directory keeps the checkout it saved.
+        """
+        if summary.workspace != self.workspace:
+            return summary
+        if self._identity is None:
+            self._identity = await to_thread.run_sync(project_identity, self.workspace)
+        checkout = git_checkout(self._identity)
+        return summary if checkout is None else replace(summary, checkout=checkout)
 
     def _mark_interrupted(self) -> None:
         self._messages = interrupted_history(self._messages)
@@ -726,7 +743,7 @@ class Session(Generic[DepsT, OutputT]):
                         candidate = replace(candidate, title=title or 'New session')
                     accepted: list[ModelMessage] = [*previous, *submitted]
                     self.summary = await self.conversations.save(
-                        summary=replace(candidate, outcome='running'), messages=accepted
+                        summary=await self._with_checkout(replace(candidate, outcome='running')), messages=accepted
                     )
                     self._messages = accepted
                 with (

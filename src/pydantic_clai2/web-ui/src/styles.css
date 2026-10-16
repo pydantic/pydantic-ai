@@ -313,6 +313,49 @@ pre {
   white-space: nowrap;
 }
 
+.worktree.nested {
+  margin: 2px 0 6px 12px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.worktree-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px 4px 6px;
+  color: var(--faint);
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.worktree-title:hover,
+.worktree.current > .worktree-title {
+  color: var(--text-soft);
+}
+
+.worktree-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-tag {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.worktree.missing .session-title {
+  color: var(--muted);
+}
+
 .chevron {
   color: var(--faint);
   transition: transform 0.15s ease;

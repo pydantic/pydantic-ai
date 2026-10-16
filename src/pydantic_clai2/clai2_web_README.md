@@ -14,7 +14,12 @@ ends the web UI; `/web status` shows its address.
 To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web`). It prints
 the address, opens it, and logs the conversation to the terminal until Ctrl-C.
 
-The sidebar lists the sessions `/resume` shows, grouped by project, with search. Click one to
+The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
+after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
+the current ones first and search across all of them. A folder outside Git is a project of its own.
+A session remembers its checkout when it is saved, so one from a worktree you have since removed
+stays under its project, marked removed; an older session from a removed folder is placed by
+where it was, or listed under Removed folders. Click one to
 switch to it, or use its menu to rename, fork, or delete it; a session saved in another
 directory opens read-only. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
 Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.

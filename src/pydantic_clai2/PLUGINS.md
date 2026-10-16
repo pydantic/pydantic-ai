@@ -1203,7 +1203,9 @@ terminal enters, and both show them. A capability the plugin binds gives the bro
 conversation's runs as turns, with their stream events (text, thinking, tool calls and results,
 shell output, diffs), but not a background `/fork`'s, though it fires the turn moments too.
 Command results come from `on_command_end` and history from `host.conversation`. The
-sidebar lists `host.sessions`, the store `/resume` uses: clicking a session sends
+sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
+repository, then by checkout, with a session from a removed worktree under its repository by the
+checkout saved with it (`ConversationSummary.checkout`). Clicking a session sends
 `/resume ID`, so a session saved in another directory, which `/resume ID` refuses, opens
 read-only. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
