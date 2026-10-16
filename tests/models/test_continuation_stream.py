@@ -1422,6 +1422,15 @@ def _background_segments() -> list[_Segment]:
     ]
 
 
+def _recording_sleep(delays: list[float]) -> Callable[[float], Awaitable[None]]:
+    """An agent graph sleep that records each delay instead of waiting."""
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    return sleep
+
+
 async def test_a_streamed_run_with_pending_output_ends_instead_of_waiting() -> None:
     """With `PendingModelResponse` in the output type, a streamed run ends on a pending background job.
 
@@ -1432,10 +1441,7 @@ async def test_a_streamed_run_with_pending_output_ends_instead_of_waiting() -> N
     agent = Agent(model, output_type=[str, PendingModelResponse])
     delays: list[float] = []
 
-    async def record_sleep(delay: float) -> None:
-        delays.append(delay)
-
-    with Agent.using_sleep(record_sleep):
+    with Agent.using_sleep(_recording_sleep(delays)):
         async with agent.run_stream('Hello') as result:
             output = await result.get_output()
         assert isinstance(output, PendingModelResponse)
@@ -1455,10 +1461,7 @@ async def test_a_streamed_run_without_pending_output_waits_for_the_job() -> None
     model = _FakeModel(_background_segments())
     delays: list[float] = []
 
-    async def record_sleep(delay: float) -> None:
-        delays.append(delay)
-
-    with Agent.using_sleep(record_sleep):
+    with Agent.using_sleep(_recording_sleep(delays)):
         async with Agent(model).run_stream('Hello') as result:
             assert await result.get_output() == 'done'
     assert (model.segments, delays) == ([], [0.5])
