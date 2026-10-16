@@ -456,12 +456,9 @@ async def test_a_legacy_retry_prompt_part_is_translated_to_the_part_it_always_me
     `cause`. Nothing about the old part survives into the request, so no adapter has to know it — and
     the profile flag picks the same voices it picks for a part stored as feedback in the first place.
     """
-    try:
+    with pytest.raises(ValidationError) as exc_info:
         Answer.model_validate({'count': 'lots'})
-    except ValidationError as e:
-        errors = e.errors(include_url=False, include_context=False)
-    else:  # pragma: no cover
-        raise AssertionError('expected a validation error')
+    errors = exc_info.value.errors(include_url=False, include_context=False)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='how many?')]),
@@ -970,15 +967,12 @@ def test_retry_prompt_part_from_error_builds_the_legacy_content():
     `_output.build_retried_tool_return` instead — but answering a deferred call with a retry of your
     own still needs the same content shape, so the constructor keeps its job.
     """
-    try:
+    with pytest.raises(ValidationError) as exc_info:
         Answer.model_validate({'count': 'lots'})
-    except ValidationError as e:
-        with pytest.warns(PydanticAIDeprecationWarning):
-            part = RetryPromptPart.from_error(  # pyright: ignore[reportDeprecated]
-                e, tool_name='count_things', tool_call_id='call_1'
-            )
-    else:  # pragma: no cover
-        raise AssertionError('expected a validation error')
+    with pytest.warns(PydanticAIDeprecationWarning):
+        part = RetryPromptPart.from_error(  # pyright: ignore[reportDeprecated]
+            exc_info.value, tool_name='count_things', tool_call_id='call_1'
+        )
 
     assert part == snapshot(
         legacy_retry_prompt_part(
