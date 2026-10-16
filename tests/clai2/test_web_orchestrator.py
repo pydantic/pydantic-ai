@@ -167,9 +167,12 @@ def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -
         assert web_.post('/api/orchestrator/clear').status_code == 409
         running = web_.get('/api/orchestrator/state').json()
         assert running['running'] and [item['kind'] for item in running['items']] == ['user', 'assistant']
-        assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': True}
-        # A second stop, before the turn ended, does not cut its ending short.
-        assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': True}
+
+        async def stop_twice() -> list[bool]:
+            # Both on one tick of the loop, before the turn could end: the second stop does not cut its ending short.
+            return [orchestrator.interrupt(), orchestrator.interrupt()]
+
+        assert web_.portal.call(stop_twice) == [True, True]
         assert orchestrator_until(socket, TurnEnded)[1] == TurnEnded(outcome='cancelled')
         stopped = web_.get('/api/orchestrator/state').json()['items']
         assert stopped[0]['text'] == 'Work until I stop you', 'what ran before the stop is kept'
