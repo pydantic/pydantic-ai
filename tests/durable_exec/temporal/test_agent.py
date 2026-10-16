@@ -543,6 +543,12 @@ async def test_temporal_agent_rejects_cancellation_token() -> None:
         await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
 
 
+async def test_temporal_agent_rejects_timeout() -> None:
+    """The deprecated wrapper agent has no replay-safe clock, so it points to `TemporalDurability` instead."""
+    with pytest.raises(UserError, match='`timeout` is not supported by the deprecated `TemporalAgent`'):
+        await _legacy_migration_agent.run('hello', timeout=1)
+
+
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
 
 
@@ -1954,13 +1960,6 @@ async def test_temporal_agent_realtime_session_outside_workflow():
     async with simple_temporal_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
-
-
-async def test_temporal_agent_rejects_connect():
-    """Runs use the Temporal model, so a connection would open a socket that no run uses."""
-    with pytest.raises(UserError, match='`TemporalAgent` does not support explicit connections'):
-        async with simple_temporal_agent.connect():
-            pytest.fail('TemporalAgent runs cannot use a connection')  # pragma: no cover
 
 
 async def simple_event_stream_handler(
@@ -3456,6 +3455,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
             '_run_held_toolsets',
             '_tool_name_path',
             'agent',
+            'deadline',
             'deps',
             'discovered_tool_names',
             'max_retries',

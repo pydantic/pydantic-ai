@@ -4368,7 +4368,10 @@ class RealtimeSession:
             annotate_tool_call_otel_metadata(response, instrumentation.model_request_parameters)
 
     def _core_advanced(self, core: SessionCore) -> None:
-        """Wake whoever waits on what the core owes, and bound how long a missing transcript or a stalled response holds history back."""
+        """Wake whoever waits on what the core owes.
+
+        And bound how long a missing transcript, or a stalled response, holds history back.
+        """
         self._exchange_progress.set()
         if (turn_id := core.transcript_holding_history()) is not None and turn_id not in self._transcript_watchdogs:
             self._transcript_watchdogs[turn_id] = asyncio.get_running_loop().call_later(

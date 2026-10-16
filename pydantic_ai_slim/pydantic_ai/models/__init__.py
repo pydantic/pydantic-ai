@@ -13,7 +13,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
@@ -409,8 +409,9 @@ class ModelRequestContext:
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
         """The model responses whose usage was counted for this request.
 
-        Empty until the model responds. It includes responses a hook later replaced, and can hold more
-        than one response when a continued response was partly billed before an error hook recovered.
+        Empty until the model responds. It includes responses a hook later replaced and the partial response
+        of a stream the consumer stopped, and can hold more than one response when a continued response was
+        partly billed before an error hook recovered.
         Request contexts copied with `dataclasses.replace()` see the same responses.
 
         Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
@@ -562,15 +563,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
-    def connect(self) -> AbstractAsyncContextManager[Self]:
-        """Open a persistent connection and yield a model bound to it.
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client the provider created if it can't be used on the running event loop.
 
-        The context owns the connection and closes it on exit. The source model remains unchanged.
-        Models that do not implement explicit connections raise [`UserError`][pydantic_ai.exceptions.UserError].
-        See [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]
-        for Responses WebSocket support.
+        An agent calls this at the start of each run, so that a model the run uses without entering it gets a new
+        client when the run is on a different event loop than the client was last used on. See
+        [`Provider`][pydantic_ai.providers.Provider]. A model that wraps others calls it on each of them.
         """
-        raise UserError(f'`{type(self).__name__}` does not support explicit connections.')
+        if (provider := self.provider) is not None:
+            provider._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
 
     @property
     def settings(self) -> ModelSettings | None:

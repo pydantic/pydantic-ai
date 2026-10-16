@@ -49,7 +49,7 @@ from .codec import (
 
 @dataclass
 class _Turn:
-    """A spoken turn, from its first transcript until its transcript is whole (marked finished, or no more will come)."""
+    """A spoken turn, from its first transcript until its transcript is whole (marked finished, or no more comes)."""
 
     id: str
     identified: bool = False
@@ -156,9 +156,9 @@ class InferredLifecycle:
         self._open_named = False
         """Whether the provider named the response under way, by the `response_id` of its content."""
         self._ended_by_usage: str | None = None
-        """The response a usage report or its tool call just ended, whose terminal, if one follows, ends nothing more."""
+        """The response a usage report or its tool call just ended: its terminal, if one follows, ends nothing more."""
         self._cut_off = False
-        """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`), so more output is another."""
+        """Whether the response under way was cut off (`RealtimeResponseInterruptedEvent`): more output is another."""
         self._deferred: ResponseDone | None = None
         """The terminal of a response the model said the exchange continues past (`interaction_status=IN_PROGRESS`):
         it stays open for the tool call it was stalling for, and ends at anything else."""
@@ -324,7 +324,7 @@ class InferredLifecycle:
     # --- what the server says ---------------------------------------------------------------------
 
     def frame_for(self, codec: Sequence[RealtimeCodecEvent]) -> RealtimeFrame:
-        """The frame to yield for the codec events one provider message makes: them, with the lifecycle events around."""
+        """The frame to yield for the codec events one provider message makes, with the lifecycle events around them."""
         turn_taken = self.takes_turn(codec)
         frame: RealtimeFrame = [*self.take_pending()]
         if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
@@ -348,9 +348,9 @@ class InferredLifecycle:
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         """Whether the provider message `codec` makes has the model take the turn, whatever its output shows.
 
-        An extension point for a subclass whose connection knows where the model takes the turn better than its output shows
-        (see `audio_starts_response`): a response then starts with the message's audio, or after its events if it
-        has none, if none is under way. `False` by default.
+        An extension point for a subclass whose connection knows where the model takes the turn better than its
+        output shows (see `audio_starts_response`): a response then starts with the message's audio, or after its
+        events if it has none, if none is under way. `False` by default.
         """
         return False
 
@@ -732,7 +732,7 @@ class InferredLifecycle:
     # --- user turns and inputs ----------------------------------------------------------------------
 
     def _close_turn(self, events: list[LifecycleEvent], *, turn_id: str | None = None) -> None:
-        """The joined turn's reply (to `turn_id`, if given) is over, or was cut off: no more of its transcript is coming."""
+        """The joined turn's reply (to `turn_id`, if given) is over, or was cut off: no more of its transcript comes."""
         turn = self._turn
         if turn is None or not turn.joined or (turn_id is not None and turn.id != turn_id):
             return

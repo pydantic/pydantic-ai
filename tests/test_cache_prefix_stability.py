@@ -24,14 +24,25 @@ that test asserts the request *changes*, documenting the protocol-version limita
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 import pytest
 from cassetter import Cassette
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import StepStartUIPart, UIMessage
 
 from .conftest import try_import
 
@@ -44,12 +55,24 @@ with try_import() as ag_ui_reasoning_successful:
     from ag_ui.core import ReasoningMessage  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 with try_import() as openai_imports_successful:
+    from openai.types.chat import ChatCompletionMessage
+
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
+    from .models.mock_openai import (
+        MockOpenAI,
+        completion_message as openai_completion_message,
+        get_mock_chat_completion_kwargs as get_mock_openai_kwargs,
+    )
+
 with try_import() as anthropic_imports_successful:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = [pytest.mark.vcr]
 
@@ -61,6 +84,25 @@ def _post_bodies(vcr: Cassette) -> list[bytes | str | None]:
 
 def _vercel_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
     return VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(history))
+
+
+def _vercel_stream_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
+    """Round-trip through the shape an AI SDK client holds after streaming a run.
+
+    The client accumulates every model response of a run into one assistant `UIMessage`,
+    starting each response (a "step") with a `step-start` part, rather than the one message per
+    response that `dump_messages` writes.
+    """
+    ui_messages: list[UIMessage] = []
+    for ui_message in VercelAIAdapter.dump_messages(history):
+        step = [StepStartUIPart(), *ui_message.parts]
+        if ui_message.role == 'assistant' and ui_messages and ui_messages[-1].role == 'assistant':
+            ui_messages[-1].parts = [*ui_messages[-1].parts, *step]
+        elif ui_message.role == 'assistant':
+            ui_messages.append(ui_message.model_copy(update={'parts': step}))
+        else:
+            ui_messages.append(ui_message)
+    return VercelAIAdapter.load_messages(ui_messages)
 
 
 def _ag_ui_roundtrip_latest(history: list[ModelMessage]) -> list[ModelMessage]:
@@ -109,6 +151,64 @@ async def test_openai_tool_call_roundtrip_wire_stable(
 
     original_body, roundtripped_body = _post_bodies(vcr)[-2:]
     assert roundtripped_body == original_body
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(_vercel_stream_roundtrip, id='vercel_stream'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui',
+            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
+        ),
+    ],
+)
+async def test_parallel_tool_calls_roundtrip_wire_stable(
+    allow_model_requests: None,
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+):
+    """Parallel tool calls re-send with an identical request after a UI round-trip.
+
+    The calls must come back as one assistant message followed by all their results, as the model
+    made them; one assistant message per call would move the cacheable prefix and misrepresent
+    what the model did. The two requests are compared as built, not as recorded (a cassette
+    replays its recording whatever body is sent), so this is a mocked test.
+    """
+
+    def parallel_calls(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if isinstance(messages[-1].parts[-1], ToolReturnPart):
+            return ModelResponse(parts=[TextPart('Sunny in both.')])
+        return ModelResponse(
+            parts=[
+                TextPart('Checking both cities.'),
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_paris'),
+                ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_london'),
+            ]
+        )
+
+    generator = Agent(FunctionModel(parallel_calls))
+
+    @generator.tool_plain
+    def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    history = (await generator.run('What is the weather in Paris and in London?')).all_messages()
+
+    ok = completion_message([BetaTextBlock(text='OK', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    client = MockAnthropic.create_mock([ok, ok])
+    probe = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
+    await probe.run('Reply with exactly: OK', message_history=history)
+    await probe.run('Reply with exactly: OK', message_history=roundtrip(history))
+
+    original, roundtripped = (
+        json.dumps(kwargs['messages'], sort_keys=True, default=str)
+        for kwargs in get_mock_chat_completion_kwargs(client)
+    )
+    assert '"call_london"' in original and original.count('"tool_use"') == 2
+    assert roundtripped == original
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -169,3 +269,48 @@ async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
 
     original_body, roundtripped_body = _post_bodies(vcr)[-2:]
     assert roundtripped_body != original_body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui',
+            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
+        ),
+    ],
+)
+async def test_openai_spaced_tool_call_args_roundtrip_wire_stable(
+    allow_model_requests: None,
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+):
+    """Raw tool-call args with whitespace re-send with an identical request body after a UI round-trip.
+
+    Many models (DeepSeek, Mistral, Cerebras, older GPT-4o snapshots) return arguments like `{"city": "Paris"}`,
+    which the history keeps as that string. Vercel AI carries the call's input as an object, so the round-tripped
+    copy holds a dict that serializes compactly. The prompt cache is keyed on the bytes sent, so both forms must
+    render the same `arguments` string. This is mocked rather than recorded because VCR here doesn't match on the
+    request body, and the real `gpt-4o` already returns compact arguments.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', '{"city": "Paris", "days": 2}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ModelResponse(parts=[TextPart('It is sunny in Paris.')]),
+    ]
+
+    bodies: list[str] = []
+    for messages in (history, roundtrip(history)):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
+    assert '"arguments": "{\\"city\\":\\"Paris\\",\\"days\\":2}"' in original_body

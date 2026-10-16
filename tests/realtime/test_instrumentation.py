@@ -456,8 +456,8 @@ async def test_session_and_tool_spans_with_usage() -> None:
     # Every span in a session tree carries the realtime marker — the tool span is created by the
     # shared `Instrumentation` capability, which marks it only when the active model is realtime.
     assert all(s.attributes is not None and s.attributes.get('pydantic_ai.realtime') is True for s in spans.values())
-    # The capability receives the raw call, matching the standard tool-manager path.
-    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city": "Paris"}'
+    # The capability receives the call's args as compact JSON, matching the standard tool-manager path.
+    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city":"Paris"}'
     assert tool.attributes['gen_ai.tool.call.result'] == 'sunny'
     # Both the `chat` span and the `execute_tool` span are children of the session span (siblings),
     # matching the classic agent-run tree where `execute_tool` follows `chat` rather than nesting in it.

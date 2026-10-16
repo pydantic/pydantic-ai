@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
+from functools import partial
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -31,6 +33,9 @@ from . import Provider
 
 class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     """Provider for Hugging Face."""
+
+    _client_factory: Callable[[], AsyncInferenceClient] | None = None
+    """Builds the `AsyncInferenceClient` again, when this provider built it."""
 
     @property
     def name(self) -> str:
@@ -128,6 +133,20 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             raise ValueError('Cannot provide both `base_url` and `provider_name`.')
 
         if hf_client is None:
-            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # pyright: ignore[reportArgumentType]
+            self._client_factory = partial(
+                AsyncInferenceClient,
+                api_key=api_key,
+                provider=provider_name,  # pyright: ignore[reportArgumentType]
+                base_url=base_url,
+            )
+            self._client = self._client_factory()
         else:
             self._client = hf_client
+
+    def _refresh_http_client(self) -> None:
+        """Rebuild the `AsyncInferenceClient` this provider built if it was used on an event loop that isn't running.
+
+        The client opens its HTTP client on first use and keeps it, so it can't be used from another event loop.
+        """
+        if self._client_factory is not None and not self._entered_count and self._moved_to_another_event_loop():
+            self._client = self._client_factory()

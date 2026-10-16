@@ -4589,7 +4589,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
                     'type': 'function_call',
                     'name': 'get_weather',
                     'call_id': 'tc_1',
-                    'arguments': '{"city": "Paris"}',
+                    'arguments': '{"city":"Paris"}',
                 },
             },
             {
