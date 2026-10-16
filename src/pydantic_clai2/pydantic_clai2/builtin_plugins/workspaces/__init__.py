@@ -5,7 +5,7 @@ profiles of a backend with its options. This release has one backend, `local-wor
 this machine whose CLAI runs as you with your own settings and sign-ins, so nothing is copied into it.
 
 The live workspaces are kept in a registry in CLAI's state directory, so every CLAI lists the same ones;
-see `registry`. `Workspaces` in `manager` is what `/workspaces` and the `orchestrator` plugin call.
+see `registry`. `Workspaces` in `manager` is what `/workspaces` and the web UI's orchestrator call.
 """
 
 import html
