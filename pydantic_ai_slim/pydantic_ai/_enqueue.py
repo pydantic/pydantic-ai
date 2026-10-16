@@ -232,9 +232,18 @@ def stamped_messages(
     return messages
 
 
-def deliver_asap_messages(
-    ctx: RunContext[Any], queue: PendingMessageQueue, request_context: ModelRequestContext
-) -> ModelRequestContext:
+def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
+    """The run's pending-message queue.
+
+    Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec guards,
+    synthetic contexts) never reach the code that drains it.
+    """
+    queue = ctx.pending_messages
+    assert isinstance(queue, PendingMessageQueue)
+    return queue
+
+
+def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
     """Deliver the queued `'asap'` messages into the request being prepared.
 
     Each drained request is appended to both `request_context.messages` (so the model sees it this
@@ -243,7 +252,7 @@ def deliver_asap_messages(
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the messages
     exactly as delivered.
     """
-    for pending in queue.pop_priority('asap'):
+    for pending in run_queue(ctx).pop_priority('asap'):
         messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
         request_context.messages = [*request_context.messages, *messages]
         ctx.messages.extend(messages)

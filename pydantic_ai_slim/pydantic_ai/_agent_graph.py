@@ -2005,9 +2005,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # one call, which is what a turn-scoped reminder needs. Not when resuming a suspended response: that
         # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
         if self._resume_suspended is None:
-            queue = ctx.state.pending_messages
-            assert isinstance(queue, _enqueue.PendingMessageQueue)
-            processed_context = _enqueue.deliver_asap_messages(run_context, queue, processed_context)
+            processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original

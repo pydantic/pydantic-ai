@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import PendingMessageQueue, deliver_asap_messages, stamped_messages
+from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
@@ -16,14 +16,6 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
-
-
-def _queue(ctx: RunContext[Any]) -> PendingMessageQueue:
-    # Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec
-    # guards, synthetic contexts) never reach this drain.
-    queue = ctx.pending_messages
-    assert isinstance(queue, PendingMessageQueue)
-    return queue
 
 
 class PendingMessageDrainCapability(AbstractCapability[Any]):
@@ -68,7 +60,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
         messages exactly as delivered here.
         """
-        return deliver_asap_messages(ctx, _queue(ctx), request_context)
+        return deliver_asap_messages(ctx, request_context)
 
 
 def drain_pending_messages_at_end(
@@ -97,7 +89,7 @@ def drain_pending_messages_at_end(
     # final step (e.g. a background task completing while the model produced
     # its final response) gets delivered before `'when_idle'` messages, and the
     # agent gets another turn rather than terminating with the message lost.
-    leftover_asap, when_idle = _queue(ctx).drain_at_end()
+    leftover_asap, when_idle = run_queue(ctx).drain_at_end()
     if not leftover_asap and not when_idle:
         return result
 
