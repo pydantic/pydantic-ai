@@ -592,6 +592,27 @@ class _Delegation:
     """
 
 
+class _LiveLifecycle(InferredLifecycle):
+    """GPT-Live's inferred lifecycle.
+
+    Live transcribes the user as they speak, so words over a reply are reported while it goes on, and its output is
+    a continuous audio track, silent between replies: the connection says where the model takes the turn instead
+    (`turn_taken`).
+    """
+
+    transcripts_lag_replies = False
+    audio_starts_response = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.turn_taken = False
+        """The provider message being mapped has the model take the turn (see `_open_response()`)."""
+
+    def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
+        took_turn, self.turn_taken = self.turn_taken, False
+        return took_turn
+
+
 class OpenAILiveConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI GPT-Live API.
 
@@ -690,9 +711,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
         # Which response, user turn, and input each frame is about (see `frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
-        self._lifecycle = InferredLifecycle(transcripts_lag_replies=False, audio_starts_response=False)
-        # Whether the frame just mapped had the model take the turn (see `_open_response()`).
-        self._took_turn = False
+        self._lifecycle = _LiveLifecycle()
 
     @property
     def model_name(self) -> str | None:
@@ -728,12 +747,8 @@ class OpenAILiveConnection(RealtimeConnection):
     # --- sending ----------------------------------------------------------------------------------
 
     async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
-        input_index = self._lifecycle.input_sent(content)
-        try:
+        with self._lifecycle.sending(content) as input_index:
             delivered = await self._send_input(content)
-        except BaseException:
-            self._lifecycle.input_failed(input_index)
-            raise
         if not delivered:
             # A tool result whose backend gave up on the call: nothing will reply to it.
             self._lifecycle.input_unanswerable(input_index)
@@ -950,8 +965,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     def _frame(self, codec: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """One frame's codec events, with the lifecycle events around them."""
-        took_turn, self._took_turn = self._took_turn, False
-        return self._lifecycle.message(codec, takes_turn=took_turn)
+        return self._lifecycle.frame_for(codec)
 
     async def frames(self) -> AsyncIterator[RealtimeFrame]:  # noqa: C901
         # One read is always in flight: the next one starts before this frame is handled, so nothing
@@ -1166,7 +1180,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._response_open = True
         # Its reply starts here, even with nothing of it to report: work it delegated, or speech a WebRTC
         # sideband doesn't forward.
-        self._took_turn = True
+        self._lifecycle.turn_taken = True
         return events
 
     def _map_frame(self, raw: str | bytes) -> list[RealtimeCodecEvent]:

@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 from collections import OrderedDict
 from collections.abc import Iterator
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -55,6 +56,7 @@ from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
+    LifecycleEvent,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
@@ -78,6 +80,7 @@ from pydantic_ai.realtime.codec import (
     ToolCallCancelled,
     ToolResult,
 )
+from pydantic_ai.realtime.openai_live import _LiveLifecycle  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage
 
 
@@ -98,9 +101,9 @@ def feed(session_core: SessionCore, *items: CoreInput) -> SessionCore:
     return session_core
 
 
-def lifecycle_message(tracker: InferredLifecycle, session_core: SessionCore, *codec: RealtimeCodecEvent) -> None:
+def lifecycle_frame(tracker: InferredLifecycle, session_core: SessionCore, *codec: RealtimeCodecEvent) -> None:
     """Apply what the tracker makes of one provider message to the core."""
-    for event in tracker.message(list(codec)):
+    for event in tracker.frame_for(list(codec)):
         assert not isinstance(event, StaleEvent)
         session_core.apply(event)
 
@@ -1144,21 +1147,19 @@ def test_a_turn_recorded_after_the_reply_to_it_is_evicted_before_that_reply() ->
 
 def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carries_on() -> None:
     """Gemini's extended-thinking model holds its filler open (`IN_PROGRESS`): the user's words then don't end the wait."""
-    tracker = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
+    tracker = InferredLifecycle(transcribes=True)
     session_core = core()
 
     session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
     tracker.input_sent('Weather?')
-    lifecycle_message(tracker, session_core, OutputTranscript('Let me check.'))
-    lifecycle_message(
-        tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True)
-    )
+    lifecycle_frame(tracker, session_core, OutputTranscript('Let me check.'))
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
     wait = session_core.wait_tokens()
-    lifecycle_message(tracker, session_core, InputTranscript('Hm'))
+    lifecycle_frame(tracker, session_core, InputTranscript('Hm'))
     assert session_core.still_owed(wait) != frozenset()
-    lifecycle_message(tracker, session_core, OutputTranscript('Still checking.'))
+    lifecycle_frame(tracker, session_core, OutputTranscript('Still checking.'))
     assert session_core.still_owed(wait) != frozenset()
-    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
     assert session_core.still_owed(wait) == frozenset()
     assert summary(session_core.all_messages()) == snapshot(
         [
@@ -1181,18 +1182,16 @@ def test_a_reply_the_provider_will_never_give_is_lost_once() -> None:
 
 def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
     """Gemini reports the words that cut a reply off ahead of the cut, in one message: they are new speech."""
-    tracker = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
+    tracker = InferredLifecycle(transcribes=True)
     session_core = core()
 
-    lifecycle_message(tracker, session_core, InputTranscript('First question'))
-    lifecycle_message(tracker, session_core, OutputTranscript('Let me check.'))
-    lifecycle_message(
-        tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True)
-    )
-    lifecycle_message(tracker, session_core, InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
-    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
-    lifecycle_message(tracker, session_core, OutputTranscript('Sure.'))
-    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
+    lifecycle_frame(tracker, session_core, InputTranscript('First question'))
+    lifecycle_frame(tracker, session_core, OutputTranscript('Let me check.'))
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True))
+    lifecycle_frame(tracker, session_core, InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
+    lifecycle_frame(tracker, session_core, OutputTranscript('Sure.'))
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
     assert summary(session_core.all_messages()) == snapshot(
         [
             '{user:First question}',
@@ -1202,11 +1201,11 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
         ]
     )
     # Likewise over a reply the model started on its own, before any transcript of what it answers came.
-    lifecycle_message(tracker, session_core, OutputTranscript('By the way...'))
-    lifecycle_message(tracker, session_core, InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
-    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
-    lifecycle_message(tracker, session_core, OutputTranscript('Okay.'))
-    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
+    lifecycle_frame(tracker, session_core, OutputTranscript('By the way...'))
+    lifecycle_frame(tracker, session_core, InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
+    lifecycle_frame(tracker, session_core, OutputTranscript('Okay.'))
+    lifecycle_frame(tracker, session_core, SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
     assert summary(session_core.all_messages()[4:]) == snapshot(
         ['None [assistant:By the way...] interrupted None', '{user:Stop}', 'None [assistant:Okay.] complete stop']
     )
@@ -1214,9 +1213,10 @@ def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
 
 def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:
     """GPT-Live's audio track runs on between replies, so its connection says where the model takes the turn."""
-    tracker = InferredLifecycle(transcribes=True, audio_starts_response=False)
-    assert [type(event).__name__ for event in tracker.message([AudioDelta(b'\x00\x00')])] == snapshot(['AudioDelta'])
-    assert [type(event).__name__ for event in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
+    tracker = _LiveLifecycle()
+    assert [type(event).__name__ for event in tracker.frame_for([AudioDelta(b'\x00\x00')])] == snapshot(['AudioDelta'])
+    tracker.turn_taken = True
+    assert [type(event).__name__ for event in tracker.frame_for([AudioDelta(b'\x00\x10')])] == (
         snapshot(['ResponseStarted', 'AudioDelta'])
     )
 
@@ -1231,10 +1231,10 @@ def test_usage_naming_an_unknown_response_with_none_under_way_counts_toward_the_
 def test_a_tool_result_the_backend_will_never_take_doesnt_join_the_conversation() -> None:
     """Held behind the reply under way, a result that goes nowhere stays out of the conversation when that reply ends."""
     tracker = InferredLifecycle(transcribes=True)
-    tracker.message([OutputTranscript('Let me check.')])
+    tracker.frame_for([OutputTranscript('Let me check.')])
     input_id = tracker.input_sent(ToolResult('call_1', output='sunny'))
     tracker.input_unanswerable(input_id)
-    assert [type(event).__name__ for event in tracker.message([ResponseDone()])] == snapshot(
+    assert [type(event).__name__ for event in tracker.frame_for([ResponseDone()])] == snapshot(
         ['InputLost', 'ResponseDone', 'ResponseEnded']
     )
 
@@ -1269,14 +1269,25 @@ def test_a_turn_still_transcribing_when_the_next_starts_holds_no_history_back() 
     """Words naming no turn are the latest one's, so a joined turn the next one replaces has all of its words."""
     tracker = InferredLifecycle(transcribes=True)
     session_core = core()
-    lifecycle_message(tracker, session_core, RealtimeInputSpeechStartEvent())
-    lifecycle_message(tracker, session_core, InputTranscript('Hello'))
-    lifecycle_message(tracker, session_core, RealtimeInputSpeechEndEvent())
-    lifecycle_message(tracker, session_core, RealtimeInputSpeechStartEvent())
-    lifecycle_message(tracker, session_core, InputTranscript('again', is_final=True))
-    lifecycle_message(tracker, session_core, RealtimeInputSpeechEndEvent())
-    lifecycle_message(tracker, session_core, OutputTranscript('Hi.'), ResponseDone())
+    lifecycle_frame(tracker, session_core, RealtimeInputSpeechStartEvent())
+    lifecycle_frame(tracker, session_core, InputTranscript('Hello'))
+    lifecycle_frame(tracker, session_core, RealtimeInputSpeechEndEvent())
+    lifecycle_frame(tracker, session_core, RealtimeInputSpeechStartEvent())
+    lifecycle_frame(tracker, session_core, InputTranscript('again', is_final=True))
+    lifecycle_frame(tracker, session_core, RealtimeInputSpeechEndEvent())
+    lifecycle_frame(tracker, session_core, OutputTranscript('Hi.'), ResponseDone())
     assert session_core.transcript_holding_history() is None
     assert summary(session_core.all_messages()) == snapshot(
         ['{user:Hello}', '{user:again}', 'None [assistant:Hi.] complete stop']
     )
+
+
+def test_a_lifecycle_event_the_core_does_not_know_is_refused() -> None:
+    """`LifecycleEvent` is a base class a connection could subclass: the core says so rather than ignore it."""
+
+    @dataclass(frozen=True, kw_only=True)
+    class _Unknown(LifecycleEvent):
+        pass
+
+    with pytest.raises(TypeError, match='no handling for the lifecycle event'):
+        core().apply(_Unknown())

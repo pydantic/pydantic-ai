@@ -38,7 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
-from ._lifecycle import LIFECYCLE_EVENT_TYPES, LifecycleEvent, RealtimeFrame, StaleEvent
+from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -567,7 +567,7 @@ class RealtimeConnection(ABC):
             for event in frame:
                 if isinstance(event, StaleEvent):
                     yield event.event
-                elif not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                elif not isinstance(event, LifecycleEvent):
                     yield event
 
     async def _end_session(self) -> AsyncIterator[SessionUsage]:

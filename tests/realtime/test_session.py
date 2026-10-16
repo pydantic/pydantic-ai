@@ -9956,9 +9956,10 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
     async with agent.realtime(model, usage_limits=UsageLimits(total_tokens_limit=50)).session() as session:
         with pytest.raises(UsageLimitExceeded, match='exceed the total_tokens_limit of 50'):
             _ = [e async for e in session]
-    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
-    assert response.state == 'complete'
-    assert response.usage == RequestUsage(input_tokens=100, output_tokens=100)
+    # The usage report the session stopped reading at counts toward the session; the response it was for never
+    # started, so there's none in history.
+    assert session.usage.input_tokens == 100 and session.usage.output_tokens == 100
+    assert not any(isinstance(message, ModelResponse) for message in session.new_messages())
 
 
 async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:
@@ -11932,7 +11933,8 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
             yield OutputTranscript(text='B is streaming')
             fail_now.set()
             await finish_b.wait()
-            yield ResponseDone()  # pragma: lax no cover  # (the wait can end, and the session close, before it's read)
+            # The wait can end, and the session close, before this is read.
+            yield ResponseDone()  # pragma: lax no cover
             await asyncio.Event().wait()  # pragma: no cover
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -12310,3 +12312,76 @@ async def test_a_response_over_the_request_limit_within_one_frame_is_neither_rec
                 pass
     assert session.usage.requests == 0
     assert session.all_messages() == []
+
+
+@pytest.mark.parametrize(
+    ('item_id', 'ended'),
+    [
+        pytest.param('u1', False, id='named-turn-started'),
+        pytest.param('u1', True, id='named-turn-ended'),
+        pytest.param(None, False, id='unnamed-turn-started'),
+    ],
+)
+async def test_own_record_keeps_a_turn_anchored_to_a_response_whose_retained_audio_it_drops(
+    item_id: str | None, ended: bool
+) -> None:
+    """A turn started while a response was spoken is anchored to it, and stays so once its audio leaves the record."""
+    speech_end: list[RealtimeCodecEvent] = [RealtimeInputSpeechEndEvent(item_id=item_id)]
+    conn = FakeRealtimeConnection(
+        [
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Hello.', is_final=True),
+            RealtimeInputSpeechStartEvent(item_id=item_id),
+            *(speech_end if ended else []),
+            ResponseDone(),
+            *([] if ended else speech_end),
+            InputTranscript(text='Hi.', is_final=True, item_id=item_id),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all')
+    await collect_events(session)
+    assert [
+        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
+        for message in _own_record(session)
+    ] == [('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])]
+
+
+class _DeferredCommitConnection(_ContinuousMicrophoneConnection):
+    """Sends a commit as it gets it, but reports it through the listener, as a connection that holds it would."""
+
+    _listener: Callable[[], None] | None = None
+
+    @property
+    def _defers_audio_commit(self) -> bool:
+        return True
+
+    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+        self._listener = listener
+
+    async def send_input(self, content: RealtimeInput) -> None:
+        if isinstance(content, CommitAudio):
+            assert self._listener is not None
+            self._listener()
+        await super().send_input(content)
+
+
+async def test_own_record_keeps_a_commit_anchored_to_a_response_whose_retained_audio_it_drops() -> None:
+    """A turn committed while a response was spoken follows it in the record, once its audio leaves the record too."""
+    conn = _DeferredCommitConnection(
+        [
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Hello.', is_final=True),
+            _MIC,
+            _RELEASE,
+            ResponseDone(),
+            InputTranscript(text='Hi.', is_final=True),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all')
+    conn.session = session
+    async with session:
+        await drain_events(session)
+    assert [
+        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
+        for message in _own_record(session)
+    ] == snapshot([('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])])

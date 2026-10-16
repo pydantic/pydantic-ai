@@ -1520,7 +1520,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # parts) since the last `turn_complete`. A dropped-and-redialed connection never continues an
         # in-flight turn (session resumption restores conversation state, not the generation;
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
-        # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
+        # never arrive — see `frames`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
         # On a model whose typed turns don't see video frames, the most recent image sent and when (by
         # `time.monotonic()`), for the next typed turn to carry again. See `send`.
@@ -1568,8 +1568,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
         automatic VAD).
         """
-        input_index = self._lifecycle.input_sent(content)
-        try:
+        turn: _TypedTurn | None = None
+        with self._lifecycle.sending(content) as input_index:
             while self._unanswered_lost_tool_calls and not self._lost_tool_calls_answered:
                 # Whatever reaches a resumed session first is consumed by an exchange stuck on calls it lost,
                 # so those are answered ahead of any input (see `_answer_lost_tool_calls`). The lock orders
@@ -1577,22 +1577,18 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # again if a re-dial replaced the session while an answer was on the wire.
                 async with self._send_lock:
                     await self._answer_lost_tool_calls()
-        except BaseException:
-            self._lifecycle.input_failed(input_index)
-            raise
-        # Tracked from before the send, so a handle or answer arriving while it is on the wire counts.
-        # Only needed to tell a reconnect what it lost, so not tracked without a reconnect policy.
-        turn = _TypedTurn(input_index) if isinstance(content, str) and self._reconnect is not None else None
-        if turn is not None:
-            self._uncovered_typed_turns.append(turn)
-        try:
-            await self._send(content)
-        except BaseException:
-            self._lifecycle.input_failed(input_index)
-            # A reconnect noticed meanwhile has already let go of the list it was in.
-            if turn is not None and turn in self._uncovered_typed_turns:
-                self._uncovered_typed_turns.remove(turn)
-            raise
+            # Tracked from before the send, so a handle or answer arriving while it is on the wire counts.
+            # Only needed to tell a reconnect what it lost, so not tracked without a reconnect policy.
+            turn = _TypedTurn(input_index) if isinstance(content, str) and self._reconnect is not None else None
+            if turn is not None:
+                self._uncovered_typed_turns.append(turn)
+            try:
+                await self._send(content)
+            except BaseException:
+                # A reconnect noticed meanwhile has already let go of the list it was in.
+                if turn is not None and turn in self._uncovered_typed_turns:
+                    self._uncovered_typed_turns.remove(turn)
+                raise
         if turn is not None:
             turn.sending = False
         # Gemini acknowledges nothing: where the input joined the conversation is known now, if it is.
@@ -1747,7 +1743,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # Coverage cannot attribute the normal async-generator exhaustion back to this outer
                 # loop; `test_connect_continues_after_empty_server_turn` exercises that continuation.
                 async for message in self._session.receive():  # pragma: no branch
-                    yield self._lifecycle.message(self._map_message(message))
+                    yield self._lifecycle.frame_for(self._map_message(message))
             except self.transport_errors as e:
                 # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
                 lost: RealtimeFrame = [*self._lifecycle.connection_lost()]

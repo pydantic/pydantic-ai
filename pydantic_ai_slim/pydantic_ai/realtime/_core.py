@@ -480,6 +480,8 @@ class SessionCore:
         elif isinstance(item, PartStartEvent):
             if (response := self._open_response(None)) is not None:
                 response.native_parts.append(item.part)
+        elif isinstance(item, LifecycleEvent):
+            raise TypeError(f'The session core has no handling for the lifecycle event {item!r}.')
         else:
             self._command(item)
 
@@ -1045,12 +1047,6 @@ class SessionCore:
             return
         self._closed = True
         self._lose_open_responses()
-        if self._carried_usage and not self._next_refused:
-            # Usage reported between responses that no later response claimed: billed all the same, so it's
-            # recorded on a response of its own rather than dropped.
-            response_id = f'pydantic_ai_carried_usage_{len(self._responses)}'
-            self._start_response(ResponseStarted(response_id=response_id, provider_id=False))
-            self._end_response(ResponseEnded(response_id=response_id, status='completed'))
         for turn in self._turns.values():
             if turn.message is None:
                 if not turn.ended:

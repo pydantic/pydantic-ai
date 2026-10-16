@@ -107,7 +107,7 @@ from ._core import (
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._lifecycle import LIFECYCLE_EVENT_TYPES, ResponseStarted, StaleEvent
+from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
     accumulate_transcript,
@@ -3359,11 +3359,10 @@ class RealtimeSession:
     def _bound_retained_audio(self) -> None:
         """Evict the oldest retained audio until what the session retains fits `retain_audio_max_seconds`.
 
-        Everything retained counts: audio recorded in history, parts finalized but not recorded yet (in a
-        response still in flight, say), segments waiting for their transcript, and the turns being spoken now.
-        Audio recorded in history goes first, oldest first, each part keeping its transcript; then the waiting
-        segments, oldest first; and only then the turns being spoken now, which keep their most recent audio.
-        A part not recorded yet is only evicted once it is. Only the local copy is trimmed: the provider
+        Everything retained counts: parts finalized but not recorded yet (in a response still in flight, say),
+        segments waiting for their transcript, and the turns being spoken now. The waiting segments go first, oldest
+        first, and only then the turns being spoken now, which keep their most recent audio. A part not recorded yet
+        isn't evicted: once recorded, the core's history bounds it. Only the local copy is trimmed: the provider
         received all of it.
         """
         budget = self._audio_budget
@@ -3372,22 +3371,8 @@ class RealtimeSession:
             untracked_input=segments.byte_count + len(self._input_audio),
             untracked_output=len(self._output_audio),
         )
-        if excess > 0 and budget.tracked_parts:
-            # Resume where the last pass stopped, so each message is passed over about once however many
-            # passes there are; a pass that finds nothing (the audio over budget is still on its way into
-            # history) leaves it at the end.
-            index = self._audio_eviction_start
-            # (This session's own record only holds audio until `_drop_audio_the_core_keeps` strips it, after each
-            # event: whether a pass finds any depends on timing.)
-            while index < len(self._history):  # pragma: lax no cover
-                stripped, freed = budget.strip(self._history[index], excess)
-                if freed:
-                    self._replace_recorded_message(index, stripped)
-                    excess -= freed
-                    if excess <= 0:
-                        break
-                index += 1
-            self._audio_eviction_start = index
+        # (Audio recorded in this session's own record is in the core's history, which bounds it: the record lets go of
+        # it at the end of the event that recorded it, in `_drop_audio_the_core_keeps`.)
         while excess > 0 and (evicted := segments.evict_oldest()) is not None:
             excess -= budget.weight(evicted, output=False)
         excess = budget.trim(self._input_audio, excess, output=False)
@@ -3418,19 +3403,18 @@ class RealtimeSession:
         """
         old = self._history[index]
         self._history[index] = message
-        # (Whether a turn is anchored to a message while its audio is stripped depends on timing.)
         for item_id, anchor in self._user_turn_anchors.items():
-            if anchor is old:  # pragma: lax no cover
+            if anchor is old:
                 self._user_turn_anchors[item_id] = message
         anonymous_anchors = self._pending_anonymous_user_turn_anchors
         for anchor_index, anchor in enumerate(anonymous_anchors):
-            if anchor is old:  # pragma: lax no cover
+            if anchor is old:
                 anonymous_anchors[anchor_index] = message
         for item_id, (anchor,) in self._pending_user_turn_anchors.items():
-            if anchor is old:  # pragma: lax no cover
+            if anchor is old:
                 self._pending_user_turn_anchors[item_id] = (message,)
         for held in (self._held_commit, self._sent_commit, *self._held_commits_in_flight):
-            if held is not None and held.anchor is old:  # pragma: lax no cover
+            if held is not None and held.anchor is old:
                 held.anchor = message
 
     def _segment_input_audio(self, item_id: str | None) -> None:
@@ -4490,7 +4474,7 @@ class RealtimeSession:
                 codec = [
                     event.event if isinstance(event, StaleEvent) else event
                     for event in frame
-                    if not isinstance(event, LIFECYCLE_EVENT_TYPES)
+                    if not isinstance(event, LifecycleEvent)
                 ]
                 handled = 0
                 try:

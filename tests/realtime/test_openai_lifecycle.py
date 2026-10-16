@@ -15,7 +15,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.realtime._lifecycle import (
-    LIFECYCLE_EVENT_TYPES,
     InputAdded,
     InputLost,
     LifecycleEvent,
@@ -94,7 +93,7 @@ def frames(*frames: dict[str, Any]) -> list[str]:
 
 def describe(event: RealtimeCodecEvent | LifecycleEvent) -> LifecycleEvent | str:
     """A lifecycle event as itself, and a codec event as the name of its type."""
-    return event if isinstance(event, LIFECYCLE_EVENT_TYPES) else type(event).__name__
+    return event if isinstance(event, LifecycleEvent) else type(event).__name__
 
 
 async def codec(connection: OpenAIRealtimeConnection) -> list[RealtimeCodecEvent]:
