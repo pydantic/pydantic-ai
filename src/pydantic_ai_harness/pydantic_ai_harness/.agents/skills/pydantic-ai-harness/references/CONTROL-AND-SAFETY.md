@@ -503,8 +503,9 @@ agent = Agent(
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
   `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
-- `cache_ttl='5m' | '1h'`. Observe with `ReminderFiredEvent` (`on_fire` is deprecated).
-- Each tail capability (this, `Planning`) adds a cache breakpoint; Anthropic allows 4.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored.
+- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
+  Anthropic allows 4.
 - Not spec-serializable.
 
 ## TrajectoryJudge

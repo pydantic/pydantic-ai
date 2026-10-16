@@ -9,9 +9,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -964,7 +966,8 @@ class TestEndToEnd:
         assert [len(messages) for messages in seen] == [1, 3, 3, 3]
         assert all('<system>stay focused</system>' in _all_text(messages) for messages in seen)
 
-    async def test_composes_with_planning(self) -> None:
+    @pytest.mark.parametrize('reminders_first', [False, True])
+    async def test_composes_with_planning(self, reminders_first: bool) -> None:
         captured: dict[str, list[ModelMessage]] = {}
         calls = 0
 
@@ -984,15 +987,29 @@ class TestEndToEnd:
             captured['messages'] = messages
             return ModelResponse(parts=[TextPart('done')])
 
-        agent: Agent[None, str] = Agent(
-            FunctionModel(model_fn),
-            capabilities=[Planning(), SystemReminders(reminders=[Reminder('stay focused')])],
-        )
+        capabilities: list[AbstractCapability[None]] = [
+            Planning(),
+            SystemReminders(reminders=[Reminder('stay focused')]),
+        ]
+        if reminders_first:
+            capabilities.reverse()
+        agent: Agent[None, str] = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=capabilities)
         result = await agent.run('go')
         assert result.output == 'done'
         sent = _all_text(captured['messages'])
         assert '<plan-reminder>' in sent
         assert '<system>stay focused</system>' in sent
+        # `wrap_model_request` hooks run around the `before_model_request` chain, so `Planning` adds its
+        # reminder to the tool-result request before this reminder is enqueued after it: the plan reminder
+        # keeps its breakpoint on the tool result, and this reminder comes last.
+        last = captured['messages'][-1]
+        assert isinstance(last, ModelRequest)
+        assert [type(part).__name__ for part in last.parts] == ['ToolReturnPart', 'UserPromptPart', 'UserPromptPart']
+        plan_reminder, reminder = last.parts[1], last.parts[2]
+        assert isinstance(plan_reminder, UserPromptPart) and isinstance(plan_reminder.content, list)
+        assert isinstance(plan_reminder.content[0], CachePoint)
+        assert plan_reminder.content[1] == '<plan-reminder>\n'
+        assert isinstance(reminder, UserPromptPart) and reminder.content == '<system>stay focused</system>'
         # Planning's reminder is request-only; this one is kept in history as a request-scoped prompt.
         durable = _all_text(result.all_messages())
         assert '<plan-reminder>' not in durable
