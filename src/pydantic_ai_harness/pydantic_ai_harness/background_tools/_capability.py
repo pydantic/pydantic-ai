@@ -74,6 +74,21 @@ _Outcome = tuple[UserContent, ...] | BaseException
 
 
 def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
+    if isinstance(outcome, ToolRetryError):
+        tool_manager = ctx.tool_manager
+        if tool_manager is None:
+            raise outcome
+        tool_def = tool_manager.get_tool_def(outcome.tool_retry.tool_name or '')
+        if tool_def is None:
+            raise outcome
+
+        # The issuing step may have already been replaced by the time the background
+        # call fails. Apply the retry budget to the manager that will create the next
+        # model step, rather than the stale manager captured at dispatch time.
+        tool_manager._check_max_retries(tool_def.name, tool_def.max_retries, outcome)
+        tool_manager.failed_tools.add(tool_def.name)
+        ctx.enqueue(outcome.tool_retry)
+        return
     if isinstance(outcome, BaseException):
         raise outcome
     ctx.enqueue(*outcome)
@@ -266,7 +281,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 await anyio.lowlevel.checkpoint_if_cancelled()
                 try:
                     result = await handler(args)
-                except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
+                except ToolRetryError as e:
+                    # A background tool can finish after the issuing run step has already
+                    # advanced. Do not turn this into a plain user message: retry accounting
+                    # belongs to the current step when the outcome arrives.
+                    outcome = e
+                except (ApprovalRequired, CallDeferred, ToolFailedError) as e:
                     outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",)
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
@@ -335,10 +355,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 result = await handler()
                 # Tasks still live after a deferred-tool pause or `run_stream()` are dropped.
                 self._task_group.cancel_scope.cancel()
-            # An error from a task that finished after the last node boundary still ends the run.
+            # A retry that arrives after the final node boundary still belongs to the
+            # current run's retry budget; ordinary unexpected failures still end the run.
             for outcome in self._arrived():
-                if isinstance(outcome, BaseException):
-                    raise outcome
+                _deliver(ctx, outcome)
         # `result` is bound: the group re-raises the run's own exception, and no task cancels the group.
         assert result is not None
         return result
