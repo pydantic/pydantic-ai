@@ -2281,9 +2281,11 @@ contributes nothing:
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
-saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
-saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
-first.
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, the
+saved `sessions`, and the session's folder, `workspace`. Set up state in `__init__`;
+call `super().__init__(host, settings)` first. Each live session gets its own
+instance unless the class sets `scope = 'process'`; see
+[Several live sessions](#several-live-sessions).
 
 ### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
 
@@ -2292,7 +2294,7 @@ Nine `async` methods fire outside the agent run, in the shell:
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
 | `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
-| `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
+| `on_session_end` | CLAI is quitting, the plugin is unloading, or its session closed for being idle | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
@@ -3380,6 +3382,144 @@ panel shows a bar and reset time for each.
   plugin loaded later goes to the end of the line.
 - Anything you print, print through `self.host.console`, so it stays in step with
   streaming output.
+- Follow the rules in [Several live sessions](#several-live-sessions): CLAI may run
+  your plugin in many sessions at once.
+
+## Several live sessions
+
+The terminal runs one session at a time. The web UI (`clai2 --web`, or `/web` from a
+terminal) keeps several sessions live in one CLAI process, each with its own
+conversation, folder, plugins, queued input, and running turn. A plugin that follows
+these rules works the same in both.
+
+1. **An instance belongs to one live session.** CLAI builds one instance of your
+   plugin for each live session, so under the web UI several exist at once. Each is
+   loaded and unloaded on its own: `on_session_start` when its session opens or the
+   plugin is turned on, `on_session_end` when its session closes or the plugin is
+   turned off. A session the browser opened closes after it has sat idle for an hour:
+   no turn, no queued input, no fork or delegated task, and no browser or terminal
+   showing it. Opening it again resumes it in a new session, with new instances.
+2. **Use `host.workspace`, never the process's directory.** Each session works in its
+   own folder. CLAI never changes the process's working directory after startup, so
+   `Path.cwd()` is the folder CLAI started in, not the session's. Never call
+   `os.chdir`: it would move every session at once. Resolve a relative path against
+   `self.host.workspace`, and start a subprocess with `cwd=self.host.workspace`.
+3. **No module-level mutable state.** Python imports your module once per process, so
+   a dict, list, cache, or client at module level is shared by every live session.
+   Keep state on `self`, set up in `__init__` or `on_session_start`. When sessions
+   should share one thing, make the plugin process-scoped (below).
+4. **Do not assume a terminal.** A session the browser opened has none: its console
+   writes to a log, and nobody can press a key in it. Check
+   `self.host.console.is_terminal` before reading keys or drawing on the screen, such
+   as a menu in `host.full_screen()`, and skip that work when it is `False`. The
+   built-in `ask_user` and `herdr` plugins do this.
+5. **`on_session_end` may come from idle closing.** An idle session closes with
+   `reason='exit'`, as quitting does, while CLAI and the other sessions go on. Keep
+   cleanup quick: stop what the instance started and wait for no one. Leave the saved
+   conversation alone; the user may resume it later.
+6. **Keep background tasks bounded per instance.** A task, timer, or connection an
+   instance starts runs once per live session, so a hundred sessions run a hundred of
+   them. Start each in `on_session_start` (or when a command needs it) and stop it in
+   `on_session_end`. A plugin that connects to an MCP server over HTTP has one
+   connection per live session.
+
+### One instance for the whole process: `scope = 'process'`
+
+Some things should exist once per process, whatever the number of sessions: one
+server on one port, one global tracing setup, one registry every session shares. Set
+`scope = 'process'` on the class. The built-in `web`, `observability`, and `workspaces`
+plugins are process-scoped. Any other plugin should keep the default, `'session'`.
+
+```python
+from collections import Counter
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import NoSettings, Plugin, PluginHost, TurnEnd
+from pydantic_clai2.ui.rendering.status import StatusSegment
+
+
+class Turns(Plugin):
+    """Count finished turns per folder across every live session, and show how many run now."""
+
+    scope = 'process'
+
+    def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
+        super().__init__(host, settings)
+        self.finished: Counter[str] = Counter()  # One instance, so every session adds to it.
+
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        # Fires for each session's turns; `host.workspace` is the folder of the session that ran it.
+        self.finished[str(self.host.workspace)] += 1
+
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (self._running,)
+
+    def _running(self) -> str:
+        live = self.host.live
+        running = 0 if live is None else sum(session.running for session in live.listing())
+        return f'{running} running'
+```
+
+What changes for a process-scoped plugin:
+
+- **One start, one end.** The first session that loads it builds it and runs
+  `on_session_start`. Every other live session, and each one opened later, joins that
+  same instance without another `on_session_start`. `on_session_end` runs once: when
+  the plugin is turned off (after every running turn that uses it ends), or when the
+  last session closes, as when CLAI quits. One session closing for being idle does not
+  end it.
+- **Its contributions join every session.** Its capabilities, commands, status
+  segments, and renderers are in every live session. Turning it off, reloading it, or
+  changing its settings applies to all of them at once.
+- **Other moments come once per session.** `on_turn_start`, `on_turn_end`,
+  `on_conversation_changed`, `on_command_end`, `on_task_event`, and the rest reach it
+  each time any session fires them. `self.host.live.current()` names that session.
+- **The host follows the session being handled.** `self.host.session_id`, `workspace`,
+  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
+  `host.live.current()`: the session whose moment, command, or agent run is being
+  handled. A task started meanwhile, such as a server started from a command, keeps
+  that session. Outside one, they act on the session that loaded the plugin, or the
+  oldest live session once that one has closed; a status segment, painted outside
+  any moment, sees that session too. Its other attributes, such as
+  `conversation`, `status`, and `console`, always belong to the session that loaded it.
+  Reach any other session through `host.live`.
+
+`self.host.live` is a `LiveSessions`; a plugin with the default scope gets `None`:
+
+| Member | Does |
+|---|---|
+| `listing()` | every live session, oldest first, each a `LiveSession` |
+| `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
+| `current()` | the session being handled now, or `None` outside a moment, command, or run |
+| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
+| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in |
+| `await close(live_id)` | close a session `open` or `new` started, cancelling its turn; its plugins end with `'exit'`. Raises `ValueError` for a session its own driver runs, such as the terminal's |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+
+Never await `open` or `new` from `on_session_start`: the new session waits for the
+plugins still loading.
+
+A `LiveSession` is one live session:
+
+| Member | Is or does |
+|---|---|
+| `id` | its ID, stable while it is live, even when its conversation changes with `/new` or `/resume` |
+| `session_id` | its current saved conversation's ID, as its `host.session_id` reads it |
+| `workspace` | the folder it works in |
+| `conversation` | its history, as its `host.conversation` |
+| `status` | its status row |
+| `sessions` | the saved conversations its `/resume` lists |
+| `tasks` | its delegated tasks, or `None` |
+| `running` | whether a turn runs in it now |
+| `queued` | how many inputs wait for its running turn or command to end |
+| `watchers` | how many `watch()` calls have not stopped yet |
+| `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
+| `send_input(text)` | enter `text` at its prompt, as its `host.send_input` does |
+| `interrupt()` | cancel its running turn or command; `False` when nothing was running |
+| `await complete(text)` | what Tab offers at its prompt for `text` |
+
+In a terminal without the web UI, `host.live` lists the one session, and `open` and
+`new` raise `RuntimeError`.
 
 ## Testing a plugin
 
