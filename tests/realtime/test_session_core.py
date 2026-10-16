@@ -1409,3 +1409,17 @@ def test_tools_see_what_a_response_under_way_said_and_called() -> None:
         ['r1 [assistant:Let me check., call:c1, assistant:Still checking.] complete None']
     )
     assert session_core.all_messages() == []
+
+
+def test_a_native_part_ends_under_the_index_it_started_with_after_its_response_ended() -> None:
+    """A connection can end a native part in a later frame than its response: it still closes the part it opened."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(
+        core(), started('r1'), PartStartEvent(index=7, part=call), ended('r1'), PartEndEvent(index=7, part=call)
+    )
+    indexes = [
+        (type(effect).__name__, effect.index)
+        for effect in session_core.take_effects()
+        if isinstance(effect, (PartStartEvent, PartEndEvent))
+    ]
+    assert indexes == snapshot([('PartStartEvent', 0), ('PartEndEvent', 0)])

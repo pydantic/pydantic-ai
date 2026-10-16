@@ -38,7 +38,7 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -80,8 +80,9 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
 )
+from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, ResponseStarted
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
@@ -217,6 +218,40 @@ def _settings_with_metrics(
 
 async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
     return 'sunny'
+
+
+async def test_a_limit_tripped_mid_frame_still_ends_the_response_span() -> None:
+    """A usage limit that stops the session partway through a frame doesn't leave the `chat` span open.
+
+    Gemini reports a response's output, usage and end in one message, so the limit can trip after the response
+    ended but before the session streamed that it did.
+    """
+
+    class _OneFrame(_Connection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [
+                ResponseStarted(response_id='r1'),
+                SessionUsage(usage=RequestUsage(input_tokens=100), response_scoped=True),
+                OutputTranscript(text='Hi.', is_final=True),
+                ResponseDone(),
+                ResponseEnded(response_id='r1', status='completed'),
+            ]
+
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _OneFrame([]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        usage_limits=UsageLimits(per_request_input_tokens_limit=50),
+    )
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            _ = [event async for event in session]
+
+    assert [span.name for span in exporter.get_finished_spans() if span.name.startswith('chat')] == [
+        'chat gpt-realtime'
+    ]
 
 
 async def test_owner_error_marks_active_chat_and_session_spans() -> None:

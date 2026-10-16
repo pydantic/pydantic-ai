@@ -9007,9 +9007,18 @@ async def test_executed_call_still_consumes_the_tool_call_limit() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='ordinary', args='{}'), ResponseDone()])
     model = FakeRealtimeModel(conn)
+    events: list[RealtimeEvent] = []
     with pytest.raises(UsageLimitExceeded):
         async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
-            _ = [e async for e in session]
+            async for event in session:
+                events.append(event)  # pragma: no cover — nothing streams ahead of the refused call
+
+    # Refused before anything of it streams. (The response that made it ended in the same frame, so it is
+    # recorded, and the call gets the interrupted return a call that never ran gets.)
+    assert events == []
+    assert [
+        part.outcome for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ] == ['interrupted']
 
 
 async def test_tools_from_one_response_share_a_run_step() -> None:

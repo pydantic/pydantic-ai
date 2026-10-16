@@ -916,6 +916,7 @@ class RealtimeSession:
             self._server_cancelled_the_response_on_speech = False
             self._stop_tool_calls(list(self._pending_tool_calls))
             self._apply_core(Closed())
+            self._end_chat_spans_left_open()
             self._teardown = asyncio.create_task(self._finish_teardown())
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
@@ -2598,28 +2599,40 @@ class RealtimeSession:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
         if isinstance(event, ToolCall):
             if self._core.take_call(event.tool_call_id):
-                try:
-                    await self._dispatch_tool_call(event)
-                except UsageLimitExceeded:
-                    # Tripped before the call ran: it is refused, so it stays out of history (or, if its response is
-                    # recorded already, gets an interrupted return).
-                    self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
-                    raise
+                await self._dispatch_tool_call(event)
             return False
         return await self._handle_non_tool_pump_event(event)
 
-    async def _dispatch_tool_call(self, event: ToolCall) -> None:
-        """Fold a tool call into the response and start its background task."""
-        # A declaratively deferred call (`requires_approval=True`, an external tool) is resolved by
-        # a handler or refused — it never reaches the tool body and so never increments
-        # `usage.tool_calls`. The graph leaves those out of its own pre-check projection
-        # (`_tool_execution` builds `function_indices` from `('function', 'unknown')`), so charging
-        # the budget for one here could trip the limit over a call that costs nothing. An unknown
-        # tool name *is* charged, exactly as `'unknown'` is projected there.
-        tool_def = self._tool_manager.get_tool_def(event.tool_name)
-        reserves_budget = tool_def is None or not tool_def.defer
-        if reserves_budget:
+    def _reserves_budget(self, tool_name: str) -> bool:
+        """Whether a call counts toward `tool_calls_limit` while it runs.
+
+        A declaratively deferred call (`requires_approval=True`, an external tool) is resolved by a handler or
+        refused — it never reaches the tool body and so never increments `usage.tool_calls`. The graph leaves those
+        out of its own pre-check projection (`_tool_execution` builds `function_indices` from
+        `('function', 'unknown')`), so charging the budget for one here could trip the limit over a call that costs
+        nothing. An unknown tool name *is* charged, exactly as `'unknown'` is projected there.
+        """
+        tool_def = self._tool_manager.get_tool_def(tool_name)
+        return tool_def is None or not tool_def.defer
+
+    def _check_tool_call(self, event: ToolCall) -> None:
+        """Check `tool_calls_limit` for a call the session is to run, before anything of it streams.
+
+        Tripped, the call is refused, so it stays out of history (or, if its response is recorded already, gets an
+        interrupted return), and nothing shows it was made.
+        """
+        if not self._core.call_waiting(event.tool_call_id) or not self._reserves_budget(event.tool_name):
+            return
+        try:
             self._check_tool_call_limit()
+        except UsageLimitExceeded:
+            self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
+            raise
+
+    async def _dispatch_tool_call(self, event: ToolCall) -> None:
+        """Start a tool call's background task (its limit was checked in `_check_tool_call`)."""
+        reserves_budget = self._reserves_budget(event.tool_name)
+        if reserves_budget:
             self._tool_calls_in_flight += 1
         # Captured at dispatch so every call from one response runs at the step in effect when the
         # response produced them, the way a graph run's whole batch shares the step advanced before
@@ -2710,6 +2723,8 @@ class RealtimeSession:
         try:
             response_done = response_closed = False
             async for effects, event in core_events:
+                if isinstance(event, ToolCall):
+                    self._check_tool_call(event)
                 self._emit_effects(effects)
                 response_closed = response_closed or any(isinstance(effect, ResponseClosed) for effect in effects)
                 if event is not None:
@@ -2731,6 +2746,7 @@ class RealtimeSession:
             await core_events.aclose()
             self._pump_finished = True
             self._apply_core(ReceiveEnded())
+            self._end_chat_spans_left_open()
             self._exchange_progress.set()
             if not self._closed:
                 self._finish_taps()
@@ -2776,6 +2792,12 @@ class RealtimeSession:
             else:
                 self._publish_taps(effect)
                 self._queue_put(effect)
+
+    def _end_chat_spans_left_open(self) -> None:
+        """End the `chat` spans of responses that ended while their close wasn't streamed (receiving stopped mid-frame)."""
+        for response_id in list(self._session_instrumentation.chat_spans):
+            message, input_messages = self._core.recorded_response(response_id)
+            self._session_instrumentation.end_chat_span(response_id, input_messages, message)
 
     def _response_closed(self, effect: ResponseClosed) -> None:
         self._frame_lost_response = self._frame_lost_response or effect.status == 'lost'

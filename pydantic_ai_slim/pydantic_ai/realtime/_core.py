@@ -309,8 +309,7 @@ class _Response:
     )
     """The stream index and part each item of the output closed, for a transcript of the item that arrives after it
     closed."""
-    native_indexes: dict[int, int] = field(default_factory=dict[int, int])
-    """The stream index of each native tool part the connection numbered, by the connection's index."""
+
     item_details: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """What the provider said about each item of the output, for the part the item makes."""
     usage: RequestUsage = field(default_factory=RequestUsage)
@@ -482,6 +481,8 @@ class SessionCore:
         self._next_index = 0
         """The stream index of the next part to start: one counter for the session, as both speakers' parts stream at
         once, so an index names a part in the event stream rather than a slot in a message."""
+        self._native_indexes: dict[int, int] = {}
+        """The stream index of each native tool part under way, by the index the connection numbered it with."""
         self._part_items: OrderedDict[int, str | None] = OrderedDict()
         """The output item each recent assistant part streamed, by stream index, for a barge-in to name what it cuts."""
 
@@ -855,13 +856,12 @@ class SessionCore:
         It leads its response's message, as on a standard run, and streams under a stream index of its own: the
         connection's numbering knows nothing of the session's, and a repeated index replaces the part at it.
         """
-        response = self._open_response(None)
         if isinstance(event, PartStartEvent):
-            if response is None:
+            if (response := self._open_response(None)) is None:
                 return
             response.native_parts.append(event.part)
-            index = response.native_indexes[event.index] = self._take_index()
-        elif response is None or (index := response.native_indexes.pop(event.index, None)) is None:
+            index = self._native_indexes[event.index] = self._take_index()
+        elif (index := self._native_indexes.pop(event.index, None)) is None:
             # An end with no start: it closes nothing, so it gets an index of its own.
             index = self._take_index()
         self._effects.append(replace(event, index=index))
@@ -1479,6 +1479,15 @@ class SessionCore:
     def response_under_way(self) -> bool:
         """Whether a response is under way that the session didn't refuse."""
         return any(response.status is None and not response.refused for response in self._responses.values())
+
+    def call_waiting(self, call_id: str) -> bool:
+        """Whether a tool call is waiting for the session to take it to run (see `take_call`)."""
+        return call_id in self._undispatched
+
+    def recorded_response(self, response_id: str) -> tuple[ModelResponse | None, list[ModelMessage]]:
+        """What history records for a response that ended (if anything), and the conversation ahead of it."""
+        response = self._responses[response_id]
+        return response.message, self._history_before(response)
 
     def take_call(self, call_id: str) -> bool:
         """Whether the session is to run this tool call: the core accepted it, and nothing took it to run yet.
