@@ -139,7 +139,8 @@ Then the plumbing, which the agent never calls directly:
    keep_fraction=0.4` on both strategies). A first message larger than about 40% of the window keeps the history
    above the threshold. When summarizing fails with a model API error (including an exhausted `FallbackModel`),
    a usage limit, or `CannotSummarizeError` because the model is realtime or cannot write text, those messages are
-   dropped instead.
+   dropped instead. The summary request uses only the model's own settings, not the agent's or the run's
+   `model_settings` (such as `openai_store=False` or `extra_headers`).
    Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
@@ -271,8 +272,10 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 `Coder` now compacts the history itself, as described in [Composition](#composition), instead of binding
 [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)`. A summary is a request to the run's model, so it counts
-toward the run's usage and cost. To keep the previous behaviour, pass `Coder(compaction=False)` and add
-`ClearToolResults(max_fraction=0.7)` yourself.
+toward the run's usage and cost. It uses only the model's own settings, not the agent's or the run's
+`model_settings`; to give it settings such as `openai_store=False`, pass `Coder(compaction=False)` and bind your own
+`FallbackCompaction` whose `SummarizingCompaction(model_settings=...)` sets them. To keep the previous behaviour, pass
+`Coder(compaction=False)` and add `ClearToolResults(max_fraction=0.7)` yourself.
 
 ### Prompt caching
 
