@@ -72,6 +72,8 @@ class Fleet:
 
     def __post_init__(self) -> None:
         self.launch = self._build(self.folder('home'))
+        # Switching a new database to WAL can fail at once when two first saves race, so make it first.
+        self.portal.call(self.launch.process.conversations.listing)
         self.launch.process.live.build = lambda directory: self._build(directory or self.folder('home'))
         self.portal.call(self.launch.loader.load_all)
         [plugin] = [

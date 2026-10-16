@@ -387,6 +387,8 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
         (fleet.folder(name) / 'AGENTS.md').write_text(f'Rules of {name}.')
         fleet.agents[name] = reader(name)
     launched_in = Path.cwd()
+    # Switching a new database to WAL can fail at once when two first saves race, so make it first.
+    await fleet.process.conversations.listing()
     with anyio.fail_after(20):
         async with fleet.live.serving():
             sessions = [await fleet.live.new(workspace=fleet.folder(name)) for name in ('alpha', 'beta')]
