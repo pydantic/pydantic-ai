@@ -37,7 +37,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
-| `plugins/menus.py` | a declared settings menu: `FieldRow`, `FieldSource`, `SettingsMenu`, `Option`, and the `Dialogs` protocol its actions ask through |
+| `plugins/menus.py` | a declared settings menu: `FieldRow`, `FieldSource`, `SettingsMenu` (rows, actions, and the menus rows open), `Option`, and the `Dialogs` protocol its actions ask through |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
 | `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
@@ -47,24 +47,26 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/prompt/line_input.py` | `read_line`: one line pinned under the transcript through the live panel (`run_worker(inline=True)`), for a prompt after printed output such as a sign-in URL; `CodexAuth` and `OpenRouterAuth` default to it |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldMenu`, `Runners`, `run_flow`) |
-| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets, and `run_settings_menu`, which shows a `SettingsMenu` under one hold |
+| `ui/menus/dialogs.py` | `TerminalDialogs`, `Dialogs` as termflow widgets (multi-line text through `Runners.edit`, `view` as a pager), and `run_settings_menu`, which shows a `SettingsMenu`, and the menus its rows open, under one hold |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext`, and `settings_menu`, the `SettingsMenu` `/set`, `/theme`, and `/spinner` declare as their `Command.menu` |
-| `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
+| `ui/menus/system_prompt_menu.py` | `/system_prompt`: `system_prompt_menu`, the `SettingsMenu` the terminal runs and the web UI shows (its `Command.menu`): the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, edited and appended in a multi-line `Dialogs.text`, and the latest request's full instructions in a read-only `Dialogs.view` |
+| `ui/menus/update_menu.py` | `/update`'s declared menu, the web UI's Settings > About: the running version, whose action confirms before entering `/update`, and the `updates.channel` row of `/set` |
 | `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
-| `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
-| `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
+| `ui/menus/model_menu.py` | `/model add`: provider discovery, `run_model_flow`, and `add_model` through `Dialogs`; `ModelSettingsSource` and `model_settings_menu`, one model's settings menu for `/model settings`, `Ctrl+S`, `/effort`'s web menu, and `/model`'s |
+| `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default; `models_menu` (`ModelsSource`, `remove_model`), the menu bare `/model` declares for the web UI |
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
 | `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key |
 | `models/accounts.py` | accounts per provider for `/accounts` and `PROVIDER@*`: found from credential files or recorded at `/login`, ordered in the `accounts` table (no secrets) |
-| `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add` |
+| `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add`; adding, renaming, and signing out ask through `Dialogs`, so `accounts_settings_menu`, the `Command.menu` of `/accounts` and `/login`, runs the same steps in the web UI |
+| `ui/menus/key_menu.py` | `/keys`: the terminal list, its add/replace/rename/delete steps asking through `Dialogs`, and `keys_menu`, the same steps as `/keys`' `Command.menu`; secrets never leave it, only names |
 | `models/usage.py` | account usage fetchers: Codex through the core provider's own client (so tokens refresh as for model requests), Copilot with the saved GitHub login, plugins through `PluginLogin.usage` |
 | `ui/menus/account_usage.py` | `UsageBoard`: `/accounts` usage loaded in the background while the menu is open; the menu thread redraws itself from `read_key`, never another thread |
 | `models/chains.py` | `chain:NAME` fallback chains over core `FallbackModel`; a chain takes its first model's settings. Made in the `/model` picker (`/chain` is an alias of `/model chains`) |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
-| `ui/menus/custom_params.py` | the editor for custom model parameters |
+| `ui/menus/custom_params.py` | `edit_custom_params`, the editor for custom model parameters, asking through `Dialogs` |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation` and pointing `Agent.instrument_all` at it while loaded (restored on unload); `token` picks a `/keys` write token, `variables_key` a `/keys` API key for managed variables, `ui_events` subscribes it to UI telemetry; its declared `settings_menu` has a project row whose action runs `logfire_setup` |
 | `builtin_plugins/logfire_live.py` | the `observability` plugin's web UI side panel: the project's page from Logfire's `/v1/info`, and the live view URL filtered to the conversation's root trace, opened at the latest run that `SessionTracing.before_run` remembers |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
@@ -123,7 +125,10 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `builtin_plugins/web/session_tools.py` | the orchestrator's session tools over `host.sessions`: `sessions_find` (every project's saved sessions as a table, grouped by `placements`), `sessions_archive` and `sessions_unarchive`, each publishing `SessionsChanged`; no session tool deletes a session or removes a worktree. Imported lazily by `orchestrator.py` |
 | `builtin_plugins/web/workspaces.py` | the sidebar's Workspaces section: `GET /api/workspaces` (no tokens) and `POST /api/workspaces/ID/open` (the workspace's address with its token, for this page only); `web-ui/src/components/WorkspacesSection.tsx` draws it |
 | `web-ui/` (beside the package) | the React and TypeScript source of the browser UI, built with Vite |
-| `web-ui/src/components/SettingsWindow.tsx`, `CommandMenu.tsx` | the Settings window (sections by `#settings/ID`: General is `/set`'s declared menu, Plugins the plugins panel) and the dialog for another bare command's declared menu (`Command.menu`, read through `PluginHost.command_menu` and `/api/commands/NAME/fields`), both drawn by `MenuForm.tsx`; add a section to `SECTIONS`, not a second window |
+| `web-ui/src/components/CommandPalette.tsx` | the command palette (Cmd/Ctrl+Shift+P, or bare `/help`): every command `host.complete('/')` offers, filtered; Enter runs the bare command as the composer would, one needing arguments goes to the composer |
+| `web-ui/src/components/UsageCard.tsx` | `/usage` and `/cost` results as a card, from the `UsageReport` on their `Notice` |
+| `web-ui/src/components/SettingsWindow.tsx`, `CommandMenu.tsx` | the Settings window (sections by `#settings/ID`: General is `/set`'s declared menu, Plugins the plugins panel, Keys & accounts the menus `/keys` and `/accounts` declare, MCP servers `/mcp`'s) and the dialog for another bare command's declared menu (`Command.menu`, read through `PluginHost.command_menu` and `/api/commands/NAME/fields`), both drawn by `MenuForm.tsx`; add a section to `SECTIONS`, not a second window |
+| `mcp/_menu.py`, `web-ui/src/components/McpSection.tsx` | `/mcp`'s declared menu (`servers_menu`): a row per server with its state, project-file trust, and Add server, each an action whose `Dialogs` run `MCPCommand.run` (the `/mcp install` form, start, stop, tools, logs, sign-in, edit, remove); the Settings window's MCP servers section draws it |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, asking through the `Dialogs` they are given, Esc-cancellable |
