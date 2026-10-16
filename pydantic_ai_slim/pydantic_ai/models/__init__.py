@@ -568,6 +568,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    @property
+    def _contains_live_connection(self) -> bool:
+        """Whether a request would borrow runtime state that cannot cross a durable boundary."""
+        return False
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # TODO(v3): remove along with `resolve_prompt_cache_retention`.

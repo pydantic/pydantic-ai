@@ -19,9 +19,11 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, assert_never, cast, get_args, overload
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Literal, Never, Self, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
+from opentelemetry.trace import get_current_span
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
@@ -134,6 +136,11 @@ from ._tool_choice import (
 )
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
+
+if TYPE_CHECKING:
+    from openai.types.websocket_connection_options import WebSocketConnectionOptions
+
+    from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketStream
 
 try:
     from openai import (
@@ -480,7 +487,7 @@ def _is_azure(client: AsyncOpenAI, system: str) -> bool:
 
 
 def _check_azure_content_filter(
-    e: APIStatusError, client: AsyncOpenAI, system: str, model_name: str
+    e: APIStatusError | ModelHTTPError, client: AsyncOpenAI, system: str, model_name: str
 ) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
@@ -2383,6 +2390,74 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
+    _websocket: ResponsesWebSocket | None = field(default=None, repr=False)
+
+    @property
+    def _contains_live_connection(self) -> bool:
+        return self._websocket is not None
+
+    async def __aenter__(self) -> Self:
+        if self._websocket is None:
+            await super().__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        if self._websocket is None:
+            return await super().__aexit__(exc_type, exc_val, exc_tb)
+        return None
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        extra_headers: Mapping[str, str] | None = None,
+        websocket_connection_options: WebSocketConnectionOptions | None = None,
+    ) -> AsyncGenerator[Self]:
+        """Yield a model bound to one caller-owned Responses WebSocket.
+
+        The source model continues to use HTTP. Pass the yielded model to an Agent,
+        an individual run, or a model-selection capability. One response may be active
+        on the connection at a time; incomplete streams and cancellation close it.
+
+        Install `pydantic-ai-slim[openai-responses-websocket]` to enable this method.
+        Standalone token counting and compaction continue to use HTTP.
+        """
+        try:
+            from ._openai_responses_websocket import ResponsesWebSocket
+        except ImportError as exc:
+            raise ImportError(
+                'Install `pydantic-ai-slim[openai-responses-websocket]` to use Responses WebSockets.'
+            ) from exc
+
+        headers = {key.lower(): value for key, value in (self.settings or {}).get('extra_headers', {}).items()}
+        headers.update({key.lower(): value for key, value in (extra_headers or {}).items()})
+        headers.setdefault('user-agent', get_user_agent())
+        # `_build_request_options` inserts the default under this exact spelling.
+        # Keep one User-Agent key when the connection supplied a custom value.
+        request_headers = {key: value for key, value in headers.items() if key != 'user-agent'}
+        request_headers['User-Agent'] = headers['user-agent']
+        settings: ModelSettings = {**(self.settings or {}), 'extra_headers': request_headers}
+        timeout = HTTPX2Timeout(to_httpx2_timeout(settings.get('timeout', self.client.timeout)))
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            websocket = await ResponsesWebSocket.connect(
+                self.client,
+                self.model_name,
+                self._provider.model_id_namespace,
+                headers,
+                timeout,
+                websocket_connection_options or {},
+            )
+        try:
+            connected = _utils.replace_no_init(self, _websocket=websocket)
+            connected._settings = settings
+            yield connected
+        finally:
+            await websocket.close()
 
     def __init__(
         self,
@@ -2633,12 +2708,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        if info := self._get_continuation_info(messages, settings):
+        info = self._get_continuation_info(messages, settings)
+        if info is not None and self._websocket is not None:
+            raise UserError('A suspended Responses response cannot be resumed over a WebSocket. Select an HTTP model.')
+        if info is not None:
             # Non-streaming retrieve: on `store=false` backends (Codex, which is also stream-only)
             # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
-        elif self.profile.get('openai_responses_requires_streaming', False):
+        elif self._websocket is not None or self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
             # Note: if a higher-level path to enforce streaming is ever added, this branch belongs there instead.
@@ -2653,7 +2731,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
                 async for _ in streamed_response:
                     pass
-            return streamed_response.get()
+            result = streamed_response.get()
+            if self._websocket is not None:
+                result.provider_details = {**(result.provider_details or {}), 'transport': 'websocket'}
+            return result
         else:
             response = await self._responses_create(
                 messages, stream=False, model_settings=settings, model_request_parameters=model_request_parameters
@@ -2736,7 +2817,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        if info := self._get_continuation_info(messages, settings):
+        info = self._get_continuation_info(messages, settings)
+        if info is not None and self._websocket is not None:
+            raise UserError('A suspended Responses response cannot be resumed over a WebSocket. Select an HTTP model.')
+        if info is not None:
             response_id, last_sequence_number, previous_model_name = info
             expected_response_id = response_id
             if last_sequence_number is None:
@@ -2773,6 +2857,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
             )
+            if self._websocket is not None:
+                sr.provider_details = {**(sr.provider_details or {}), 'transport': 'websocket'}
             yield sr
 
     def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
@@ -2956,19 +3042,28 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[responses.ResponseStreamEvent],
+        response: AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
         *,
         expected_model_name: OpenAIModelName | None = None,
         expected_response_id: str | None = None,
-    ) -> OpenAIResponsesStreamedResponse:
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
-            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream
         ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            first_chunk = await peekable_response.peek()
+            try:
+                first_chunk = await peekable_response.peek()
+            except ModelHTTPError as exc:
+                if self._websocket is not None and (
+                    model_response := _check_azure_content_filter(exc, self.client, self.system, self.model_name)
+                ):
+                    return _ModelResponseStreamedResponse(
+                        model_request_parameters=model_request_parameters, _model_response=model_response
+                    )
+                raise
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
@@ -3246,7 +3341,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+    ) -> AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream: ...
 
     async def _responses_create(
         self,
@@ -3254,7 +3349,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
         profile = self.profile
 
         include = self._build_include(model_settings)
@@ -3286,6 +3381,63 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if comparison_response_id is not None:
                 prompt_cache_options['comparison_response_id'] = comparison_response_id
 
+        if websocket := self._websocket:
+            if model_settings.get('openai_background'):
+                raise UserError('Background responses are not supported over a Responses WebSocket.')
+            request_headers = {key.lower(): value for key, value in extra_headers.items()}
+            effective_headers = websocket.effective_headers(self.client, request_headers)
+            if effective_headers != websocket.headers:
+                differing_headers = ', '.join(
+                    f'`{name}`'
+                    for name in sorted(effective_headers.keys() | websocket.headers.keys())
+                    if effective_headers.get(name) != websocket.headers.get(name)
+                )
+                raise UserError(
+                    'Request headers must match the open Responses WebSocket handshake. '
+                    f'Differing headers: {differing_headers}. '
+                    'Configure them on the model or `model.connect(extra_headers=...)`.'
+                )
+            body: dict[str, object] = {
+                'model': request_params.model,
+                'input': request_params.input,
+                'instructions': request_params.instructions,
+                'parallel_tool_calls': request_params.parallel_tool_calls,
+                'tools': request_params.tools,
+                'tool_choice': request_params.tool_choice,
+                'previous_response_id': request_params.previous_response_id,
+                'reasoning': request_params.reasoning,
+                'text': request_params.text,
+                'truncation': request_params.truncation,
+                'context_management': request_params.context_management,
+                'max_output_tokens': model_settings.get('max_tokens', OMIT),
+                'temperature': model_settings.get('temperature', OMIT),
+                'top_p': model_settings.get('top_p', OMIT),
+                'service_tier': _resolve_openai_service_tier(model_settings),
+                'conversation': request_params.conversation,
+                'top_logprobs': model_settings.get('openai_top_logprobs', OMIT),
+                'store': store,
+                'user': model_settings.get('openai_user', OMIT),
+                'include': include or OMIT,
+                'prompt_cache_key': model_settings.get('openai_prompt_cache_key', OMIT),
+                'prompt_cache_retention': model_settings.get('openai_prompt_cache_retention', OMIT),
+                'prompt_cache_options': prompt_cache_options,
+                'moderation': model_settings.get('openai_moderation', OMIT),
+            }
+            if (extra_body := model_settings.get('extra_body')) is not None:
+                if not _is_str_dict(extra_body):
+                    raise UserError('Responses WebSocket `extra_body` must have string keys.')
+                body.update(extra_body)
+            if body.get('background') or any(key in body for key in ('stream', 'stream_id', 'type')):
+                raise UserError(
+                    'Responses WebSocket `extra_body` cannot set `background`, `stream`, `stream_id`, or `type`.'
+                )
+            get_current_span().set_attribute('pydantic_ai.transport', 'websocket')
+            return await websocket.request(
+                {key: value for key, value in body.items() if not isinstance(value, Omit)},
+                HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout),
+            )
+
+        get_current_span().set_attribute('pydantic_ai.transport', 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await self.client.responses.create(
@@ -3716,6 +3868,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if message.provider_details and message.provider_details.get('compaction'):
                     return None
                 response_id = message.provider_response_id
+                if (message.provider_details or {}).get('transport') == 'websocket':
+                    if self._websocket is None or response_id not in self._websocket.response_ids:
+                        return None
+                elif self._websocket is not None:
+                    return None
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
@@ -3741,6 +3898,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # the next request must pass the `CompactionPart` via the `input` array
                 # (handled by `_map_messages`) without a `previous_response_id`.
                 if m.provider_details and m.provider_details.get('compaction'):
+                    return None, messages
+                # A WebSocket response may exist only in its connection cache (store=false or
+                # zero data retention). A different socket or HTTP request must replay history.
+                if (m.provider_details or {}).get('transport') == 'websocket':
+                    if self._websocket is None or m.provider_response_id not in self._websocket.response_ids:
+                        return None, messages
+                elif self._websocket is not None:
                     return None, messages
                 previous_response_id = m.provider_response_id
                 break
@@ -4802,7 +4966,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
+    _response: _utils.PeekableAsyncStream[
+        responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream
+    ]
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
@@ -4849,6 +5015,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        if isinstance(self._response.source, AsyncStream):
+            return super().get_stream_cancel_errors()
+        from ._openai_responses_websocket import WebSocketTransportError
+
+        return (WebSocketTransportError,)
 
     async def close_stream(self) -> None:
         await self._response.source.close()

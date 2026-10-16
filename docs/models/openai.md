@@ -39,6 +39,38 @@ agent = Agent('{{ openai:medium }}')
 !!! tip
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
+## Responses WebSockets
+
+For consecutive Responses API requests on one connection, install the separate WebSocket extra:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai-responses-websocket]"
+```
+
+Open a connection on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] and pass the yielded model through normal Agent model selection:
+
+```python {test="skip" lint="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+responses_model = OpenAIResponsesModel('{{ openai:medium.name }}')
+agent = Agent()
+
+async with responses_model.connect() as connected_model:
+    result = await agent.run('Summarize the latest report.', model=connected_model)
+    follow_up = await agent.run('Give me three action items.', model=connected_model, conversation=result.conversation)
+```
+
+The source `responses_model` still uses HTTP. The connection belongs to `connected_model` and closes when its context exits. You can also construct `Agent(connected_model)` inside the context or return it from a model-selection capability. An explicit `model=` argument has the usual precedence over a capability's model selection; leave it out when the capability should choose. Selecting an ordinary model uses HTTP even while another model's socket is open.
+
+One response can be active on a connection at a time. An overlapping request raises before sending a second frame. For parallel requests, open a separate context for each worker. Sequential SubAgents may borrow a live parent model; parallel or background SubAgents need independent models when their requests can overlap or outlive that context. A connected handle cannot be used after its context exits. Closing an unfinished stream closes the socket, so open a new context to continue.
+
+The connection can continue a response using a cached response ID while that ID remains on the same socket. If selection moves to HTTP or another socket, Pydantic AI sends the retained message history instead of reusing a connection-local ID. Keep the full conversation when you may change transports, especially with `openai_store=False` or zero data retention. The library does not replay a request after an ambiguous disconnect; inspect the run outcome before retrying tools.
+
+Request settings continue to map to `response.create`. Handshake headers, authentication, the SDK client's WebSocket URL, proxy and TLS configuration are fixed when `connect()` opens. Put shared headers in model settings or `connect(extra_headers=...)`; changing them on an individual run raises before send. WebSocket responses cannot use `openai_background=True`, and the HTTP compaction and token-counting operations keep their ordinary transport. The OpenAI API WebSocket endpoint is the supported service; an OpenAI-compatible HTTP endpoint needs its own WebSocket support and client configuration. [`OpenAICodexModel`](openai-codex.md) uses per-request session headers and does not support this persistent connection.
+
+Responses WebSockets carry ordinary text and tool-call responses. They are separate from [Realtime sessions](../realtime/openai.md) for audio and live interaction. See the [OpenAI WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode) for endpoint behavior and connection-local state.
+
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
 For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
 

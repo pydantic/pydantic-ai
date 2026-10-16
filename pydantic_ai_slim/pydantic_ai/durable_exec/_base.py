@@ -1648,6 +1648,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> DurableModel:
         """Assemble the base-owned durable model used before and after the before-hook chain."""
         self._validate_model_request_parameters(request_context.model_request_parameters)
+        if request_context.model._contains_live_connection:  # pyright: ignore[reportPrivateUsage]
+            raise UserError(
+                'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
+                'Open the connection inside a model activity, or select an ordinary HTTP model.'
+            )
         resolved = self._resolved_request_model(request_context.model)
         owned = resolved is not None and not resolved.registered
         model_scope = self._request_model_scope.get()

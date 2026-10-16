@@ -126,6 +126,7 @@ realtime = ["websockets>=14.0"]
 # dependency tree. xAI includes `openai` because its realtime API reuses the OpenAI codec, whose
 # event types come from the OpenAI SDK.
 openai-realtime = ["pydantic-ai-slim[openai,realtime]"]
+openai-responses-websocket = ["pydantic-ai-slim[openai]", "websockets>=14.0"]
 google-realtime = ["pydantic-ai-slim[google,realtime]"]
 xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
