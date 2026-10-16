@@ -28,7 +28,9 @@ from pydantic_ai_harness.compaction._shared import (
     find_token_cutoff,
     prepend_first_user_message,
     record_compaction_reclaim,
+    resolve_keep_tokens,
     resolve_token_trigger,
+    validate_keep_fraction,
     validate_token_trigger,
 )
 
@@ -77,12 +79,12 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     Unlike `fallback_context_window`, this applies whether or not resolution succeeds. Reach
     for it when the registry is confidently wrong: a beta- or tier-gated window it records as
     the maximum, or a self-hosted endpoint whose model id describes someone else's
-    deployment. Only consulted alongside `max_fraction`."""
+    deployment. Only consulted alongside `max_fraction` or `keep_fraction`."""
 
     fallback_context_window: int = field(default=DEFAULT_CONTEXT_WINDOW, kw_only=True)
     """Window assumed when the request's model is not in the pricing registry.
 
-    Only consulted alongside `max_fraction`. Supply the real number for a deployment the
+    Only consulted alongside `max_fraction` or `keep_fraction`. Supply the real number for a deployment the
     registry cannot resolve."""
 
     keep_messages: int = 40
@@ -96,6 +98,14 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
 
     Whole messages and tool dependencies can exceed this floor. Attached instructions do
     not count. When `None`, falls back to `keep_messages`; zero keeps legacy edge behavior.
+    """
+
+    keep_fraction: float | None = field(default=None, kw_only=True)
+    """Retain at least this fraction of the request model's context window, as a `keep_tokens` floor.
+
+    With `keep_tokens`, the smaller floor applies, so a fixed tail still leaves something to
+    reclaim on a small window. Alone, it replaces `keep_messages` as `keep_tokens` does. The
+    window resolves as for `max_fraction`, including `context_window` and `fallback_context_window`.
     """
 
     tokenizer: Callable[[str], int] | None = None
@@ -128,6 +138,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_messages must be non-negative.')
         if self.keep_tokens is not None and self.keep_tokens < 0:
             raise ValueError('keep_tokens must be non-negative.')
+        validate_keep_fraction(self.keep_fraction)
 
     async def compact(
         self,
@@ -135,8 +146,11 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
         """Drop the oldest messages down to the configured tail."""
-        if self.keep_tokens is not None:
-            cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
+        keep_tokens = resolve_keep_tokens(
+            self.keep_tokens, self.keep_fraction, ctx.model, self.fallback_context_window, self.context_window
+        )
+        if keep_tokens is not None:
+            cutoff = find_token_cutoff(messages, keep_tokens, self.tokenizer)
         else:
             # The receipt takes one of the kept slots, but never the last one: keeping zero
             # messages would drop the newest message, which in a run is the request being answered.
@@ -149,7 +163,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         trimmed = messages[cutoff:]
         if self.preserve_first_user_message:
             trimmed = prepend_first_user_message(messages, cutoff, trimmed)
-        protected_tail = len(messages) - cutoff if self.keep_tokens else 0
+        protected_tail = len(messages) - cutoff if keep_tokens else 0
         trimmed = reinject_pinned(messages, trimmed, protected_tail=protected_tail)
         if self.receipts:
             if protected_tail:
