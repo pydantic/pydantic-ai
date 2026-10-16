@@ -788,6 +788,13 @@ GitHub Copilot (premium requests); plugins can report their own, as the Claude
 Code plugin does. `…` means it is still loading and `?` that the service did not
 answer; the right-hand panel says why.
 
+In the web UI, `/accounts` and `/login` open the Settings window's **Keys & accounts**
+section, beside the saved `/keys`, with the same steps behind each account's button. There,
+ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the link or code, an
+API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
+and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
+only in the terminal.
+
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
 as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
@@ -867,6 +874,9 @@ Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
 confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
 clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+In the web UI, `/keys` opens the Settings window's **Keys & accounts** section,
+which lists the names, says what uses each, and asks the same steps as dialogs; a
+value goes from the page to CLAI, never back.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,

@@ -33,6 +33,7 @@ from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
 from pydantic_clai2.models.accounts import remember
 from pydantic_clai2.models.profiles import ALL, DEFAULT, account, parse_model, split_profile, with_profile
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -53,12 +54,15 @@ async def login_command(
     plugins: Mapping[str, PluginLogin] | None = None,
     store: SettingsStore | None = None,
     runners: Runners = TERMINAL,
+    dialogs: Dialogs | None = None,
 ) -> str:
     """`/login NAME[@PROFILE]` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` asks which.
 
     `@PROFILE` signs in another account, used by models named `PROVIDER@PROFILE:MODEL`. Providers that
     take an API key or a connection (`openrouter`, `vllm`, `openai`, ...) sign in to a profile too.
-    A plugin sign-in that succeeds saves its `models` to `store`.
+    A plugin sign-in that succeeds saves its `models` to `store`. `dialogs` asks wherever a menu was
+    opened, such as the web UI: subscriptions wait on their waiting screen and API keys come from `/keys`;
+    connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
     """
     plugins = plugins or {}
     if len(args) > 1:
@@ -75,7 +79,7 @@ async def login_command(
     if profile == DEFAULT:
         profile = None
     plugin = plugins.get(name)
-    message = await _sign_in(name, profile=profile, codex=codex, plugins=plugins, store=store)
+    message = await _sign_in(name, profile=profile, codex=codex, plugins=plugins, store=store, dialogs=dialogs)
     # A plugin keeps its own tokens; for the rest, a saved login is what tells success from a cancelled prompt.
     if store is not None and (plugin is not None or has_credentials(account=account(name, profile))):
         remember(store, login=name, profile=profile, plugin=plugin)
@@ -89,17 +93,20 @@ async def _sign_in(
     codex: 'CodexAuth',
     plugins: Mapping[str, PluginLogin],
     store: SettingsStore | None,
+    dialogs: Dialogs | None,
 ) -> str:
     if name == CODEX:
-        return await codex.login([] if profile is None else [account(name, profile)])
+        return await codex.login([] if profile is None else [account(name, profile)], dialogs=dialogs)
     if name == 'github-copilot':
-        return await github_copilot.login(console=codex.console, account=account(name, profile))
+        return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=dialogs)
     if (login := plugins.get(name)) is not None:
+        if dialogs is not None:
+            raise ValueError(f'Sign in to {account(name, profile)} in the terminal: /login {account(name, profile)}.')
         return await _plugin_login(login, profile=profile, store=store)
     from pydantic_clai2.models import key_profiles
 
     if key_profiles.supports(name, profile=profile):
-        return await key_profiles.login(provider=name, profile=profile)
+        return await key_profiles.login(provider=name, profile=profile, dialogs=dialogs)
     raise ValueError(_login_usage(plugins))
 
 
@@ -215,10 +222,12 @@ class CodexAuth:
         """The default profile's provider, once a request has built it."""
         return self._providers.get(CODEX)
 
-    async def login(self, args: list[str]) -> str:
+    async def login(self, args: list[str], *, dialogs: Dialogs | None = None) -> str:
         """Run core's authorization-code + PKCE flow with a five-minute timeout.
 
         `args` is empty, `['openai-codex']`, or `['openai-codex@PROFILE']` to sign in another account.
+        With `dialogs`, their waiting screen shows the link and waits for the browser to come back to
+        this machine, instead of the terminal opening the browser and offering to paste the URL.
         """
         provider, profile = split_profile(args[0]) if len(args) == 1 else ('', None)
         if args and (len(args) > 1 or provider != CODEX):
@@ -227,6 +236,17 @@ class CodexAuth:
         source = CodexCredentials(account=name)
         flow = OpenAICodexOAuthFlow()
         who = 'ChatGPT/Codex' if profile is None else f'ChatGPT/Codex for profile {profile}'
+        if dialogs is not None:
+            try:
+                with fail_after(self.login_timeout):
+                    credentials = await self._wait(flow, dialogs, who=who, name=name)
+            except TimeoutError:
+                raise UserError(f'Codex login timed out. Run /login {name} to try again.') from None
+            if credentials is None:
+                return f'{who} sign-in cancelled.'
+            await source.save_login(credentials)
+            self._providers.pop(name, None)
+            return self._connected(name, profile)
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
         )
@@ -251,11 +271,40 @@ class CodexAuth:
         finally:
             browser.cancel()
             await asyncio.gather(browser, return_exceptions=True)
+        return self._connected(name, profile)
+
+    @staticmethod
+    def _connected(name: str, profile: str | None) -> str:
         connected = 'Codex connected.' if profile is None else f'Codex connected as {name}; use {name}:MODEL.'
         # A keyring save removes the file, so its presence means the fallback was used.
         if (path := credentials_path(account=name)).exists():
             return f'{connected} No OS keyring is available, so credentials are saved in plaintext at {path}.'
         return f'{connected} Credentials saved in the OS credential store.'
+
+    @staticmethod
+    async def _wait(
+        flow: OpenAICodexOAuthFlow, dialogs: Dialogs, *, who: str, name: str
+    ) -> OpenAICodexCredentials | None:
+        """The browser's callback, behind `dialogs`' waiting screen; `None` when the user cancels it."""
+        received: list[OpenAICodexCredentials] = []
+
+        async def callback(show: Callable[[str], None]) -> None:
+            show(f'Open this link to sign in:\n\n{flow.authorization_url()}')
+            try:
+                received.append(await flow.exchange_code_from_callback())
+            except OSError as exc:
+                raise UserError(
+                    f'The local sign-in callback is unavailable ({exc}). '
+                    f'Run /login {name} in the terminal to paste the URL instead.'
+                ) from None
+
+        description = (
+            f'Sign in to {who} in your browser. This closes by itself once the browser comes back to '
+            'this machine; from another machine, run /login in the terminal instead.'
+        )
+        if not await dialogs.wait(title=f'Signing in to {who}', description=description, task=callback):
+            return None
+        return received[0]
 
     async def _receive(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         """Race the localhost callback against a pasted redirect; the first to succeed wins.

@@ -447,7 +447,8 @@ class Remote:
 
     async def command_menu(self, name: str) -> MenuInfo:
         """The menu bare `/NAME` opens, as the command declares it, with every row's current value."""
-        return await to_thread.run_sync(_menu_info, self._command_menu(name))
+        # Building it may read what it lists, such as `/keys`' names, so it is built off the loop too.
+        return await to_thread.run_sync(lambda: _menu_info(self._command_menu(name)))
 
     async def edit_command_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
         """Set a row of a command's menu to `value`, or reset it with `None` or empty text, as the terminal's menu does."""
@@ -458,16 +459,21 @@ class Remote:
         return await self._edit_command(name, partial(_run_action, key=key, dialogs=self.dialogs))
 
     async def _edit_command(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
-        """One edit, printed in the terminal too, after which every page reads the settings again."""
-        menu = self._command_menu(name)
+        """One edit, printed in the terminal too, after which every page reads the settings again.
+
+        The menu is built again afterwards, since an edit may add or remove rows, such as a saved key.
+        """
         async with self._command_edits:
+            menu = await to_thread.run_sync(self._command_menu, name)
             try:
                 messages = await edit(menu)
             finally:
                 self._settings_changed()
         for message in messages:
             self.host.console.print(message, markup=False, highlight=False)
-        return MenuEdited(messages=messages, menu=await to_thread.run_sync(_menu_info, menu))
+        return await to_thread.run_sync(
+            lambda: MenuEdited(messages=messages, menu=_menu_info(self._command_menu(name)))
+        )
 
     # The sidebar's workers: the delegated tasks.
 

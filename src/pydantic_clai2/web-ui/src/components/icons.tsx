@@ -162,3 +162,9 @@ export const ExternalIcon = icon(
     <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
   </>,
 )
+export const KeyIcon = icon(
+  <>
+    <circle cx="8" cy="15" r="4" />
+    <path d="m11 12 9-9M17 6l3 3M14 9l2 2" />
+  </>,
+)

@@ -342,7 +342,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
 | `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key |
 | `models/accounts.py` | accounts per provider for `/accounts` and `PROVIDER@*`: found from credential files or recorded at `/login`, ordered in the `accounts` table (no secrets) |
-| `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add` |
+| `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add`; adding, renaming, and signing out ask through `Dialogs`, so `accounts_settings_menu`, the `Command.menu` of `/accounts` and `/login`, runs the same steps in the web UI |
+| `ui/menus/key_menu.py` | `/keys`: the terminal list, its add/replace/rename/delete steps asking through `Dialogs`, and `keys_menu`, the same steps as `/keys`' `Command.menu`; secrets never leave it, only names |
 | `models/usage.py` | account usage fetchers: Codex through the core provider's own client (so tokens refresh as for model requests), Copilot with the saved GitHub login, plugins through `PluginLogin.usage` |
 | `ui/menus/account_usage.py` | `UsageBoard`: `/accounts` usage loaded in the background while the menu is open; the menu thread redraws itself from `read_key`, never another thread |
 | `models/chains.py` | `chain:NAME` fallback chains over core `FallbackModel`; a chain takes its first model's settings. Made in the `/model` picker (`/chain` is an alias of `/model chains`) |

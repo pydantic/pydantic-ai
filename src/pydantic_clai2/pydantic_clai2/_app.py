@@ -67,6 +67,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.menus import Dialogs, SettingsMenu
 from pydantic_clai2.runtime._session import (
     ModelDefaults,
     Session,
@@ -88,7 +89,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
-from pydantic_clai2.ui.menus.key_menu import keys_command
+from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -416,10 +417,26 @@ class _ModelResolver:
             self._auth = CodexAuth(self.console)
         return self._auth
 
-    async def login(self, args: list[str]) -> str:
+    async def login(self, args: list[str], dialogs: Dialogs | None = None) -> str:
+        """`/login`; `dialogs` asks wherever a menu was opened, such as the web UI, instead of the terminal."""
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
+        return await login_command(
+            args, codex=self.codex_auth(), plugins=self.logins(), store=self.store, dialogs=dialogs
+        )
+
+    def accounts_menu(self) -> SettingsMenu:
+        """`/accounts` (and bare `/login`) as a declared menu, signing in through the dialogs it is shown with."""
+        from pydantic_clai2.ui.menus.accounts_menu import accounts_settings_menu
+
+        if self.store is None:  # pragma: no cover -- the shell always has a store.
+            raise ValueError('Accounts need a settings database.')
+        return accounts_settings_menu(
+            self.store,
+            sign_in=lambda target, dialogs: self.login([target], dialogs),
+            plugins=self.logins,
+            forget=self.codex_auth().forget,
+        )
 
     async def resolve(self, name: str) -> Model | str:
         """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string.
@@ -612,7 +629,11 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
+    commands.register(
+        Command(
+            name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True, menu=keys_menu
+        )
+    )
     commands.register(
         Command(
             name='login',
@@ -622,6 +643,7 @@ def create_shell(
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
             during_turn=True,
+            menu=models.accounts_menu,
         )
     )
     commands.register(
@@ -630,6 +652,7 @@ def create_shell(
             description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
             handler=models.accounts,
             during_turn=True,
+            menu=models.accounts_menu,
         )
     )
     set_ = Command(

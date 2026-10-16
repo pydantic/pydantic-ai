@@ -55,6 +55,16 @@ saved; a change made in the terminal shows here too. `/set` or `/settings` typed
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
 in the terminal.
 
+**Keys & accounts** (`#settings/keys`, or `/keys`, `/login`, or `/accounts` in the composer) lists
+your saved API keys by name, with what uses each, and your accounts in the order `PROVIDER@*` tries
+them. Each row's button asks what to do as the terminal's menus do: add, replace (masked), rename,
+or delete a key; sign in again, rename, try earlier or later, or sign out of an account; add one.
+A key's value is typed in the page but never sent back to it. Signing in to ChatGPT/Codex or GitHub
+Copilot shows its link or code on a waiting screen you can cancel; the ChatGPT/Codex sign-in
+finishes when the browser comes back to the machine CLAI runs on. An API-key account picks or saves
+a `/keys` entry. Connections (`openrouter`, `vllm`) and plugins' sign-ins ask in the terminal, so
+the page says to run `/login NAME` there.
+
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
 footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and
