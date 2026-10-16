@@ -46,8 +46,8 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
-from pydantic_clai2.runtime.repl_cells import REPL_CELL, ReplCell
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
 
@@ -385,8 +385,8 @@ class Session(Generic[DepsT, OutputT]):
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
-        self._repl_notes: list[tuple[str, str]] = []
-        """Cells the user ran in the REPL since the last prompt, with the conversation they ran in."""
+        self._monty_notes: list[tuple[str, str]] = []
+        """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
         self.on_context_window: Callable[[int], None] | None = None
         """Told the context window of each streamed request's model, when its profile knows one."""
@@ -674,34 +674,34 @@ class Session(Generic[DepsT, OutputT]):
             self._run_context.enqueue(*content, priority='asap')
         return True
 
-    async def run_in_repl(self, code: str) -> ReplCell:
-        """Run `code` as a `run_code` cell in this session's REPL, outside the conversation; see `repl_cells`.
+    async def run_in_monty(self, code: str) -> MontyCell:
+        """Run `code` as a `run_code` cell in Monty, outside the conversation; see `monty_cells`.
 
         The cell runs with the session's tools and capabilities, so code mode must be on for it to
         find `run_code`. The next prompt tells the model what ran.
         """
         if self._running:
-            raise RuntimeError('A turn is running. Run REPL cells between turns.')
-        cell = ReplCell(code=code)
+            raise RuntimeError('A turn is running. Run Monty cells between turns.')
+        cell = MontyCell(code=code)
         self._running = True
         try:
             with session_context(self.summary.id):
                 _, capabilities = self._bind()
                 self._add_local_workspace(capabilities)
                 await self.agent.run(
-                    "Run the user's REPL cell.",
+                    "Run the user's Monty cell.",
                     output_type=str,
                     deps=self.deps,
                     model=cell.model(),
                     message_history=[],
                     conversation_id=self.summary.id,
                     capabilities=capabilities,
-                    metadata={REPL_CELL: True},
+                    metadata={MONTY_CELL: True},
                     event_stream_handler=self._stream,
                 )
         finally:
             self._running = False
-        self._repl_notes.append((self.summary.id, cell.note()))
+        self._monty_notes.append((self.summary.id, cell.note()))
         return cell
 
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
@@ -712,10 +712,10 @@ class Session(Generic[DepsT, OutputT]):
         capabilities.append(local)
         return True
 
-    def _take_repl_notes(self) -> list[str]:
+    def _take_monty_notes(self) -> list[str]:
         """The notes for cells run in this conversation since the last prompt; others are dropped."""
-        notes = [note for conversation_id, note in self._repl_notes if conversation_id == self.summary.id]
-        self._repl_notes.clear()
+        notes = [note for conversation_id, note in self._monty_notes if conversation_id == self.summary.id]
+        self._monty_notes.clear()
         return notes
 
     async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
@@ -725,8 +725,8 @@ class Session(Generic[DepsT, OutputT]):
         content: str | Sequence[UserContent] | None = (
             [*([text] if text is not None else []), *images] if images else text
         )
-        if content is not None and (notes := self._take_repl_notes()):
-            # The model's REPL holds what the user's cells did; tell it before this prompt.
+        if content is not None and (notes := self._take_monty_notes()):
+            # Monty holds what the user's cells did; tell the model before this prompt.
             content = [*notes, *([content] if isinstance(content, str) else content)]
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True

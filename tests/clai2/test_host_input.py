@@ -297,6 +297,7 @@ async def test_a_host_without_a_shell() -> None:
     assert not host.interrupt()
     assert await host.complete('/') == []
     assert host.sessions is None
+    assert host.tasks is None
 
 
 def response(text: str) -> list[ModelMessage]:
@@ -350,7 +351,7 @@ async def test_rename_refuses_a_conversation_that_changed(tmp_path: Path, monkey
         await shell.sessions.rename(saved.id, 'New')
 
 
-async def test_fork_closes_an_interrupted_conversations_open_calls(tmp_path: Path) -> None:
+async def test_fork_closes_open_calls_of_an_interrupted_conversation(tmp_path: Path) -> None:
     shell = remote_shell(tmp_path, Agent(TestModel()), output=io.StringIO())
     call = ModelResponse(parts=[ToolCallPart('shell', {'command': 'ls'}, tool_call_id='call')])
     saved = await shell.sessions.store.save(

@@ -122,7 +122,6 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     (package / '__init__.py').write_text('raise RuntimeError("parent imported")')
     (package / 'tools.py').write_text('class Tool:\n    """A safe description."""\n')
     assert text('clai_parent_must_not_run.tools:Tool') == 'A safe description.'
-    assert text('clai_parent_must_not_run.tools:Tool') == 'A safe description.'
     assert 'clai_parent_must_not_run' not in sys.modules
     injected = tmp_path / 'injected.py'
     injected.write_text('"""Before\\x1b]52;c;payload\\x07 after."""')

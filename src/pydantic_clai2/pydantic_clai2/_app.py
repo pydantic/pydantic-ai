@@ -45,6 +45,7 @@ from pydantic_clai2.commands import (
     set_completions,
 )
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -60,6 +61,7 @@ from pydantic_clai2.plugins import (
     Renderer,
     SessionEndReason,
     SessionStart,
+    TaskEvent,
     TurnEnd,
     TurnStart,
     bare_screen,
@@ -83,7 +85,7 @@ from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
@@ -122,58 +124,6 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
-
-
-DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
-    PluginSettings(
-        id='coder',
-        factory='pydantic_clai2.builtin_plugins.coder',
-        settings={
-            'unrestricted_filesystem': True,
-            'repo_context': False,
-            'sub_agents': False,
-            'agent_folders': ['agents'],
-        },
-    ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
-    PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
-    PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
-    PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
-    PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
-    PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
-    PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
-    PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
-    PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),
-    PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False),
-    PluginSettings(id='ordinal', factory='pydantic_clai2.builtin_plugins.ordinal', enabled=False),
-    PluginSettings(id='notion', factory='pydantic_clai2.builtin_plugins.notion', enabled=False),
-    PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False),
-    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.builtin_plugins.logfire_mcp', enabled=False),
-    PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
-    PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
-    PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
-    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
-    PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=False),
-    PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', enabled=False),
-    PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces', enabled=False),
-)
-"""Built-in declarations, each integrated with the shell. `remove` restores their defaults.
-
-Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
-
-`coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
-`compaction` runs alongside `coder`, whose `ClearToolResults` only empties old tool results; see `plugins.compatibility`.
-"""
-
-STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
-    plugin.model_copy(update={'settings': {**plugin.settings, 'sub_agents': True}}) if plugin.id == 'coder' else plugin
-    for plugin in DEFAULT_PLUGINS
-)
-"""CLI-owned agents bind plugins at construction, so Coder can delegate safely.
-
-`DEFAULT_PLUGINS` keeps its run-level delegation opt-out for caller-supplied agents.
-"""
 
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
@@ -820,6 +770,7 @@ def create_shell(
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
+        tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -914,9 +865,9 @@ def create_shell(
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
     commands.register(
         Command(
-            name='repl',
-            description="Run your own Python in this session's run_code REPL: /repl CODE",
-            handler=shell.repl_command,
+            name='monty',
+            description="Run your own Python in Monty, this session's run_code sandbox: /monty CODE",
+            handler=shell.monty_command,
             raw=True,
             live=True,
         )
@@ -1009,6 +960,9 @@ class _Shell(Generic[DepsT, OutputT]):
             if str(self.sessions.store.database) == ':memory:'
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
+            fire=self.loader.fire,
+            listening=lambda: self.loader.handles(TaskEvent),
+            send_input=self.send_input,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -1070,19 +1024,15 @@ class _Shell(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /tasks [stop|background|resume ID]')
         record = self.tasks.resolve(args[1])
         if args[0] == 'stop':
-            await self.tasks.owner.cancel(record.id)
-            await self.tasks.owner.save(record)
+            await self.tasks.stop(record.id)
             return f'Stopping task {record.id[:8]} and its descendants.'
         if args[0] == 'background':
-            self.tasks.owner.background(record.id)
+            self.tasks.background(record.id)
             return f'Task {record.id[:8]} moved to background.'
         await self.tasks.owner.allow_resume(record.id)
         if self.editor is None:
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
-        self.editor.submit(
-            f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
-            f'resume={record.id!r}. Continue from its saved history and report the result.'
-        )
+        self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
 
     def submit_prompt(self, text: str) -> None:
@@ -1091,17 +1041,17 @@ class _Shell(Generic[DepsT, OutputT]):
             raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
         self.submitted.append(text)
 
-    async def repl_command(self, args: list[str]) -> str:
-        """`/repl CODE`: run a cell in the REPL code mode keeps with the session; the next prompt tells the model."""
+    async def monty_command(self, args: list[str]) -> str:
+        """`/monty CODE`: run a cell in Monty, code mode's sandbox; the next prompt tells the model."""
         code = args[0].strip() if args else ''
         if not code:
-            raise ValueError("Usage: /repl CODE runs your own cell in this session's run_code REPL.")
+            raise ValueError("Usage: /monty CODE runs your own cell in Monty, this session's run_code sandbox.")
         if not (self.speculation.enabled or self.context.settings.code_mode):
-            raise ValueError('Code mode is off, so there is no REPL. Turn it on with /set run.code_mode true.')
+            raise ValueError('Code mode is off, so there is no Monty sandbox. Turn it on with /set run.code_mode true.')
         if self.session.repl_states is None:
-            raise ValueError('This CLAI saves no sessions, so no REPL outlives a run.')
+            raise ValueError('This CLAI saves no sessions, so no Monty state outlives a run.')
         self.session.plugins = self.run_plugins()
-        cell = await self.session.run_in_repl(code)
+        cell = await self.session.run_in_monty(code)
         if cell.failed:
             raise ValueError(f'The cell failed:\n{cell.report()}')
         return cell.report() or '(no output)'

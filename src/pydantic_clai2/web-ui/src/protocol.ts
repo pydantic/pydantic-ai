@@ -30,7 +30,7 @@ export interface Item {
   diffs: Diff[]
   /** Tools a `run_code` cell called from its sandbox; live runs only. */
   calls: SubCall[]
-  /** A cell the user ran with `/repl`, rather than one the model wrote. */
+  /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
 }
 
@@ -243,6 +243,19 @@ export interface PluginRow {
   form: PluginForm | null
   /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */
   serving: boolean
+}
+
+/** A plugin's side panel, as it is now. */
+export interface PanelInfo {
+  plugin: string
+  id: string
+  title: string
+  icon: 'panel' | 'traces'
+  /** The page to show; `null` shows `note` alone, such as how to set the plugin up. */
+  url: string | null
+  note: string
+  /** The page lets this one frame it; otherwise it opens in a window of its own. */
+  embed: boolean
 }
 
 /** One row of a plugin's declared settings menu, with its current value. */

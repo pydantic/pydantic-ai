@@ -31,7 +31,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -72,7 +72,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
 )
 
@@ -124,7 +124,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore, continue_run
 
 store = InMemoryStepStore()
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -179,11 +179,11 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
 )
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
