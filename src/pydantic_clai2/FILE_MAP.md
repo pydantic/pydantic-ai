@@ -23,6 +23,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
+| `ui/rendering/welcome.py` | `print_welcome`: the banner, version, worktree notice, hints, and project-settings report a fresh launch and `/clear` show |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
 | `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
