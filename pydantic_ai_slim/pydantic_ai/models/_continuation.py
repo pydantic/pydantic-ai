@@ -232,7 +232,7 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
     silently leaking the job. So the cancel runs as a task of its own, which is waited for until it
     completes, before the cancellation propagates: an `anyio` scope's cancellation is re-delivered at every
     await unless shielded, and a native cancellation still interrupts a shielded wait, so it's waited for
-    again. Any error from the cancel itself is swallowed — a failing teardown must not replace the error
+    again, until a second native cancellation gives up on it. Any error from the cancel itself is swallowed — a failing teardown must not replace the error
     (or cancellation) that aborted the run.
     """
     job = asyncio.ensure_future(model.cancel_suspended_response(response))
@@ -243,6 +243,9 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
                 # Unlike `await job`, doesn't forward our cancellation into the cancel.
                 await asyncio.wait((job,))
             except asyncio.CancelledError as error:
+                if cancelled is not None:
+                    # A repeated cancellation gives up on the provider cancel, so a hanging one can't block the run.
+                    job.cancel()
                 cancelled = error
     with suppress(asyncio.CancelledError):
         job.exception()

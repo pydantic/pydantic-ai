@@ -38,9 +38,15 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_mode, merge_responses
+from pydantic_ai.models._continuation import (
+    _ContinuationStreamedResponse,
+    cancel_suspended_job,
+    merge_mode,
+    merge_responses,
+)
 from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -1367,3 +1373,22 @@ async def test_streamed_interruption_no_context_detach_error(caplog: pytest.LogC
                     pass
 
     assert not any('Failed to detach context' in record.getMessage() for record in caplog.records)
+
+
+async def test_a_repeated_cancellation_gives_up_on_a_hanging_suspended_job_cancel() -> None:
+    """One cancellation lets the provider cancel finish; a second one abandons a cancel that never finishes."""
+    started = asyncio.Event()
+
+    class HangingCancelModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(cancel_suspended_job(HangingCancelModel(), ModelResponse(parts=[], state='suspended')))
+    await asyncio.wait_for(started.wait(), READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, READINESS_WAIT_TIMEOUT)
