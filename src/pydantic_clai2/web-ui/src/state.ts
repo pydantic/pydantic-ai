@@ -254,6 +254,9 @@ export function reduce(state: State, message: ServerMessage): State {
     case 'orchestrator':
       // The orchestrator chat keeps its own state, with `reduceOrchestrator`.
       return state
+    case 'live':
+      // This page shows one session at a time; the sidebar's live dots read `live` separately.
+      return state
   }
 }
 

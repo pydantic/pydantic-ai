@@ -4,6 +4,7 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -261,7 +262,10 @@ class UpdateInfo:
 
 @dataclass(kw_only=True)
 class Snapshot:
-    """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
+    """Everything a browser needs to show one live session: sent on connect, on `watch`, and on a conversation switch.
+
+    `session.id` names the session, so a snapshot carries no `session` string of its own.
+    """
 
     type: Literal['snapshot'] = 'snapshot'
     session: SessionInfo
@@ -514,6 +518,39 @@ class SettingsChanged:
     type: Literal['settings'] = 'settings'
 
 
+LiveState = Literal['running', 'queued', 'asking', 'idle']
+"""`queued`: input waits while the session's turn runs; `asking`: a question or dialog waits for the user."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class LiveEntry:
+    """A session open in this CLAI, which the browser can watch and drive, named by its conversation ID."""
+
+    id: str
+    state: LiveState
+    title: str | None
+    workspace: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class LiveChanged:
+    """The live sessions, sent on connect and whenever one opens, closes, switches conversation, or changes state."""
+
+    type: Literal['live'] = 'live'
+    sessions: list[LiveEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
+class Watch:
+    """From the browser: the live sessions it shows, replacing the ones it watched; each new one gets a `Snapshot`.
+
+    A connection that never sends one watches the default session, as before CLAI ran several.
+    """
+
+    type: Literal['watch'] = 'watch'
+    sessions: list[str]
+
+
 ItemMessage = (
     ItemAdded
     | TextDelta
@@ -583,13 +620,34 @@ ServerMessage = (
     | TaskChanged
     | TaskItems
     | UpdateChanged
+    | LiveChanged
 )
+SessionMessage = (
+    ItemMessage
+    | TurnStarted
+    | TurnEnded
+    | StatusChanged
+    | QuestionAsked
+    | QuestionClosed
+    | DialogOpened
+    | DialogShown
+    | DialogClosed
+    | Notice
+    | TitleChanged
+    | TaskChanged
+    | TaskItems
+)
+"""The messages about one live session, which only its watchers get, each with a `session` naming it."""
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
 
-def dump(message: ServerMessage) -> str:
-    """The JSON text of one message, as the WebSocket sends it."""
-    return _WIRE.dump_json(message).decode()
+def dump(message: ServerMessage, *, session: str | None = None) -> str:
+    """The JSON text of one message, as the WebSocket sends it, with `session`, its conversation ID, when given."""
+    text = _WIRE.dump_json(message).decode()
+    if session is None:
+        return text
+    # Every message is a JSON object, so the conversation ID goes in first.
+    return f'{{"session":{json.dumps(session)},{text[1:]}'
 
 
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']
@@ -604,7 +662,7 @@ class SessionEntry:
     workspace: str
     updated_at: datetime
     state: SessionState
-    """`running` is this session's own turn; `busy` a turn another CLAI is running."""
+    """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
     messages: int
     model: str | None
     current: bool

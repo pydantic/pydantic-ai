@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import os
 import re
 import socket
@@ -57,6 +58,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Item,
     ItemAdded,
     ItemLog,
+    LiveChanged,
+    LiveEntry,
     Notice,
     ServerMessage,
     ShellDone,
@@ -71,6 +74,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolOutput,
     TurnEnded,
     TurnStarted,
+    dump,
     history_items,
 )
 from pydantic_clai2.builtin_plugins.web.remote import Observer
@@ -746,3 +750,18 @@ async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
             dialogs.answer(second.id, 'a')
     assert sorted(answers, key=str) == [False, None]
     assert [type(message).__name__ for message in published].count('DialogClosed') == 4
+
+
+def test_dump_names_the_session_of_a_per_session_message():
+    """A per-session message carries its conversation ID first; a global one carries none."""
+    assert json.loads(dump(TextDelta(id='live1', text='hi'), session='conv "1"')) == {
+        'session': 'conv "1"',
+        'type': 'delta',
+        'id': 'live1',
+        'text': 'hi',
+    }
+    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', title=None, workspace='/w')])
+    assert json.loads(dump(live)) == {
+        'type': 'live',
+        'sessions': [{'id': 'c1', 'state': 'queued', 'title': None, 'workspace': '/w'}],
+    }

@@ -226,3 +226,54 @@ deletes a session, and archiving removes no folder or worktree. It needs `worksp
 the chat offers to do in one click, and uses the session's model. Its conversation is kept across
 reloads and restarts. The session's own agent gets none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
+
+## Several live sessions
+
+`clai2 --web` keeps every session you open live in the one CLAI process: each runs its own turns in
+its own folder, with its own plugins and input queue, while the others run theirs. The page watches
+the sessions it shows over its one WebSocket.
+
+### Wire protocol
+
+Sessions are named by their conversation ID, the `id` the sidebar lists.
+
+- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
+  `status`, `question`, `question_closed`, `dialog`, `dialog_shown`, `dialog_closed`, `notice`,
+  `title`, `task`, `task_event`) carry `"session": "<conversation id>"` and go only to the
+  connections watching that session. A `snapshot` names its session in `session.id`.
+- **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`)
+  go to every connection and carry no `session`.
+- `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
+  conversation, or changes state:
+  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
+  `queued` means input waits while that session's turn runs; `asking` means a question or dialog
+  waits for the user.
+- The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
+  watches. The server answers with a `snapshot` for each newly watched live session; IDs that are not
+  live are ignored. A connection that never sends `watch` (an older page, `web/client.py`) watches
+  the default session, as before. A watched session is never closed for being idle.
+- When a live session switches conversation (`/new` or `/resume` typed in it), its watchers get a
+  `snapshot` for the new ID, and `live` changes.
+
+Routes for one live session, `{id}` its conversation ID; each answers 404 when it is not live:
+
+| Route | Does |
+|---|---|
+| `GET /api/sessions/{id}/state` | its `snapshot` |
+| `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
+| `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
+| `GET /api/sessions/{id}/complete?text=…` | Tab completions |
+| `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
+| `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
+| `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer its dialog |
+
+`POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
+one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
+optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
+`{"id": …}` too. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+delete) and `/api/tasks/{task_id}/…` are unchanged.
+
+The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
+`/api/switch`, `/api/questions/…`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the
+default session: the one the terminal is attached to, else the most recently opened. `web/client.py`
+and the orchestrators of other CLAI versions use them.
