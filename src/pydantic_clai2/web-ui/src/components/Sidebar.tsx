@@ -11,6 +11,7 @@ import {
   FolderIcon,
   MoonIcon,
   MoreIcon,
+  OrchestratorIcon,
   PaletteIcon,
   PuzzleIcon,
   SearchIcon,
@@ -35,6 +36,10 @@ interface Props {
   onView: (session: SessionEntry) => void
   /** Start a new session, asking where it runs when sessions run in their own directories. */
   onNew: () => void
+  /** Whether the main pane shows the orchestrator chat, and whether its turn runs. */
+  orchestrating: boolean
+  orchestratorRunning: boolean
+  onOrchestrator: () => void
   onCollapse: () => void
   onPlugins: () => void
   onError: (message: string) => void
@@ -56,7 +61,24 @@ function live(worktrees: Worktree[]): boolean {
 
 /** Saved sessions grouped by project, then worktree, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onNew, onCollapse, onPlugins, onError },
+  {
+    version,
+    viewing,
+    opening,
+    theme,
+    connected,
+    onTheme,
+    themeInfo,
+    onPickTheme,
+    onView,
+    onNew,
+    orchestrating,
+    orchestratorRunning,
+    onOrchestrator,
+    onCollapse,
+    onPlugins,
+    onError,
+  },
   ref,
 ) {
   const [query, setQuery] = useState('')
@@ -179,7 +201,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   )
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
       <div className="sidebar-top">
         <div className="brand">
           <Logo />
@@ -193,6 +215,16 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       <button className="new-session" onClick={onNew} title={`New session (${MOD}Shift+O)`}>
         <ComposeIcon size={16} />
         <span>New session</span>
+      </button>
+      <button
+        className={`new-session orchestrator-entry ${orchestrating ? 'active' : ''}`}
+        onClick={onOrchestrator}
+        title="Orchestrator: an agent that runs workspaces for you"
+        aria-pressed={orchestrating}
+      >
+        <OrchestratorIcon size={16} />
+        <span>Orchestrator</span>
+        {orchestratorRunning && <span className="state running" aria-label="Working" />}
       </button>
       <label className="search">
         <SearchIcon size={14} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { api, connect, interrupt, type Connection } from './api'
+import { api, connect, interrupt, orchestrator, type Connection } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
@@ -10,14 +10,17 @@ import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
 import { DialogLayer } from './components/DialogLayer'
 import { NewSessionDialog } from './components/NewSessionDialog'
+import { OrchestratorPane } from './components/OrchestratorPane'
 import { ReplPanel } from './components/ReplPanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
-import { initial, reduce } from './state'
+import { initial, initialOrchestrator, reduce, reduceOrchestrator } from './state'
 
 type Theme = 'dark' | 'light'
+/** What the main pane shows: the session, or the orchestrator chat. */
+type Pane = 'session' | 'orchestrator'
 
 interface Opening {
   id: string
@@ -32,6 +35,10 @@ function initialTheme(): Theme {
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initial)
+  const [orchestration, dispatchOrchestrator] = useReducer(reduceOrchestrator, initialOrchestrator)
+  const [pane, setPane] = useState<Pane>(() =>
+    localStorage.getItem('clai-pane') === 'orchestrator' ? 'orchestrator' : 'session',
+  )
   const [connection, setConnection] = useState<Connection>('connecting')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
@@ -60,7 +67,10 @@ export function App() {
       scheduled = false
       const batch = pending
       pending = []
-      for (const message of batch) dispatch(message)
+      for (const message of batch) {
+        if (message.type === 'orchestrator') dispatchOrchestrator(message.message)
+        else dispatch(message)
+      }
     }
     const disconnect = connect((message) => {
       pending.push(message)
@@ -77,6 +87,17 @@ export function App() {
   }, [])
 
   useEffect(() => localStorage.setItem('clai-repl', repl ? 'open' : 'closed'), [repl])
+  useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
+
+  // A command or the plugins panel may have turned `workspaces` on or off, which the orchestrator needs.
+  const pluginsVersion = state.pluginsVersion
+  useEffect(() => {
+    if (pluginsVersion === 0) return
+    void orchestrator
+      .state()
+      .then((found) => dispatchOrchestrator({ type: 'enabled', enabled: found.enabled }))
+      .catch(() => undefined)
+  }, [pluginsVersion])
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -95,8 +116,9 @@ export function App() {
   }, [theme, palette])
 
   useEffect(() => {
-    document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
-  }, [state.session?.title])
+    if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
+    else document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
+  }, [state.session?.title, pane])
 
   // A switch of the live session ends any read-only preview, and the wait for it if it is the one picked.
   const sessionId = state.session?.id
@@ -122,6 +144,7 @@ export function App() {
 
   const followsWorkspace = state.followsWorkspace
   const newSession = useCallback(() => {
+    setPane('session')
     if (followsWorkspace) setChoosing(true)
     else void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
   }, [followsWorkspace, showError])
@@ -143,6 +166,7 @@ export function App() {
     async (session: SessionEntry) => {
       // Only the last session clicked is shown, however the requests for earlier ones resolve.
       const request = ++picked.current
+      setPane('session')
       if (session.current) {
         setPreview(null)
         setOpening(null)
@@ -167,6 +191,10 @@ export function App() {
     [state.running, showError, open],
   )
 
+  // Esc stops the turn of what the main pane shows.
+  const orchestrating = pane === 'orchestrator'
+  const running = orchestrating ? orchestration.chat.running : state.running
+  const stop = orchestrating ? orchestrator.interrupt : api.interrupt
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = MAC ? event.metaKey : event.ctrlKey
@@ -186,11 +214,11 @@ export function App() {
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
-      } else if (event.key === 'Escape' && state.running && !event.defaultPrevented && !event.isComposing) {
+      } else if (event.key === 'Escape' && running && !event.defaultPrevented && !event.isComposing) {
         // Esc in the composer or on the page interrupts, as in the terminal; other fields keep it for themselves.
         const target = event.target as HTMLElement
         const field = target.closest('input, textarea, select')
-        if (!field || field.closest('.composer')) void interrupt(showError)
+        if (!field || field.closest('.composer')) void interrupt(showError, stop)
       } else if (event.key === '/' && document.activeElement === document.body) {
         event.preventDefault()
         composer.current?.focus()
@@ -198,7 +226,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.running, showError, newSession])
+  }, [running, stop, showError, newSession])
 
   const status = state.status
   const title = preview ? preview.title : (state.session?.title ?? 'New session')
@@ -221,7 +249,7 @@ export function App() {
   )
 
   return (
-    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${repl ? 'with-repl' : ''}`}>
+    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${repl && !orchestrating ? 'with-repl' : ''}`}>
       {sidebar && (
         <Sidebar
           ref={sidebarRef}
@@ -237,85 +265,103 @@ export function App() {
           }
           onView={(session) => void view(session)}
           onNew={newSession}
+          orchestrating={orchestrating}
+          orchestratorRunning={orchestration.chat.running}
+          onOrchestrator={() => {
+            setPane('orchestrator')
+            setPreview(null)
+          }}
           onCollapse={() => setSidebar(false)}
           onPlugins={openPlugins}
           onError={showError}
         />
       )}
       <main className="main">
-        <header className="topbar">
-          {!sidebar && (
-            <button className="icon-button" onClick={() => setSidebar(true)} title={`Show sidebar (${MOD}B)`}>
-              <SidebarIcon size={16} />
-            </button>
-          )}
-          <div className="topbar-title">
-            <span className="title">{title}</span>
-            <span className="workspace" title={workspace}>
-              {workspace.replace(/^\/Users\/[^/]+/, '~')}
-            </span>
-          </div>
-          {status && !preview && (
-            <div className="topbar-status">
-              <span className={`activity ${state.running ? 'busy' : ''}`}>{state.running ? status.activity : 'ready'}</span>
-              <span className="context" title="Context used / window">
-                {compact(status.context_tokens)} / {compact(status.context_window)}
-              </span>
-              {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
-            </div>
-          )}
-          <button
-            className={`icon-button repl-toggle ${repl ? 'active' : ''}`}
-            onClick={() => setRepl(!repl)}
-            title={`${repl ? 'Hide' : 'Show'} the run_code REPL (${MOD}J)`}
-            aria-pressed={repl}
-          >
-            <TerminalIcon size={16} />
-          </button>
-        </header>
-        {preview && (
-          <div className="preview-banner">
-            {preview.openable
-              ? 'A turn is running. You can switch to this session once it ends.'
-              : preview.missing
-                ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
-                : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
-            {preview.openable && !state.running && (
-              <button className="primary small" onClick={() => void open(preview)}>
-                Continue here
-              </button>
-            )}
-            <button className="ghost small" onClick={() => setPreview(null)}>
-              Back to current
-            </button>
-          </div>
-        )}
-        {fresh ? (
-          <div className="hero">
-            <h1>
-              What should we build{project ? ' in ' : ''}
-              {project && <span className="hero-project">{project}</span>}?
-            </h1>
-            {state.questions.map((request) => (
-              <QuestionCard key={request.id} request={request} onError={showError} />
-            ))}
-            {composerElement}
-            <p className="hero-hint">
-              Type <kbd>/</kbd> for commands. The terminal and this page drive the same session.
-            </p>
-          </div>
+        {orchestrating ? (
+          <OrchestratorPane
+            view={orchestration}
+            model={status?.model ?? '…'}
+            connected={connection === 'open'}
+            onShowSidebar={sidebar ? null : () => setSidebar(true)}
+            onError={showError}
+          />
         ) : (
           <>
-            <Transcript
-              entries={entries}
-              running={!preview && state.running}
-              empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
-            />
-            <footer className="bottom">
-              {!preview &&
-                state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
-              {!preview && composerElement}
-            </footer>
+            <header className="topbar">
+              {!sidebar && (
+                <button className="icon-button" onClick={() => setSidebar(true)} title={`Show sidebar (${MOD}B)`}>
+                  <SidebarIcon size={16} />
+                </button>
+              )}
+              <div className="topbar-title">
+                <span className="title">{title}</span>
+                <span className="workspace" title={workspace}>
+                  {workspace.replace(/^\/Users\/[^/]+/, '~')}
+                </span>
+              </div>
+              {status && !preview && (
+                <div className="topbar-status">
+                  <span className={`activity ${state.running ? 'busy' : ''}`}>{state.running ? status.activity : 'ready'}</span>
+                  <span className="context" title="Context used / window">
+                    {compact(status.context_tokens)} / {compact(status.context_window)}
+                  </span>
+                  {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
+                </div>
+              )}
+              <button
+                className={`icon-button repl-toggle ${repl ? 'active' : ''}`}
+                onClick={() => setRepl(!repl)}
+                title={`${repl ? 'Hide' : 'Show'} the run_code REPL (${MOD}J)`}
+                aria-pressed={repl}
+              >
+                <TerminalIcon size={16} />
+              </button>
+            </header>
+            {preview && (
+              <div className="preview-banner">
+                {preview.openable
+                  ? 'A turn is running. You can switch to this session once it ends.'
+                  : preview.missing
+                    ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                    : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                {preview.openable && !state.running && (
+                  <button className="primary small" onClick={() => void open(preview)}>
+                    Continue here
+                  </button>
+                )}
+                <button className="ghost small" onClick={() => setPreview(null)}>
+                  Back to current
+                </button>
+              </div>
+            )}
+            {fresh ? (
+              <div className="hero">
+                <h1>
+                  What should we build{project ? ' in ' : ''}
+                  {project && <span className="hero-project">{project}</span>}?
+                </h1>
+                {state.questions.map((request) => (
+                  <QuestionCard key={request.id} request={request} onError={showError} />
+                ))}
+                {composerElement}
+                <p className="hero-hint">
+                  Type <kbd>/</kbd> for commands. The terminal and this page drive the same session.
+                </p>
+              </div>
+            ) : (
+              <>
+                <Transcript
+                  entries={entries}
+                  running={!preview && state.running}
+                  empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
+                />
+                <footer className="bottom">
+                  {!preview &&
+                    state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
+                  {!preview && composerElement}
+                </footer>
+              </>
+            )}
           </>
         )}
         {opening && (
@@ -351,7 +397,7 @@ export function App() {
           onNotice={showNotice}
         />
       )}
-      {repl && (
+      {repl && !orchestrating && (
         <ReplPanel
           entries={entries}
           status={status}

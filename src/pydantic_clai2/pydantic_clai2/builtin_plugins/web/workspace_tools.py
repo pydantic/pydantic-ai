@@ -1,8 +1,8 @@
-"""Let the model run workspaces: make one, start its CLAI with a prompt, watch it, steer it, and report back.
+"""The orchestrator's tools: make a workspace, start its CLAI with a prompt, watch it, steer it, and report back.
 
-The built-in `orchestrator` plugin, off by default. It gives the model tools over the `workspaces` plugin's
-registry, and talks to each workspace's CLAI through its web UI with `web.client`. Turn `workspaces` on
-too: its settings are the kinds of workspace the model may make. The model never sees a token.
+They work over the `workspaces` plugin's registry, whose settings are the kinds of workspace the model may
+make, and talk to each workspace's CLAI through its web UI with `web.client`. The model never sees a token.
+Only the orchestrator's own agent gets them (`web.orchestrator`), never the session's.
 """
 
 import asyncio
@@ -18,28 +18,18 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from websockets.exceptions import WebSocketException
 
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AgentCapability, Capability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient
 from pydantic_clai2.builtin_plugins.web.protocol import Item
 from pydantic_clai2.builtin_plugins.workspaces import Workspace, Workspaces, configured, describe
-from pydantic_clai2.plugins import NoSettings, Plugin, PluginHost, SessionEnd
+from pydantic_clai2.plugins import PluginHost
 
 ASK_USER_TOOL = 'ask_user_question'
 CONNECT_TIMEOUT = 15.0
 MAX_WAIT = 3600.0
 ITEM_CHARS = 600
 ANSWER_CHARS = 4000
-
-INSTRUCTIONS = """\
-You can run work in workspaces: checkouts of a repository on their own branch, each with its own CLAI \
-session that you prompt and watch. `workspace_list` shows them and the kinds you can make; \
-`workspace_create` makes one (it does not start anything); `session_start` starts its CLAI with a \
-prompt; `session_wait` waits for the turn to end or for a question; `session_read` shows the latest \
-items; `session_send` steers it with another prompt; `session_answer` answers its questions; \
-`session_interrupt` stops a turn. Report back what the session did. Before `workspace_destroy`, ask \
-the user with `ask_user_question`, offering the options `Destroy ID` and `Keep ID`."""
 
 
 class SessionAnswer(BaseModel):
@@ -122,7 +112,7 @@ def reported(tool: Callable[P, Awaitable[str]]) -> Callable[P, Awaitable[str]]:
     return run
 
 
-class Orchestrator:
+class WorkspaceTools:
     """The tools, and the connections to the workspaces' CLAIs they keep between calls."""
 
     def __init__(self, host: PluginHost[None]) -> None:
@@ -133,7 +123,7 @@ class Orchestrator:
         """The registry with the kinds the `workspaces` plugin is configured with; `RuntimeError` while it is off."""
         workspaces = configured(self.host.plugins)
         if workspaces is None:
-            raise RuntimeError('The `workspaces` plugin is off. Ask the user to run `/plugins enable workspaces`.')
+            raise RuntimeError('The `workspaces` plugin is off. Ask the user to turn it on.')
         return workspaces
 
     async def view(self, workspace: Workspace) -> SessionView:
@@ -173,6 +163,20 @@ class Orchestrator:
         """Disconnect from every workspace; their CLAIs keep running."""
         for workspace_id in list(self.links):
             await self.disconnect(workspace_id)
+
+    def tools(self) -> list[Callable[..., Awaitable[str]]]:
+        """Every tool, `reported`, for an agent."""
+        return [
+            reported(self.workspace_list),
+            reported(self.workspace_create),
+            reported(self.workspace_destroy),
+            reported(self.session_start),
+            reported(self.session_send),
+            reported(self.session_read),
+            reported(self.session_wait),
+            reported(self.session_interrupt),
+            reported(self.session_answer),
+        ]
 
     # The tools. Each returns text for the model; a problem it can act on comes back as an error line.
 
@@ -291,33 +295,3 @@ def _answer(answer: SessionAnswer) -> AskUserAnswer:
     if answer.custom is not None:
         return AskUserAnswer(header=answer.header, custom_answer=answer.custom)
     return AskUserAnswer(header=answer.header, selected=tuple(answer.selected))
-
-
-class OrchestratorPlugin(Plugin):
-    """Tools for the model to make workspaces, run a CLAI session in each, and watch and steer it."""
-
-    def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
-        super().__init__(host, settings)
-        self.orchestrator = Orchestrator(host)
-
-    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        tools = self.orchestrator
-        return (
-            Capability[None](
-                instructions=INSTRUCTIONS,
-                tools=[
-                    reported(tools.workspace_list),
-                    reported(tools.workspace_create),
-                    reported(tools.workspace_destroy),
-                    reported(tools.session_start),
-                    reported(tools.session_send),
-                    reported(tools.session_read),
-                    reported(tools.session_wait),
-                    reported(tools.session_interrupt),
-                    reported(tools.session_answer),
-                ],
-            ),
-        )
-
-    async def on_session_end(self, event: SessionEnd) -> None:
-        await self.orchestrator.close()

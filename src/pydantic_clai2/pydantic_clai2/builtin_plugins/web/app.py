@@ -24,10 +24,13 @@ from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
+from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
     MenuEdited,
     MenuInfo,
+    OrchestratorMessage,
+    OrchestratorState,
     PluginRow,
     Project,
     Transcript,
@@ -114,6 +117,12 @@ class Answers(BaseModel):
     answers: list[Answer] | None = None
 
 
+class RequestAnswers(Answers):
+    """Answers to the orchestrator's question request `id`."""
+
+    id: str
+
+
 class Rename(BaseModel):
     """A session's new title."""
 
@@ -181,6 +190,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _sessions(app, remote)
     _plugins(app, remote)
     _workspaces(app, remote)
+    _orchestrator(app, remote.orchestrator)
     _events(app, remote)
     if (static / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
@@ -339,6 +349,31 @@ def _workspaces(app: FastAPI, remote: Remote) -> None:
         return await _wait(open_workspace(remote.host.plugins, workspace_id))
 
 
+def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
+    """The orchestrator chat: its own conversation with its own agent, streamed on the same WebSocket."""
+
+    @app.get('/api/orchestrator/state')
+    async def state() -> OrchestratorState:
+        return orchestrator.state()
+
+    @app.post('/api/orchestrator/input', status_code=204)
+    async def send(body: Input) -> None:
+        _run(lambda: orchestrator.send(body.text))
+
+    @app.post('/api/orchestrator/interrupt')
+    async def interrupt() -> Interrupted:
+        return Interrupted(interrupted=orchestrator.interrupt())
+
+    @app.post('/api/orchestrator/answer', status_code=204)
+    async def answer(body: RequestAnswers) -> None:
+        answers = None if body.answers is None else [_answer(answer) for answer in body.answers]
+        _run(lambda: orchestrator.answer(body.id, answers))
+
+    @app.post('/api/orchestrator/clear', status_code=204)
+    async def clear() -> None:
+        _run(orchestrator.clear)
+
+
 def _events(app: FastAPI, remote: Remote) -> None:
     """The WebSocket: a snapshot on connect, then every message the session publishes."""
 
@@ -348,6 +383,7 @@ def _events(app: FastAPI, remote: Remote) -> None:
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with remote.hub.subscribe() as queue:
             await socket.send_text(dump(remote.snapshot()))
+            await socket.send_text(dump(OrchestratorMessage(message=remote.orchestrator.state())))
             async with anyio.create_task_group() as connection:
 
                 async def forward() -> None:

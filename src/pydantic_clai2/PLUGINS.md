@@ -1391,13 +1391,24 @@ starts its CLAI if needed (`POST /api/workspaces/ID/open`) and opens its own pag
 that response carries the workspace's token, to the page that already has its own; `GET
 /api/workspaces` never does.
 
-### `orchestrator`: the model runs workspaces
+### Orchestrator: an agent that runs workspaces
 
-The built-in `orchestrator` plugin (`pydantic_clai2.builtin_plugins.orchestrator`) starts disabled.
-It gives the model tools over the `workspaces` plugin's registry and kinds, so turn that on too; while
-it is off, every tool says so. Each workspace's CLAI is driven through its web UI with
-[`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace that
-the plugin keeps between tool calls and closes when it unloads; the CLAIs keep running.
+The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the sidebar, right below
+**New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
+orchestrator is an agent of its own, separate from the session's: its own conversation, its own
+instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
+destroying one), and only the tools below plus `ask_user_question`. It has no shell, file, code
+mode, or other CLAI tools, and the session's agent, in the terminal or the browser, gets none of
+these.
+
+It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
+off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
+in its composer; choose another for the session to change it. One turn runs at a time, with a small
+dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
+chat** starts over; the workspaces stay. Each workspace's CLAI is driven through its web UI with
+[`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace kept
+between tool calls and closed when `web` unloads; the CLAIs keep running. A tool card that names a
+workspace has an **Open** link to its page, as the sidebar's Workspaces section has.
 
 | Tool | Does |
 |---|---|
@@ -1412,14 +1423,27 @@ the plugin keeps between tool calls and closes when it unloads; the CLAIs keep r
 | `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
-conversation picked the option `Destroy ID` for that workspace; the model is told to ask that way.
-The answer comes from you, through the terminal or the browser, so the model cannot give it itself.
+orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
+ask that way. Its questions show only in the orchestrator chat and only you answer them there,
+never the terminal, so the model cannot give the answer itself.
 `session_start` and `session_send` send prompts only: a `/command` would run in the workspace's CLAI
 with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse it and
 the model asks you to type it in the workspace's page.
 
 The model never sees a token: tools return addresses without one, and problems (an unknown
 workspace, a CLAI that stopped) come back as `Error: ...` lines rather than failing the run.
+
+**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
+alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
+among the saved sessions or in `/resume`. Every CLAI with the web UI reads the same file; when two
+run at once, each keeps its own copy, and the one that ends a turn last writes it.
+
+**From another program.** `GET /api/orchestrator/state` returns the chat (`enabled`, `running`,
+`items`, `questions`, `model`); `POST /api/orchestrator/input` (`{"text": ...}`) starts a turn,
+`/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
+question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
+API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
+"message": ...}`, the state first after the session's snapshot.
 
 ### `github`: tools from GitHub's hosted MCP server
 

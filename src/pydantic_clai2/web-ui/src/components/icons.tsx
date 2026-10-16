@@ -129,3 +129,19 @@ export const CloseIcon = icon(<path d="M6 6l12 12M18 6 6 18" />)
 export const PuzzleIcon = icon(
   <path d="M9 4.5a2 2 0 1 1 4 0V6h3a1 1 0 0 1 1 1v3h1.5a2 2 0 1 1 0 4H17v3a1 1 0 0 1-1 1h-3v-1.5a2 2 0 1 0-4 0V18H6a1 1 0 0 1-1-1v-3h1.5a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h3Z" />,
 )
+export const OrchestratorIcon = icon(
+  <>
+    <circle cx="12" cy="12" r="2.5" />
+    <circle cx="5.5" cy="5.5" r="2" />
+    <circle cx="18.5" cy="5.5" r="2" />
+    <circle cx="12" cy="20" r="2" />
+    <path d="m7 7 3.2 3.2M17 7l-3.2 3.2M12 14.5V18" />
+  </>,
+)
+export const ExternalIcon = icon(
+  <>
+    <path d="M14 4h6v6" />
+    <path d="m20 4-9 9" />
+    <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+  </>,
+)

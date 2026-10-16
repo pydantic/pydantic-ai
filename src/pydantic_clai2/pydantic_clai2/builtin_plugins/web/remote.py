@@ -16,7 +16,7 @@ from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse, check_response
+from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -25,6 +25,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
+from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
     Choice,
     CompletionInfo,
@@ -102,6 +103,8 @@ class Remote:
         self.answerer = answerer
         self.dialogs = BrowserDialogs(publish=hub.publish)
         """Where the settings menus opened in this page ask their questions."""
+        self.orchestrator = Orchestrator(host=host, publish=hub.publish)
+        """The orchestrator chat, a separate agent with its own conversation, beside the session."""
         self.running = False
         self._translator = EventTranslator()
         """One for the whole load, so item IDs stay unique across turns in a browser that keeps them all."""
@@ -278,10 +281,7 @@ class Remote:
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
         """Answer an open question, or decline it with `None`; `ValueError` when the answers do not fit it."""
-        request = self.answerer.request(request_id)
-        response = AskUserResponse(cancelled=True) if answers is None else AskUserResponse(answers=tuple(answers))
-        check_response(request, response)
-        self.answerer.answer(request_id, response)
+        self.answerer.reply(request_id, answers)
 
     # The plugins panel.
 

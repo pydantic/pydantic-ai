@@ -179,6 +179,7 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_session_end(self, event: SessionEnd) -> None:
         await self.stop()
+        await self.remote.orchestrator.close()
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         # The run ended before the session saved its outcome; the browser's turn ended with the run.

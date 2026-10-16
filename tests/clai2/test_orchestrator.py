@@ -1,4 +1,4 @@
-"""The `orchestrator` plugin's tools, driving a workspace's CLAI: a real web app served in this process.
+"""The web UI's orchestrator and its tools, driving a workspace's CLAI: a real web app served in this process.
 
 The workspace's `clai2 --web` is not spawned: the launcher's process stand-in serves an in-process shell on
 the port and with the token the launcher chose, so every tool talks to the real web UI over loopback.
@@ -9,7 +9,7 @@ import io
 import os
 import signal
 import subprocess
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -32,22 +32,29 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.ask_user import AskUser, AskUserAnswer, AskUserRequest, AskUserResponse
+from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
-from pydantic_clai2.builtin_plugins import orchestrator as orchestrator_module
-from pydantic_clai2.builtin_plugins.orchestrator import Orchestrator, OrchestratorPlugin, SessionAnswer, summarize
-from pydantic_clai2.builtin_plugins.web import WebPlugin
+from pydantic_clai2.builtin_plugins.web import WebPlugin, workspace_tools as tools_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER
-from pydantic_clai2.builtin_plugins.web.protocol import Item, WorkspacesInfo
+from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    Item,
+    ItemAdded,
+    OrchestratorEvent,
+    OrchestratorMessage,
+    QuestionAsked,
+    ServerMessage,
+    TurnEnded,
+    WorkspacesInfo,
+)
+from pydantic_clai2.builtin_plugins.web.workspace_tools import SessionAnswer, WorkspaceTools, summarize
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
 from pydantic_clai2.builtin_plugins.workspaces import manager
 from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher
-from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, load_plugin
-from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins import PluginHost
 
 pytestmark = pytest.mark.anyio
 
@@ -103,14 +110,18 @@ def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(f'Hello from the workspace: {prompt}. ' + 'x' * 5000)])
 
 
-async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """`child_model`, streamed, as CLAI requests it."""
-    for part in child_model(messages, info).parts:
+async def streamed(response: ModelResponse) -> AsyncIterator[str | DeltaToolCalls]:
+    """`response`, streamed, as CLAI and the orchestrator request it."""
+    for part in response.parts:
         if isinstance(part, TextPart):
             yield part.content
         else:
             assert isinstance(part, ToolCallPart)
             yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+
+def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    return streamed(child_model(messages, info))
 
 
 @dataclass
@@ -198,41 +209,59 @@ async def child_serving(tmp_path: Path) -> AsyncGenerator[Child]:
 
 @dataclass
 class Parent:
-    loader: PluginLoader[None]
-    plugin: OrchestratorPlugin
-    tools: Orchestrator
+    shell: _Shell[None, str]
+    web: WebPlugin
+    tools: WorkspaceTools
     processes: InProcess
+
+    @property
+    def orchestrator(self) -> Orchestrator:
+        return self.web.remote.orchestrator
 
 
 @asynccontextmanager
 async def parent(
-    tmp_path: Path, child: Child, monkeypatch: pytest.MonkeyPatch, *, workspaces: bool = True
+    tmp_path: Path,
+    child: Child,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    workspaces: bool = True,
+    model: FunctionModel | None = None,
 ) -> AsyncGenerator[Parent]:
-    """A loader with `orchestrator`, and `workspaces` unless told otherwise, whose launcher serves `child`."""
+    """A shell with `web`, and `workspaces` unless told otherwise, whose launcher serves `child`.
+
+    `model` is the session's, which the orchestrator uses too.
+    """
     processes = InProcess(child)
     launcher = Launcher(processes=processes, python='python', interval=0.01, startup_timeout=10, stop_timeout=5)
     monkeypatch.setattr(manager, 'Launcher', lambda: launcher)
-    store = SettingsStore(tmp_path / 'parent.db')
-    builtin = [PluginSettings(id='orchestrator', factory='pydantic_clai2.builtin_plugins.orchestrator')]
+    builtin = [PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings={'open_browser': False})]
     if workspaces:
         builtin.append(PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces'))
-    loader = PluginLoader[None](
-        store=store,
-        console=Console(file=io.StringIO()),
-        commands=Commands(),
-        session_start=lambda: SessionStart(agent=Agent(FunctionModel(child_model)), settings=store.load()),
-        builtin=builtin,
+    shell = create_shell(
+        Agent(model or FunctionModel(child_model), deps_type=type(None)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO(), width=100),
+        settings=None,
+        store=SettingsStore(tmp_path / 'parent.db'),
+        builtin_plugins=builtin,
+        project=ProjectSettings(),
+        headless=True,
     )
-    await loader.load_all()
-    [plugin] = [entry.loaded.plugin for entry in loader.entries() if entry.name == 'orchestrator' and entry.loaded]
-    assert isinstance(plugin, OrchestratorPlugin)
+    await shell.loader.load_all()
+    [web] = [entry.loaded.plugin for entry in shell.loader.entries() if entry.name == 'web' and entry.loaded]
+    assert isinstance(web, WebPlugin)
+    tools = WorkspaceTools(web.host)
     try:
-        yield Parent(loader=loader, plugin=plugin, tools=plugin.orchestrator, processes=processes)
+        yield Parent(shell=shell, web=web, tools=tools, processes=processes)
     finally:
-        await loader.close('exit')
+        await tools.close()
+        await shell.loader.close('exit')
 
 
-async def created(tools: Orchestrator, repository: Path) -> str:
+async def created(tools: WorkspaceTools, repository: Path) -> str:
     made = await tools.workspace_create(kind='local-worktree', repo=str(repository), ref='main')
     return made.split()[2].removesuffix('.')
 
@@ -326,81 +355,132 @@ async def test_answering_a_dialog(tmp_path: Path, repository: Path, monkeypatch:
         assert results == [200]
 
 
-async def test_destroying_needs_the_users_pick(
+def destroy_question(workspace: str) -> dict[str, object]:
+    return {
+        'questions': [
+            {
+                'question': f'Destroy workspace {workspace}?',
+                'header': 'Destroy',
+                'options': [{'label': f'Destroy {workspace}'}, {'label': f'Keep {workspace}'}],
+            }
+        ]
+    }
+
+
+def returned(messages: Sequence[ModelMessage]) -> list[str]:
+    """What the workspace tools returned, in order; `ask_user_question` answers left out."""
+    return [
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name != 'ask_user_question'
+    ]
+
+
+def orchestrating(repository: Path) -> FunctionModel:
+    """The orchestrator's model: make a workspace, run a prompt there, read it, and destroy it once the user agrees."""
+
+    def destroy(workspace: str) -> ToolCallPart:
+        return ToolCallPart('workspace_destroy', {'workspace': workspace})
+
+    def ask(workspace: str) -> ToolCallPart:
+        return ToolCallPart('ask_user_question', destroy_question(workspace))
+
+    steps: list[Callable[[str], ToolCallPart | TextPart]] = [
+        lambda _: ToolCallPart('workspace_create', {'kind': 'local-worktree', 'repo': str(repository), 'ref': 'main'}),
+        lambda workspace: ToolCallPart('session_start', {'workspace': workspace, 'prompt': 'say hi'}),
+        lambda workspace: ToolCallPart('session_wait', {'workspace': workspace, 'timeout': 10}),
+        lambda workspace: ToolCallPart('session_read', {'workspace': workspace, 'last': 1}),
+        *[destroy, ask] * 3,
+        destroy,
+        lambda _: TextPart('It said hi; the workspace is gone.'),
+    ]
+
+    def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        made = next((text for text in returned(messages) if text.startswith('Created workspace ')), '')
+        workspace = made.split()[2] if made else ''
+        step = steps[sum(isinstance(message, ModelResponse) for message in messages)]
+        return streamed(ModelResponse(parts=[step(workspace)]))
+
+    return FunctionModel(stream_function=stream)
+
+
+WIRE = TypeAdapter[ServerMessage](ServerMessage)
+
+
+async def converse(
+    orchestrator: Orchestrator, queue: asyncio.Queue[str], picks: list[int | None]
+) -> list[OrchestratorEvent]:
+    """The orchestrator chat's messages until its turn ends, answering each question with the next of `picks`.
+
+    A pick is an option's index, or `None` to decline, as the user would in the page.
+    """
+    seen: list[OrchestratorEvent] = []
+    with anyio.fail_after(30):
+        while True:
+            message = WIRE.validate_json(await queue.get())
+            if not isinstance(message, OrchestratorMessage):
+                continue
+            event = message.message
+            seen.append(event)
+            if isinstance(event, QuestionAsked):
+                pick = picks.pop(0)
+                [question] = event.questions.questions
+                label = None if pick is None else question.options[pick].label
+                answers = None if label is None else [AskUserAnswer(header=question.header, selected=(label,))]
+                orchestrator.answer(event.questions.id, answers)
+            elif isinstance(event, TurnEnded):
+                return seen
+
+
+async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
     tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`workspace_destroy` refuses until the user picked `Destroy ID` in `ask_user_question`; then the CLAI stops."""
-    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
-        tools = made.tools
-        workspace = await created(tools, repository)
-        await tools.session_start(workspace, 'hi')
-        await tools.session_wait(workspace, timeout=10)
-        path = (await tools.workspaces().get(workspace)).path
-        asked: list[AskUserRequest] = []
+    """The orchestrator's own agent makes a workspace, prompts its CLAI, reads it, and destroys it once the user agrees.
 
-        async def user(request: AskUserRequest) -> AskUserResponse:
-            asked.append(request)
-            if len(asked) == 1:
-                return AskUserResponse(cancelled=True)
-            picked = f'Keep {workspace}' if len(asked) == 2 else f'Destroy {workspace}'
-            return AskUserResponse(answers=(AskUserAnswer(header='Destroy', selected=(picked,)),))
-
-        question = {
-            'questions': [
-                {
-                    'question': f'Destroy workspace {workspace}?',
-                    'header': 'Destroy',
-                    'options': [{'label': f'Destroy {workspace}'}, {'label': f'Keep {workspace}'}],
-                }
-            ]
-        }
-        script = [
-            ToolCallPart('workspace_destroy', {'workspace': workspace}),
-            ToolCallPart('ask_user_question', question),
-            ToolCallPart('workspace_destroy', {'workspace': workspace}),
-            ToolCallPart('ask_user_question', question),
-            ToolCallPart('workspace_destroy', {'workspace': workspace}),
-            ToolCallPart('ask_user_question', question),
-            ToolCallPart('workspace_destroy', {'workspace': workspace}),
-        ]
-        results: list[str] = []
-
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            last = messages[-1]
-            assert isinstance(last, ModelRequest)
-            results.extend(
-                str(part.content)
-                for part in last.parts
-                if isinstance(part, ToolReturnPart) and part.tool_name != 'ask_user_question'
-            )
-            return ModelResponse(parts=[script.pop(0)] if script else [TextPart('Done.')])
-
-        capabilities = [*made.loader.capabilities(), AskUser[None](answerer=user)]
-        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
-        await agent.run('destroy it')
-        assert results[0].startswith(
+    `workspace_destroy` refuses until the user picked `Destroy ID` in the orchestrator chat: declining and
+    keeping it are no confirmation. The model never answers for the user.
+    """
+    model = orchestrating(repository)
+    async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, model=model) as made:
+        orchestrator = made.orchestrator
+        with made.web.hub.subscribe() as queue:
+            orchestrator.send('Say hi in a new workspace, then clean up.')
+            seen = await converse(orchestrator, queue, [1, None, 0])
+        end = seen[-1]
+        assert isinstance(end, TurnEnded) and end.outcome == 'completed'
+        tools = [event.item.name for event in seen if isinstance(event, ItemAdded) and event.item.kind == 'tool']
+        assert tools[:4] == ['workspace_create', 'session_start', 'session_wait', 'session_read']
+        results = returned(orchestrator.messages)
+        workspace = results[0].split()[2]
+        path = Path(results[0].split()[4])
+        assert 'Hello from the workspace: say hi.' in results[2]
+        assert results[4].startswith(
             f'Not destroyed. Ask the user first with `ask_user_question`, offering `Destroy {workspace}`'
         )
-        assert results[1].startswith('Not destroyed.'), 'declining is no confirmation'
-        assert results[2].startswith('Not destroyed.'), 'keeping it is no confirmation'
-        assert results[3] == (f'Destroyed workspace {workspace}; its checkout at {path} was removed, its branch kept.')
+        assert results[5].startswith('Not destroyed.'), 'keeping it is no confirmation'
+        assert results[6].startswith('Not destroyed.'), 'declining is no confirmation'
+        assert results[7] == f'Destroyed workspace {workspace}; its checkout at {path} was removed, its branch kept.'
         assert not path.exists() and made.processes.signals == [signal.SIGINT]
-        assert tools.links == {}
-        assert await tools.workspace_list() == 'No workspaces yet.\nKinds: local-worktree.'
+        assert await made.tools.workspace_list() == 'No workspaces yet.\nKinds: local-worktree.'
+
+        # The conversation is saved, so another load of the web UI shows it.
+        again = Orchestrator(host=made.web.host, publish=lambda message: None)
+        kinds = [item.kind for item in again.state().items]
+        assert kinds[0] == 'user' and kinds[-1] == 'assistant' and len(again.messages) == len(orchestrator.messages)
 
 
 async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
-        [capability] = made.plugin.get_capabilities()
-        assert isinstance(capability, Capability)
         tools = made.tools
         assert (await tools.workspace_list()).startswith('No workspaces')
         workspace = await created(tools, repository)
-        reading = orchestrator_module.reported(tools.session_read)
+        reading = tools_module.reported(tools.session_read)
         assert await reading(workspace) == (
             f'Error: Workspace {workspace} has no CLAI running. Start it with `session_start`.'
         )
-        assert await orchestrator_module.reported(tools.workspace_create)(kind='docker') == (
+        assert await tools_module.reported(tools.workspace_create)(kind='docker') == (
             "Error: No workspace kind 'docker'. Kinds: local-worktree."
         )
 
@@ -430,24 +510,19 @@ async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, mo
         assert current.session is not None
         await tools.disconnect(workspace)
         await child.web.stop()
-        monkeypatch.setattr(orchestrator_module, 'CONNECT_TIMEOUT', 5)
+        monkeypatch.setattr(tools_module, 'CONNECT_TIMEOUT', 5)
         assert await reading(workspace) == f'Error: Could not connect to the CLAI of workspace {workspace}.'
 
-        await made.plugin.on_session_end(SessionEnd(reason='exit'))
+        await tools.close()
         assert tools.links == {}
 
 
 async def test_without_the_workspaces_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, workspaces=False) as made:
-        listing = orchestrator_module.reported(made.tools.workspace_list)
-        assert (
-            await listing()
-            == 'Error: The `workspaces` plugin is off. Ask the user to run `/plugins enable workspaces`.'
-        )
-    host = PluginHost(name='orchestrator', console=Console(file=io.StringIO()), settings={})
-    alone = load_plugin(OrchestratorPlugin, host)
-    assert isinstance(alone.plugin, OrchestratorPlugin)
-    assert 'is off' in await orchestrator_module.reported(alone.plugin.orchestrator.workspace_list)()
+        listing = tools_module.reported(made.tools.workspace_list)
+        assert await listing() == 'Error: The `workspaces` plugin is off. Ask the user to turn it on.'
+    alone = WorkspaceTools(PluginHost(name='web', console=Console(file=io.StringIO()), settings={}))
+    assert 'is off' in await tools_module.reported(alone.workspace_list)()
 
 
 async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -455,11 +530,11 @@ async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path, monk
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch) as made:
         workspace = await created(made.tools, repository)
         refusal = 'Error: Send prompts only. A `/command`, such as `/workspaces destroy`'
-        starting = orchestrator_module.reported(made.tools.session_start)
+        starting = tools_module.reported(made.tools.session_start)
         assert (await starting(workspace, ' /workspaces destroy other')).startswith(refusal)
         assert (await made.tools.workspaces().get(workspace)).status == 'ready', 'nothing started'
         await made.tools.session_start(workspace, 'hi')
-        sending = orchestrator_module.reported(made.tools.session_send)
+        sending = tools_module.reported(made.tools.session_send)
         assert (await sending(workspace, '/plugins add evil evil:Plugin')).startswith(refusal)
         await made.tools.session_wait(workspace, timeout=10)
 

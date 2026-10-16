@@ -18,12 +18,17 @@ interface Props {
   placeholder: string
   /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
   local?: Readonly<Record<string, () => void>>
+  /** Where a message goes, and what stops the running turn: the session's by default. */
+  chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
+  /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
+  commands?: boolean
+  label?: string
   onError: (message: string) => void
 }
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, meter, controls, model, disabled, placeholder, local, onError },
+  { running, meter, controls, model, disabled, placeholder, local, chat, commands = true, label = 'Message CLAI', onError },
   ref,
 ) {
   const [text, setText] = useState('')
@@ -47,7 +52,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   const complete = useCallback(async (value: string) => {
     const id = ++request.current
-    if (!value.startsWith('/') || value.includes('\n')) {
+    if (!commands || !value.startsWith('/') || value.includes('\n')) {
       setSuggestions([])
       return
     }
@@ -60,7 +65,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } catch {
       if (id === request.current) setSuggestions([])
     }
-  }, [])
+  }, [commands])
 
   useEffect(() => {
     if (!models) return
@@ -97,7 +102,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      await api.send(value)
+      await (chat ? chat.send(value) : api.send(value))
     } catch (error) {
       setText(value)
       onError(error instanceof Error ? error.message : String(error))
@@ -189,7 +194,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           }}
           onKeyDown={onKeyDown}
           onBlur={() => window.setTimeout(() => setSuggestions([]), 120)}
-          aria-label="Message CLAI"
+          aria-label={label}
           role="combobox"
           aria-expanded={suggestions.length > 0}
           aria-controls="suggestions"
@@ -197,35 +202,41 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           aria-activedescendant={suggestions.length > 0 ? `suggestion-${selected}` : undefined}
         />
         <div className="composer-bar">
-          <div className="model-picker">
-            <button
-              className="pill"
-              onClick={() => void openModels()}
-              title="Choose a saved model"
-              aria-haspopup="menu"
-              aria-expanded={models !== null}
-            >
+          {commands ? (
+            <div className="model-picker">
+              <button
+                className="pill"
+                onClick={() => void openModels()}
+                title="Choose a saved model"
+                aria-haspopup="menu"
+                aria-expanded={models !== null}
+              >
+                <span className="model-name">{model}</span>
+                <ChevronIcon size={12} className="chevron down" />
+              </button>
+              {models && (
+                <div className="menu model-menu" role="menu">
+                  {models.length === 0 && <div className="menu-empty">No saved models. Add one with /model add in the terminal.</div>}
+                  {models.map((name) => (
+                    <button key={name} onClick={() => void pickModel(name)}>
+                      <span>{name}</span>
+                      {name === model && <CheckIcon size={14} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="pill static" title="The orchestrator uses this session's model">
               <span className="model-name">{model}</span>
-              <ChevronIcon size={12} className="chevron down" />
-            </button>
-            {models && (
-              <div className="menu model-menu" role="menu">
-                {models.length === 0 && <div className="menu-empty">No saved models. Add one with /model add in the terminal.</div>}
-                {models.map((name) => (
-                  <button key={name} onClick={() => void pickModel(name)}>
-                    <span>{name}</span>
-                    {name === model && <CheckIcon size={14} />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+            </span>
+          )}
           {controls}
-          {running ? meter : <span className="hint">/ for commands</span>}
+          {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
           {running && !text.trim() ? (
             <button
               className="send stop"
-              onClick={() => void interrupt(onError)}
+              onClick={() => void interrupt(onError, chat?.interrupt)}
               title="Interrupt (Esc)"
               aria-label="Interrupt"
             >

@@ -122,19 +122,8 @@ export interface ThemeInfo {
   palette: Palette | null
 }
 
-export type ServerMessage =
-  | {
-      type: 'snapshot'
-      session: SessionInfo
-      items: Item[]
-      running: boolean
-      status: StatusInfo
-      questions: Questions[]
-      dialogs: Dialog[]
-      theme: ThemeInfo
-      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
-      follows_workspace: boolean
-    }
+/** A transcript's item, turn, and question messages, which the session and the orchestrator chat both get. */
+export type ChatMessage =
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
@@ -148,9 +137,39 @@ export type ServerMessage =
   | { type: 'diff'; id: string; diff: Diff }
   | { type: 'turn_start'; item: Item | null }
   | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
-  | { type: 'status'; status: StatusInfo }
   | { type: 'question'; questions: Questions }
   | { type: 'question_closed'; id: string }
+
+/** The orchestrator chat: sent on connect and when it starts over. */
+export interface OrchestratorState {
+  type: 'orchestrator_state'
+  /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
+  enabled: boolean
+  running: boolean
+  items: Item[]
+  questions: Questions[]
+  /** The session's model, which the orchestrator uses too. */
+  model: string
+}
+
+export type OrchestratorEvent = ChatMessage | OrchestratorState
+
+export type ServerMessage =
+  | {
+      type: 'snapshot'
+      session: SessionInfo
+      items: Item[]
+      running: boolean
+      status: StatusInfo
+      questions: Questions[]
+      dialogs: Dialog[]
+      theme: ThemeInfo
+      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      follows_workspace: boolean
+    }
+  | ChatMessage
+  | { type: 'status'; status: StatusInfo }
+  | { type: 'orchestrator'; message: OrchestratorEvent }
   | { type: 'dialog'; dialog: Dialog }
   | { type: 'dialog_shown'; id: string; text: string }
   | { type: 'dialog_closed'; id: string }

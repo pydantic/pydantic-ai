@@ -167,12 +167,15 @@ CLAI's status and an **Open** button that starts it if needed and opens its page
 
 ## Orchestrator
 
-The `orchestrator` plugin lets the model do that for you: "clone pydantic-ai off main and fix issue
-#123". Turn it on with `/plugins enable orchestrator` (and `workspaces`, whose kinds it may use). It
-gives the model tools to make workspaces, start each one's CLAI with a prompt, wait for and read its
-turns in short, steer it with more prompts, answer its questions, and interrupt it. It destroys a
-workspace only after you picked **Destroy ID** when it asked. See
-[the plugin guide](PLUGINS.md#orchestrator-the-model-runs-workspaces).
+The web UI has an agent that does that for you: "clone pydantic-ai off main and fix issue #123".
+Click **Orchestrator** in the sidebar, right below **New session**, to open its chat. It is a
+separate agent with its own conversation, and the only one with these tools: it makes workspaces,
+starts each one's CLAI with a prompt, waits for and reads its turns, steers it with more prompts,
+answers its questions, and reports back. It destroys a workspace only after you picked **Destroy
+ID** when it asked, in its chat. It needs `workspaces` on, which the chat offers to do in one
+click, and uses the session's model. Its conversation is kept across reloads and restarts. The
+session's own agent gets none of this. See
+[the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
 
 ## Herdr integration
 

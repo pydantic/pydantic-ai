@@ -458,8 +458,36 @@ ItemMessage = (
     | SubCallOutput
     | SubCallDone
 )
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorState:
+    """The orchestrator chat: sent on connect and when it starts over, and what `GET /api/orchestrator/state` returns."""
+
+    type: Literal['orchestrator_state'] = 'orchestrator_state'
+    enabled: bool
+    """Whether the `workspaces` plugin is on; the orchestrator runs only then."""
+    running: bool
+    items: list[Item]
+    questions: list[Questions]
+    model: str
+    """The session's model, which the orchestrator uses too."""
+
+
+OrchestratorEvent = ItemMessage | TurnStarted | TurnEnded | QuestionAsked | QuestionClosed | OrchestratorState
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorMessage:
+    """A message for the orchestrator chat, on the session's WebSocket."""
+
+    type: Literal['orchestrator'] = 'orchestrator'
+    message: OrchestratorEvent
+
+
 ServerMessage = (
     Snapshot
+    | OrchestratorMessage
     | ItemMessage
     | TurnStarted
     | TurnEnded

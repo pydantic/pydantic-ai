@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, openWorkspacePage } from '../api'
 import type { WorkspaceRow } from '../protocol'
 import { BranchIcon, ChevronIcon, FolderIcon } from './icons'
 
@@ -38,18 +38,11 @@ export function WorkspacesSection({ version, onError }: Props) {
   if (rows === null) return null
 
   const openPage = async (row: WorkspaceRow) => {
-    // Opened now, while the click still counts as one, and pointed at the page once its CLAI answers.
-    const tab = window.open('', '_blank')
     setOpening(row.id)
     try {
-      const { url } = await api.openWorkspace(row.id)
-      if (tab) {
-        tab.opener = null
-        tab.location.href = url
-      } else window.location.assign(url)
+      await openWorkspacePage(row.id)
       void load()
     } catch (error) {
-      tab?.close()
       onError(error instanceof Error ? error.message : String(error))
     } finally {
       setOpening(null)
