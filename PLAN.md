@@ -160,7 +160,16 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    ```
    - **Records:** `start` creates records with `background=True` and `backgroundable=True`. `reports()`, the
      shell's wake, `focused()` and Ctrl+B all key off `background`, so a member is never treated as foreground
-     work.
+     work. `start` refuses agent types listed in `one_shot`, because a teammate must be wakeable.
+   - **Runner contract:** the runner `member_runner` returns must attach:
+     - `DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id)`, so the inbox
+       callback attaches;
+     - the team's gate listeners;
+     - `owner.persistence_capabilities()`.
+
+     `SubAgents._run_delegation` does this for today's children, but members don't go through it. Inside a
+     member run, `ctx.conversation_id` is the member's own id, as for today's children. Team tools therefore
+     find their conversation through `owner.records[DelegationTasks.child_id()].conversation_id`.
    - **Who provides the runner:** the host, e.g. `clai2`'s `Session`, registers the factory when it constructs
      the owner. Each runner closes over the session's deps, model, local workspace, and a **per-member
      `RunUsage`**. A member therefore never borrows a spawning run's `RunContext`, which may already have ended.
@@ -191,6 +200,13 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
      `DelegationTask`, so it gets a conversation-keyed inbox.
    - **The lead inbox takes agent messages only**, `SystemPromptPart`. The user talks to the lead through the
      normal prompt.
+   - **Storage:** member inbox entries live on their `DelegationTask` record. The lead inbox lives at
+     `directory / 'inbox' / f'{sha256(conversation_id).hexdigest()}.json'`, written atomically like `save()`.
+     The subdirectory keeps it away from `opened()`'s `<32-hex id>.json` record glob, and hashing makes
+     arbitrary conversation ids safe as file names.
+   - **User authority:** a user stop outranks agent messages. `send` to a record that is `user_stopped` or
+     `not resumable` persists the message but never wakes the member. Only user actions wake a stopped member:
+     `TaskCatalog.resume` after `allow_resume`, or `host.team.send` with `str` content.
    - **Content:** a `str` is the user typing to the member, delivered as a user message. A `SystemPromptPart`
      is a framed message from another agent.
    - **Saving:** the content is saved on the record first.
@@ -220,6 +236,13 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    - **`steer()`** is unchanged for non-team tasks and returns `False` for records that have a `name`. Its
      synchronous `bool` contract can't wrap the async, persisted `send`. Member-facing composers (TUI focus
      mode, web `WorkerView` "Message") call `host.team.send` and its REST route instead.
+   - **Documented contracts to update in the same PRs** (2 and 4):
+     - The `DelegationTasks.steer` and `TaskCatalog.steer` docstrings say `False` can also mean "team member: use
+       `host.team.send`". Today `False` implies "not running; resume it".
+     - The `TaskCatalog.resume` docstring says that on a member it wakes without entering a prompt.
+     - `PLUGINS.md` covers both.
+     - The web `/api/tasks/{id}/steer` route returns a distinct result for members instead of a bare
+       `steered: false`.
 4. **`max_active: int | None = None` (G6).** A semaphore on *running* members. Starts and wakes beyond the limit
    queue. The default keeps today's behaviour.
 
@@ -276,10 +299,14 @@ primitives, which is why its home is a question for maintainers.
 - **Registry:** `name → task_id, agent type, state: working|idle|queued|stopped|failed, current_task`.
 - **Scope:** a `Team` is keyed by `conversation_id`, with one team per conversation.
 - **Reconcile on open.** The registry is rebuilt from that conversation's records that have a `name`, and
-  `current_task` from the board's `owner` fields. `DelegationTasks.opened()` turns members interrupted by a
-  restart into `cancelled`; their claims are released back to `pending`. Without this, the board would keep
-  stale `in_progress` items. The shell's start-up wake for undelivered reports goes through the batcher
-  (below) for team records.
+  `current_task` from the board's `owner` fields.
+- **Interrupted members.** `DelegationTasks.opened()` turns members interrupted by a restart into `cancelled`.
+  Reconcile then:
+  - releases their claims back to `pending`, so the board doesn't keep stale `in_progress` items;
+  - writes each undelivered report into the lead inbox and marks the slot delivered, the same as on settle.
+    Such members never settle through `_run`, and a later wake would overwrite the report.
+- **Start-up wake.** For team conversations, the shell's start-up wake is based on the lead inbox, not on
+  `reports()`, and goes through the batcher (below).
 
 | Tool | Lead | Member | Notes |
 |---|---|---|---|
@@ -493,7 +520,8 @@ REST routes call `host.team`:
    - a message sent while the member's final response settles is delivered on the next wake;
    - a member reloaded after restart can be woken;
    - a message to an idle lead survives until its next turn;
-   - a member woken inside the debounce window doesn't lose its earlier report;
+   - a member woken inside the debounce window doesn't lose its earlier report, including one left by a restart;
+   - a peer `send` to a user-stopped member doesn't wake it;
    - `delegate_task(resume=<member>)` from another member is refused.
 3. **Team composition:** in harness `teams/` or in `clai2`, per Q2. Board and message tools, `teams.*` events,
    gates, the `Team` observer, lead wake batching, docs and the skill update.
