@@ -3857,7 +3857,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if boundary == 'compaction':
             return None, messages
         if boundary == 'transport':
-            for index, message in enumerate(messages):
+            for index in range(len(messages) - 1, -1, -1):
+                message = messages[index]
+                if (
+                    isinstance(message, ModelResponse)
+                    and message.provider_name == self.system
+                    and message.provider_details
+                    and message.provider_details.get('compaction')
+                ):
+                    return None, messages
                 if (
                     isinstance(message, ModelResponse)
                     and message.provider_name == self.system

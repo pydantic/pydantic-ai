@@ -20,6 +20,7 @@ from typing_extensions import Unpack
 
 from pydantic_ai import (
     Agent,
+    CompactionPart,
     ModelRequest,
     ModelResponse,
     RunContext,
@@ -699,6 +700,35 @@ async def test_compatible_response_is_not_a_history_boundary(allow_model_request
         result = await Agent(connected).run('hello')
         assert connected._history_boundary(result.all_messages()) is None  # pyright: ignore[reportPrivateUsage]
     assert len(socket.sent) == 1
+
+
+@pytest.mark.parametrize('seed_after_compaction', [False, True])
+def test_concrete_seed_respects_compaction_when_transport_changes(seed_after_compaction: bool):
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    seed = ModelResponse(parts=[TextPart('seed')], provider_name='openai', provider_response_id='resp_seed')
+    compaction = ModelResponse(
+        parts=[CompactionPart(content='summary', provider_name='openai')],
+        provider_name='openai',
+        provider_details={'compaction': True},
+    )
+    socket_response = ModelResponse(
+        parts=[TextPart('socket answer')],
+        provider_name='openai',
+        provider_response_id='resp_socket',
+        provider_details={'transport': 'websocket'},
+    )
+    history: list[ModelRequest | ModelResponse] = [
+        *([compaction, seed] if seed_after_compaction else [seed, compaction]),
+        socket_response,
+        ModelRequest.user_text_prompt('continue'),
+    ]
+
+    previous_id, new_messages = source._resolve_previous_response_id(  # pyright: ignore[reportPrivateUsage]
+        'resp_seed', history
+    )
+
+    assert previous_id == ('resp_seed' if seed_after_compaction else None)
+    assert new_messages == (history[2:] if seed_after_compaction else history)
 
 
 @pytest.mark.parametrize(
