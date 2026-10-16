@@ -567,6 +567,11 @@ async def test_huggingface_provider_closes_its_client_on_exit(huggingface_http_c
         pass
     assert [client.is_closed for client in huggingface_http_clients] == [True, True]
 
+    # An exit without a matching enter does nothing.
+    await provider.__aexit__(None, None, None)
+    assert (await agent.run('What is the capital of France?')).output == 'Paris'
+    assert [client.is_closed for client in huggingface_http_clients] == [True, True, False]
+
 
 @pytest.mark.skipif(not huggingface_imports_successful(), reason='huggingface_hub not installed')
 async def test_huggingface_provider_leaves_passed_in_client_open(huggingface_http_clients: list[httpx.AsyncClient]):
