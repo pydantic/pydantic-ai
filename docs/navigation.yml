@@ -73,6 +73,7 @@ navigation:
         slug: "core-concepts/workspace"
         aliases:
           - "workspace"
+          - "harness/durable-execution"
       - page: "Capabilities"
         path: "capabilities/overview.md"
         slug: "capabilities/overview"
@@ -310,9 +311,6 @@ navigation:
           - page: "Bubblewrap Sandbox"
             path: "harness/bubblewrap-sandbox.md"
             slug: "harness/bubblewrap-sandbox"
-          - page: "Workspaces Under Durable Execution"
-            path: "harness/durable-workspaces.md"
-            slug: "harness/durable-workspaces"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
@@ -623,7 +621,6 @@ navigation:
         aliases:
           - "durable-execution"
           - "durable-execution/overview"
-          - "harness/durable-execution"
           - "integrations/durable_execution"
           - "durable_execution"
           - "durable_execution/overview"

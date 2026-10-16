@@ -33,6 +33,5 @@ Capability authors can also move custom hook work into engine activities, steps,
 Third-party runtime authors can use the stable [durable execution backend builder](./backends.md)
 to integrate another engine without importing Pydantic AI internals.
 
-Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also run inside a durable agent; see
-[Workspaces under durable execution](https://pydantic.dev/docs/ai/harness/durable-workspaces/) for examples and
-per-engine limits.
+Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also run inside a durable agent; the
+[workspace guide](../workspace.md#durable-execution) shows how, and what works on each engine.

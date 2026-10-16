@@ -258,6 +258,45 @@ Temporal stores workflow-side workspace call arguments (commands, `env=`, file c
 Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
 secrets as workflow-side arguments; use a [payload codec](#large-payloads) to protect history.
 
+### Harness Workspace Capabilities {#harness-workspace-capabilities}
+
+[Harness](../harness/index.md) workspace capabilities such as `Coder`, `Shell` and `FileSystem` work in a
+Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capabilities) shows what works
+on each engine. Three things are specific to Temporal.
+
+**Live events.** Tools that write files ask for approval and report the write from the workflow, so
+`FileChangeRequestEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
+listeners as they happen. Other tools run in activities and their events are not delivered: `FileReadEvent`,
+`DirectoryListedEvent` and `FilesSearchedEvent` from the file tools, and `CommandStartedEvent`,
+`CommandOutputEvent` and `CommandFinishedEvent` from `shell`
+([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools still work and return their
+results. When Temporal replays a workflow, approval listeners run again, so make their external effects
+idempotent.
+
+**Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
+become activities of the same agent. Sub-agents read from `agent_folders` are not supported: reading the
+folders at run start adds a toolset at run time, which Temporal refuses, so pass
+`SubAgents(include_self=True, agent_folders=None)` when you compose `SubAgents` yourself.
+
+#### Command timeouts {#harness-command-timeouts}
+
+An activity has 60 seconds by default. `run_command` and `shell` get 300 seconds, which covers the `shell`
+tool's 270-second foreground wait. A `run_command` given a longer timeout, through
+`Shell(default_timeout=...)` or the model's `timeout_seconds`, needs a longer activity. Add this next to
+`TemporalDurability()`:
+
+```python
+from datetime import timedelta
+
+from pydantic_ai.capabilities import SetToolMetadata
+from temporalio.workflow import ActivityConfig
+
+SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30)))
+```
+
+For longer work, use `start_command` or `shell(mode='background')`, which return while the command keeps
+running.
+
 ### Capabilities at Runtime
 
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.

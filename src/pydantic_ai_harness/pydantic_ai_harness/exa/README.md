@@ -305,7 +305,7 @@ calls.
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-workspaces/), each Exa request is recorded, so a
+Under [durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution), each Exa request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -316,7 +316,7 @@ On Temporal an activity has 60 seconds by default, which `deep_search` can
 exceed. Give the tool calls longer with
 `TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](https://pydantic.dev/docs/ai/harness/durable-workspaces/#temporal-timeouts). `ExaAgent` polls its run in a capability
+as in [Temporal timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts). `ExaAgent` polls its run in a capability
 activity, which takes the base `activity_config`, so set its
 `start_to_close_timeout` above `timeout_ms`.
 
