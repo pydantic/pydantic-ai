@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 from cassetter import Cassette
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -269,6 +270,59 @@ async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
 
     original_body, roundtripped_body = _post_bodies(vcr)[-2:]
     assert roundtripped_body != original_body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_tool_return_order_wire_stable(allow_model_requests: None):
+    """The same parallel tool exchange re-sends with an identical request body whatever order its results are stored in.
+
+    `end_strategy='early'` stores the output tool's result ahead of the function tools' results, while a UI client
+    rebuilds them from the stream (AG-UI, in the order the tools completed) or from per-call tool parts (Vercel AI,
+    in call order). The prompt cache is keyed on the bytes sent, so results go out in call order either way.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_weather'),
+                ToolCallPart('final_result', {'response': 'sunny'}, tool_call_id='call_output'),
+                ToolCallPart('get_time', {'city': 'Paris'}, tool_call_id='call_time'),
+            ]
+        )
+
+    generator = Agent(FunctionModel(respond), output_type=ToolOutput(str), end_strategy='early')
+
+    @generator.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    @generator.tool_plain
+    def get_time(city: str) -> str:
+        return 'noon'  # pragma: no cover
+
+    history = (await generator.run('Weather and time in Paris?')).all_messages()
+    results = history[-1]
+    assert isinstance(results, ModelRequest)
+    by_id = {part.tool_call_id: part for part in results.parts if isinstance(part, ToolReturnPart)}
+    assert list(by_id) == ['call_output', 'call_weather', 'call_time']
+    in_call_order = [
+        *history[:-1],
+        replace(results, parts=[by_id[i] for i in ('call_weather', 'call_output', 'call_time')]),
+    ]
+
+    bodies: list[str] = []
+    for messages in (history, in_call_order):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        sent = get_mock_openai_kwargs(client)[0]['messages']
+        assert [m['tool_call_id'] for m in sent if m['role'] == 'tool'] == ['call_weather', 'call_output', 'call_time']
+        bodies.append(json.dumps(sent))
+
+    original_body, reordered_body = bodies
+    assert reordered_body == original_body
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')

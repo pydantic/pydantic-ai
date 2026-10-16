@@ -25,7 +25,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Updates, installed
+from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -54,6 +54,7 @@ from pydantic_clai2.plugins import (
     TaskEvent,
     TurnEnd,
     TurnStart,
+    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
@@ -373,6 +374,9 @@ def create_shell(
         workspace=lambda: Path(session.workspace),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
+    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
+    updates.capture = lambda: web_serving(loader) is not None
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -487,6 +491,13 @@ def create_shell(
     return shell
 
 
+def web_serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+    """The port and token of the web UI the `web` plugin serves now; `None` while it serves none."""
+    from pydantic_clai2.cli.web import serving
+
+    return serving(loader)
+
+
 @dataclass(kw_only=True)
 class _ConversationFooter:
     """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
@@ -541,6 +552,19 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _identity_pending: bool = field(default=False, init=False)
     _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
+
+    def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
+        """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
+        if (executable := self.updates.relaunch) is None:
+            return None
+        summary = self.session.summary
+        return Relaunch(
+            executable=executable,
+            session_id=summary.id if summary.revision else None,
+            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+            new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
+            web=web,
+        )
 
     @property
     def session_id(self) -> str | None:
