@@ -128,8 +128,9 @@ def create_shell(
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
-    what the session shares with the others in this CLAI; without one, it gets its own over `store`.
-    `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    what the session shares with the others in this CLAI; without one, it gets its own over `store`, which
+    is otherwise unused. `signals` lets Ctrl-C cancel this session's turns; only the session the terminal
+    shows takes it.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
