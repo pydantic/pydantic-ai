@@ -415,7 +415,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # response. Streamed messages mark steps with `step-start` parts; without them (as
                 # `dump_messages` writes, one response per message) content after a completed tool
                 # call is taken to start the next step.
-                pending_returns: list[ToolReturnPart] = []
+                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart] = []
                 has_steps = any(isinstance(part, StepStartUIPart) for part in msg.parts)
                 for part in msg.parts:
                     if pending_returns and (
@@ -480,8 +480,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             # The event stream emits the delta after the tool result that caused it, so
                             # the AI SDK attaches it to the assistant message. Adding it here lands it on
-                            # the request carrying that tool return, matching the server-side history.
-                            builder.add(tool_availability_delta_from_payload(part.data))
+                            # the request carrying that tool return, matching the server-side history. While
+                            # the step's tool returns are held back, it waits with them so it follows its return.
+                            delta = tool_availability_delta_from_payload(part.data)
+                            if pending_returns:
+                                pending_returns.append(delta)
+                            else:
+                                builder.add(delta)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
