@@ -7051,8 +7051,12 @@ def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(
 
     None of it may raise out of `load_messages`, which would fail the whole request.
     """
-    user_content = 'Hi' if content == 'Hi' else [TextInputContent(type='text', text='Hi')]
-    [request] = AGUIAdapter.load_messages([UserMessage(id='u1', content=user_content, encrypted_value=encrypted_value)])
+    message = (
+        UserMessage(id='u1', content='Hi', encrypted_value=encrypted_value)
+        if content == 'Hi'
+        else UserMessage(id='u1', content=[TextInputContent(type='text', text='Hi')], encrypted_value=encrypted_value)
+    )
+    [request] = AGUIAdapter.load_messages([message])
     assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
 
 
