@@ -11,7 +11,6 @@ from dataclasses import replace
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
-from pydantic_ai._agent_graph import _StepModelSettings  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.models import ModelRequestContext
@@ -540,40 +539,3 @@ async def test_a_recovered_response_does_not_count_a_rejected_attempts_usage_aga
     assert result.output == 'recovered'
     assert _attempt_outcomes(result.all_messages()[-1]) == [('rejected', None)]
     assert (result.usage.requests, result.usage.input_tokens, result.usage.output_tokens) == (1, 100, 10)
-
-
-def test_step_model_settings_record_in_place_writes():
-    """Every way of changing the step's settings in place is recorded, so it can be told apart from what was resolved."""
-    settings = _StepModelSettings(
-        {'temperature': 0.5, 'max_tokens': 10, 'top_p': 0.9, 'seed': 1, 'max_retries': 2, 'timeout': 3}
-    )
-    assert settings.written == set()
-    settings['temperature'] = 0.5
-    del settings['max_tokens']
-    settings.update(top_p=0.9)
-    settings |= {'seed': 1}
-    assert settings.setdefault('max_retries', 9) == 2
-    settings.setdefault('presence_penalty', 0.1)
-    assert settings.pop('missing', None) is None
-    settings.pop('timeout')
-    assert settings.written == {'temperature', 'max_tokens', 'top_p', 'seed', 'presence_penalty', 'timeout'}
-    settings.popitem()
-    settings.clear()
-    assert settings == {}
-    assert settings.written == {
-        'temperature',
-        'max_tokens',
-        'top_p',
-        'seed',
-        'presence_penalty',
-        'timeout',
-        'max_retries',
-    }
-    assert settings.resolved == {
-        'temperature': 0.5,
-        'max_tokens': 10,
-        'top_p': 0.9,
-        'seed': 1,
-        'max_retries': 2,
-        'timeout': 3,
-    }

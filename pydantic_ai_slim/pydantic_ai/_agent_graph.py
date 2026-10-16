@@ -11,8 +11,8 @@ from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
 from datetime import datetime
-from functools import cache, lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -382,57 +382,13 @@ set far above any real chain: exceeding it means a capability bug, not a long ch
 """
 
 
-class _StepModelSettings(dict[str, Any]):
-    """A step's resolved model settings, recording the keys a hook writes or removes in place.
+class StepModelSettings(NamedTuple):
+    """A step's model settings, as resolved from the step model's own `settings` and the agent, capability and run layers."""
 
-    `wrap_model_request` and `before_model_request` hooks change the settings either in place or by replacing
-    them. A value written in place is recognized as the hook's even when it equals what the step model's own
-    `settings` gave, so it reaches a `Fallback` candidate other than the step's model too (see
-    `_AttemptBaseline`).
-    """
-
-    def __init__(self, settings: ModelSettings | None) -> None:
-        super().__init__(settings or {})
-        self.resolved: dict[str, Any] = dict(self)
-        """The settings as resolved, before any hook ran."""
-        self.written: set[str] = set()
-        """The keys a hook set or removed in place."""
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.written.add(key)
-        super().__setitem__(key, value)
-
-    def __delitem__(self, key: str) -> None:
-        self.written.add(key)
-        super().__delitem__(key)
-
-    def update(self, *args: Any, **kwargs: Any) -> None:
-        changes = dict(*args, **kwargs)
-        self.written.update(changes)
-        super().update(changes)
-
-    def __ior__(self, other: Any) -> _StepModelSettings:
-        self.update(other)
-        return self
-
-    def setdefault(self, key: str, default: Any = None) -> Any:
-        if key not in self:
-            self.written.add(key)
-        return super().setdefault(key, default)
-
-    def pop(self, key: str, *default: Any) -> Any:
-        if key in self:
-            self.written.add(key)
-        return super().pop(key, *default)
-
-    def popitem(self) -> tuple[str, Any]:
-        key, value = super().popitem()
-        self.written.add(key)
-        return key, value
-
-    def clear(self) -> None:
-        self.written.update(self)
-        super().clear()
+    merged: ModelSettings | None
+    """The layers merged onto the step model's own `settings`: what the step's request starts from."""
+    layered: ModelSettings | None
+    """The layers alone, what an attempt at another model starts from: see `_AttemptBaseline.settings_for`."""
 
 
 @dataclasses.dataclass
@@ -453,36 +409,26 @@ class _AttemptBaseline:
     """The settings the hooks set on top of the step's resolved settings."""
     hook_removed_settings: set[str]
     """The resolved settings the hooks removed."""
-    layered_settings: Callable[[], ModelSettings | None]
+    layered_settings: ModelSettings | None
     """The step's settings from the agent, capabilities and run, without the step model's own `settings`."""
 
     @classmethod
-    def capture(
-        cls,
-        request_context: ModelRequestContext,
-        step_settings: _StepModelSettings | None,
-        layered_settings: Callable[[], ModelSettings | None],
-    ) -> _AttemptBaseline:
+    def capture(cls, request_context: ModelRequestContext, step_settings: StepModelSettings) -> _AttemptBaseline:
         """Capture the request as the hooks left it, and what they changed in the step's resolved settings.
 
-        A key a hook wrote in place counts as changed. In settings a hook replaced, a value equal to the resolved
-        one can't be told apart from one carried over, so it counts as unchanged.
+        A hook that sets a value equal to the one the step already resolved to counts as leaving it unchanged,
+        so an attempt at another model uses that model's own value.
         """
         final: dict[str, Any] = dict(request_context.model_settings or {})
-        resolved = step_settings.resolved if step_settings is not None else {}
-        written = step_settings.written if step_settings is not None else set[str]()
+        resolved: dict[str, Any] = dict(step_settings.merged or {})
         return cls(
             messages=list(request_context.messages),
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
             model=request_context.model,
-            hook_settings={
-                key: value
-                for key, value in final.items()
-                if key in written or key not in resolved or resolved[key] != value
-            },
+            hook_settings={key: value for key, value in final.items() if key not in resolved or resolved[key] != value},
             hook_removed_settings={key for key in resolved if key not in final},
-            layered_settings=cache(layered_settings),
+            layered_settings=step_settings.layered,
         )
 
     def settings_for(self, model: models.Model) -> ModelSettings | None:
@@ -497,7 +443,7 @@ class _AttemptBaseline:
             return self.model_settings
         settings = {
             key: value
-            for key, value in {**(self.layered_settings() or {}), **self.hook_settings}.items()
+            for key, value in {**(self.layered_settings or {}), **self.hook_settings}.items()
             if key not in self.hook_removed_settings
         }
         return cast(ModelSettings, settings) if settings else None
@@ -741,12 +687,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
         [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[tuple[models.Model, str | None]]
     ]
     enter_model: Callable[[models.Model], Awaitable[None]]
-    get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
-    get_layered_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
-    """The step's settings from the agent, capabilities and run, without the model's own `settings`.
-
-    What an attempt at a model other than the step's starts from: see `_AttemptBaseline.settings_for`.
-    """
+    get_model_settings: Callable[[RunContext[DepsT]], StepModelSettings]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
     end_strategy: EndStrategy
@@ -1817,7 +1758,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
-    _step_model_settings: _StepModelSettings | None = field(repr=False, init=False, default=None)
+    _step_model_settings: StepModelSettings = field(
+        repr=False, init=False, default=StepModelSettings(merged=None, layered=None)
+    )
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2365,9 +2308,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
     ) -> ModelSettings:
-        """Resolve the step's model settings, recording what the step's hooks then change in place."""
-        self._step_model_settings = _StepModelSettings(ctx.deps.get_model_settings(run_context))
-        model_settings = cast(ModelSettings, self._step_model_settings)
+        """Resolve the step's model settings, keeping the layers alone for an attempt at another model."""
+        self._step_model_settings = ctx.deps.get_model_settings(run_context)
+        model_settings = self._step_model_settings.merged or ModelSettings()
         run_context.model_settings = model_settings
         return model_settings
 
@@ -2377,15 +2320,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
     ) -> _AttemptBaseline:
-        def layered_settings() -> ModelSettings | None:
-            # Resolving the layers stamps `run_context.model_settings` for callable layers, so put the step's back.
-            step_settings = run_context.model_settings
-            try:
-                return ctx.deps.get_layered_model_settings(run_context)
-            finally:
-                run_context.model_settings = step_settings
-
-        return _AttemptBaseline.capture(request_context, self._step_model_settings, layered_settings)
+        return _AttemptBaseline.capture(request_context, self._step_model_settings)
 
     async def _prepare_resume_request(
         self,

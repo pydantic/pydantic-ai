@@ -1138,11 +1138,9 @@ async def test_each_candidate_gets_its_own_max_retries():
 
 
 async def test_settings_a_hook_sets_reach_every_candidate():
-    """A setting a `before_model_request` hook sets or removes applies to every candidate.
+    """A setting a `before_model_request` hook changes or removes applies to every candidate.
 
-    Set in place, it does even when it equals the step model's own value. In settings a hook replaces, a value
-    equal to the one the step resolved to can't be told apart from one carried over, so it's left to each
-    candidate's own `settings`.
+    A removed setting falls back to each candidate's own.
     """
     seen: list[tuple[str, int | None, float | None]] = []
 
@@ -1158,31 +1156,47 @@ async def test_settings_a_hook_sets_reach_every_candidate():
 
     @dataclass
     class SetRetriesAndDropTemperature(AbstractCapability[Any]):
-        replace_settings: bool
-
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            if self.replace_settings:
-                settings = dict(request_context.model_settings or {})
-                settings['max_retries'] = 3
-                settings.pop('temperature', None)
-                return replace(request_context, model_settings=cast(ModelSettings, settings))
-            assert request_context.model_settings is not None
-            request_context.model_settings['max_retries'] = 2
-            del request_context.model_settings['temperature']
-            return request_context
+            settings = dict(request_context.model_settings or {})
+            settings['max_retries'] = 3
+            del settings['temperature']
+            return replace(request_context, model_settings=cast(ModelSettings, settings))
 
-    for replace_settings, max_retries in ((False, 2), (True, 3)):
-        seen.clear()
-        agent = Agent(
-            respond('first', True, {'max_retries': 2, 'temperature': 0.5}),
-            model_settings={'temperature': 0.1},
-            capabilities=[
-                SetRetriesAndDropTemperature(replace_settings),
-                Fallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
-            ],
-        )
-        assert (await agent.run('x')).output == 'hello'
-        # Dropping the agent's `temperature` leaves each candidate's own.
-        assert seen == [('first', max_retries, 0.5), ('last', max_retries, 0.9)]
+    agent = Agent(
+        respond('first', True, {'max_retries': 2, 'temperature': 0.5}),
+        model_settings={'temperature': 0.1},
+        capabilities=[
+            SetRetriesAndDropTemperature(),
+            Fallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
+        ],
+    )
+    assert (await agent.run('x')).output == 'hello'
+    # Dropping the agent's `temperature` leaves each candidate's own, which it merges in itself.
+    assert seen == [('first', 3, 0.5), ('last', 3, 0.9)]
+
+
+async def test_callable_model_settings_resolve_once_per_step():
+    """A callable `model_settings` layer is resolved once per step, even when an attempt moves to another model."""
+    calls: list[int] = []
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        calls.append(ctx.run_step)
+        return {'temperature': 0.2}
+
+    temperatures: list[float | None] = []
+
+    def respond(fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            temperatures.append((info.model_settings or {}).get('temperature'))
+            if fail:
+                raise ModelAPIError(model_name='m', message='boom')
+            return ModelResponse(parts=[TextPart('hello')])
+
+        return FunctionModel(fn)
+
+    agent = Agent(respond(True), model_settings=settings, capabilities=[Fallback(respond(False))])
+    assert (await agent.run('x')).output == 'hello'
+    assert calls == [1]
+    assert temperatures == [0.2, 0.2]
