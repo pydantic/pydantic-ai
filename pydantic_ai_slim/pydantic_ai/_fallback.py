@@ -28,10 +28,12 @@ from ._model_request_attempts import AttemptStart, failed_attempt, record_attemp
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import FallbackExceptionGroup, UserError
 from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, ModelResponseStreamEvent
+from .models._request_timeout import stream_under_deadline
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .models import Model, ModelRequestParameters, StreamedResponse
+    from .models._request_timeout import RequestDeadline
     from .settings import ModelSettings
 
 __all__ = (
@@ -315,6 +317,7 @@ def warn_response_handlers_not_applied(owner: str) -> None:
 @asynccontextmanager
 async def request_stream_until_first_event(
     model: Model,
+    deadline: RequestDeadline | None,
     messages: list[ModelMessage],
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
@@ -326,12 +329,16 @@ async def request_stream_until_first_event(
     like an OpenAI Responses `response.failed` after `response.created`, or a Bedrock throttling
     error as the first stream event. Waiting for the first event means such an error is raised here,
     while the request can still fall back to another model. The event is replayed to the consumer,
-    so the stream it gets is unchanged. A stream that ends without any event is handed over as is.
+    so the stream it gets is unchanged. A stream that ends without any event is handed over as is. The stream
+    is opened under the `request_timeout` `deadline`, if any, so waiting for the first event counts towards it
+    like every event after it.
 
     Shared by `FallbackModel` for each candidate and by the agent's primed stream, which the `Fallback`
     capability relies on.
     """
-    async with model.request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+    async with stream_under_deadline(
+        deadline, model.request_stream(messages, model_settings, model_request_parameters, run_context)
+    ) as response:
         events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
             PeekableAsyncStream(aiter(response))
         )

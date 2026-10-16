@@ -62,6 +62,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..usage import RequestUsage, _add_usage_tokens  # pyright: ignore[reportPrivateUsage]
 from . import Model, ModelRequestContext, StreamedResponse
+from ._request_timeout import without_carried_deadline
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -236,6 +237,9 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     stripped = _strip_replace_marker(merged.metadata)
     if stripped is not merged.metadata:
         merged = replace(merged, metadata=stripped)
+    # The `request_timeout` deadline a `FallbackModel` carries only matters to the segments that continue the turn.
+    if merged.state != 'suspended':
+        merged = without_carried_deadline(merged)
     return merged
 
 
@@ -410,7 +414,12 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         if self._event_iterator is None:
             self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
-            self._event_iterator = self._iterator_with_cancel_guard(self._segment_stream)
+            events: AsyncIterator[ModelResponseStreamEvent] = self._segment_stream
+            # The `request_timeout` deadline covers opening each segment, the waits between segments, and reading
+            # each segment's events.
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = self._iterator_with_cancel_guard(events)
         return self._event_iterator
 
     async def prime(self) -> None:
@@ -440,7 +449,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
             with self.segment_context():
                 sub = await stack.enter_async_context(
                     request_stream_until_first_event(
-                        self.model, messages, self.model_settings, self.model_request_parameters, self.run_context
+                        # The `request_timeout` deadline covers opening the segment and waiting for its first event.
+                        self.model,
+                        self._request_deadline,
+                        messages,
+                        self.model_settings,
+                        self.model_request_parameters,
+                        self.run_context,
                     )
                 )
         except BaseException:

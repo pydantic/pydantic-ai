@@ -99,6 +99,7 @@ from .models._continuation import (
     report_continuation_segment,
     resumed_response,
 )
+from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
 from .output import OutputDataT, OutputSpec, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
@@ -1335,7 +1336,8 @@ def _split_resume_seed(
     through untouched.
     """
     if (seed := resumed_response(messages)) is not None:
-        return list(messages[:-1]), seed
+        # Resuming is a new request, so the deadline a `FallbackModel` carried on the suspended response is dropped.
+        return list(messages[:-1]), without_carried_deadline(seed)
     return list(messages), None
 
 
@@ -1463,7 +1465,10 @@ async def model_request(
     # re-issue (`last_mode is None`) counts as strict, harmless since both ceilings allow ≥1.
     last_mode: MergeMode | None = None
     response = seed
-    with set_current_run_context(run_context):
+    # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
+    # `FallbackModel` starts one per model it tries instead, and carries the picked model's on its suspended responses.
+    deadline = start_request_deadline(model, request_context.model_settings)
+    with set_current_run_context(run_context), enforce_request_deadline(deadline):
         while True:
             if response is None:
                 messages = base_messages
@@ -1600,6 +1605,9 @@ async def model_request_stream(
             segment_context=capture_current_context(),
             request_context=request_context,
         )
+        # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
+        if (deadline := start_request_deadline(model, request_context.model_settings)) is not None:
+            sr._enforce_request_deadline(deadline)  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
         finally:
@@ -2556,6 +2564,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
+            # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
+            # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
+            # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
+            # the rendered position is known (see the carried reasoning in `AnthropicModel._map_message`).
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )

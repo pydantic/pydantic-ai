@@ -11,10 +11,11 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2._app import STOCK_PLUGINS, create_shell, create_stock_agent
 from pydantic_clai2.builtin_plugins.web import WebPlugin
+from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import SessionEndReason
+from pydantic_clai2.plugins import DepsT, SessionEndReason
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace, workspace_directory
@@ -36,6 +37,7 @@ async def run_web(
     fork_session: bool = False,
     port: int | None = None,
     token: str | None = None,
+    restart: WebHandoff | None = None,
 ) -> None:
     """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl-C.
 
@@ -50,6 +52,9 @@ async def run_web(
     that keeps it, such as the `workspaces` plugin: CLAI then listens on 127.0.0.1 whatever the saved
     address, prints the address without the token as `Web UI running at http://127.0.0.1:PORT/`, which
     is how a launcher that passed port 0 learns the port, and opens no browser.
+
+    `restart` is the web UI the build before `/update` served: CLAI serves it again on that port with that
+    token, opening no browser, so the pages it had reconnect. After `/update`, this raises `Relaunch`.
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
@@ -79,6 +84,7 @@ async def run_web(
         busy=shell.background_running,
     ).attach(sessions=shell.sessions, commands=shell.commands)
     reason: SessionEndReason = 'error'
+    served: WebHandoff | None = None
     async with agent, create_task_group() as workers:
         workers.start_soon(shell.sessions.namer.run)
         try:
@@ -97,13 +103,17 @@ async def run_web(
             if notice:
                 console.print(notice, markup=False)
             web.port = port
-            if token is None:
-                console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
-            else:
+            if restart is not None:
+                web.port, web.token = restart.port, restart.token
+            if token is not None:
                 # A launcher talks to it on this machine alone, whatever address the saved settings name.
                 web.token, web.listen = token, LAUNCHER_HOST
-                address, _, _ = (await web.start()).partition('?')
-                console.print(f'Web UI running at {address}', markup=False)
+            if token is None and restart is None:
+                console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
+            else:
+                url = await web.start()
+                # A launcher keeps its token, so the address it reads leaves the token out.
+                console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
             console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
             reason = await shell.run()
         except get_cancelled_exc_class():
@@ -111,13 +121,37 @@ async def run_web(
             raise
         finally:
             workers.cancel_scope.cancel()
+            # Before closing the plugins stops the web UI.
+            served = serving(shell.loader)
             with CancelScope(shield=True):
                 await shell.loader.close(reason)
+    if (relaunch := shell.relaunch(web=served)) is not None:
+        raise relaunch
 
 
-def _loaded_web(loader: PluginLoader[None]) -> WebPlugin | None:
+def _loaded_web(loader: PluginLoader[DepsT]) -> WebPlugin | None:
     loaded = next((entry.loaded for entry in loader.entries() if entry.name == WEB), None)
     return loaded.plugin if loaded is not None and isinstance(loaded.plugin, WebPlugin) else None
+
+
+def serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+    """The port and token of the web UI `loader`'s `web` plugin serves now; `None` while it serves none."""
+    web = _loaded_web(loader)
+    if web is None or web.server is None:
+        return None
+    return WebHandoff(port=web.server.port, token=web.token)
+
+
+async def serve_again(loader: PluginLoader[DepsT], handoff: WebHandoff) -> str:
+    """Serve the web UI on the port and with the token CLAI used before `/update`, opening no browser."""
+    web = _loaded_web(loader)
+    if web is None:
+        return 'The web UI did not start again: the web plugin is off. Turn it on with /plugins enable web.'
+    web.port, web.token = handoff.port, handoff.token
+    try:
+        return f'Web UI running at {await web.start()}'
+    except OSError as exc:
+        return f'The web UI did not start again on port {handoff.port}: {exc}. Start it on another with /web.'
 
 
 async def _start_in(*, store: SettingsStore, conversation_id: str) -> ProjectSettings | None:
