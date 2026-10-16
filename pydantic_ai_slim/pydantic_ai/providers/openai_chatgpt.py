@@ -57,6 +57,17 @@ __all__ = (
 _PROVIDER_NAME = 'openai-chatgpt'
 _BASE_URL = 'https://api.openai.com/v1'
 _RESOURCE = 'https://api.openai.com/v1'
+_UNUSABLE_REFRESH_TOKEN_ERRORS = frozenset(
+    {
+        'invalid_grant',
+        'invalid_refresh_token',
+        'token_expired',
+        'refresh_token_expired',
+        'refresh_token_invalidated',
+        'refresh_token_reused',
+    }
+)
+"""Refresh error codes that mean the user has to sign in again."""
 _ISSUER = 'https://auth.openai.com'
 _AUTHORIZE_URL = 'https://auth.openai.com/api/accounts/authorize'
 _TOKEN_URL = 'https://auth.openai.com/api/accounts/oauth/token'
@@ -162,8 +173,7 @@ async def _refresh_credentials(
     """Exchange the refresh token for a new credential set against the account's issued client.
 
     Raises [`CredentialsRefreshError`][pydantic_ai.providers.openai_chatgpt.CredentialsRefreshError]
-    when the token endpoint rejects the grant (`invalid_grant` means a fresh sign-in is required) or
-    returns a malformed response.
+    when the token endpoint rejects the grant or returns a malformed response.
     """
     data = await _post_token_request(
         _TOKEN_URL,
@@ -176,6 +186,7 @@ async def _refresh_credentials(
         _token_response_ta,
         provider_name=_PROVIDER_NAME,
         http_client=http_client,
+        rejected_grant_errors=_UNUSABLE_REFRESH_TOKEN_ERRORS,
     )
     return OpenAIChatGPTCredentials(
         client_id=credentials.client_id,
@@ -243,7 +254,12 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
             state: The CSRF token bound to the callback; auto-generated when `None`.
         """
         parsed = urlsplit(redirect_uri)
-        if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.path != _REDIRECT_PATH:
+        if (
+            parsed.scheme != 'http'
+            or parsed.hostname != '127.0.0.1'
+            or parsed.port is None
+            or parsed.path != _REDIRECT_PATH
+        ):
             raise UserError(
                 f'`redirect_uri` must be `http://127.0.0.1:PORT{_REDIRECT_PATH}`: Sign in with ChatGPT only '
                 f'lets the port vary, got {redirect_uri!r}.'
@@ -277,8 +293,9 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
                 and the provider refuses credentials without plan usage.
             extra_params: Additional query parameters, merged over the defaults (so they can also
                 override them), except `client_id`, `redirect_uri`, `state`, `code_challenge`, `nonce`,
-                and `resource`, which the callback validation and code exchange rely on. Pass `{'prompt': 'consent'}` to ask a user who
-                declined plan usage again, or `{'login_hint': email}` to preselect an account.
+                and `resource`, which the callback validation and code exchange rely on. Pass
+                `{'prompt': 'consent'}` to ask a user who declined plan usage again, or
+                `{'login_hint': email}` to preselect an account.
         """
         params: dict[str, str] = {
             'response_type': 'code',
@@ -309,7 +326,9 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
         Args:
             code: The callback's `code` parameter.
             client_id: The callback's `client_id` parameter, which carries the issued client id after a
-                new registration. A sign-in that reused `client_id` may omit it.
+                new registration. A sign-in that reused `client_id` may omit it. Once accepted, it is
+                kept as the flow's `client_id`, so a sign-in retried after a failed exchange can reuse
+                the registration.
         """
         if self.client_id is not None:
             if client_id is not None and client_id != self.client_id:
@@ -322,6 +341,8 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
             raise UserError(
                 'The registration is incomplete: the authorization callback did not carry the issued `client_id`.'
             )
+        else:
+            self.client_id = client_id
         data = await _post_token_request(
             _TOKEN_URL,
             {
