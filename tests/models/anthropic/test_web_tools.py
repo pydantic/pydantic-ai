@@ -184,6 +184,35 @@ def test_anthropic_explicit_profile_instance_narrows_web_tools():
     assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected_tool_types'),
+    [
+        pytest.param('claude-sonnet-4-6', ['web_search_20260209', 'web_fetch_20260209'], id='dynamic-filtering'),
+        pytest.param('claude-sonnet-4-5', ['web_search_20250305', 'web_fetch_20250910'], id='previous'),
+    ],
+)
+async def test_anthropic_web_tools_allowed_callers(
+    allow_model_requests: None, model_name: str, expected_tool_types: list[str]
+):
+    """`anthropic_web_tools_allowed_callers` is sent on both web tools, keeping the profile's tool version.
+
+    Unit (not VCR) test: the VCR cassette matcher isn't sensitive to the request body, so the mock
+    client's call kwargs are what pin the outgoing `tools`.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
+
+    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']))
+
+    tools = get_mock_chat_completion_kwargs(mock_client)[0]['tools']
+    assert [(tool['type'], tool['allowed_callers']) for tool in tools] == [
+        (tool_type, ['direct']) for tool_type in expected_tool_types
+    ]
+
+
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Pass Anthropic dynamic-filtering caller metadata back with web fetch history.
 

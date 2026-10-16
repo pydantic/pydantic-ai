@@ -35,7 +35,7 @@ with try_import() as imports_successful:
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, AnthropicWebToolCaller
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -183,6 +183,43 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
         assert calls[0].tool_name == 'code_execution'
         assert calls[0].tool_call_id == _TOOL_CALL_ID
         assert calls[0].args_as_dict() == {'code': 'print(1)'}
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    ('allowed_callers', 'expected_call'),
+    [
+        pytest.param(['direct'], [], id='direct-only'),
+        pytest.param(['direct', 'code_execution_20260120'], ['code_execution'], id='code-execution-caller'),
+    ],
+)
+async def test_anthropic_web_tools_allowed_callers_gate_implicit_code_execution(
+    allow_model_requests: None, stream: bool, allowed_callers: list[AnthropicWebToolCaller], expected_call: list[str]
+):
+    """`code_execution` is implicitly enabled by the web tools only when they allow a code execution caller."""
+    if stream:
+        mock_client = MockAnthropic.create_stream_mock(_server_tool_stream('code_execution'))
+    else:
+        response = completion_message(
+            [_server_tool_call('code_execution', {'code': 'print(1)'})], BetaUsage(input_tokens=1, output_tokens=1)
+        )
+        mock_client = MockAnthropic.create_mock(response)
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hello')])]
+    settings = AnthropicModelSettings(anthropic_web_tools_allowed_callers=allowed_callers)
+    request_parameters = ModelRequestParameters(native_tools=[WebFetchTool()])
+
+    if stream:
+        async with model.request_stream(messages, settings, request_parameters) as streamed_response:
+            async for _ in streamed_response:
+                pass
+            model_response = streamed_response.get()
+    else:
+        model_response = await model.request(messages, settings, request_parameters)
+
+    calls = [part.tool_name for part in model_response.parts if isinstance(part, NativeToolCallPart)]
+    assert calls == expected_call
 
 
 async def test_anthropic_keeps_server_tool_call_with_matching_result(allow_model_requests: None):
