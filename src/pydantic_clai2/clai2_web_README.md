@@ -55,6 +55,7 @@ saved; a change made in the terminal shows here too. `/set` or `/settings` typed
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
 in the terminal.
 
+<!-- From #10456 -->
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
 the next prompt, exactly as `/model NAME` does: the session switches, the terminal's status row and
 the composer show it, and it is saved as the default. Each saved model and fallback chain has a row
@@ -67,6 +68,7 @@ current model and the saved default. Creating, editing, and renaming fallback ch
 terminal's `/model chains`. `/effort` typed in the composer opens a dialog with the active model's
 settings, effort among them, and `/fast` still toggles fast mode.
 
+<!-- From #10457 -->
 **Keys & accounts** (`#settings/keys`, or `/keys`, `/login`, or `/accounts` in the composer) lists
 your saved API keys by name, with what uses each, and your accounts in the order `PROVIDER@*` tries
 them. Each row's button asks what to do as the terminal's menus do: add, replace (masked), rename,
@@ -77,6 +79,7 @@ finishes when the browser comes back to the machine CLAI runs on. An API-key acc
 a `/keys` entry. Connections (`openrouter`, `vllm`) and plugins' sign-ins ask in the terminal, so
 the page says to run `/login NAME` there.
 
+<!-- From #10459 -->
 **MCP servers** (`#settings/mcp`, or `/mcp` typed in the composer) lists your MCP servers with
 their state: running, ready, off, an error, or needing a sign-in.
 **Add server** opens `/mcp install`'s form as dialogs, its JSON in a multi-line field, and a

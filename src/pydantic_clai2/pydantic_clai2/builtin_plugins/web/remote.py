@@ -471,8 +471,9 @@ class Remote:
 
     async def run_command_menu_action(self, name: str, key: str, *, path: Sequence[str] = ()) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
-        action = partial(_run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}')
-        return await self._edit_command(name, action, path)
+        return await self._edit_command(
+            name, partial(_run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}'), path
+        )
 
     async def _edit_command(
         self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
