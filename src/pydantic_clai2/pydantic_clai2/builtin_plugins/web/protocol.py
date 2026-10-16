@@ -600,6 +600,8 @@ class SessionEntry:
     messages: int
     model: str | None
     current: bool
+    archived: bool
+    """Hidden from the sidebar unless it lists archived sessions too."""
 
 
 @dataclass(frozen=True, kw_only=True)

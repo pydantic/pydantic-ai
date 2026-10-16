@@ -533,9 +533,9 @@ class Remote:
             raise LookupError('This CLAI does not save sessions.')
         return self.host.sessions
 
-    async def projects(self, query: str = '') -> list[Project]:
+    async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
-        entries = await self.catalog.listing(query=query)
+        entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
         workspaces = {entry.workspace for entry in entries} | {self.host.status.workspace}
         known = dict(self._identities)
 
@@ -588,6 +588,7 @@ class Remote:
             messages=summary.message_count,
             model=summary.model,
             current=current,
+            archived=summary.archived_at is not None,
         )
 
     async def transcript(self, conversation_id: str) -> Transcript:
@@ -642,6 +643,12 @@ class Remote:
 
     async def delete(self, conversation_id: str) -> None:
         await self.catalog.delete(conversation_id)
+        self.hub.publish(SessionsChanged())
+
+    async def archive(self, conversation_id: str, *, archived: bool) -> None:
+        """Archive a session, hiding it from the sidebar, or unarchive it."""
+        catalog = self.catalog
+        await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
 

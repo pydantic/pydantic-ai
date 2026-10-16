@@ -75,13 +75,16 @@ export const api = {
   selectModel: (name: string) => call<void>('POST', '/api/model', { name }),
   setSwitch: (key: Switch, on: boolean) => call<void>('POST', '/api/switch', { key, on }),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
-  sessions: (query: string) => call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}`),
+  sessions: (query: string, archived = false) =>
+    call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   newSession: (workspace?: string) =>
     call<void>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
   open: (id: string) => call<void>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
+  archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
+  unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   plugins: () => call<PluginRow[]>('GET', '/api/plugins'),
   plugin: (name: string, action: PluginAction) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/${action}`),

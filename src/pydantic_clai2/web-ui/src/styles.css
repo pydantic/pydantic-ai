@@ -290,6 +290,25 @@ pre {
   color: var(--muted);
 }
 
+.archived-toggle {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--faint);
+}
+
+.archived-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.archived-toggle.on {
+  background: var(--active);
+  color: var(--lithium);
+}
+
 .projects {
   flex: 1;
   overflow-y: auto;
@@ -423,6 +442,11 @@ pre {
 
 .session.current .session-title {
   color: var(--text);
+}
+
+.session.archived .session-title,
+.session.archived .state {
+  opacity: 0.55;
 }
 
 .session-time {
