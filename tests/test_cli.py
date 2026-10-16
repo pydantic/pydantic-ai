@@ -71,6 +71,17 @@ def reset_sniffio_cvar() -> Iterator[None]:
         sniffio.current_async_library_cvar.reset(token)
 
 
+@pytest.fixture(autouse=True)
+def restore_cli_agent_model() -> Iterator[None]:
+    # `cli()` assigns the model it resolves to the shared module-level `cli_agent`, so without this a
+    # test that passes `--model` would change the model that every later `cli()` call starts from.
+    model = cli_agent.model
+    try:
+        yield
+    finally:
+        cli_agent.model = model
+
+
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
