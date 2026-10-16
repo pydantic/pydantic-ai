@@ -14,7 +14,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
@@ -22,9 +22,6 @@ import anyio.to_thread
 from pydantic_ai.exceptions import UserError
 
 CredentialsT = TypeVar('CredentialsT')
-
-_FLOW_BOUND_PARAMS = frozenset({'client_id', 'redirect_uri', 'state', 'code_challenge'})
-"""Authorization parameters the flow itself validates or exchanges against, so a caller override breaks the login."""
 
 _CALLBACK_READ_TIMEOUT = 5.0
 """Seconds a callback connection may stall before it is dropped, so it cannot block the real redirect."""
@@ -37,6 +34,9 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
     the pieces every flow needs: the `state` guarding the callback, the PKCE verifier/challenge
     pair, and the redirect URI the authorization code is bound to.
     """
+
+    _bound_params: ClassVar[frozenset[str]] = frozenset({'client_id', 'redirect_uri', 'state', 'code_challenge'})
+    """Authorization parameters the flow itself validates or exchanges against, so a caller override breaks the login."""
 
     def __init__(self, *, redirect_uri: str, state: str | None = None) -> None:
         self.redirect_uri = redirect_uri
@@ -52,12 +52,11 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
     def _merge_extra_params(self, params: dict[str, str], extra_params: Mapping[str, str] | None) -> dict[str, str]:
         """Merge caller-supplied query parameters over the defaults, refusing identity overrides."""
         if extra_params:
-            if overridden := sorted(_FLOW_BOUND_PARAMS & extra_params.keys()):
+            if overridden := sorted(self._bound_params & extra_params.keys()):
                 raise UserError(
-                    f'`extra_params` cannot override {", ".join(overridden)}: the flow validates its own `state`, '
-                    'exchanges the code with its own PKCE verifier, and always posts the public client id and its '
-                    '`redirect_uri`, so the authorization code would be unusable. Pass `redirect_uri=` to the '
-                    'constructor instead.'
+                    f'`extra_params` cannot override {", ".join(overridden)}: the flow validates the callback and '
+                    'exchanges the code with its own values, so the authorization code would be unusable. Pass '
+                    '`redirect_uri=` to the constructor instead.'
                 )
             params.update(extra_params)
         return params

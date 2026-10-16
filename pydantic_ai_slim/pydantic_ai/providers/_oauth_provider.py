@@ -331,7 +331,7 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
         raise NotImplementedError
 
     def _validate_credentials(self, credentials: CredentialsT) -> None:
-        """Reject credentials this provider cannot use, as they are given or loaded."""
+        """Reject credentials this provider cannot use, as they are given, loaded, or refreshed."""
 
     def _create_http_client(self) -> httpx2.AsyncClient:
         """Factory used when a closed provider-owned client is reopened."""
@@ -427,6 +427,7 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
             # would invalidate theirs. Re-read storage first and adopt a newer set if one is there.
             if (stored := await source.load()) != rejected:
                 self._replace(stored)
+                self._validate_credentials(stored)
                 return
         # The provider's own client, so custom transports and proxies apply to refreshes too;
         # the auth flow ignores other hosts, so this cannot recurse or leak the bearer.
@@ -439,6 +440,9 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
                     'Credentials were refreshed in memory but saving them to the credential source raised.',
                     self.name,
                 ) from e
+        # Checked only once saved: the rotated refresh token is the only usable one, even when this
+        # provider can't use what it now grants.
+        self._validate_credentials(self.credentials)
 
     def _replace(self, credentials: CredentialsT) -> None:
         # Atomic replace of the complete set, then bump the revision so concurrent 401s observe it.
