@@ -61,7 +61,9 @@ Paths are relative to the repo root.
 - **Subtree cancel, `max_depth`, and persistence.** `directory=` writes atomic JSON per task. `step_store=`
   gives mid-run snapshots. Interrupted records come back resumable, which is better than Claude Code here.
 - **One observer.** It receives a `DelegationTaskEvent(task, event, model_name, context_window)` for every child
-  stream event, *without* passing those events into the parent's stream.
+  stream event, *without* passing those events into the parent's stream. The forwarding is done by
+  `SubAgents._stream_child`, which `_run_delegation` passes as the child's `event_stream_handler`, through
+  `owner.notify`. The same handler keeps `record.messages` current.
 
 ### Harness: `planning` is a task list with dependencies
 
@@ -150,32 +152,42 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
 
 1. **Name (G4).** Add an optional `DelegationTask.name: str | None = None`, surfaced as `TaskInfo.name`.
    Existing UIs can then label rows `alice (reviewer)` without knowing about teams.
-2. **Host-driven start and wake (G2).** Add new owner API built on the existing `Runner` type. The runner comes
-   from a *host-registered factory* rather than from a tool's `RunContext`:
+2. **Host-driven start and wake (G2).** Add new owner API built on the existing `Runner` type
+   (`Callable[[DelegationTask], Awaitable[str]]`). The runner is *registered by the host on the owner*, rather
+   than built from a tool's `RunContext`:
    ```python
-   DelegationTasks(..., member_runner: Callable[[DelegationTask], Runner] | None = None)
+   DelegationTasks(..., member_runner: Runner | None = None)
 
    async def start(self, *, name: str, agent_name: str, prompt: str, conversation_id: str,
                    model: str | None = None) -> DelegationTask: ...   # never waits
+
+   def member_run(self, record: DelegationTask) -> MemberRun: ...
    ```
+   `MemberRun` bundles what `SubAgents._run_delegation` sets up for today's children, so hosts don't copy
+   private logic: capabilities, event stream handler, and run keyword arguments.
    - **Records:** `start` creates records with `background=True` and `backgroundable=True`. `reports()`, the
      shell's wake, `focused()` and Ctrl+B all key off `background`, so a member is never treated as foreground
      work. `start` refuses agent types listed in `one_shot`, because a teammate must be wakeable.
-   - **Runner contract:** the runner `member_runner` returns must attach:
-     - `DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id)`, so the inbox
-       callback attaches;
-     - the team's gate listeners;
-     - `owner.persistence_capabilities()`.
+   - **Runner contract:** `member_runner` runs the member's agent with `owner.member_run(record)`, adding the
+     team's gate listeners to its capabilities. `MemberRun` provides:
+     - **Capabilities:** `DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id)`,
+       so the inbox callback attaches, plus `owner.persistence_capabilities()`.
+     - **Event stream handler:** keeps `record.messages` current and calls
+       `owner.notify(record, event, model_name=..., context_window=...)`, like `_stream_child`. Without it,
+       members would produce no `DelegationTaskEvent`/`TaskEvent`, and none of the UIs in §4 and §5 would see
+       them.
+     - **Run keyword arguments:** `conversation_id=record.id`, `run_id=record.run_id`,
+       `message_history=repair_messages(record.messages)`. Restart recovery from `step_store` keys on
+       `record.run_id`.
 
-     `SubAgents._run_delegation` does this for today's children, but members don't go through it. Inside a
-     member run, `ctx.conversation_id` is the member's own id, as for today's children. Team tools therefore
-     find their conversation through `owner.records[DelegationTasks.child_id()].conversation_id`.
-   - **Who provides the runner:** the host, e.g. `clai2`'s `Session`, registers the factory when it constructs
-     the owner. Each runner closes over the session's deps, model, local workspace, and a **per-member
-     `RunUsage`**. A member therefore never borrows a spawning run's `RunContext`, which may already have ended.
-     Usage rolls up into a team total and is capped by the member's `UsageLimits`.
-   - **Restarts:** because the runner comes from a factory rather than a saved closure, a member reloaded from
-     `directory=` after a restart can still be woken. With no factory registered, `start` and waking raise
+     As for today's children, `ctx.conversation_id` inside a member run is the member's own id. Team tools
+     therefore find their conversation through `owner.records[DelegationTasks.child_id()].conversation_id`.
+   - **Who provides the runner:** the host, e.g. `clai2`'s `Session`, registers it when it constructs the owner.
+     It closes over the session's deps, model, local workspace, and a **per-member `RunUsage`**. A member
+     therefore never borrows a spawning run's `RunContext`, which may already have ended. Usage rolls up into a
+     team total and is capped by the member's `UsageLimits`.
+   - **Restarts:** because the runner is registered on the owner rather than saved per task, a member reloaded
+     from `directory=` after a restart can still be woken. With no runner registered, `start` and waking raise
      `RuntimeError`.
    - **Workspaces:** owned by a run, so they are refused, the same as today's `backgroundable` rule.
    - **Parent:** members are top-level, `parent_id=None`. A wake keeps that parent no matter who triggers it,
@@ -347,7 +359,8 @@ Routing has two sources:
 
 1. **Caused by a tool call:** `ctx.emit` in the run that made the call.
    - The lead's events land in its stream: the TUI `StreamRenderer` and the web `Observer.on_event` see them.
-   - A member's events land in its own stream, which `DelegationTasks` already forwards to its observer. Plugins
+   - A member's events land in its own stream. The `MemberRun` stream handler (§3.1) forwards them to the
+     owner's observer through `owner.notify`, as `SubAgents._stream_child` does for today's children. Plugins
      receive them as `TaskEvent(event=...)`.
 2. **Caused by the owner or the user, outside any run:** for example, state changes when a member settles, wake
    and queueing, the user's board edits, the user's messages, and claims released on failure. `Team` publishes
@@ -514,7 +527,7 @@ REST routes call `host.team`:
    - N concurrent claimers produce exactly one winner;
    - concurrent completions unblock dependents exactly once;
    - a concurrent `set_items` doesn't lose an owner.
-2. **harness `subagents`:** `DelegationTask.name`, `member_runner` with `start`, persisted member and lead
+2. **harness `subagents`:** `DelegationTask.name`, `member_runner` with `start` and `member_run`, persisted member and lead
    inboxes with `send` (new optional `receiving(message=)` callback, per-message acknowledgement, wake on
    settle), and `max_active`. Tests:
    - a message sent while the member's final response settles is delivered on the next wake;
