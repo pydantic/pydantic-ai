@@ -32,7 +32,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import SelectModel
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from pydantic_ai.models import AbstractModel, Model, ModelRequestParameters, ModelSelectionContext
+from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -736,6 +736,60 @@ def test_concrete_seed_respects_compaction_when_transport_changes(seed_after_com
 
     assert previous_id == ('resp_seed' if seed_after_compaction else None)
     assert new_messages == (history[2:] if seed_after_compaction else history)
+
+
+async def test_connected_model_http_operations_replay_socket_history(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    socket = sockets.pending[0]
+    socket.responses = deque([text_events('socket answer', 'resp_socket')])
+    http_requests: list[httpx2.Request] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        http_requests.append(request)
+        if request.url.path == '/v1/responses/input_tokens':
+            return httpx2.Response(200, json={'input_tokens': 16, 'object': 'response.input_tokens'})
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'resp_compact',
+                'created_at': 0,
+                'object': 'response.compaction',
+                'output': [{'id': 'comp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'}],
+                'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+            },
+        )
+
+    settings: OpenAIResponsesModelSettings = {'openai_store': False, 'openai_previous_response_id': 'auto'}
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
+        async with source.connect() as connected:
+            first_request = ModelRequest.user_text_prompt('first')
+            first_response = await connected.request([first_request], settings, ModelRequestParameters())
+            assert (first_response.provider_details or {}).get('transport') == 'websocket'
+            context = ModelRequestContext(
+                model=connected,
+                messages=[first_request, first_response, ModelRequest.user_text_prompt('next')],
+                model_settings=settings,
+                model_request_parameters=ModelRequestParameters(),
+            )
+            counted = await connected.count_tokens(context.messages, settings, context.model_request_parameters)
+            compacted = await connected.compact_messages(context)
+
+    assert len(socket.sent) == 1
+    assert counted.input_tokens == 16
+    assert compacted.provider_response_id == 'resp_compact'
+    assert [request.url.path for request in http_requests] == [
+        '/v1/responses/input_tokens',
+        '/v1/responses/compact',
+    ]
+    for request in http_requests:
+        body = FRAME_ADAPTER.validate_json(request.content)
+        assert 'previous_response_id' not in body
+        assert 'first' in str(body['input'])
+        assert 'socket answer' in str(body['input'])
+        assert 'next' in str(body['input'])
+    assert socket.close_count == 1
 
 
 @pytest.mark.parametrize(

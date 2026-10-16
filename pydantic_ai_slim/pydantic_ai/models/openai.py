@@ -2654,7 +2654,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
-        previous_response_id, messages = self._resolve_previous_response_id(
+        # `/compact` is always HTTP, even when this model is bound to a WebSocket.
+        # Its cache-only response IDs cannot anchor an HTTP compaction request.
+        http_model = _utils.replace_no_init(self, _websocket=None) if self._websocket is not None else self
+        previous_response_id, messages = http_model._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
@@ -2774,7 +2777,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
         profile = self.profile
-        request_params = await self._build_responses_request_params(
+        # Token counting is an HTTP request, so a connected model must not reuse a
+        # response ID that exists only in its WebSocket's connection-local cache.
+        http_model = _utils.replace_no_init(self, _websocket=None) if self._websocket is not None else self
+        request_params = await http_model._build_responses_request_params(
             messages,
             settings,
             model_request_parameters,
