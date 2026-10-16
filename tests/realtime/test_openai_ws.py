@@ -1580,3 +1580,48 @@ async def test_interrupt_after_the_reply_finished_generating(
         if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.output_item.added'
     )
     assert truncates[0]['item_id'] == first_item
+
+
+async def test_interrupt_partway_through_a_finished_reply(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A barge-in partway into a reply that already finished truncates it there, and history records the cut.
+
+    The transcript stays what the provider gave (it doesn't say which words were heard), so a text model or
+    a replay reads it with the interruption marker. The cassette keeps only a few bytes of each audio delta,
+    so the position attributed as played (20 ms) lies within what replays too.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in two full sentences.')
+
+    async with agent.realtime(model).session() as session:
+        _stream = session.stream_audio()  # the single playback view the position is attributed to
+        events = aiter(session)
+        with anyio.fail_after(60):
+            await session.send('Tell me about the moon.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+            assert await session.interrupt(played_bytes=960) is True
+            # The next turn, so the provider's acknowledgement of the truncation is read before closing.
+            await session.send('Say goodbye.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == snapshot([20])
+    received = [
+        message.data['type']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert 'conversation.item.truncated' in received
+    assert 'error' not in received
+
+    response, goodbye = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert (response.state, goodbye.state) == ('interrupted', 'complete')
+    [speech] = [part for part in response.parts if isinstance(part, SpeechPart)]
+    assert speech.interrupted_at_ms == snapshot(20)
+    assert speech.transcript == snapshot(
+        "The moon is Earth's only natural satellite, and it's the fifth largest moon in the solar system. It's about a quarter the size of Earth, and it takes roughly 27 days to orbit our planet, showing phases as it moves through its cycle."
+    )
