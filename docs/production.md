@@ -4,7 +4,7 @@ description: "Take a Pydantic AI agent to production: crash recovery, human appr
 
 # Going to Production
 
-Everything on this page is open source and runs on your infrastructure. [Pydantic AI](index.md), [Pydantic Evals](evals.md) and [Pydantic AI Harness](harness/index.md) are MIT-licensed Python packages that run in your own process, and durable execution runs on an engine you operate (or that engine's own cloud). There is no Pydantic-hosted agent runtime. Two hosted products plug in with a couple of lines when you want them: [Pydantic Logfire](logfire.md), which shows every run, model request and tool call as a trace next to the rest of your application, with a [free tier](https://pydantic.dev/pricing/) (any OpenTelemetry backend works instead); and the [Pydantic AI Gateway](gateway.md), one key for models across providers with spending caps, where calling providers directly works instead.
+[Pydantic AI](index.md), [Pydantic Evals](evals.md) and [Pydantic AI Harness](harness/index.md) are open-source, MIT-licensed Python packages that run in your own process, and durable execution runs on an engine you operate (or that engine's own cloud): there is no Pydantic-hosted agent runtime. Two hosted Pydantic services plug in with a couple of lines when you want them: [Pydantic Logfire](logfire.md), which shows every run, model request and tool call as a trace next to the rest of your application, with a [free tier](https://pydantic.dev/pricing/) (any OpenTelemetry backend works instead); and the [Pydantic AI Gateway](gateway.md), one key for models across providers with spending caps, where calling providers directly works instead.
 
 The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full, and puts the answers together in [one runnable service](#end-to-end).
 
@@ -12,7 +12,7 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 |---|---|---|
 | [What happens when the process crashes mid-run?](#crash) | Run the agent on a [durable execution](durable_execution/overview.md) engine | Core, plus an engine you run |
 | [How does a human approve a risky action, and the run resume days later?](#approval) | [Deferred tools](deferred-tools.md) end the run; a later run resumes it | Core |
-| [How do I keep conversation state?](#state) | Store the run's [`Conversation`][pydantic_ai.conversation.Conversation], or let [`StepPersistence`](harness/step-persistence.md) do it | Core, or [Harness](harness/index.md) |
+| [How do I keep conversation state?](#state) | Store the run's [`Conversation`][pydantic_ai.conversation.Conversation]; [`StepPersistence`](harness/step-persistence.md) adds a step log and snapshots to continue or fork from | Core, and [Harness](harness/index.md) |
 | [How do I bound cost and runaway loops?](#cost) | [`UsageLimits`][pydantic_ai.usage.UsageLimits] per run, [`SpendLimits`](harness/spend.md) per day, tenant or month | Core, and [Harness](harness/index.md) |
 | [What happens when a provider is down?](#outages) | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], [transport retries](retries.md#transport-retries), or Gateway failover | Core, or the hosted [Gateway](gateway.md) |
 | [Where do API keys go?](#keys) | Environment variables, or one Gateway key for every provider | Core, or the hosted [Gateway](gateway.md) |
@@ -35,9 +35,9 @@ Start with the smallest set that does the job, and add the rest as you need it:
 | A coding or long-running agent | `pydantic-ai-harness` | [Pydantic AI Harness](harness/index.md) and [Coder](harness/coder.md) | A [sandbox](harness/index.md#execution-environments), [`SpendLimits`](harness/spend.md), [`StepPersistence`](harness/step-persistence.md), [workspace capabilities under an engine](workspace.md#durable-execution) |
 | An eval suite | `pydantic-evals` (included in `pydantic-ai`) | [Evals quick start](evals/quick-start.md) | [Trajectory evaluators](evals/evaluators/agentic.md), [online evaluation](evals/online-evaluation.md) |
 
-## A complete service {#end-to-end}
+## An end-to-end service {#end-to-end}
 
-One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) only when `LOGFIRE_TOKEN` is set, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`.
+One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) when a Logfire token is available, from `LOGFIRE_TOKEN` or the credentials `logfire auth` saved locally, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. To stay short, it leaves out what you add before exposing it: authentication and checks that the caller owns the run, deduplication of repeated requests, [usage limits](#cost), and a terminal state for a run that fails, which `GET /runs/{run_id}` otherwise keeps reporting as running.
 
 ```bash
 pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
@@ -113,9 +113,9 @@ Run it with `uvicorn production_service:app`, start a run with `POST /runs?promp
 
 ## What happens when the process crashes mid-run? {#crash}
 
-Without [durable execution](durable_execution/overview.md), a run in flight dies with the process: you start it again, or continue it from the last snapshot [`StepPersistence`](#checkpointer) saved. With it, each model request runs as a durable step on an engine that journals the result, and so does each tool call the engine wraps or you mark; which tool calls an engine wraps for you differs per engine (DBOS, for one, leaves function tools to you, as in the [service above](#end-to-end)). A restarted run replays completed steps from the journal and continues from the one that was in flight, without paying for completed model requests again or re-running completed steps.
+Without [durable execution](durable_execution/overview.md), a run in flight dies with the process: you start it again, or continue it from the last snapshot [`StepPersistence`](#checkpointer) saved. With it, each model request runs as a durable step on an engine that journals the result, and so does each tool call the engine wraps or you mark; which tool calls an engine wraps for you differs per engine (DBOS, for one, leaves function tools to you, as in the [service above](#end-to-end)). A restarted run replays completed steps from the journal and retries the one that was in flight, without paying for completed model requests again or re-running completed steps.
 
-You attach durability to an ordinary agent as a [capability](capabilities/overview.md), and the run is durable when it executes inside the engine's workflow, as `support_run` does in the [service above](#end-to-end).
+With the engines that ship in Pydantic AI and the Harness, you attach durability to an ordinary agent as a [capability](capabilities/overview.md), and the run is durable when it executes inside the engine's workflow or handler, as `support_run` does in the [service above](#end-to-end); Restate and Kitaru wrap the agent in a class of their own instead, and Airflow in an operator.
 
 A step that was in flight when the process died runs again from its start, so a tool with side effects should be safe to repeat, for example by passing an idempotency key to the API it calls. Model requests, tool calls and output validation each [retry on their own layer](retries.md) before a run fails, and a run that still fails raises an exception such as [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], with [`capture_run_messages`][pydantic_ai.capture_run_messages] to see what it exchanged; see [Model errors](agent.md#model-errors).
 
@@ -126,11 +126,11 @@ The [service above](#end-to-end) uses DBOS because it runs in your process again
 In frameworks built around a checkpointer, one mechanism saves state after each step and covers crash recovery, pausing for a human and resuming a thread. Pydantic AI splits those jobs between pieces that compose on one agent:
 
 - **Crash recovery inside a run** comes from durable execution, at the granularity of a single model request or journaled tool call. A crash in the middle of a long tool loop resumes at the step that was running, with every completed step before it replayed from the journal.
-- **Saving and continuing between runs** comes from [`StepPersistence`](harness/step-persistence.md) (Harness): it saves a continuable snapshot at every settled step and when a run fails, so you can continue a run from its latest snapshot or fork it from any saved one, later and in another process if you like, with built-in stores or your own.
-- **Knowing whether a side effect happened** comes from the `StepPersistence` tool-effect ledger, which records when each tool call started and finished, so after a crash you can tell a call that completed from one whose effect is unknown, before deciding to run it again.
+- **Saving and continuing between runs** comes from storing the run's [`Conversation`](#state). [`StepPersistence`](harness/step-persistence.md) (Harness) adds message-history snapshots, saved at each settled tool-call boundary within a run and when an error unwinds it (a hard kill leaves the snapshots already written), so you can continue a run from its latest snapshot or fork it from a saved one, later and in another process if you like, with built-in stores or your own.
+- **Inspecting tool calls after a failure** comes from the `StepPersistence` tool-effect ledger, which records that each tool call started and whether it returned or raised. A call that never finished has an unknown outcome, and one that raised may still have had its effect, so check the external system before running it again.
 - **Pausing for a human** needs no live process at all: [deferred tools](#approval) end the run cleanly and a later run picks it up.
 
-`StepPersistence` is aware of durable execution: its writes are durable operations, so replaying a durable run does not write its events twice. A snapshot holds the run's message history, which is the state an agent run is made of; state that a capability keeps outside the messages, a workspace's files and resuming in the middle of a step are not part of it, and that last one is what durable execution is for. [Persistence](persistence.md) lays out which piece answers which question.
+`StepPersistence` is aware of durable execution: its writes are durable operations, so replaying a durable run does not write its events twice. A snapshot holds the run's messages only. The cumulative usage and pending deferred calls a `Conversation` carries are not in it, so its continuation helpers complement storing the `Conversation` rather than replace it; nor are state a capability keeps outside the messages, a workspace's files, or the middle of a step, which is what durable execution is for. [Persistence](persistence.md) lays out which piece answers which question.
 
 ## How does a human approve a risky action, and the run resume days later? {#approval}
 
@@ -154,15 +154,19 @@ async def start(prompt: str) -> bytes:
     return ConversationTypeAdapter.dump_json(result.conversation)  # store under result.conversation_id
 
 
-async def resume(stored: bytes, approvals: dict[str, bool]) -> str | DeferredToolRequests:
+async def resume(
+    stored: bytes, approvals: dict[str, bool]
+) -> tuple[bytes, str | DeferredToolRequests]:
     conversation = ConversationTypeAdapter.validate_json(stored)
     assert conversation.deferred_tool_requests is not None
     result = await agent.run(
         conversation=conversation,
         deferred_tool_results=conversation.deferred_tool_requests.build_results(approvals=approvals),
     )
-    return result.output
+    return ConversationTypeAdapter.dump_json(result.conversation), result.output  # store it again
 ```
+
+Store the returned conversation after every continuation: the model can ask for another approval, and the conversation is what answers it.
 
 The same mechanism [hands a call to a frontend or a background worker](deferred-tools.md#external-tool-execution) to execute, and an approval can come back with edited arguments or a denial message the model sees. The [UI adapters](ui/overview.md) carry approvals to and from the browser, and the [CLI](cli.md) prompts for them. Under a durable engine, the workflow can instead wait for the decision itself, as `support_run` does in the [service above](#end-to-end) with DBOS messages; the engine keeps the wait in its database, so a restart picks it back up. When the approver is in the same process, a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves calls inline without ending the run. All of it is on [Deferred Tools](deferred-tools.md).
 
@@ -175,11 +179,11 @@ For an agent with nobody watching, [`ToolCallJudge`](harness/tool-call-judge.md)
 
 A conversation's state is its [`Conversation`][pydantic_ai.conversation.Conversation]: the [messages](message-history.md), the running usage that [`UsageLimits`](#cost) budgets keep counting across turns and approvals, the `conversation_id` that [correlates its runs](message-history.md#correlating-runs-with-run_id-and-conversation_id), and any pending deferred calls. Store [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] in your own database, serialized with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter] and keyed by its `conversation_id`, and pass it back as `conversation=` on the next run. A `jsonb` column is enough; no schema migration is needed when Pydantic AI adds a message part. [Persistence](persistence.md#storing-a-conversation-yourself) also shows an append-only variant that keeps writes proportional to each turn.
 
-To skip writing that code, [`StepPersistence`](harness/step-persistence.md) (Harness) stores runs for you, with continue and fork. For what an agent should remember about a user across conversations, [`Memory`](harness/memory.md) (Harness) keeps notes the agent writes itself. [Persistence](persistence.md) compares all of these, and [compaction](capabilities/compaction.md) keeps a long conversation inside the context window.
+A conversation ID is a key, not a credential: check that the caller may access the conversation before you load it, and serialize concurrent updates to one conversation, for example with a version column or a per-conversation lock, so two instances don't continue the same stored version. [`StepPersistence`](harness/step-persistence.md) (Harness) adds a step log and message-history snapshots to continue or fork a run from, alongside the stored `Conversation`. For what an agent should remember about a user across conversations, [`Memory`](harness/memory.md) (Harness) keeps notes the agent writes itself. [Persistence](persistence.md) compares all of these, and [compaction](capabilities/compaction.md) keeps a long conversation inside the context window.
 
 ## How do I bound cost and runaway loops? {#cost}
 
-[`UsageLimits`][pydantic_ai.usage.UsageLimits] caps one run's requests, tool calls, tokens and cost in USD, and raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] once a limit is hit:
+[`UsageLimits`][pydantic_ai.usage.UsageLimits] caps one run's agent-loop requests, successful tool calls, tokens and cost in USD, and raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] once a limit is hit. `request_limit` counts turns of the agent loop, not every attempt sent to a provider, and tokens and cost are checked after a response arrives, so the request that crosses a limit has already been paid for:
 
 ```python {title="production_limits.py"}
 from decimal import Decimal
@@ -198,13 +202,13 @@ async def handle(prompt: str) -> str:
 
 Cost is best-effort: a model [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for isn't counted (with a `cost_limit`, a run that can't be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning]), so keep `request_limit` alongside `cost_limit`; see [usage limits](agent.md#usage-limits). Keep [model prices up to date](agent.md#keeping-model-prices-up-to-date) so cost limits and traces price new models.
 
-For budgets longer than one run, such as a daily ceiling, a monthly one or a per-tenant share, [`SpendLimits`](harness/spend.md) (Harness) prices every response and refuses the next request once a budget is spent, with a counter that several worker processes can share. Its USD budgets have the same gap: an unpriced response counts as free unless you set `on_unpriced='raise'` or supply your own `price`, while its token budgets still hold. The [Gateway](gateway.md#key-features) enforces its own daily, weekly and monthly spending caps per project, user and API key before a request reaches the provider. [Timeouts](timeouts.md) bound [each model request, tool call and hook](timeouts.md#bounding-how-long-a-step-takes) and [a whole run](timeouts.md#bounding-a-whole-run) (the `tool_timeout=30` above is one), [cancellation](agent.md#cancelling-a-run) stops a run from a stop button or a timer, [`max_concurrency`](agent.md#concurrency-limiting) caps how many runs an agent executes at once, and [`ConcurrencyLimitedModel`][pydantic_ai.ConcurrencyLimitedModel] caps [concurrent requests to a model](models/overview.md#http-request-concurrency) to stay under a provider's rate limits.
+For budgets longer than one run, such as a daily ceiling, a monthly one or a per-tenant share, [`SpendLimits`](harness/spend.md) (Harness) prices every response and refuses the next request once a budget is spent. It is a brake, not a reservation: the request that crosses the line completes and concurrent runs can each pass the check, so spend can overshoot, and budgets that span worker processes or restarts need a shared store instead of the default in-memory one. Its USD budgets have the same gap: an unpriced response counts as free unless you set `on_unpriced='raise'` or supply your own `price`, while its token budgets still hold. The [Gateway](gateway.md#key-features) enforces its own daily, weekly and monthly spending caps per project, user and API key before a request reaches the provider. [Timeouts](timeouts.md) bound [each model request, tool call and hook](timeouts.md#bounding-how-long-a-step-takes) and [a whole run](timeouts.md#bounding-a-whole-run) (the `tool_timeout=30` above is one), [cancellation](agent.md#cancelling-a-run) stops a run from a stop button or a timer, [`max_concurrency`](agent.md#concurrency-limiting) caps how many runs an agent executes at once, and [`ConcurrencyLimitedModel`][pydantic_ai.ConcurrencyLimitedModel] caps [concurrent requests to a model](models/overview.md#http-request-concurrency) within one process; it bounds concurrency, not requests per minute, so handle the provider's rate-limit responses as well.
 
 The cheapest request is one the provider has cached: the [`Caching`][pydantic_ai.capabilities.Caching] capability turns on [prompt caching](capabilities/caching.md), so a multi-turn run stops paying full price for its instructions, tools and history on every request, and each model request's span reports [prompt-cache health](logfire.md#prompt-cache-health), so you notice when a change breaks the cache. The [token and cost metrics](logfire.md#emitted-metrics) break spend down by provider and model, in Logfire or any OpenTelemetry backend.
 
 ## What happens when a provider is down? {#outages}
 
-[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries the next model when a request fails with an API error, or when a response fails a check you define; see [Fallback Model](models/overview.md#fallback-model):
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries the next model when a request fails with an API error, or when a non-streamed response fails a check you define (streamed responses, as a [frontend](#frontend) gets, are accepted as they are); see [Fallback Model](models/overview.md#fallback-model):
 
 ```python {title="production_fallback.py"}
 from pydantic_ai import Agent
@@ -230,15 +234,15 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 ```
 
-With Logfire, getting there takes `logfire auth` and `logfire projects new` on your machine and a write token in production; a coding agent can do it for you from [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md), and the free tier covers getting started. The same SDK instruments [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/) and [the HTTP requests to the provider](logfire.md#monitoring-http-requests), so a run shows up inside the request that started it, with the raw prompt it sent. [Using Logfire](logfire.md#using-logfire) walks through it.
+With Logfire, getting there takes `logfire auth` and `logfire projects new` (or `logfire projects use` for an existing project) on your machine and a write token in production; a coding agent can do it for you from [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md), and the free tier covers getting started. The same SDK instruments [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/) and [the HTTP requests to the provider](logfire.md#monitoring-http-requests), so a run shows up inside the request that started it, with the raw prompt it sent. [Using Logfire](logfire.md#using-logfire) walks through it.
 
 Without the Logfire SDK, [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] or the [`Instrumentation`](capabilities/instrumentation.md) capability does the same against your own tracer provider; see [OTel without Logfire](logfire.md#otel-without-logfire). [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) are on every run, so a conversation reloaded from storage stays correlated across its runs, and [run metadata](agent.md#run-metadata) such as a tenant or user ID lands on the run span, so you can filter traces by it.
 
-Telemetry includes prompts, completions and tool arguments by default. To keep them out, set [`include_content=False`](logfire.md#excluding-prompts-and-completions) on [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings], and [`include_binary_content=False`](logfire.md#excluding-binary-content) leaves out images, audio and documents.
+Telemetry includes prompts, completions and tool arguments by default. To keep them out of Pydantic AI's spans, set [`include_content=False`](logfire.md#excluding-prompts-and-completions) on [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings], and [`include_binary_content=False`](logfire.md#excluding-binary-content) leaves out the bytes of images, audio and documents. Neither touches run metadata, your own spans or captured HTTP request bodies, so configure those separately.
 
 ## How do I know it's still good? {#evals}
 
-[Pydantic Evals](evals.md) runs your agent, or any Python function, against a dataset of cases in code, and scores the results with your own evaluators, built-in checks or an [LLM judge](evals/evaluators/llm-judge.md). [Trajectory evaluators](evals/evaluators/agentic.md) grade the sequence and arguments of the agent's tool calls, not just its final answer. [Online evaluation](evals/online-evaluation.md) attaches the same evaluators to production traffic, scoring every call or a sample in the background and emitting the results as OpenTelemetry events.
+[Pydantic Evals](evals.md) runs your agent, or any Python function, against a dataset of cases in code, and scores the results with your own evaluators, built-in checks or an [LLM judge](evals/evaluators/llm-judge.md). [Trajectory evaluators](evals/evaluators/agentic.md) grade the sequence and arguments of the agent's tool calls, not just its final answer. [Online evaluation](evals/online-evaluation.md) attaches the same evaluators to production traffic, scoring every call or a sample in the background and emitting the results as OpenTelemetry events. That background work lives in your process, not on a job queue: [sample](evals/online-evaluation.md#sampling) and [cap the concurrency](evals/online-evaluation.md#concurrency-control) of expensive evaluators such as an LLM judge, and await [`wait_for_evaluations()`][pydantic_evals.online.wait_for_evaluations] on shutdown so pending ones finish.
 
 During a run, [`TrajectoryJudge`](harness/trajectory-judge.md) (Harness) reviews a long run every few model requests and steers it back when it drifts.
 
@@ -256,7 +260,11 @@ from pydantic_ai.models.test import TestModel
 
 models.ALLOW_MODEL_REQUESTS = False
 
-agent = Agent('{{ anthropic:medium }}', instructions='Answer support questions.')
+agent = Agent(
+    '{{ anthropic:medium }}',
+    instructions='Answer support questions.',
+    defer_model_check=True,  # build the model on first use, so tests need no API key
+)
 
 
 def test_support_agent():
@@ -312,4 +320,4 @@ An agent is a Python object in your process, so you deploy it the way you deploy
 
 In a long-running server, runs are async and share one event loop: [`max_concurrency`](agent.md#concurrency-limiting) caps how many run at once (with a queue limit for backpressure), [`UseThreadExecutor`](capabilities/thread-executor.md) gives sync tools a bounded thread pool, and a slow tool can run as a [background tool](harness/background-tools.md) (Harness) while the agent keeps working.
 
-Pin your versions: Pydantic AI follows its [version policy](version-policy.md), and Pydantic AI Harness is on [0.x releases](harness/index.md#version-policy) whose API may change between minor versions.
+Pin your versions: Pydantic AI follows its [version policy](version-policy.md), and Pydantic AI Harness is on [0.x releases](harness/index.md#version-policy) whose API may change between minor versions. With a durable engine, a deploy also changes what in-flight runs replay against: adding a tool or changing a type the engine stored can break a run started under the old code, so let those runs drain on the old version or follow the engine's versioning guidance, such as [Temporal's](durable_execution/temporal.md#agent-run-context-and-dependencies) or [AWS Lambda's](harness/aws-lambda.md#constraints).
