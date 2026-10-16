@@ -98,6 +98,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
+                # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
+                # https://platform.openai.com/docs/api-reference/chat/create
+                openai_chat_supports_allowed_tools=True,
             ),
         )
 

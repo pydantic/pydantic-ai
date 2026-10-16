@@ -553,7 +553,7 @@ Whether a model can be forced to call a tool is a property of the model, set on 
 
 Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
 
-- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock when forcing a single tool.
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses and OpenAI Chat on OpenAI's own API (`allowed_tools`), Google (`allowed_function_names`), and Bedrock when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
 The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
@@ -561,7 +561,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 | Provider | Cache-breaking case |
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
-| OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| OpenAI Chat | Only on OpenAI-compatible APIs: `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing. OpenAI's own API (via [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]) gets `allowed_tools` instead |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
