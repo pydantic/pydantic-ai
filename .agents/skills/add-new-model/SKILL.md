@@ -176,6 +176,8 @@ advertised and quietly degraded by a capability carve-out instead.
 
 Make only the changes the enumeration step surfaced. Resist scope creep. If you suspect a pre-existing bug in a sibling model's profile, reproduce it live first. Fold a reproduced bug on the same profile gate into this PR, with a test and one PR-body line. Flag an unreproduced or larger one in the PR description instead.
 
+Docs examples name models through the aliases in `docs/model_aliases/aliases.json`, not model ids. Check the placement rules in `docs/model_aliases/AGENTS.md`. When they place the new model in an alias, repoint that alias in `aliases.json` instead of editing doc pages. Then update the README mirrors that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` flag.
+
 After edits:
 
 ```bash
@@ -280,7 +282,7 @@ check. Keep the model-specific evidence concise:
 - **A Vertex 404 at the default `us-central1` does not mean Vertex lacks the id.** Probe `location='global'` before you conclude the id is Gemini-API-only.
 - **Gateway support is opt-out, not opt-in.** The enumeration test generates `gateway/{google,google-cloud}:*` for every `LatestGoogleModelNames` entry **except** those listed in `UNSUPPORTED_GATEWAY_MODEL_NAMES` in `tests/models/test_model_names.py`. Mirror the most recent sibling series: if `gemini-3.5-flash` is in the gateway KnownModelName blocks (not in the unsupported set), new flash siblings go there too. Only add to `UNSUPPORTED_GATEWAY_MODEL_NAMES` when the gateway actually rejects the id.
 - **Snapshots / tests:** hand-add the new ids in sorted position in `tests/test_capability_spec.py::test_model_json_schema_with_capabilities` (plain sorted string list). Mirror-only adds skip new VCR by default; #5527 recorded one for `gemini-3.5-flash` but that is not required for a pure name add.
-- **Docs:** example snippets often hard-code a recent flash id (`docs/models/google.md`, `docs/capabilities/thinking.md`) — leave them alone unless the docs maintain a model registry table (they currently do not).
+- **Docs:** doc pages name models through the tiered aliases in `docs/model_aliases/aliases.json`. Leave pages that pin a model on purpose (`docs/models/google.md`, `docs/capabilities/thinking.md`) alone.
 
 Google image-model landmines:
 
