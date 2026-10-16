@@ -250,6 +250,7 @@ async def parent(
         builtin_plugins=builtin,
         project=ProjectSettings(),
         headless=True,
+        workspace=tmp_path,
     )
     await shell.loader.load_all()
     [web] = [entry.loaded.plugin for entry in shell.loader.entries() if entry.name == 'web' and entry.loaded]
@@ -263,7 +264,8 @@ async def parent(
 
 
 async def created(tools: WorkspaceTools, repository: Path) -> str:
-    made = await tools.workspace_create(kind='local-worktree', repo=str(repository), ref='main')
+    """A relative `repo` is in the parent session's directory, not the process's."""
+    made = await tools.workspace_create(kind='local-worktree', repo=repository.name, ref='main')
     return made.split()[2].removesuffix('.')
 
 
