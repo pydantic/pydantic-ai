@@ -147,3 +147,21 @@ async def test_concurrent_saves_on_a_caller_connection_take_turns() -> None:
                 tg.start_soon(store.save, conversation)
 
         assert [await store.load(c.conversation_id) for c in conversations] == conversations
+
+
+def test_sqlite_store_rejects_an_in_memory_database_path() -> None:
+    with pytest.raises(ValueError, match="`database=':memory:'` is not supported"):
+        SqliteConversationStore(database=':memory:')
+
+
+async def test_first_use_of_a_caller_connection_leaves_its_open_transaction_to_the_caller() -> None:
+    with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
+        connection.execute('CREATE TABLE app (value TEXT)')
+        connection.execute('BEGIN')
+        connection.execute("INSERT INTO app VALUES ('uncommitted')")
+        store = SqliteConversationStore(connection=connection, media_store=None)
+
+        await store.read_record('unknown')
+        connection.execute('ROLLBACK')
+
+        assert connection.execute('SELECT count(*) FROM app').fetchone() == (0,)

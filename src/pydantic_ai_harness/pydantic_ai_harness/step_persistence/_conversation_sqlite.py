@@ -100,6 +100,11 @@ class SqliteConversationStore(ConversationStore):
     ) -> None:
         if (database is None) == (connection is None):
             raise ValueError('provide exactly one of `database=` or `connection=`')
+        if database is not None and str(database) == ':memory:':
+            # Each operation opens its own connection, and each would get a new, empty database.
+            raise ValueError(
+                "`database=':memory:'` is not supported; pass `connection=sqlite3.connect(':memory:', ...)`"
+            )
         self._database = Path(database) if database is not None else None
         self._connection = connection
         self._schema_ready = False
@@ -137,7 +142,10 @@ class SqliteConversationStore(ConversationStore):
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         if not self._schema_ready:
-            conn.executescript(_SCHEMA)
+            # One statement at a time: `executescript` would first commit a transaction the caller has open.
+            for statement in _SCHEMA.split(';'):
+                if statement.strip():
+                    conn.execute(statement)
             self._schema_ready = True
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
