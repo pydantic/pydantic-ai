@@ -7053,6 +7053,7 @@ The page the user is on.
     assert request.parts == [UserPromptPart(content=[item], timestamp=IsDatetime())]
 
 
+@requires_ag_ui('0.1.11')
 @pytest.mark.parametrize(
     'encrypted_value',
     [
@@ -7067,7 +7068,6 @@ The page the user is on.
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
     ],
 )
-@requires_ag_ui('0.1.11')
 @pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
 def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(
     encrypted_value: str, content: str

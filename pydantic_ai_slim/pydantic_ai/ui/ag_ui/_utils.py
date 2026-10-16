@@ -14,9 +14,9 @@ from ..._utils import is_str_dict
 from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
-"""AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
+"""AG-UI version that added the `encrypted_value` field to `ToolCall`, `ToolMessage` and `UserMessage`.
 
-Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
+Gates the field-based `tool_kind` and `StructuredContent` round-trips in `dump_messages`/`load_messages`. The streaming
 carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
 `REASONING_VERSION` — see `tool_kind_encrypted_value`.
 """
@@ -188,7 +188,7 @@ def tool_kind_encrypted_value(
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
-    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`, absent when there's nothing to carry."""
+    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`/`UserMessage`, absent when there's nothing to carry."""
 
     encrypted_value: str
 

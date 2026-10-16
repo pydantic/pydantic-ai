@@ -773,7 +773,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     for item in part.content:
                         if isinstance(item, StructuredContent):
                             # AG-UI has no structured user input, so the item is text the frontend shows,
-                            # and its value rides the message's `encrypted_value`; before 0.1.11 it's text only.
+                            # and its value rides the message's `encrypted_value`. Before 0.1.11 it's text only, with
+                            # no warning (unlike a lost `tool_kind`): the text the user and model see is unchanged.
                             if use_encrypted_value:
                                 structured_payloads[len(user_content)] = structured_content_payload(item)
                             user_content.append(TextInputContent(type='text', text=item.content))
@@ -1046,7 +1047,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
         - `StructuredContent` is dumped as a text item, with its value in the `UserMessage`'s
-          `encrypted_value`, and reloads without its `metadata`.
+          `encrypted_value` from `ag_ui_version='0.1.11'`, and reloads without its `metadata`. Below
+          that it's dumped, and reloads, as plain text.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
           inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
