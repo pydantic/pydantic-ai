@@ -38,7 +38,6 @@ from pydantic_clai2.mcp import OAuthSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
-from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs
 from tests.clai2.conftest import stored_accounts
 from tests.clai2.dialog_script import Answer, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
@@ -145,7 +144,7 @@ async def for_run(loader: PluginLoader[None]) -> Linear[None] | None:
     assert entry.loaded is not None
     plugin = entry.loaded.plugin
     assert isinstance(plugin, linear.LinearPlugin)
-    assert loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
+    assert loader.capabilities() == [plugin.for_run]
     return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
 
 

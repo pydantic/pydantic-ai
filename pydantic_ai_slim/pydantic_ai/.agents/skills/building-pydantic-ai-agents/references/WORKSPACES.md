@@ -60,7 +60,8 @@ while old ones continue where they started. A history ref that no capability rec
 `UserError` (pass `workspace='new'` to start fresh), unless the agent has no workspace capability at
 all (a summarizer given the history), which ignores it. With no ref and no supplier the run gets an
 `UnavailableWorkspace` whose operations raise `WorkspaceUnavailableError` explaining how to attach one.
-`get_workspace` runs before `for_run` (a capability that only a `for_run` contributes is asked
+`get_workspace` runs before `for_run` (when nothing else supplies one, the run calls its capability
+functions first and asks what they return; a capability that only a `for_run` contributes is asked
 afterwards, and `for_run` may not change a selection made before it), is synchronous, and must have
 no side effects or I/O. A capability must return `None` for references it does not own. A
 workspace capability can't be deferred: `defer_loading=True` on one raises `UserError`.

@@ -18,6 +18,7 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -36,7 +37,6 @@ from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from tests.clai2.dialog_script import Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
-from tests.clai2.test_workspace_defaults import per_run
 
 pytestmark = pytest.mark.anyio
 
@@ -99,7 +99,8 @@ def menu(loaded: LoadedPlugin[None]) -> SettingsMenu:
 async def for_run(loaded: LoadedPlugin[None]) -> Pylon[None] | None:
     """What the plugin builds for the next run."""
     [capability] = loaded.capabilities
-    running = per_run(capability)(CTX)
+    assert not isinstance(capability, AbstractCapability), 'rebuilt per run from the current settings'
+    running = capability(CTX)
     assert inspect.isawaitable(running)
     result = await running
     assert result is None or isinstance(result, Pylon)

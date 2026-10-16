@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Literal, TypeGuard
+from typing import Literal
 
 import pytest
 
@@ -11,12 +11,10 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
     Capability,
-    CapabilityFunc,
     CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
 )
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -25,17 +23,6 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_clai2 import Session
 from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.runtime._session import WorkspacelessCapability
-
-
-def is_workspaceless(capability: object) -> TypeGuard[WorkspacelessCapability[None]]:
-    return isinstance(capability, WorkspacelessCapability)
-
-
-def per_run(capability: object) -> CapabilityFunc[None]:
-    """The function a built-in plugin's capability resolves each run."""
-    assert is_workspaceless(capability), 'a per-run plugin capability supplies no workspace'
-    return capability.capability_func
 
 
 @pytest.mark.parametrize('stock', [False, True])
@@ -96,13 +83,16 @@ async def test_dynamic_plugins_do_not_suppress_the_local_default(
     assert result.response.workspace_ref == WorkspaceRef(provider='local', id=expected_dir)
 
 
-@pytest.mark.parametrize('contribution', ['none', 'instructions'])
-async def test_a_workspaceless_capability_function_leaves_the_local_default_to_for_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contribution: Literal['none', 'instructions']
+@pytest.mark.parametrize('contribution', ['none', 'instructions', 'workspace'])
+async def test_skills_read_the_workspace_next_to_a_capability_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contribution: Literal['none', 'instructions', 'workspace']
 ) -> None:
-    # `Skills` reads its libraries in `for_run`, before a capability function's workspace could be chosen.
+    # Regression: `Skills` reads its libraries in `for_run`, which ran before a capability function's
+    # workspace, CLAI's launch directory included, was chosen.
     monkeypatch.chdir(tmp_path)
-    skill = tmp_path / '.agents' / 'skills' / 'review'
+    sandbox = tmp_path / 'sandbox'
+    expected_dir = sandbox if contribution == 'workspace' else tmp_path
+    skill = expected_dir / '.agents' / 'skills' / 'review'
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text('---\ndescription: Review the change.\n---\n\nReview it.\n', encoding='utf-8')
     instructions: list[str] = []
@@ -114,35 +104,21 @@ async def test_a_workspaceless_capability_function_leaves_the_local_default_to_f
         yield 'done'
 
     def dynamic(ctx: RunContext[None]) -> AbstractCapability[None] | None:
+        if contribution == 'workspace':
+            return LocalWorkspace(sandbox, id='sandbox')
         return Capability(instructions='From the plugin.') if contribution == 'instructions' else None
 
     plugins: list[AgentCapability[None]] = [
         Coder(repo_context=False, sub_agents=False),
         Skills[None]('.agents/skills'),
-        WorkspacelessCapability[None](dynamic),
+        dynamic,
     ]
     agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
     result = await Session(agent, deps=None, plugins=plugins).prompt('go')
-    assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(tmp_path.resolve()))
+    assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected_dir.resolve()))
     [seen] = instructions
     assert '- review: Review the change.' in seen
     assert ('From the plugin.' in seen) == (contribution == 'instructions')
-
-
-async def test_a_workspaceless_capability_function_that_returns_a_workspace_fails_the_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    sandbox = tmp_path / 'sandbox'
-    sandbox.mkdir()
-
-    def dynamic(ctx: RunContext[None]) -> AbstractCapability[None]:
-        return LocalWorkspace(sandbox, id='sandbox')
-
-    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    session = Session(agent, deps=None, plugins=[WorkspacelessCapability[None](dynamic)])
-    with pytest.raises(UserError, match="A capability's `for_run` changed the workspace"):
-        await session.prompt('go')
 
 
 async def test_static_default_is_available_during_for_run(tmp_path: Path) -> None:
