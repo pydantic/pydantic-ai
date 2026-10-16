@@ -154,6 +154,8 @@ class ModelProfile(TypedDict, total=False):
     When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
     itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
     the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
+    On Anthropic, it also decides whether `anthropic_cache` sends the top-level `cache_control` parameter or
+    falls back to a breakpoint on the last block.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]

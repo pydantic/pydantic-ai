@@ -81,7 +81,11 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
-from ..providers._bedrock_model_names import bedrock_claude_cache_retentions, bedrock_lacks_claude_structured_output
+from ..providers._bedrock_model_names import (
+    bedrock_claude_cache_retentions,
+    bedrock_claude_supports_automatic_caching,
+    bedrock_lacks_claude_structured_output,
+)
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
@@ -295,13 +299,7 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
-# Automatic prompt caching (the top-level `cache_control` parameter) is documented on every platform except the
-# legacy Amazon Bedrock InvokeModel integration, which rejects it with a 400:
-# https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching
-# `AsyncAnthropicBedrockMantle` (the Bedrock Messages API) and `AsyncAnthropicVertex` support it. Fast mode is
-# not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
-_NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock,)
-
+# Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
 _CACHE_SETTINGS_KEYS = (
     'anthropic_cache',
     'anthropic_cache_instructions',
@@ -587,9 +585,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Passes a top-level `cache_control` parameter so the server automatically applies a
     cache breakpoint to the last cacheable block and moves it forward as conversations grow.
 
-    On the legacy `AsyncAnthropicBedrock` client, automatic caching is not supported, so this falls back to
-    per-block caching on the last user message. If the last content block already has
-    `cache_control` from an explicit `CachePoint`, it is preserved.
+    Where the model profile's `supports_auto_cache` is `False`, such as on the legacy `AsyncAnthropicBedrock`
+    client with models before Claude Opus 4.7, this falls back to per-block caching on the last user message.
+    If the last content block already has `cache_control` from an explicit `CachePoint`, it is preserved.
 
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
 
@@ -1108,21 +1106,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                # The legacy Bedrock SDK client doesn't support the top-level automatic caching parameter,
-                # so the unified `cache` setting places breakpoints there instead.
-                supports_auto_cache=_profile.get('supports_auto_cache', False)
-                and not isinstance(client, _NON_AUTOMATIC_CACHING_CLIENTS),
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
             # AWS grants the 1-hour cache TTL to only a subset of Claude models, and withholds structured output
             # from some that have it on the direct API, matching `BedrockConverseModel`.
+            # The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't
+            # serve from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting
+            # place a breakpoint on the last block there instead. A `supports_auto_cache` the user sets in
+            # `profile=` is the override, for models this list doesn't know yet.
+            user_profile = self._profile
+            auto_cache_overridden = (
+                user_profile is not None and not callable(user_profile) and 'supports_auto_cache' in user_profile
+            )
             _profile = merge_profile(
                 _profile,
                 AnthropicModelProfile(
                     supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name),
                     supports_json_schema_output=_profile.get('supports_json_schema_output', False)
                     and not bedrock_lacks_claude_structured_output(self._model_name),
+                    supports_auto_cache=_profile.get('supports_auto_cache', False)
+                    and (auto_cache_overridden or bedrock_claude_supports_automatic_caching(self._model_name)),
                 ),
             )
         return cast(AnthropicModelProfile, _profile)
@@ -2954,10 +2958,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None, None
 
         ttl: Literal['5m', '1h'] = '5m' if auto_cache is True else auto_cache
-        # The legacy Bedrock client does not support the top-level cache_control parameter
-        # (automatic caching). Per-block fallback is handled by _apply_per_block_caching_fallback.
-        # https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching
-        if isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
+        # Where the profile disclaims automatic caching (such as the legacy Bedrock client on older models),
+        # the per-block fallback is handled by _apply_per_block_caching_fallback.
+        if not self.profile.get('supports_auto_cache', False):
             return None, ttl
         return self._build_cache_control(ttl), ttl
 
@@ -2977,7 +2980,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if caching is not enabled.
             anthropic_messages: The list of Anthropic message params to apply fallback to.
         """
-        if resolved_ttl and isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
+        if resolved_ttl and not self.profile.get('supports_auto_cache', False):
             self._apply_message_cache_control(anthropic_messages, resolved_ttl)
 
     def _apply_explicit_message_caching(

@@ -1,4 +1,4 @@
-"""Which Anthropic SDK clients get automatic prompt caching (the top-level `cache_control` parameter).
+"""Which Anthropic SDK clients and models get automatic prompt caching (the top-level `cache_control` parameter).
 
 Mocked at the HTTP transport rather than recorded, because Bedrock and Vertex AI can't be recorded here.
 Going through each real SDK client checks the parameter survives the client's own request rewriting.
@@ -8,7 +8,8 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
 
 import httpx2
 import pytest
@@ -29,6 +30,7 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -53,14 +55,36 @@ _AUTOMATIC: _Breakpoints = ({'type': 'ephemeral', 'ttl': '5m'}, [])
 _LAST_BLOCK: _Breakpoints = (None, ['messages[0].content[0]'])
 """No top-level parameter, with the breakpoint on the last block of the conversation instead."""
 
-_EXPECTED_BREAKPOINTS: dict[str, _Breakpoints] = {
-    'api': _AUTOMATIC,
-    # The legacy Bedrock InvokeModel API rejects the top-level `cache_control` parameter with a 400.
-    'bedrock': _LAST_BLOCK,
-    'mantle': _AUTOMATIC,
-    'vertex': _AUTOMATIC,
-    'foundry': _AUTOMATIC,
-}
+
+@dataclass(frozen=True)
+class Case:
+    id: str
+    client: str
+    expected: _Breakpoints
+    model_name: str = 'claude-sonnet-4-5'
+    profile: dict[str, Any] | None = None
+
+
+CASES = [
+    Case('api', 'api', _AUTOMATIC),
+    Case('mantle', 'mantle', _AUTOMATIC),
+    Case('vertex', 'vertex', _AUTOMATIC),
+    Case('foundry', 'foundry', _AUTOMATIC),
+    # The legacy Bedrock InvokeModel API rejects the top-level `cache_control` parameter with a 400 on the
+    # ARN-versioned models, but takes it on the models it serves from the Messages API infrastructure.
+    Case('bedrock-sonnet-4-5', 'bedrock', _LAST_BLOCK, model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0'),
+    Case('bedrock-opus-4-8', 'bedrock', _AUTOMATIC, model_name='us.anthropic.claude-opus-4-8'),
+    Case('bedrock-opus-5-5', 'bedrock', _AUTOMATIC, model_name='global.anthropic.claude-opus-5-5'),
+    # The profile is the override, both ways.
+    Case(
+        'bedrock-profile-on',
+        'bedrock',
+        _AUTOMATIC,
+        model_name='us.anthropic.claude-sonnet-4-6',
+        profile={'supports_auto_cache': True},
+    ),
+    Case('api-profile-off', 'api', _LAST_BLOCK, profile={'supports_auto_cache': False}),
+]
 
 
 @pytest.mark.parametrize(
@@ -71,9 +95,9 @@ _EXPECTED_BREAKPOINTS: dict[str, _Breakpoints] = {
         pytest.param({'max_tokens': 256, 'cache': True}, id='unified-cache'),
     ],
 )
-@pytest.mark.parametrize('client_name', list(_EXPECTED_BREAKPOINTS))
-async def test_automatic_caching_by_client(allow_model_requests: None, client_name: str, settings: ModelSettings):
-    """Every client except the legacy Bedrock one sends the conversation breakpoint as automatic caching."""
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
+async def test_automatic_caching_by_client(allow_model_requests: None, case: Case, settings: ModelSettings):
+    """The profile's `supports_auto_cache` decides between automatic caching and a breakpoint on the last block."""
     bodies: list[dict[str, Any]] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
@@ -92,8 +116,12 @@ async def test_automatic_caching_by_client(allow_model_requests: None, client_na
                 api_key='x', base_url='https://example.com/anthropic', http_client=http_client
             ),
         }
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=clients[client_name]()))
+        model = AnthropicModel(
+            case.model_name,
+            provider=AnthropicProvider(anthropic_client=clients[case.client]()),
+            profile=cast(AnthropicModelProfile | None, case.profile),
+        )
         await Agent(model, model_settings=settings).run('Hello')
 
     [body] = bodies
-    assert cache_breakpoints(body) == _EXPECTED_BREAKPOINTS[client_name]
+    assert cache_breakpoints(body) == case.expected
