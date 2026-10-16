@@ -51,7 +51,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     When used as an async context manager, providers that create their own HTTP client will close it on exit.
     This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
-    Outside one, a run on a new event loop, after the one the client was last used on has stopped, gets a new client.
+    Outside one, a run on a new event loop, while the one the client was last used on isn't running, gets a new client.
     """
 
     _client: InterfaceClient
@@ -117,7 +117,7 @@ class Provider(ABC, Generic[InterfaceClient]):
     def _moved_to_another_event_loop(self) -> bool:
         """Record the running event loop as the one this provider's own client is used on.
 
-        Returns whether the client was last used on a different event loop that has since stopped. Connections
+        Returns whether the client was last used on a different event loop that isn't running now. Connections
         belong to the event loop that opened them, so a client can't be used from another one, and one whose
         loop has closed can't be closed either. While the other loop is still running, for example in another
         thread, its runs may still be using the client, so it isn't replaced under them.
@@ -131,7 +131,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         return previous_loop is not None and previous_loop is not loop and not previous_loop.is_running()
 
     def _refresh_http_client(self) -> None:
-        """Replace the HTTP client this provider created if it's closed or was used on an event loop that has stopped.
+        """Replace the HTTP client this provider created if it's closed or was used on an event loop that isn't running.
 
         Called when the provider is entered, and at the start of a run that uses it without entering it. While
         the provider is entered, whoever entered it owns the client, so it's left alone. The replaced client
