@@ -152,6 +152,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     are left out of the enqueued messages sent to the frontend.
     """
 
+    preserve_file_data: bool = False
+    """Whether enqueued messages sent to the frontend keep `FilePart` and `UploadedFile` items, as [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data]."""
+
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
@@ -469,7 +472,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
         if not enqueued:
             return
-        messages = AGUIAdapter.dump_messages(enqueued, ag_ui_version=self.ag_ui_version)
+        messages = AGUIAdapter.dump_messages(
+            enqueued, ag_ui_version=self.ag_ui_version, preserve_file_data=self.preserve_file_data
+        )
         yield ActivitySnapshotEvent(
             message_id=event.enqueue_id,
             activity_type=ENQUEUED_MESSAGES_ACTIVITY_TYPE,

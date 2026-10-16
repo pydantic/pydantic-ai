@@ -9135,6 +9135,38 @@ async def test_enqueued_messages_event_skipped_for_legacy_ag_ui() -> None:
     assert not any(event['type'] == 'ACTIVITY_SNAPSHOT' for event in events)
 
 
+@requires_ag_ui('0.1.19')
+async def test_enqueued_messages_preserve_file_data() -> None:
+    """With `preserve_file_data`, an enqueued uploaded file survives the stream round trip like a dumped one."""
+    uploaded = UploadedFile(file_id='file-1', provider_name='openai', media_type='application/pdf')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='attach', json_args='{}', tool_call_id='attach-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def attach(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Here is the file', uploaded)
+        return 'attached'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19', preserve_file_data=True)
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)], preserve_file_data=True)
+    assert uploaded in [
+        item for part in iter_message_parts(loaded, ModelRequest, UserPromptPart) for item in part.content
+    ]
+
+
 def test_enqueued_messages_keep_their_own_message_ids() -> None:
     """The activity's id isn't kept on the enqueued messages, which carry their own."""
     activity = ActivityMessage(

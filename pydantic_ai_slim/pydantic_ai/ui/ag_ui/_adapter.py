@@ -342,6 +342,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             accept=self.accept,
             ag_ui_version=self.ag_ui_version,
             manage_system_prompt=self.manage_system_prompt,
+            preserve_file_data=self.preserve_file_data,
         )
 
     @classmethod
