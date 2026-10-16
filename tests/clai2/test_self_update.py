@@ -374,7 +374,9 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
 @pytest.mark.subprocess(
     reason='runs Python one-liners in place of `uv` to check its exit status and lines are returned'
 )
-async def test_run_uv_returns_the_exit_status(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_run_uv_returns_the_exit_status(
+    capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert await _run_uv([sys.executable, '-c', 'raise SystemExit(3)']) == 3
     lines: list[str] = []
 
@@ -384,8 +386,14 @@ async def test_run_uv_returns_the_exit_status(capsys: pytest.CaptureFixture[str]
     script = "import sys; print('Resolved'); sys.stderr.write('Prepared\\r\\nfailed'); raise SystemExit(2)"
     assert await _run_uv([sys.executable, '-u', '-c', script], output) == 2
     assert lines == ['Resolved', 'Prepared', 'failed']
-    assert capsys.readouterr().err == 'Resolved\nPrepared\nfailed\n', 'the terminal still shows them'
+    assert capfd.readouterr().err == 'Resolved\nPrepared\nfailed\n', 'the terminal still shows them'
+    # While the shell relays standard error, the lines go straight to the terminal, before the editor is back.
+    source, terminal = os.pipe()
+    monkeypatch.setattr(self_update, 'terminal_stderr', lambda: terminal)
     assert await _run_uv([sys.executable, '-c', "print('Installed')"], output) == 0
+    os.close(terminal)
+    with os.fdopen(source) as relayed:
+        assert relayed.read() == 'Installed\n'
     assert lines[-1] == 'Installed'
 
 

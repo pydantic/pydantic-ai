@@ -298,7 +298,9 @@ async def _run_uv(command: Sequence[str], output: Output | None = None) -> int:
 
 async def _print_line(line: bytes, output: Output) -> None:
     text = line.decode(errors='replace').rstrip('\r')
-    print(text, file=sys.stderr, flush=True)
+    # Straight to the terminal, as uv would have written it, before the editor comes back.
+    terminal = terminal_stderr()
+    os.write(2 if terminal is None else terminal, f'{text}\n'.encode())
     await output(text)
 
 
