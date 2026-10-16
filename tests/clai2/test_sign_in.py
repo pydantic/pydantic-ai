@@ -35,6 +35,7 @@ from pydantic_clai2.plugins.sign_in import (
     wait_for_sign_in,
     warn_if_signed_out,
 )
+from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
 from tests.clai2.menu_script import UNTIL_CLOSED, Script
 
@@ -105,7 +106,7 @@ async def test_sign_in_now_reports_success_failure_and_cancellation() -> None:
 
 
 async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sign_in, 'menu_key', lambda: 'esc')
+    monkeypatch.setattr(dialogs, 'menu_key', lambda: 'esc')
     service = Service(hang=True)
     seen: list[tuple[str, str]] = []
 
@@ -114,7 +115,7 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
         read_key: Callable[[], str] = menu._read_key  # pyright: ignore[reportPrivateUsage]
         preview = menu._preview  # pyright: ignore[reportPrivateUsage]
         assert preview is not None and service.shown is not None
-        item = MenuItem('Cancel sign-in', value=None)
+        item = MenuItem('Cancel', value=None)
         seen.append((read_key(), preview(item)))
         service.shown('Enter code: ABCD')
         seen.append((read_key(), preview(item)))
@@ -125,7 +126,7 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
     with anyio.fail_after(5):
         assert not await wait_for_sign_in(service, scripted)
     [(first_key, first), (second_key, second)] = seen
-    assert first_key == second_key == sign_in._REDRAW  # pyright: ignore[reportPrivateUsage]
+    assert first_key == second_key == dialogs._REDRAW  # pyright: ignore[reportPrivateUsage]
     assert first.splitlines() == [
         'Finish signing in to Example in your browser.',
         '',
