@@ -40,7 +40,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](persistence.md), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](gateway.md) is one key for every model with real-time cost monitoring and budget control; the Gateway self-hosts if you would rather, and our [instrumentation](logfire.md) is plain OpenTelemetry, so any backend you already run works. Underneath both, [genai-prices](https://github.com/pydantic/genai-prices) keeps model pricing current, and [Monty](https://github.com/pydantic/monty) is the sandboxed Python interpreter that runs model-written code.
+[Pydantic Logfire](https://pydantic.dev/logfire) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](gateway.md) is one key for every model with real-time cost monitoring and budget control; our [instrumentation](logfire.md) is plain OpenTelemetry, so any backend you already run works. Underneath both, [genai-prices](https://github.com/pydantic/genai-prices) keeps model pricing current, and [Monty](https://github.com/pydantic/monty) is the sandboxed Python interpreter that runs model-written code.
 
 ## What are you building?
 
@@ -162,6 +162,8 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ```
 
     [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](durable_execution/overview.md) integrations besides.
+
+    Saving, resuming, and forking a run need no engine: [`StepPersistence`](harness/step-persistence.md) from Pydantic AI Harness snapshots every settled step to a store you choose, the way a checkpointer does (see [Persistence](persistence.md)). The engine is for recovering a run that crashes partway through a step.
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 

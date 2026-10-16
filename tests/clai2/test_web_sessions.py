@@ -72,8 +72,6 @@ class Fleet:
 
     def __post_init__(self) -> None:
         self.launch = self._build(self.folder('home'))
-        # Switching a new database to WAL can fail at once when two first saves race, so make it first.
-        self.portal.call(self.launch.process.conversations.listing)
         self.launch.process.live.build = lambda directory: self._build(directory or self.folder('home'))
         self.portal.call(self.launch.loader.load_all)
         [plugin] = [
@@ -85,13 +83,17 @@ class Fleet:
         self.client = TestClient(app)
         self.client.portal = self.portal
 
+        serving = self.portal.call(anyio.Event)
+
         async def serve() -> None:
             # As `clai2 --web` does: the others close as serving ends, then the launch session's plugins.
             async with self.launch.process.live.serving():
+                serving.set()
                 reason = await self.launch.run()
             await self.launch.close(reason)
 
         self.running = self.portal.start_task_soon(serve)
+        self.portal.call(serving.wait)
 
     def folder(self, name: str) -> Path:
         directory = self.root / name

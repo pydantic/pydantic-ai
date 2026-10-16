@@ -163,20 +163,21 @@ async def _serve_web(
                 shell.session.record_resumed()
             if notice:
                 console.print(notice, markup=False)
-            web.port = port
-            if restart is not None:
-                web.port, web.token = restart.port, restart.token
-            if token is not None:
-                # A launcher talks to it on this machine alone, whatever address the saved settings name.
-                web.token, web.listen = token, LAUNCHER_HOST
-            if token is None and restart is None:
-                console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
-            else:
-                url = await web.start()
-                # A launcher keeps its token, so the address it reads leaves the token out.
-                console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
-            console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
+            # Before the page is reachable, so a browser opening a session at once finds CLAI serving them.
             async with shell.process.live.serving():
+                web.port = port
+                if restart is not None:
+                    web.port, web.token = restart.port, restart.token
+                if token is not None:
+                    # A launcher talks to it on this machine alone, whatever address the saved settings name.
+                    web.token, web.listen = token, LAUNCHER_HOST
+                if token is None and restart is None:
+                    console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
+                else:
+                    url = await web.start()
+                    # A launcher keeps its token, so the address it reads leaves the token out.
+                    console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
+                console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
                 reason = await shell.run()
         except get_cancelled_exc_class():
             reason = 'exit'
