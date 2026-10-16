@@ -1072,6 +1072,16 @@ read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
 setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 
+`disabled_skills` is a JSON list of skill names that are off, `[]` by default.
+A skill that is off is left out of the model's catalog and gets no `/command`.
+The list applies in every project, so a name no folder has is not an error:
+`coder` removes the named skills from what `Skills` offers each turn instead of
+passing them as harness `exclude`, which fails a run on an unknown name. The
+**Skills** row in `/plugins configure coder` lists the skills `coder` found when
+it loaded, plus any name that is off but not found, and each pick turns one on
+or off. The setting is tagged `coder-disabled-skills`, so a build without it
+offers every skill instead of failing to load `coder`.
+
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
 changes are refused while managed children run. Exit/reload drains them before

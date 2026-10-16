@@ -41,6 +41,7 @@ from pydantic_clai2.plugins import (
     load_plugin,
 )
 from pydantic_clai2.plugins.loader import PluginLoader
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs
 
 PromptT = TypeVar('PromptT')
 
@@ -173,10 +174,103 @@ class TestSkillFolders:
         await loader.load_all()
         loaded = loader.entries()[0].loaded
         assert loaded is not None
-        loaded.host.save_settings(CoderSettings(repo_context=False, skill_folders=['skills']))
+        loaded.host.save_settings(
+            CoderSettings(repo_context=False, skill_folders=['skills'], disabled_skills=['review'])
+        )
 
-        assert store.plugin_requirements('coder') == {'skill_folders': ['coder-skill-folders']}
+        assert store.plugin_requirements('coder') == {
+            'skill_folders': ['coder-skill-folders'],
+            'disabled_skills': ['coder-disabled-skills'],
+        }
         await loader.close('exit')
+
+
+class TestDisabledSkills:
+    @pytest.mark.parametrize(
+        ('disabled', 'offered'),
+        [
+            ([], ['deploy', 'review']),
+            (['review'], ['deploy']),
+            (['review', 'deploy'], []),
+            # The setting is the same in every project, so a name this one lacks is not an error.
+            (['elsewhere'], ['deploy', 'review']),
+        ],
+    )
+    async def test_a_disabled_skill_is_hidden_from_the_model_and_has_no_command(
+        self, project: Path, disabled: list[str], offered: list[str]
+    ) -> None:
+        for name in ('deploy', 'review'):
+            write_skill(project / '.agents' / 'skills', name, description=f'{name.title()} help.')
+        loaded, output = await load_coder({'disabled_skills': list[JsonValue](disabled)})
+
+        seen = await run_once(loaded, project)
+
+        assert sorted(command.name for command in loaded.commands) == offered
+        assert [line for line in seen.instructions.splitlines() if line.startswith('- ')] == [
+            f'- {name}: {name.title()} help.' for name in offered
+        ]
+        assert ('load_capability' in seen.tools) == bool(offered)
+        assert output.getvalue() == ''
+
+    @pytest.mark.parametrize('value', ['', ' review', 'bad\x1bname'])
+    def test_invalid_names_are_rejected(self, value: str) -> None:
+        with pytest.raises(ValidationError, match='Skill names must be nonempty'):
+            CoderSettings(disabled_skills=[value])
+
+    async def test_the_skills_row_toggles_each_skill_and_saves_it(self, project: Path) -> None:
+        for name in ('deploy', 'review'):
+            write_skill(project / '.agents' / 'skills', name, description=f'{name.title()} help.')
+        loaded, _ = await load_coder({'disabled_skills': ['elsewhere']})
+        plugin = loaded.plugin
+        assert isinstance(plugin, CoderPlugin)
+        source = CoderSource(plugin.host)
+        row = next(row for row in source.rows() if row.key == 'disabled_skills')
+        assert (row.label, row.display(source.current(row))) == ('Skills', '1 off')
+        script = ScriptedDialogs(
+            [
+                Pick(value='review'),
+                Pick(value='review'),
+                Pick(value='deploy'),
+                Pick(value='elsewhere'),
+                Pick(value=':close'),
+            ]
+        )
+
+        messages = await plugin.settings_menu().actions['disabled_skills'](script)
+
+        assert messages == ['Turned review off.', 'Turned review on.', 'Turned deploy off.', 'Turned elsewhere on.']
+        assert plugin.host.settings(CoderSettings).disabled_skills == ['deploy']
+        assert [option.label for option in script.asked[0].options] == [
+            '[x] deploy',
+            '[x] review',
+            '[ ] elsewhere (not found here)',
+            'Save & close',
+        ]
+        assert [option.label for option in script.asked[1].options][:2] == ['[x] deploy', '[ ] review']
+        deploy = project.resolve() / '.agents' / 'skills' / 'deploy' / 'SKILL.md'
+        assert script.asked[0].options[0].description == f'Deploy help.\n\n{deploy}'
+        assert ' '.join(script.asked[1].description.split()).startswith('Turned review off. Each pick turns a skill')
+        assert source.current(row) == '["deploy"]'
+
+    async def test_the_skill_list_says_when_no_skills_were_found_and_reports_save_errors(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        loaded, _ = await load_coder({'disabled_skills': ['review']})
+        plugin = loaded.plugin
+        assert isinstance(plugin, CoderPlugin)
+
+        def refuse(self: CoderSource[None], names: list[str]) -> None:
+            raise ValueError('disk full')
+
+        monkeypatch.setattr(CoderSource, 'save_disabled_skills', refuse)
+        script = ScriptedDialogs([Pick(value='review'), Back()])
+
+        assert await plugin.settings_menu().actions['disabled_skills'](script) == []
+        assert ' '.join(script.asked[0].description.split()).startswith(
+            'No skills were found in the skill folders when Coder loaded. Each pick'
+        )
+        assert script.asked[1].description.startswith('Could not save: disk full\n\n')
+        assert plugin.host.settings(CoderSettings).disabled_skills == ['review']
 
 
 class TestSkillFoldersAboveTheLaunchDirectory:
