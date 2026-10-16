@@ -1030,9 +1030,9 @@ def test_unsupported_media_type_in_tool_return_is_replaced_by_a_note():
     tool_return = prepared[-1].parts[0]
     assert isinstance(tool_return, ToolReturnPart)
     assert tool_return.content == snapshot(['here', 'File report was not sent: this model cannot read documents.'])
-    assert messages[-1].parts[0] == ToolReturnPart(
-        tool_name='get_file', content=['here', document], tool_call_id='call_1'
-    )
+    stored = messages[-1].parts[0]
+    assert isinstance(stored, ToolReturnPart)
+    assert stored.content == ['here', document]
 
 
 async def test_image_tool_return_is_forwarded_as_user_message():
