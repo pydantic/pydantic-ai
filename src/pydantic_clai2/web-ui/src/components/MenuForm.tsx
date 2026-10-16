@@ -148,9 +148,12 @@ export function MenuForm({
   )
 }
 
-/** Whether a row's choices are a yes/no switch, as a boolean setting's are, such as `/set`'s, which take no other text. */
-const isSwitch = (field: MenuField) =>
-  field.choices.length === 2 && field.choices.every((choice) => choice.value === 'true' || choice.value === 'false')
+/** Whether a row's choices are a yes/no switch, as a boolean setting's are. A `named` row, one of `/set`'s, takes no other
+text even where its menu offers typing one; a plugin's row with typed values allowed keeps its list. */
+const isSwitch = (field: MenuField, named: boolean) =>
+  (named || !field.allow_custom) &&
+  field.choices.length === 2 &&
+  field.choices.every((choice) => choice.value === 'true' || choice.value === 'false')
 
 function MenuRow({
   field,
@@ -182,7 +185,7 @@ function MenuRow({
   const label = (value: string) => field.choices.find((choice) => choice.value === value)?.label ?? value
   const resettable = !field.menu && field.value !== field.default
   const inline =
-    named || isSwitch(field) || field.action || field.menu || (field.choices.length > 0 && !field.allow_custom)
+    named || isSwitch(field, named) || field.action || field.menu || (field.choices.length > 0 && !field.allow_custom)
   const titled = named && field.label === field.key
   return (
     <div className={`setting ${inline ? 'inline' : ''} ${error ? 'invalid' : ''} ${open ? 'open' : ''}`}>
@@ -230,7 +233,15 @@ function MenuRow({
             </button>
           </div>
         ) : (
-          <Control id={id} field={field} label={label} disabled={disabled} onSet={onSet} onAction={onAction} />
+          <Control
+            id={id}
+            field={field}
+            named={named}
+            label={label}
+            disabled={disabled}
+            onSet={onSet}
+            onAction={onAction}
+          />
         )}
       </div>
       {error && (
@@ -246,6 +257,7 @@ function MenuRow({
 function Control({
   id,
   field,
+  named,
   label,
   disabled,
   onSet,
@@ -253,6 +265,7 @@ function Control({
 }: {
   id: string
   field: MenuField
+  named: boolean
   label: (value: string) => string
   disabled: boolean
   onSet: (value: string | null) => void
@@ -269,7 +282,7 @@ function Control({
       </div>
     )
   }
-  if (isSwitch(field)) {
+  if (isSwitch(field, named)) {
     const on = field.value === 'true'
     return (
       <button
