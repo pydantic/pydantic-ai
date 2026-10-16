@@ -127,7 +127,7 @@ async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatc
 
 async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
-    group = shared_group(requests, 'Gemini')
+    group = shared_group(requests, 'Gemini', 'client configurations or models')
     _validate_batch_group(model, group)
     client = _batch_client(model)
     lines = (

@@ -114,7 +114,7 @@ async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> En
 
 async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
-    group = shared_group(requests, 'OpenAI')
+    group = shared_group(requests, 'OpenAI', 'client configurations or models')
     _validate_batch_group(model, group)
     client = _batch_client(model).with_options(max_retries=0)
     lines = (

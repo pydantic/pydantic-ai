@@ -18,16 +18,16 @@ if TYPE_CHECKING:
     from . import Model, ModelRequestParameters
 
 
-def shared_group(requests: Sequence[EncodedBatchRequest], provider: str) -> str:
-    """The `group` all `requests` share, which a batch must have at least one of."""
+def shared_group(requests: Sequence[EncodedBatchRequest], provider: str, causes: str) -> str:
+    """The `group` all `requests` share, which a batch must have at least one of.
+
+    `causes` names what makes this provider's groups differ, for the error.
+    """
     if not requests:
         raise UserError('A batch must contain at least one request.')
     group = requests[0].group
     if any(request.group != group for request in requests):
-        raise UserError(
-            f'Requests in one {provider} batch must share a `group`; '
-            'these came from different client configurations, models or request options.'
-        )
+        raise UserError(f'Requests in one {provider} batch must share a `group`; these came from different {causes}.')
     return group
 
 

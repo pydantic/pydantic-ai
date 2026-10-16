@@ -94,7 +94,7 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
 
 async def batch_create(model: AnthropicModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
-    group = shared_group(requests, 'Anthropic')
+    group = shared_group(requests, 'Anthropic', 'client configurations or beta flags')
     _validate_batch_group(model, group)
     batch = (
         await _batch_client(model)
