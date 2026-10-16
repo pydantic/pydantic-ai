@@ -1481,8 +1481,9 @@ destroying one, clean up saved sessions by archiving them), and only the tools b
 in the terminal or the browser, gets none of these.
 
 It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
-off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
-in its composer; choose another for the session to change it. One turn runs at a time, with a small
+off, the chat says so and **Enable workspaces** turns it on. It works for the whole CLAI, not one
+session, so it runs on the model a new session starts with (`host.default_model()`: the saved
+default, which `/set model NAME` changes, else the agent's own). One turn runs at a time, with a small
 dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
 chat** starts over; the workspaces stay. Each workspace's CLAI is driven through its web UI with
 [`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace kept
