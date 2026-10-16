@@ -243,6 +243,13 @@ resuming the current conversation. Switching back to `stable` offers the latest 
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
+`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+typed in the page or in the terminal: the page shows uv's progress and the result. After
+an install, CLAI restarts with the web UI on the same port and token, so the page
+reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
+Like any command, `/update` entered while a turn runs waits for the turn to end.
+
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
@@ -315,7 +322,8 @@ accounts it started with. `/model settings` edits to the running model apply to 
 next model request in the same turn. `/resume` can browse, rename, and delete
 sessions mid-turn, but a running conversation cannot be swapped out: picking one
 tells you to enter `/resume ID`, which restores it once the turn ends. With
-arguments, these commands queue like any other.
+arguments, these commands queue like any other, except `/theme NAME`, which
+repaints at once as the picker does.
 
 `/plugins` runs right away during a turn too, with or without arguments, so
 `/plugins disable NAME` does not wait behind the turn or your queued messages.

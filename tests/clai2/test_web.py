@@ -311,6 +311,37 @@ def test_theme(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
+def test_theme_changes_while_a_turn_runs(make_web: 'MakeWeb') -> None:
+    """`/theme NAME` from the browser's picker applies at once, not after the running turn."""
+    started, release = anyio.Event(), anyio.Event()
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    async def wait() -> str:
+        """Wait to be released."""
+        started.set()
+        await release.wait()
+        return 'released'
+
+    web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'wait'})
+        web_.portal.call(started.wait)
+        assert web_.post('/api/input', {'text': '/theme tokyo_night'}).json() == {'menu': None}
+        web_.portal.call(anyio.wait_all_tasks_blocked)
+        state = web_.get('/api/state').json()
+        assert (state['running'], state['theme']['name']) == (True, 'tokyo_night')
+        messages, changed = receive_until(socket, ThemeChanged)
+        assert changed.theme.name == 'tokyo_night'
+        assert not any(isinstance(message, TurnEnded) for message in messages)
+        web_.portal.call(release.set)
+        assert receive_until(socket, TurnEnded)[1].outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
 def test_a_monty_cell_from_the_browser(make_web: 'MakeWeb') -> None:
     """`/monty` from the browser runs the user's cell in the session's Monty sandbox: shown as theirs, and not a turn."""
     pytest.importorskip('pydantic_monty')

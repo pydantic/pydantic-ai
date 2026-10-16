@@ -6,8 +6,8 @@
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
 blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
-model picker, and a stop button. The
-terminal and the browser drive the same session: a prompt typed in either runs once, and both
+model picker, and a stop button. Scrolling up while output streams keeps your place; **Jump to latest** follows
+it again. The terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
 ends the web UI; `/web status` shows its address.
 
@@ -33,7 +33,7 @@ terminal works where it started. Keyboard: Enter sends, Shift+Enter adds a line,
 Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
-every request must carry a token that is new each launch; the printed link contains it. Keep
+every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with
 `/plugins enable web`, and `--web` loads it for that launch only. See
 [the plugin guide](PLUGINS.md#web-this-session-in-your-browser) for settings and limits.
@@ -179,6 +179,11 @@ shows what it saved; **← Session**, or the session's row, goes back.
 takes the launch's token from a file only you can read, instead of making one, for a program that
 starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
 leaves the token out, and no browser opens.
+
+`/update` works from the page as it does in the terminal: the page shows uv's progress, then
+"Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
+same session, and says which version it updated to. A failed install, or nothing to install,
+says so and nothing restarts. A terminal session with `/web` running comes back with it running.
 
 ## Workspaces
 

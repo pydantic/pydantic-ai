@@ -219,6 +219,16 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [opening])
 
+  // A CLAI that does not come back from `/update`'s restart, such as one whose port was taken, leaves the page waiting.
+  const restarting = state.update !== null && (state.update.restarting || connection !== 'open')
+  const [lost, setLost] = useState(false)
+  useEffect(() => {
+    setLost(false)
+    if (!restarting) return
+    const timer = window.setTimeout(() => setLost(true), 60000)
+    return () => window.clearTimeout(timer)
+  }, [restarting])
+
   const showToast = useCallback((text: string, level: 'info' | 'error') => {
     const shown = { text, level }
     setToast(shown)
@@ -513,6 +523,21 @@ export function App() {
             <span>
               Opening <span className="opening-title">{opening.title}</span>…
             </span>
+          </div>
+        )}
+        {state.update && (
+          <div className="opening-overlay" role="status">
+            {!lost && <span className="spinner" />}
+            {lost ? (
+              <span>CLAI did not come back at this address. Check the terminal it runs in.</span>
+            ) : restarting ? (
+              <span>Restarting CLAI…</span>
+            ) : (
+              <span>
+                Updating CLAI to <span className="opening-title">{state.update.target}</span>…
+                {state.update.line && <span className="update-line mono">{state.update.line}</span>}
+              </span>
+            )}
           </div>
         )}
         {connection === 'expired' && (
