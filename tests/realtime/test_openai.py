@@ -4793,9 +4793,7 @@ async def test_a_tool_batch_response_request_lost_to_a_drop_is_not_asked_for_aga
             await conn.send(ToolResult(tool_call_id='call_1', output='42'))
         assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
         connect.release.set()
-        async for event in events:  # pragma: no branch
-            if isinstance(event, RealtimeSessionReconnectEvent):
-                break
+        assert isinstance(await anext(events), RealtimeSessionReconnectEvent)
 
     assert [frame['type'] for frame in second.sent] == ['session.update']
 
