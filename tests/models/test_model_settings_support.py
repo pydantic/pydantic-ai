@@ -982,10 +982,11 @@ async def test_max_retries_sets_how_many_attempts_the_sdk_makes(
         monkeypatch.setattr(target, value)
 
     attempts: list[Attempts] = []
-    for settings in ({}, {'max_retries': 0}, {'max_retries': 1}):
+    variants: tuple[ModelSettings, ...] = ({}, {'max_retries': 0}, {'max_retries': 1})
+    for settings in variants:
         count = await _count_attempts(
             case.build,
-            cast(ModelSettings, settings),
+            settings,
             legacy_http=case.legacy_http,
             decision=case.decision,
             status=case.status,
