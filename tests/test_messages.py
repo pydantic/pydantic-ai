@@ -2680,6 +2680,26 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+@pytest.mark.subprocess(reason='runs an optimized interpreter where assert statements are disabled')
+def test_args_as_dict_rejects_non_dict_json_under_optimization():
+    """Non-object JSON should remain invalid when Python optimization is enabled."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-O',
+            '-c',
+            'import sys; '
+            'from pydantic_ai.messages import LoadCapabilityCallPart; '
+            "sys.exit(0 if LoadCapabilityCallPart(args='[]').capability_id is None else 1)",
+        ],
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_args_as_json_str_valid_json_canonical():
     """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
 
