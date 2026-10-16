@@ -98,14 +98,14 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 
 _DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
-# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-execution.md` is a
+# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-workspaces.md` is a
 # guide across capabilities, so the capability-page checks do not apply to them. `AGENTS.md` (and its
 # `CLAUDE.md` link) holds the directory's agent instructions.
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
     'clai2.md',
-    'durable-execution.md',
+    'durable-workspaces.md',
     'examples.md',
     'gh-aw.md',
     'index.md',

@@ -67,13 +67,13 @@ def test_coder_explains_sandbox_creation_timing() -> None:
 
 
 def test_durable_guidance_lives_on_one_page() -> None:
-    durable = (_ROOT / 'docs/harness/durable-execution.md').read_text()
+    durable = (_ROOT / 'docs/harness/durable-workspaces.md').read_text()
     assert 'FileChangeRequestEvent' in durable
     assert '.pydantic-ai-harness/shell/run-state/' in durable
     for name in ('coder', 'filesystem', 'shell'):
         for page, link in (
-            (f'docs/harness/{name}.md', '(durable-execution.md)'),
-            (f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md', '/harness/durable-execution/)'),
+            (f'docs/harness/{name}.md', '(durable-workspaces.md)'),
+            (f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md', '/harness/durable-workspaces/)'),
         ):
             text = (_ROOT / page).read_text()
             section = text.split('## Durable execution\n', 1)[1].split('\n## ', 1)[0]

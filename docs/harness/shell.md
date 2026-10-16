@@ -363,7 +363,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`. [Durable execution](durable-execution.md) shows an example for each engine, which command events Temporal delivers live, and how long a command can run in a Temporal activity.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`. [Workspaces under durable execution](durable-workspaces.md) shows an example for each engine, which command events Temporal delivers live, and how long a command can run in a Temporal activity.
 
 ## Further reading
 

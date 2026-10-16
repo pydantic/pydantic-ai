@@ -416,7 +416,7 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect. [Durable execution](durable-execution.md) shows an example for each engine and which file events Temporal delivers live.
+`FileSystem` works under Temporal, DBOS, and Prefect. [Workspaces under durable execution](durable-workspaces.md) shows an example for each engine and which file events Temporal delivers live.
 
 ## Further reading
 

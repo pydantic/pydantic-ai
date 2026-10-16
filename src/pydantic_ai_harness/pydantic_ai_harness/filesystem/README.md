@@ -382,7 +382,7 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine and which file events Temporal delivers live.
+`FileSystem` works under Temporal, DBOS, and Prefect. [Workspaces under durable execution](https://pydantic.dev/docs/ai/harness/durable-workspaces/) shows an example for each engine and which file events Temporal delivers live.
 
 ## Further reading
 

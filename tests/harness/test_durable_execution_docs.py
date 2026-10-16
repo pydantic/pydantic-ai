@@ -1,4 +1,4 @@
-"""The durable-execution page's Temporal, DBOS and Prefect examples run their tools on each engine."""
+"""The durable workspaces page's Temporal, DBOS and Prefect examples run their tools on each engine."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from ._docs_examples import python_blocks, run_block
 from ._temporal import skip_temporal_sandbox_on_314
 
-_PAGE = 'docs/harness/durable-execution.md'
+_PAGE = 'docs/harness/durable-workspaces.md'
 
 
 async def _cleanup(ref: WorkspaceRef) -> None:

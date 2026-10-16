@@ -1,18 +1,21 @@
 ---
-title: Durable Execution
-description: "Run Pydantic AI Harness workspace capabilities such as Coder, Shell, and FileSystem under Temporal, DBOS, or Prefect, and see exactly which features work on each engine."
+title: Workspace Capabilities Under Durable Execution
+description: "How Pydantic AI Harness workspace capabilities such as Coder, Shell, and FileSystem behave when the agent runs under a durable execution engine: examples and per-engine limits for Temporal, DBOS, and Prefect."
 ---
 
-# Durable Execution
+# Workspace Capabilities Under Durable Execution
+
+This page is about running Harness workspace capabilities inside a durable agent. For durable execution itself and
+the nine engines Pydantic AI supports, see [Durable Execution](../durable_execution/overview.md).
 
 Harness capabilities that act in a [workspace](../workspace.md), such as [`Coder`](coder.md),
 [`Shell`](shell.md), [`FileSystem`](filesystem.md), and [`RepoContext`](repo-context.md), work under
 [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), and
-[Prefect](../durable_execution/prefect.md). The run records a reference to its workspace, and every
+[Prefect](../durable_execution/prefect.md), the engines this page covers. The run records a reference to its workspace, and every
 activity or step reattaches to the environment it names, whichever worker runs it. A later run that
 continues the conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](../workspace.md#continuing-in-the-same-workspace).
-[`Researcher`](researcher.md) works under all three engines too: pass `Researcher()` next to the durability capability, as the `Coder` examples below do, and keep the workspace attached for its tool-result spills.
+[`Researcher`](researcher.md) works under these engines too: pass `Researcher()` next to the durability capability, as the `Coder` examples below do, and keep the workspace attached for its tool-result spills.
 
 Attach the workspace, the harness capabilities, and the durability capability when you construct the
 agent. The examples below run the same `Coder` agent on each engine. Swap `LocalWorkspace` for a
