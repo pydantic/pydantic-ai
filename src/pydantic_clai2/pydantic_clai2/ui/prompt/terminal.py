@@ -47,6 +47,8 @@ class Terminal(Generic[DepsT, OutputT]):
     def __init__(self, *, console: Console, transcript: TranscriptBuffer, history: History) -> None:
         """`transcript` is the output retained for redrawing, kept across `/reload`; `history` the prompts recalled."""
         self.console = console
+        self.lines = not console.is_terminal
+        """Whether it reads lines, decided once: a command that holds the terminal makes the console no terminal."""
         self.transcript = transcript
         self.history = history
         self.images = ImageInput()
@@ -78,7 +80,7 @@ class Terminal(Generic[DepsT, OutputT]):
             # Each session has a console of its own: the one shown before keeps printing, to nowhere.
             runtime.console.file, previous.console.file = previous.console.file, NOWHERE
             previous.shown_in(None)
-        if not self.console.is_terminal:
+        if self.lines:
             self._completer.commands = runtime.commands
             if self.prompt is None:
                 self.prompt = self._line_prompt()
@@ -134,7 +136,7 @@ class Terminal(Generic[DepsT, OutputT]):
     @asynccontextmanager
     async def _opened(self, home: 'SessionRuntime[DepsT, OutputT]') -> AsyncGenerator[None]:
         """Open the editor, when the console is a terminal, for `home` and the sessions shown after it."""
-        if not self.console.is_terminal:
+        if self.lines:
             yield
             return
         self.editor = LivePrompt(

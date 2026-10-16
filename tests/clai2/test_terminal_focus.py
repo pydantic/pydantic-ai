@@ -43,7 +43,8 @@ class Desk(Fleet):
             deps=None,
             plugins=(),
             usage_limits=None,
-            console=Console(file=self.screen, force_terminal=True, width=100, height=30),
+            # A terminal by `isatty`, as a real one: `force_terminal` would hide a file handed elsewhere.
+            console=Console(file=self.screen, width=100, height=30),
             settings=None,
             store=None,
             builtin_plugins=(),
@@ -101,6 +102,7 @@ async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(
         await until(desk.live, lambda: terminal.shown is other and home.idle)
         assert desk.live.focused == b.id and other.terminal is terminal and home.terminal is None
         assert other.editor is terminal.editor and home.editor is None
+        assert terminal.editor is not None and terminal.editor.interrupts.active, 'Esc interrupts the turn shown'
         assert other.interrupts.signals and not home.interrupts.signals
         assert signal.getsignal(signal.SIGINT) is not original, 'the turn shown takes Ctrl-C'
         assert other.session.conversation_id == conversation, 'no fork'

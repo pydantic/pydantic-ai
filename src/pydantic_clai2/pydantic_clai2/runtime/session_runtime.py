@@ -488,15 +488,20 @@ def create_shell(
     process.live.add(shell)
     # Headless, a session still edits prompts in a terminal console, but reads no lines from a pipe.
     if not headless or console.is_terminal:
-        Terminal[DepsT, OutputT](
-            console=console,
-            transcript=transcript if transcript is not None else TranscriptBuffer(),
-            history=input_history(store.path.with_name('input-history')),
-        ).attach(shell)
+        _show_in_terminal(shell, transcript=transcript)
+    return shell
+
+
+def _show_in_terminal(shell: 'SessionRuntime[DepsT, OutputT]', *, transcript: TranscriptBuffer | None) -> None:
+    """Show `shell` in a new `Terminal`, keeping the output `transcript` retains, as across a reload."""
+    Terminal[DepsT, OutputT](
+        console=shell.console,
+        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        history=input_history(shell.process.store.path.with_name('input-history')),
+    ).attach(shell)
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     if transcript is not None:
         TranscriptBuffer.rebind(transcript)
-    return shell
 
 
 def web_serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
