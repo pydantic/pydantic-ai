@@ -189,14 +189,15 @@ class PluginLoader(Generic[DepsT]):
         send_input: Callable[[str], None] | None = None,
         interrupt: Callable[[], bool] = lambda: False,
         sessions: SessionCatalog | None = None,
+        setting: Callable[[str], JsonValue] | None = None,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, and `commands`
-        are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, and
+        `commands` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -210,6 +211,7 @@ class PluginLoader(Generic[DepsT]):
         self._send_input = send_input
         self._interrupt = interrupt
         self._sessions = sessions
+        self._setting = setting
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
@@ -463,6 +465,7 @@ class PluginLoader(Generic[DepsT]):
             interrupt=self._interrupt,
             commands=self._commands,
             sessions=self._sessions,
+            setting=self._setting,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None

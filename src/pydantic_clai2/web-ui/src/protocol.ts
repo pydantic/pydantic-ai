@@ -57,7 +57,13 @@ export interface StatusInfo {
   output_tokens: number | null
   /** What the running turn's model requests have reported so far. */
   run: Usage | null
+  /** The `run.code_mode` setting; `null` without CLAI's settings. */
+  code_mode: boolean | null
+  /** The `run.speculative_code_mode` setting, which turns code mode on for its runs too. */
+  speculation: boolean | null
 }
+
+export type Switch = 'run.code_mode' | 'run.speculative_code_mode'
 
 export interface Usage {
   input_tokens: number

@@ -36,7 +36,8 @@ and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
 (console, conversation, `session_id`, status, full screen, saved settings, the
-prompt through `send_input`/`interrupt`/`complete`, and the saved `sessions`); it
+prompt through `send_input`/`interrupt`/`complete`, the saved `sessions`, and
+read-only `setting(KEY)`); it
 registers nothing. `docs/declarative-plugins.md` records the design.
 `PLUGINS.md` is the user contract. If code and `PLUGINS.md` disagree, fix one so
 they agree in the same PR.

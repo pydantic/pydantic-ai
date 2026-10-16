@@ -3,6 +3,7 @@ import { api, connect, interrupt, type Connection } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
+import { Switches } from './components/Switches'
 import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
@@ -144,6 +145,7 @@ export function App() {
       ref={composer}
       running={state.running}
       meter={<TurnMeter status={status} startedAt={state.turnStartedAt} />}
+      controls={<Switches status={status} running={state.running} onError={showError} />}
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}

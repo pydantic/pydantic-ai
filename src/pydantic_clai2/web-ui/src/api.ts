@@ -1,4 +1,4 @@
-import type { AnswerBody, CompletionInfo, Project, ServerMessage, Transcript } from './protocol'
+import type { AnswerBody, CompletionInfo, Project, ServerMessage, Switch, Transcript } from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
 const token =
@@ -43,6 +43,7 @@ export const api = {
   complete: (text: string) => call<CompletionInfo[]>('GET', `/api/complete?text=${encodeURIComponent(text)}`),
   models: () => call<string[]>('GET', '/api/models'),
   selectModel: (name: string) => call<void>('POST', '/api/model', { name }),
+  setSwitch: (key: Switch, on: boolean) => call<void>('POST', '/api/switch', { key, on }),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
   sessions: (query: string) => call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),

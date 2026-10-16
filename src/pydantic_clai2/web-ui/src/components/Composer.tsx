@@ -9,6 +9,8 @@ export interface ComposerHandle {
 
 interface Props {
   running: boolean
+  /** Controls after the model picker, such as the run switches. */
+  controls?: React.ReactNode
   /** Shown in the bar while a turn runs. */
   meter?: React.ReactNode
   model: string
@@ -22,7 +24,7 @@ interface Props {
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, meter, model, disabled, placeholder, draft: text, onDraft: setText, onError },
+  { running, meter, controls, model, disabled, placeholder, draft: text, onDraft: setText, onError },
   ref,
 ) {
   const [suggestions, setSuggestions] = useState<CompletionInfo[]>([])
@@ -213,6 +215,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               </div>
             )}
           </div>
+          {controls}
           {running ? meter : <span className="hint">/ for commands</span>}
           {running && !text.trim() ? (
             <button

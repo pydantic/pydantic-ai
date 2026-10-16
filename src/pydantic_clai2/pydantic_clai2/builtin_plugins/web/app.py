@@ -25,7 +25,7 @@ from starlette.datastructures import Headers
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, Project, Transcript, dump
-from pydantic_clai2.builtin_plugins.web.remote import Remote
+from pydantic_clai2.builtin_plugins.web.remote import Remote, Switch
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -115,6 +115,13 @@ class ModelChoice(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class SwitchChoice(BaseModel):
+    """Turn code mode or speculative execution on or off."""
+
+    key: Switch
+    on: bool
+
+
 class Interrupted(BaseModel):
     """Whether something was running to interrupt."""
 
@@ -196,6 +203,10 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/model', status_code=204)
     async def model(body: ModelChoice) -> None:
         _run(lambda: remote.send(f'/model {body.name}'))
+
+    @app.post('/api/switch', status_code=204)
+    async def switch(body: SwitchChoice) -> None:
+        _run(lambda: remote.switch(body.key, body.on))
 
     @app.post('/api/questions/{request_id}', status_code=204)
     async def answer(request_id: str, body: Answers) -> None:
