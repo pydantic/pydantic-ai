@@ -4,10 +4,11 @@ import asyncio
 import html
 import io
 import re
+import threading
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlparse
@@ -17,7 +18,7 @@ import httpx
 import httpx2
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
@@ -691,8 +692,31 @@ def test_settings_from_the_browser_are_validated_saved_and_applied(make_web: 'Ma
     assert (off.status_code, off.json()['detail']) == (400, 'Turn sample on to change its settings.')
 
     none = web_.post('/api/plugins/plain/settings', {'changes': {'x': 1}})
-    assert (none.status_code, none.json()['detail']) == (400, 'plain takes no settings.')
+    assert (none.status_code, none.json()['detail']) == (
+        400,
+        'plain has no settings form; replace its declaration with /plugins add.',
+    )
     assert web_.post('/api/plugins/missing/settings', {'changes': {}}).status_code == 404
+
+
+def test_settings_built_from_a_stale_listing_are_refused(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reload re-imports the plugin's module between the listing and the save, so its model is another class."""
+
+    class Stale(BaseModel):
+        pass
+
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    loader = web_.shell.loader
+    listing = loader.listing
+    monkeypatch.setattr(
+        loader,
+        'listing',
+        lambda: [replace(info, settings_model=Stale) if info.settings else info for info in listing()],
+    )
+    stale = web_.post('/api/plugins/sample/settings', {'changes': {'limit': 5}})
+    assert (stale.status_code, stale.json()['detail']) == (400, 'sample changed; reload the panel and try again.')
 
 
 def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -836,8 +860,10 @@ def web_shell(
 async def test_web_command_serves_on_a_free_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`/web` serves on the shell's loop and opens it through a private page; `stop` ends it, and so does unloading."""
     opened: list[str] = []
+    loop_thread = threading.get_ident()
 
     def open_browser(url: str) -> bool:
+        assert threading.get_ident() != loop_thread, 'a foreground `$BROWSER` command would block the loop'
         opened.append(url)
         return True
 

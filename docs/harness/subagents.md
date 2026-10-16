@@ -23,11 +23,11 @@ A single agent that does everything accumulates a large tool set and a long cont
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent, SubAgents
 
-researcher = Agent('anthropic:claude-opus-5-5', name='researcher', description='Researches a topic and reports findings')
-writer = Agent('anthropic:claude-opus-5-5', name='writer', description='Turns notes into polished prose')
+researcher = Agent('{{ anthropic:large }}', name='researcher', description='Researches a topic and reports findings')
+writer = Agent('{{ anthropic:large }}', name='writer', description='Turns notes into polished prose')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agents=[SubAgent(researcher), SubAgent(writer)])],
 )
 
@@ -68,7 +68,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 agent = Agent(
-    'anthropic:claude-opus-4-7',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(include_self=True)],
 )
 ```
@@ -87,11 +87,11 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents
 
-reproducer = Agent('anthropic:claude-opus-5-5', instructions='Reproduce the reported bug from a minimal script.')
-librarian = Agent('anthropic:claude-opus-5-5', instructions='Find relevant docs, issues, and prior art.')
+reproducer = Agent('{{ anthropic:large }}', instructions='Reproduce the reported bug from a minimal script.')
+librarian = Agent('{{ anthropic:large }}', instructions='Find relevant docs, issues, and prior art.')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SubAgents(
             agents=[
@@ -122,19 +122,19 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import SubAgent, SubAgents
 from pydantic_ai_harness.subagents import ModelOption
 
-reviewer = Agent('anthropic:claude-opus-5-5', name='reviewer', description='Reviews a diff')
-linter = Agent('anthropic:claude-opus-5-5', name='linter', description='Runs the linter and reports failures')
+reviewer = Agent('{{ anthropic:large }}', name='reviewer', description='Reviews a diff')
+linter = Agent('{{ anthropic:large }}', name='linter', description='Runs the linter and reports failures')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SubAgents(
             agents=[SubAgent(reviewer), SubAgent(linter, models=['fast'])],
             models={
-                'fast': 'anthropic:claude-haiku-4-5',
-                'standard': 'anthropic:claude-sonnet-5',
+                'fast': '{{ anthropic:small }}',
+                'standard': '{{ anthropic:medium }}',
                 'deep': ModelOption(
-                    'anthropic:claude-opus-5-5',
+                    '{{ anthropic:large }}',
                     description='hard reasoning, multi-file changes',
                     settings=ModelSettings(thinking='xhigh'),
                 ),
@@ -190,9 +190,9 @@ class ReportDelegations(AbstractCapability):
         print(f'{event.agent_name}: {event.outcome} in {event.duration_seconds:.1f}s')
 
 
-researcher = Agent('anthropic:claude-opus-5-5', name='researcher')
+researcher = Agent('{{ anthropic:large }}', name='researcher')
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agents=[SubAgent(researcher)]), ReportDelegations()],
 )
 ```
@@ -216,7 +216,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agent_folders='agents')],  # loads .agents/agents/ from the run's workspace
 )
 ```
@@ -281,7 +281,7 @@ from pydantic_ai_harness.subagents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
-    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-opus-5-5', effort='high')},
+    agent_overrides={'researcher': AgentOverride(model='{{ anthropic:large }}', effort='high')},
 )
 ```
 
@@ -340,7 +340,7 @@ SubAgents(
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent
 
-agent = Agent('anthropic:claude-opus-5-5')
+agent = Agent('{{ anthropic:large }}')
 
 SubAgent(
     agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
@@ -401,7 +401,7 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[SubAgents(include_self=True)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
 tasks = DelegationTasks(directory=Path('.task-history'))
 
 async def converse():

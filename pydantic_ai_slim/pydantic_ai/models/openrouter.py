@@ -61,6 +61,14 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+
+class _LeadingCachePointPlaceholder(dict[str, Any]):
+    """The empty text part a `CachePoint` opening a user message sits on until `_move_leading_cache_controls` moves it.
+
+    A subclass, so the placeholder is told apart from a user's own empty text part by type, not shape.
+    """
+
+
 _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
     'stop': 'stop',
     'length': 'length',
@@ -845,7 +853,10 @@ class OpenRouterModel(OpenAIChatModel):
         """Add `cache_control` to the last content part.
 
         Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
-        OpenRouter's Anthropic and Gemini providers.
+        OpenRouter's Anthropic and Gemini providers. A `CachePoint` that opens a user message has
+        nothing in that message to attach to, so it goes on an empty placeholder part that
+        `_move_leading_cache_controls` moves onto the previous user message once the whole
+        request is mapped.
 
         See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
 
@@ -858,13 +869,58 @@ class OpenRouterModel(OpenAIChatModel):
             return
 
         if not params:
-            raise UserError(
-                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
-                'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
-            )
+            params.append(cast(ChatCompletionContentPartParam, _LeadingCachePointPlaceholder(type='text', text='')))
 
         last_param = cast(dict[str, Any], params[-1])
         last_param['cache_control'] = self._build_cache_control(ttl)
+
+    @staticmethod
+    def _move_leading_cache_controls(openai_messages: list[chat.ChatCompletionMessageParam]) -> None:
+        """Move the `cache_control` a leading `CachePoint` left on a placeholder onto the previous user message.
+
+        "Cache everything up to here" is the end of the previous message, where Anthropic, Bedrock and
+        OpenAI put a leading `CachePoint`. Only user messages carry it here, since a tool result's
+        `cache_control` isn't documented for OpenRouter, so the closest earlier user message gets it,
+        keeping a longer TTL already there. With only tool results and assistant turns before it, the
+        breakpoint is dropped. The placeholder is removed.
+
+        Raises `UserError` when nothing but system messages comes before it, and when the
+        `CachePoint` is its message's only content: dropping that message would leave the assistant turn
+        last, which Anthropic reads as a prefill.
+
+        `_move_leading_cache_breakpoints` in `openai.py` handles the same shape for OpenAI's
+        `prompt_cache_breakpoint`. It isn't shared because the rules differ in every step: here only user
+        messages carry the marker, a longer TTL already on the target wins, a missing target drops the
+        marker instead of raising, a `CachePoint`-only message raises instead of being deleted, and the
+        placeholder is recognized by type rather than shape. Check the other one when changing either.
+        """
+        for index, message in enumerate(openai_messages):
+            content = message.get('content')
+            if not isinstance(content, list) or not content:
+                continue
+            rest = list(content)
+            placeholder = rest.pop(0)
+            if not isinstance(placeholder, _LeadingCachePointPlaceholder):
+                continue
+            earlier = [
+                cast(dict[str, Any], previous)
+                for previous in openai_messages[:index]
+                if previous['role'] not in ('system', 'developer')
+            ]
+            if not earlier or not rest:
+                raise UserError(
+                    'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
+                    'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
+                )
+            target = next((m for m in reversed(earlier) if m['role'] == 'user' and m.get('content')), None)
+            if target is not None:
+                if isinstance(target_content := target['content'], str):
+                    target['content'] = [
+                        {'type': 'text', 'text': target_content, 'cache_control': placeholder['cache_control']}
+                    ]
+                elif target_content[-1].get('cache_control', {}).get('ttl') != '1h':
+                    target_content[-1]['cache_control'] = placeholder['cache_control']
+            cast(dict[str, Any], message)['content'] = rest
 
     def _add_cache_control_to_message(
         self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'
@@ -1064,6 +1120,7 @@ class OpenRouterModel(OpenAIChatModel):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         openai_messages = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        self._move_leading_cache_controls(openai_messages)
 
         if (
             openai_messages

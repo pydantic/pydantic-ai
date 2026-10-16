@@ -47,6 +47,7 @@ export function App() {
   const openPlugins = useCallback(() => setPlugins(true), [])
   const closePlugins = useCallback(() => setPlugins(false), [])
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
+  const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
 
@@ -98,9 +99,11 @@ export function App() {
     document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
   }, [state.session?.title])
 
-  // A switch of the live session ends any read-only preview, and the wait for it if it is the one picked.
+  // A switch of the live session ends any read-only preview, drops a transcript still on its way so it cannot
+  // reopen it, and ends the wait for it if it is the one picked.
   const sessionId = state.session?.id
   useEffect(() => {
+    picked.current++
     setPreview(null)
     setWorker(null)
     setOpening((current) => (current?.id === sessionId ? null : current))
@@ -116,6 +119,13 @@ export function App() {
   const showError = useCallback((message: string) => {
     setToast(message)
     window.setTimeout(() => setToast((current) => (current === message ? null : current)), 5000)
+  }, [])
+
+  // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
+  const closePreview = useCallback(() => {
+    picked.current++
+    setPreview(null)
+    setOpening(null)
   }, [])
 
   const open = useCallback(
@@ -220,6 +230,8 @@ export function App() {
       disabled={connection !== 'open'}
       placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
       local={local}
+      draft={draft}
+      onDraft={setDraft}
       onError={showError}
     />
   )
@@ -289,7 +301,7 @@ export function App() {
                 Continue here
               </button>
             )}
-            <button className="ghost small" onClick={() => setPreview(null)}>
+            <button className="ghost small" onClick={closePreview}>
               Back to current
             </button>
           </div>

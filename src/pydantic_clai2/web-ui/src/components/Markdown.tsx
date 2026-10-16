@@ -8,9 +8,14 @@ export const Markdown = memo(function Markdown({ text, className }: { text: stri
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-copy]')
     const code = button?.closest('.code-block')?.querySelector('code')
     if (button && code) {
-      void navigator.clipboard.writeText(code.textContent ?? '')
-      button.textContent = 'Copied'
-      window.setTimeout(() => (button.textContent = 'Copy'), 1200)
+      const show = (label: string) => {
+        button.textContent = label
+        window.setTimeout(() => (button.textContent = 'Copy'), 1200)
+      }
+      navigator.clipboard.writeText(code.textContent ?? '').then(
+        () => show('Copied'),
+        () => show('Copy failed'),
+      )
     }
   }, [])
   return <div className={`markdown ${className ?? ''}`} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />

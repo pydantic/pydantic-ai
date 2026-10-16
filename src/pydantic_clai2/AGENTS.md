@@ -79,9 +79,11 @@ they agree in the same PR.
   the shell holds, and its title, change between runs (`/new`, `/resume`, background
   naming); core only sees a `conversation_id` per run. `Session._publish` is the one
   place `ConversationChanged` is fired from. `/commands` never reach the agent, so no core
-  hook sees them; `_execute_command` fires `CommandEnd`, for every command the shell runs. A delegated task's
-  own events never enter the parent run's stream, and a background task outlives that run, so no hook of the
-  parent sees them; `Tasks.observe`, the harness owner's one observer, fires `TaskEvent`. Additional moments need the same
+  hook sees them; the shell fires `CommandEnd` around `_execute_command`, outside the scope
+  Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
+  fires nothing. A delegated task's own events never enter the parent run's stream, and a
+  background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
+  the harness owner's one observer, fires `TaskEvent`. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
@@ -118,7 +120,8 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   the prompt. `customization_guide()` orders itself after the guidance plugins
   contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists the library's built-ins; `STOCK_PLUGINS` opts the CLI-owned
+  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
@@ -141,7 +144,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   drop-in folder, project, built-in. CLAI never writes the project file.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
-  approval. [Environment variables](README.md#environment-variables) documents the
+  approval. [Environment variables](docs/reference.md#environment-variables) documents the
   scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
@@ -260,7 +263,9 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences, shell command headers, and theme previews. The default theme's diff lines use Claude Code's
+streamed fences, shell command headers, and theme previews. Shell command headers
+add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette.
 
@@ -303,7 +308,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
-| `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()` |
+| `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses, and the `SessionCatalog`, `PluginCatalog`, and `TaskCatalog` protocols behind `host.sessions`, `host.plugins`, and `host.tasks` |
@@ -361,6 +366,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
+| `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
@@ -368,7 +374,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder` and `Skills`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), skill folders read in `prepare` with a `/skill-name` command each (`overridable`, submitted with `host.submit_prompt`), and its settings menu (file access, sub-agents, agent folders, skill folders), which hands **Agent folders** to `coder_folders.py` |
+| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder` and `Skills`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), skill folders (relative ones walked up to the git root) read in `prepare` with a `/skill-name` command per user-invocable skill (`overridable`, re-read when run, submitted with `host.submit_prompt`), and its settings menu (file access, sub-agents, agent folders, skill folders), which hands **Agent folders** to `coder_folders.py` |
 | `builtin_plugins/coder_folders.py` | the Coder agent-folder list (add, edit, remove, validation, duplicate detection) and its local directory browser, reading and saving through `CoderSource` |
 | `builtin_plugins/web/__init__.py` | the opt-in built-in `web` plugin: `WebSettings`, `/web start\|stop\|status`, the per-launch token, its command and conversation moments handed to `Remote`, and `AskUser` over `BrowserAnswerer` while `ask_user` is on (the compatibility matrix keeps the `ask_user` plugin off meanwhile) |
 | `builtin_plugins/web/protocol.py` | what the browser sees, as kw-only dataclasses mirrored by `web-ui/src/protocol.ts`: transcript `Item`s, server messages, `EventTranslator` (stream and harness events to item messages), `history_items`, and `ItemLog` for a browser that connects mid-turn |
@@ -463,8 +469,12 @@ uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pyd
 
 ## Docs parity
 
-`README.md` is the tour, `PLUGINS.md` is the plugin contract, this file is for
-agents. A user-facing change updates the first two in the same PR. Plain
+`README.md` is the product tour, `docs/reference.md` is the user reference,
+`PLUGINS.md` is the plugin contract, and this file is for agents. A user-facing
+change updates the reference (and the README when it changes what the tour shows)
+and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
+images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
+the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
