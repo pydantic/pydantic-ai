@@ -629,7 +629,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
                         pass
-                    elif isinstance(part, StepStartUIPart):  # pragma: no cover
+                    elif isinstance(part, StepStartUIPart):
                         # Nothing to do here
                         pass
                     else:
