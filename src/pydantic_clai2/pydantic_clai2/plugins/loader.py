@@ -436,11 +436,16 @@ class SessionPlugins(Generic[DepsT]):
         process-scoped plugin is built once: it joins every live session, and loading it where it
         was already built only joins it there.
         """
+        self._process.join(self)
+        # One load of a name at a time across sessions, so a process-scoped plugin is built once.
+        async with self._process.loading(name):
+            await self._load_one(name, fresh=fresh)
+
+    async def _load_one(self, name: str, *, fresh: bool) -> None:
         entry = self._entry(name)
         if entry.loaded is not None:
             return
         _check_not_included(entry)
-        self._process.join(self)
         if (shared := self._process.shared(name)) is not None:
             await self.attach(name, shared)
             return
@@ -509,7 +514,7 @@ class SessionPlugins(Generic[DepsT]):
             commands=self._commands,
             sessions=self._sessions,
             setting=(lambda key: here().setting(key)) if process and setting else setting,
-            plugins=self,
+            plugins=_HerePlugins(lambda: self._process.here(self)) if process else self,
             tasks=(lambda: here().tasks) if process else self._tasks,
             workspace=(lambda: here().workspace) if process else self._workspace,
             live=self._process.live if process else None,
@@ -545,9 +550,13 @@ class SessionPlugins(Generic[DepsT]):
         self._loaded[name] = loaded
         await self._unload_included(entry, loaded)
 
+    def holds(self, name: str, loaded: LoadedPlugin[DepsT]) -> bool:
+        """Whether this session has `loaded` as its plugin `name`."""
+        return self._loaded.get(name) is loaded
+
     def detach(self, name: str, loaded: LoadedPlugin[DepsT]) -> None:
         """Take a process-scoped plugin out of this session without ending it."""
-        if self._loaded.get(name) is loaded:
+        if self.holds(name, loaded):
             self._drop(self._entries[name])
 
     def _applied(self, entry: PluginEntry[DepsT]) -> tuple[PluginSettings, str | None]:
@@ -694,7 +703,7 @@ class SessionPlugins(Generic[DepsT]):
         (so `web` keeps its page, and `observability` what it read at launch, such as the Git email),
         and their capabilities come after the others'.
         """
-        kept = [name for name in self._loaded if self._shared(name)]
+        kept = [name for name in self._loaded if self._is_shared(name)]
         for name in reversed(list(self._loaded)):
             if name not in kept:
                 await self.unload(name)
@@ -703,7 +712,7 @@ class SessionPlugins(Generic[DepsT]):
         for name in [name for name in self._loaded if name in kept]:
             self._loaded[name] = self._loaded.pop(name)
 
-    def _shared(self, name: str) -> bool:
+    def _is_shared(self, name: str) -> bool:
         """Whether this session's `name` is a process-scoped plugin."""
         loaded = self._loaded.get(name)
         return loaded is not None and loaded is self._process.shared(name)
@@ -714,7 +723,7 @@ class SessionPlugins(Generic[DepsT]):
         Once no live session remains, the process-scoped plugins end too.
         """
         for name in reversed(list(self._loaded)):
-            if self._shared(name):
+            if self._is_shared(name):
                 self.detach(name, self._loaded[name])
             else:
                 await self.unload(name, reason=reason)
@@ -747,7 +756,7 @@ class SessionPlugins(Generic[DepsT]):
         turn keeps what it bound, as for a change made in this session.
         """
         entry = next((entry for entry in self.entries() if entry.name == name), None)
-        if entry is None or self._shared(name):
+        if entry is None or self._is_shared(name):
             return
         try:
             if entry.loaded is not None and (again or not entry.declaration.enabled):
@@ -1046,6 +1055,37 @@ class SessionPlugins(Generic[DepsT]):
 
 PluginLoader = SessionPlugins
 """The former name of `SessionPlugins`, which tests still use."""
+
+
+class _HerePlugins(Generic[DepsT]):
+    """A process-scoped plugin's `host.plugins`: the `PluginCatalog` of the session being handled."""
+
+    def __init__(self, here: Callable[[], SessionPlugins[DepsT]]) -> None:
+        self._here = here
+
+    def listing(self) -> list[PluginInfo]:
+        return self._here().listing()
+
+    async def enable(self, name: str) -> None:
+        await self._here().enable(name)
+
+    async def disable(self, name: str) -> None:
+        await self._here().disable(name)
+
+    async def reload(self, name: str) -> None:
+        await self._here().reload(name)
+
+    async def save_settings(self, name: str, settings: BaseModel) -> None:
+        await self._here().save_settings(name, settings)
+
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        return self._here().settings_menu(name)
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        return self._here().side_panels()
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        return await self._here().edit_settings(name, edit)
 
 
 def _binds(capability: AbstractCapability[DepsT], kind: Binds) -> bool:

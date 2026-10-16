@@ -1146,6 +1146,17 @@ async def test_a_process_plugin_ends_once_every_running_turn_is_over(tmp_path: P
     assert [entry.status for entry in a.loader.entries()] == ['on']
 
 
+async def test_a_turn_without_the_process_plugin_does_not_hold_back_its_end(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    b.loader.enabled = False
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    async with b.loader.turn():
+        await a.loader.disable('shared')
+        assert 'shared stopped exit' in a.text
+
+
 async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) -> None:
     a, b = two_sessions(tmp_path)
     (a.store.plugins_dir / 'shared.py').write_text(
@@ -1181,12 +1192,39 @@ async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(a.loader.load_all)
         await starting.wait()
-        await b.loader.load_all()
-        assert 'late' in b.commands, 'the second session joins the instance the first is starting'
+        tasks.start_soon(b.loader.load_all)
+        await anyio.wait_all_tasks_blocked()
+        assert 'late' not in b.commands, 'the second session waits for the instance the first is starting'
         fail.set()
-    assert 'no start' in a.text and b.text == ''
+    assert 'no start' in a.text and 'no start' in b.text, 'nothing was shared, so each tried its own'
     assert 'late' not in a.commands and 'late' not in b.commands
     assert [entry.loaded for entry in b.loader.entries()] == [None]
+
+
+async def test_a_process_plugin_manages_the_plugins_of_the_session_being_handled(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    shared = next(entry.loaded for entry in a.loader.entries() if entry.name == 'shared')
+    assert shared is not None and shared.plugin.host.plugins is not None
+    plugins = shared.plugin.host.plugins
+    await a.loader.close('exit')
+    await plugins.disable('alpha')
+    assert [info.name for info in plugins.listing()] == ['alpha', 'shared']
+    assert [entry.status for entry in b.loader.entries()] == ['off', 'on']
+    assert a.loader.process.sessions == (b.loader,), 'the closed session does not join again'
+    with handling(b.loader.live_session):
+        await plugins.enable('alpha')
+        await plugins.reload('alpha')
+        assert plugins.settings_menu('alpha') is None and plugins.side_panels() == {}
+        with pytest.raises(ValueError, match='takes no settings'):
+            await plugins.save_settings('alpha', NoSettings())
+        with pytest.raises(ValueError, match='declares no settings menu'):
+            await plugins.edit_settings('alpha', lambda menu: anyio.sleep(0))
+    assert b.text.count('alpha started') == 3
+    await b.loader.close('exit')
 
 
 async def test_one_session_ends_its_own_plugins_before_the_process_ones(tmp_path: Path) -> None:
