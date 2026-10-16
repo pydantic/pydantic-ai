@@ -1339,9 +1339,8 @@ class _CascadeLifecycle(InferredLifecycle):
     before the agent's greeting (a reply nobody asked for) makes no spoken turn ahead of it.
     """
 
-    def _join_turn(self, events: list[LifecycleEvent], *, replying: bool) -> str | None:
-        self._audio_since_reply = False
-        return super()._join_turn(events, replying=replying)
+    transcripts_lag_replies = False
+    untranscribed_audio_is_a_turn = False
 
 
 class ElevenLabsRealtimeConnection(RealtimeConnection):
@@ -1383,7 +1382,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         # a response has to be announced with its first audio, and a tool round shares one `event_id`
         # between the response that calls the tool and the one that answers its result.
         # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
-        self._lifecycle = _CascadeLifecycle(transcripts_lag_replies=False)
+        self._lifecycle = _CascadeLifecycle()
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
         self._deferred_cut: RealtimeResponseInterruptedEvent | None = None
         # Whether the lifecycle saw that barge-in before the cut-off response's terminal came.
@@ -1423,12 +1422,8 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
         interrupting or answering), and `ToolResult`. Manual turn-taking verbs, response
         cancellation, truncation, and images are not supported by the conversation WebSocket.
         """
-        input_id = self._lifecycle.input_sent(content)
-        try:
+        with self._lifecycle.sending(content) as input_id:
             sent = await self._send(content)
-        except BaseException:
-            self._lifecycle.input_failed(input_id)
-            raise
         if not sent:
             # A fire-and-forget call's result: the agent asked for none, so none will be answered.
             self._lifecycle.input_unanswerable(input_id)
@@ -1533,7 +1528,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
                 error = RealtimeSessionErrorEvent(
                     message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True
                 )
-                yield self._lifecycle.message([error])
+                yield self._lifecycle.frame_for([error])
                 continue
             except self.transport_errors as e:
                 # Answering a ping can hit an already-dropped socket; that is the same fatal
@@ -1559,16 +1554,16 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             # Something else came first (the user's words, say): the lifecycle needs the cut now, to tell
             # the speech that cut in from the turn being answered.
             self._cut_shown = True
-            frame = self._lifecycle.message([deferred, *events])
+            frame = self._lifecycle.frame_for([deferred, *events])
             return [event for event in frame if event is not deferred]
         if self._cut_shown and ends_response:
             # The cut-off response's terminal, after the lifecycle saw the cut: what it says was heard comes
             # after the response is over, so it ends the response, and its transcript trails it.
             self._cut_shown = False
             late = [event for event in events if isinstance(event, OutputTranscript)]
-            frame = self._lifecycle.message([event for event in events if not isinstance(event, OutputTranscript)])
+            frame = self._lifecycle.frame_for([event for event in events if not isinstance(event, OutputTranscript)])
             return [*frame, *(StaleEvent(event) for event in late)]
-        return self._lifecycle.message(events)
+        return self._lifecycle.frame_for(events)
 
     def _connection_lost(self, error: Exception) -> RealtimeFrame:
         """The frame ending the conversation: no reconnect support, so a dropped conversation is fatal.
