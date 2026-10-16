@@ -231,7 +231,9 @@ one that is not.
   menu worker between widgets. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
-  one-liners are `no cover`.
+  one-liners are `no cover`. Code that asks through `Dialogs` (settings menu
+  actions, `plugins/keys.py`, `plugins/sign_in.py`) is tested with
+  `tests/clai2/dialog_script.py`'s `ScriptedDialogs` instead.
 - Model sources live in `model_catalog.py`. To add one (models.dev, a provider
   API), write a function returning `CatalogModel`s and merge it in `catalog()`.
   The menu never talks to a source directly.
@@ -387,8 +389,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `web-ui/` (beside the package) | the React and TypeScript source of the browser UI, built with Vite |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
-| `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
-| `plugins/sign_in.py` | the shared sign-in API: `SignInMethod`, the Esc-cancellable waiting screen (`sign_in_now`), `/NAME login\|logout\|status`, the signed-out notice, `SignInRequired` |
+| `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, asking through the `Dialogs` they are given, Esc-cancellable |
+| `plugins/sign_in.py` | the shared sign-in API: `SignInMethod`, the Esc-cancellable waiting screen (`sign_in_now`, through a `Dialogs` or the terminal's), `/NAME login\|logout\|status`, the signed-out notice, `SignInRequired` |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
 | `runtime/agent_instrumentation.py` | reads core's process-wide `Agent.instrument_all` setting (core has no getter) and its tracer; `claim`/`release` hand it between live `observability` instances, outside the plugin module so `/plugins reload` keeps the claims |
 | `runtime/speculation.py` | the `run.code_mode` (on by default; tests default it off in `conftest.py`) and `run.speculative_code_mode` switches, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |

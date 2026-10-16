@@ -2551,7 +2551,8 @@ returns a `KeyReference` to a saved key, a masked new value for you to
 `save_key(name=..., value=...)`, or `None` when cancelled. Then call
 `self.host.save_settings(settings)` with the new reference. It saves your plugin's
 declaration as `plugins add` would, and `self.host.settings(Model)` returns the new
-values from then on.
+values from then on. From a settings menu, `choose_key` (below) asks through the
+menu's `Dialogs` and saves the new value for you.
 
 ### Offer a settings menu: `def settings_menu(self)`
 
@@ -2630,10 +2631,14 @@ the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`
 so plugins that need the same credential share it. The label is only a name; it
 does not export or read an environment variable.
 
-For a token row, `pydantic_clai2.plugins.keys.choose_key(name=..., label=..., runners=...)`
-shows the searchable `/keys` picker, or a masked input when no keys are saved.
-It saves a new value under `name` only after confirming a replacement, and
-returns a `KeyReference` to persist in place of the secret. Call it through
+For a token row, `await pydantic_clai2.plugins.keys.choose_key(name=..., label=..., dialogs=...)`
+offers the saved `/keys` by name, or a masked input when no keys are saved. Pass
+the `Dialogs` your settings menu action receives, so it asks wherever the menu was
+opened. `check`, if given, raises `ValueError` for a picked or typed value the
+service would reject. It saves a new value under `name` only after confirming a
+replacement, and returns a `KeyReference` to persist in place of the secret, or
+`None` when the user backed out. A `configure` menu of your own passes
+`TerminalDialogs()` from `pydantic_clai2.ui.menus.dialogs` and calls it through
 `plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
 is a complete example.
 
@@ -2652,9 +2657,11 @@ menu or a command, and runs use only what is already stored.
   as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
   refreshes the stored tokens and raises `SignInRequired` instead of opening a
   browser.
-- `await sign_in_now(method)` signs in behind a waiting screen that shows what
-  `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
-  message to show: signed in, cancelled, or why it failed.
+- `await sign_in_now(method, dialogs)` signs in behind a waiting screen that shows
+  what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
+  message to show: signed in, cancelled, or why it failed. Pass the `Dialogs` your
+  settings menu action receives, so the screen shows wherever the menu was opened;
+  without one, it shows in the terminal.
 - `sign_in_command('NAME', method)` is `/NAME [login | logout | status]`.
   `run_subcommand(method, args)` handles the same words inside a command that has
   more of its own.
@@ -2683,9 +2690,9 @@ client = PublicClient(
 sign_in = PKCESignIn(client=client, account='example-oauth', service='Example', setup='/plugins configure example')
 ```
 
-`await plugin_keys.browser_sign_in(sign_in, runners)` signs in from a settings
-menu behind a waiting screen that shows the URL, and returns `False` when the user
-presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
+`await plugin_keys.browser_sign_in(sign_in, dialogs)` signs in from a settings
+menu behind a waiting screen that shows the URL, through the `Dialogs` the menu's
+action receives, and returns `False` when the user presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
 Before each run, `await sign_in.token()` returns an access token, refreshing it
 first when it expires within five minutes and saving a rotated refresh token. It
 raises `UserError` naming `setup` when there is no usable sign-in, so a plugin can

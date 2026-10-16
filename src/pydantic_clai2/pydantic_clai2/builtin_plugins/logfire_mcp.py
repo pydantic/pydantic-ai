@@ -43,6 +43,7 @@ from pydantic_clai2.logfire_oauth import DeviceAuth, LogfireSignIn, forget, stat
 from pydantic_clai2.mcp import http_client
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, warn_if_signed_out
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
@@ -198,7 +199,7 @@ async def _command(args: list[str], *, settings: LogfireMCPSettings) -> str:
         if forgotten:
             return 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
         return 'There was no Logfire browser sign-in to forget.'
-    message = await run_subcommand(_sign_in(settings), args, RUNNERS)
+    message = await run_subcommand(_sign_in(settings), args, TerminalDialogs(RUNNERS))
     if message is None:
         raise ValueError(
             'Usage: /logfire [login | logout | status] (settings and keys: /plugins configure logfire_mcp)'

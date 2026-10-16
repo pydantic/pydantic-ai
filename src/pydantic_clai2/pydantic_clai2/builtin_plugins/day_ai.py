@@ -28,6 +28,7 @@ from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key, on_loop
 from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -205,7 +206,7 @@ async def _configure(source: DayAISource[DepsT]) -> str:
         if pick.item.value == 'oauth':
             return [source.apply(_AUTH, 'oauth'), *sign_in()]
         label = f'Day AI access token (saved in /keys as {KEY_NAME})'
-        reference = on_loop(lambda: choose_key(name=KEY_NAME, label=label, runners=RUNNERS), loop)
+        reference = on_loop(lambda: choose_key(name=KEY_NAME, label=label, dialogs=TerminalDialogs(RUNNERS)), loop)
         if reference is None:
             return []
         source.save(source.settings.model_copy(update={'auth': reference}))
@@ -214,7 +215,7 @@ async def _configure(source: DayAISource[DepsT]) -> str:
     def sign_in() -> list[str]:
         if SIGN_IN.signed_in():
             return []
-        message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
+        message = on_loop(lambda: sign_in_now(SIGN_IN, TerminalDialogs(RUNNERS)), loop)
         return [] if message is None else [message]
 
     messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'auth': pick_auth}))

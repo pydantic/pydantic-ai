@@ -19,6 +19,7 @@ from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.dialogs import TerminalDialogs, run_settings_menu
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import holding_output
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
 CLOSED = MenuResult(cancelled=True)
@@ -277,3 +278,35 @@ async def test_without_a_menu_there_is_nothing_to_configure() -> None:
     assert not bare.has_configure
     with pytest.raises(NotImplementedError, match='has no settings menu'):
         await bare.configure()
+
+
+async def test_scripted_dialogs_refuse_answers_the_terminal_could_not_give() -> None:
+    options = [Option(value='a', label='Apple')]
+    with pytest.raises(AssertionError, match="no answer left for choose 'Fruit'"):
+        await ScriptedDialogs([]).choose(title='Fruit', options=options)
+    with pytest.raises(AssertionError, match="cannot answer choose 'Fruit'"):
+        await ScriptedDialogs([Type(text='a')]).choose(title='Fruit', options=options)
+    with pytest.raises(AssertionError, match="'b' is not offered in 'Fruit'"):
+        await ScriptedDialogs([Pick(value='b')]).choose(title='Fruit', options=options)
+    with pytest.raises(AssertionError, match=r"'Name' would not accept 'x': Too short\."):
+        await ScriptedDialogs([Type(text=' x ')]).text(title='Name', check=lambda text: 'Too short.')
+
+
+async def test_backing_out_of_a_scripted_wait_cancels_the_task_once_it_shows_something() -> None:
+    async def quiet(show: Callable[[str], None]) -> None:
+        pass
+
+    async def fails(show: Callable[[str], None]) -> None:
+        raise ValueError('denied')
+
+    async def hangs(show: Callable[[str], None]) -> None:
+        show('Code: 1234')
+        await anyio.sleep_forever()
+
+    dialogs = ScriptedDialogs([Back(), Back(), Back()])
+    assert await dialogs.wait(title='Signing in', description='Finish it.', task=quiet), 'it ended first'
+    with pytest.raises(ValueError, match='denied'):
+        await dialogs.wait(title='Signing in', description='Finish it.', task=fails)
+    with anyio.fail_after(5):
+        assert not await dialogs.wait(title='Signing in', description='Finish it.', task=hangs)
+    assert [asked.shown for asked in dialogs.asked] == [[], [], ['Code: 1234']]
