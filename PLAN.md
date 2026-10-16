@@ -138,8 +138,8 @@ by asking the lead *model* to call `delegate_task(resume=...)` (`resume_prompt`)
 │  Team: names, mailbox, gates, tools, wake batching                           │
 └────────▲────────────────────────────────────────────────────────────────────┘
 ┌────────┴──────────────── harness primitives (§3.1, §3.2) ────────────────────┐
-│  DelegationTasks: + name, + member_runner + start/member_run, + persisted inbox│
-│                   with acknowledged send / wake, + max_active                 │
+│  DelegationTasks: + name, + member_runner, start, member_run,                │
+│                   + persisted inboxes (acked send / wake), + max_active      │
 │  planning: ClaimablePlanStore (atomic claim/release incl. dependent tasks)   │
 └────────▲────────────────────────────────────────────────────────────────────┘
          │ RunContext.enqueue · CapabilityEvent(dispatch='immediate') · on_event
