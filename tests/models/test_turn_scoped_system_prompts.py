@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from pydantic import JsonValue
 
 from pydantic_ai import (
     Agent,
@@ -52,6 +53,7 @@ from pydantic_ai.profiles import ModelProfile
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, RequestCapture, try_import
+from .conftest import cache_breakpoints
 
 if TYPE_CHECKING:
     from .conftest import AnthropicModelFactory
@@ -155,17 +157,6 @@ def without_cache_control(value: Any) -> Any:
     return value
 
 
-def message_breakpoints(body: dict[str, Any]) -> list[str]:
-    """Where in `messages` a request carries `cache_control`, as `messages[i][j]` paths."""
-    return [
-        f'messages[{message_index}][{block_index}]'
-        for message_index, message in enumerate(body['messages'])
-        if isinstance(message['content'], list)
-        for block_index, block in enumerate(message['content'])
-        if 'cache_control' in block
-    ]
-
-
 def assert_append_only(bodies: Sequence[dict[str, Any]]) -> None:
     """Every request's `messages` starts with the previous request's, byte for byte bar breakpoints.
 
@@ -230,8 +221,8 @@ async def test_anthropic_turn_scoped_reminders_keep_thinking_and_cache(
     ]
     # The breakpoint lands on the tool result ahead of the reminder: `cache_control` on a turn-scoped
     # entry is a 400.
-    assert [message_breakpoints(body) for body in bodies[1:]] == [
-        [f'messages[{len(body["messages"]) - 2}][0]'] for body in bodies[1:]
+    assert [cache_breakpoints(body) for body in bodies[1:]] == [
+        (None, [f'messages[{len(body["messages"]) - 2}].content[0]']) for body in bodies[1:]
     ]
     for previous, current in zip(responses, responses[1:]):
         assert current.usage.cache_read_tokens >= previous.usage.input_tokens - 30
@@ -241,14 +232,21 @@ async def test_anthropic_turn_scoped_reminders_keep_thinking_and_cache(
 class FallbackCase:
     id: str
     settings: AnthropicModelSettings
-    breakpoints: list[str]
+    breakpoints: tuple[dict[str, JsonValue] | None, list[str]]
 
 
 FALLBACK_CASES = [
     FallbackCase(
-        id='cache-messages', settings={'anthropic_cache_messages': True}, breakpoints=snapshot(['messages[2][0]'])
+        id='cache-messages',
+        settings={'anthropic_cache_messages': True},
+        breakpoints=snapshot((None, ['messages[2].content[0]'])),
     ),
-    FallbackCase(id='auto-cache', settings={'anthropic_cache': True}, breakpoints=snapshot(['messages[2][0]'])),
+    # The automatic breakpoint would land on the reminder, so an explicit one goes on the block before it.
+    FallbackCase(
+        id='auto-cache',
+        settings={'anthropic_cache': True},
+        breakpoints=snapshot(({'type': 'ephemeral', 'ttl': '5m'}, ['messages[2].content[0]'])),
+    ),
 ]
 
 
@@ -290,7 +288,7 @@ async def test_anthropic_turn_scoped_fallback_on_model_without_native_support(
         assert texts == [f'<system>Reminder: be terse. This is request {n}.</system>']
         last_content = body['messages'][-1]['content']
         assert last_content[-1] == {'text': texts[0], 'type': 'text'}
-    assert message_breakpoints(bodies[1]) == case.breakpoints
+    assert cache_breakpoints(bodies[1]) == case.breakpoints
     for previous, current in zip(responses, responses[1:]):
         assert current.usage.cache_read_tokens >= previous.usage.input_tokens - 30
     # History keeps every reminder; only the wire leaves the finished ones out.

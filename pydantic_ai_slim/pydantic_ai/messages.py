@@ -3612,35 +3612,6 @@ def _is_turn_scoped(part: ModelRequestPart) -> bool:
     return isinstance(part, SystemPromptPart) and part.scope == 'turn'
 
 
-def _drop_unanswered_turn_scoped_prompts(messages: list[ModelMessage]) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Remove the turn-scoped `SystemPromptPart`s that no response will answer, in place.
-
-    Called once a step has given up on getting a response: the run raised or was cancelled, or a
-    capability asked for a retry without one. The parts were written for that step alone, so leaving
-    them in the trailing requests would carry them into the next step's turn next to the ones it adds
-    for itself. Never between attempts at the same step: a retried or fallback attempt is still that
-    step's turn.
-
-    Edits the list in place, since it's the run's history, but replaces the affected requests rather
-    than mutating them: instrumentation caches each message's serialized form. A request left empty
-    is removed, unless every trailing request was, in which case one empty request is kept so the
-    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does.
-    """
-    start = len(messages)
-    while start and isinstance(messages[start - 1], ModelRequest):
-        start -= 1
-    for index in range(len(messages) - 1, start - 1, -1):
-        message = messages[index]
-        assert isinstance(message, ModelRequest)
-        if not any(_is_turn_scoped(part) for part in message.parts):
-            continue
-        parts = [part for part in message.parts if not _is_turn_scoped(part)]
-        if not parts and len(messages) - start > 1:
-            del messages[index]
-        else:
-            messages[index] = replace(message, parts=parts)
-
-
 def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:
     """Make the message history provider-valid and normalize its shape, out of the box.
 
