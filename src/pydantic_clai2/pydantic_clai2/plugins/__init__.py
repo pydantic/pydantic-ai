@@ -894,6 +894,16 @@ class PluginHost(Generic[DepsT]):
         except Exception:  # noqa: BLE001 -- optional suggestions, as in the editor; a broken completer offers none.
             return []
 
+    def command_menu(self, name: str, /) -> SettingsMenu | None:
+        """The settings menu bare `/NAME` opens, as the command declares it with `Command.menu`, built now.
+
+        For a plugin that is another way to use CLAI, such as a remote UI, to show that menu itself
+        instead of opening it in the terminal. `None` for a command that declares none, an unknown or
+        unavailable one, and on a host without a shell.
+        """
+        command = None if self._commands is None else self._commands.get(name)
+        return None if command is None or command.menu is None else command.menu()
+
     @property
     def session_id(self) -> str | None:
         """The current saved conversation's ID, or `None` for a host without session persistence."""
