@@ -3618,3 +3618,13 @@ async def test_closing_after_a_reconnect_ends_the_replacement_session(model: Ope
     assert [report.usage.audio_seconds for report in reports] == [6]
     assert [json.loads(frame)['type'] for frame in first.sent if json.loads(frame)['type'] == 'session.close'] == []
     assert [json.loads(frame)['type'] for frame in second.sent[1:]] == ['session.close']
+
+
+async def test_a_redial_with_nothing_to_replay_doesnt_load_the_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loading it takes seconds on first use, which a session with no history to replay shouldn't wait out."""
+
+    def get_encoding(name: str) -> Any:  # pragma: no cover
+        raise AssertionError('the tokenizer was loaded')
+
+    monkeypatch.setattr(live_module.tiktoken, 'get_encoding', get_encoding)
+    assert await live_module.replay_input_items([], provider_name='openai') == []
