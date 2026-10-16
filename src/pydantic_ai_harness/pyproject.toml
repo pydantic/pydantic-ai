@@ -72,7 +72,8 @@ absurd = ["absurd-sdk>=0.5.0,<1"]
 pgtask = ["pgtask>=0.2.0,<1"]
 # 3.2 types `page_age` as `datetime | str`, and the toolset formats it as a `datetime`.
 youdotcom = ["youdotcom>=3.1.2,<3.2"]
-restate = ["restate-sdk>=1.0.2"]
+# `restate-sdk` is a Rust extension with no Python 3.15 wheels yet, so its sdist fails to build there.
+restate = ["restate-sdk>=1.0.2 ; python_version < '3.15'"]
 mongodb = ["pymongo>=4.17.0"]
 skills = ["pyyaml>=6.0.2"]
 browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]

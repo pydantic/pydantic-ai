@@ -6322,7 +6322,7 @@ researcher = [
     { name = "pydantic-ai-slim", extra = ["duckduckgo", "web-fetch"] },
 ]
 restate = [
-    { name = "restate-sdk" },
+    { name = "restate-sdk", marker = "python_full_version < '3.15' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 skills = [
     { name = "pyyaml" },
@@ -6394,7 +6394,7 @@ requires-dist = [
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
     { name = "render", marker = "extra == 'render'", specifier = ">=1.2.0" },
-    { name = "restate-sdk", marker = "extra == 'restate'", specifier = ">=1.0.2" },
+    { name = "restate-sdk", marker = "python_full_version < '3.15' and extra == 'restate'", specifier = ">=1.0.2" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
     { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'smol') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'smol')", specifier = ">=1.22.2,<2" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },

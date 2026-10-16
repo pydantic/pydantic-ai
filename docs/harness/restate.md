@@ -37,7 +37,7 @@ import restate
 from pydantic_ai import Agent
 from pydantic_ai_harness import RestateDurability
 
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[RestateDurability()])
+agent = Agent('{{ openai:medium }}', name='analyst', capabilities=[RestateDurability()])
 analyst = restate.Service('analyst')
 
 
@@ -130,7 +130,7 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-agent = Agent('openai:gpt-5', name='calc', toolsets=[tools], capabilities=[RestateDurability()])
+agent = Agent('{{ openai:medium }}', name='calc', toolsets=[tools], capabilities=[RestateDurability()])
 ```
 
 `False` is the only supported value for the `restate` metadata key. Every step is journaled through
