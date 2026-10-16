@@ -208,7 +208,7 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.items == [] and not snapshot.running
         running = web_.run()
-        assert web_.post('/api/input', {'text': 'look it up'}).status_code == 204
+        assert web_.post('/api/input', {'text': 'look it up'}).json() == {'menu': None}
         messages, end = receive_until(socket, TurnEnded)
         [started] = [message.item for message in messages if isinstance(message, TurnStarted)]
         assert started is not None and started.text == 'look it up'
@@ -235,10 +235,10 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         state = web_.get('/api/state').json()
         assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
         assert state['items'][-1]['text'] == 'All **done**.'
-        assert web_.post('/api/input', {'text': '/cost'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/cost'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
-        assert web_.post('/api/input', {'text': '/missing'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/missing'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.level, notice.text) == ('error', 'Unknown command /missing. Use /help.')
         web_.post('/api/input', {'text': '/exit'})
@@ -329,7 +329,7 @@ def test_theme_changes_while_a_turn_runs(make_web: 'MakeWeb') -> None:
         running = web_.run()
         web_.post('/api/input', {'text': 'wait'})
         web_.portal.call(started.wait)
-        assert web_.post('/api/input', {'text': '/theme tokyo_night'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/theme tokyo_night'}).json() == {'menu': None}
         web_.portal.call(anyio.wait_all_tasks_blocked)
         state = web_.get('/api/state').json()
         assert (state['running'], state['theme']['name']) == (True, 'tokyo_night')
@@ -1295,6 +1295,7 @@ def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tm
         'secret': False,
         'note': '',
         'action': False,
+        'menu': False,
     }
     assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:

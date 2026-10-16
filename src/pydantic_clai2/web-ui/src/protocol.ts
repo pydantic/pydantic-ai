@@ -222,6 +222,7 @@ export type ServerMessage =
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
+  | { type: 'settings' }
   | { type: 'task'; task: TaskEntry }
   | { type: 'task_event'; id: string; messages: ItemMessage[] }
   | { type: 'update'; update: UpdateInfo | null }
@@ -342,6 +343,8 @@ export interface MenuField {
   note: string
   /** Choosing it runs an action, with dialogs, instead of editing a value. */
   action: boolean
+  /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
+  menu: boolean
 }
 
 /** A workspace as the sidebar lists it; never its token. */
@@ -365,6 +368,11 @@ export interface WorkspacesInfo {
 export interface MenuInfo {
   title: string
   fields: MenuField[]
+}
+
+/** What entering input did: `menu` names the bare command whose menu the page shows instead of running it. */
+export interface Entered {
+  menu: string | null
 }
 
 export interface MenuEdited {

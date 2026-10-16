@@ -18,6 +18,8 @@ interface Props {
   placeholder: string
   /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
   local?: Readonly<Record<string, () => void>>
+  /** A bare command the server answered by naming its menu, such as `/set`, which the page shows instead. */
+  onMenu?: (command: string) => void
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
@@ -39,6 +41,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     disabled,
     placeholder,
     local,
+    onMenu,
     draft: text,
     onDraft: setText,
     chat,
@@ -119,7 +122,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      await (chat ? chat.send(value) : api.send(value))
+      if (chat) await chat.send(value)
+      else {
+        const entered = await api.send(value)
+        if (entered.menu !== null) onMenu?.(entered.menu)
+      }
     } catch (error) {
       setText(value)
       onError(error instanceof Error ? error.message : String(error))

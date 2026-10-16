@@ -200,6 +200,20 @@ function TextAnswer({
   onAnswer: (value: string) => void
 }) {
   const [text, setText] = useState(dialog.initial)
+  // Text that starts on several lines, such as a server's JSON, is edited over several lines; Cmd/Ctrl+Enter saves.
+  const multiline = dialog.initial.includes('\n')
+  const field = {
+    autoFocus: true,
+    className: `setting-input ${multiline ? 'code' : ''} ${problem ? 'invalid' : ''}`,
+    spellCheck: false,
+    value: text,
+    placeholder: dialog.placeholder,
+    disabled,
+    onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setText(event.target.value)
+      onEdit()
+    },
+  }
   return (
     <form
       className="dialog-text"
@@ -210,20 +224,23 @@ function TextAnswer({
     >
       <label className="dialog-label">
         <span>{dialog.label}</span>
-        <input
-          autoFocus
-          className={`setting-input ${problem ? 'invalid' : ''}`}
-          type={dialog.secret ? 'password' : 'text'}
-          autoComplete={dialog.secret ? 'off' : undefined}
-          spellCheck={false}
-          value={text}
-          placeholder={dialog.placeholder}
-          disabled={disabled}
-          onChange={(event) => {
-            setText(event.target.value)
-            onEdit()
-          }}
-        />
+        {multiline ? (
+          <textarea
+            {...field}
+            rows={Math.min(16, Math.max(4, text.split('\n').length))}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
+              event.preventDefault()
+              onAnswer(text)
+            }}
+          />
+        ) : (
+          <input
+            {...field}
+            type={dialog.secret ? 'password' : 'text'}
+            autoComplete={dialog.secret ? 'off' : undefined}
+          />
+        )}
       </label>
       {problem && (
         <p className="setting-error" role="alert">

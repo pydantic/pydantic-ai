@@ -507,6 +507,13 @@ class PluginsChanged:
     type: Literal['plugins'] = 'plugins'
 
 
+@dataclass(frozen=True, kw_only=True)
+class SettingsChanged:
+    """A command ran, or a command's menu was edited, which may have changed CLAI's settings; open menus read them again."""
+
+    type: Literal['settings'] = 'settings'
+
+
 ItemMessage = (
     ItemAdded
     | TextDelta
@@ -572,6 +579,7 @@ ServerMessage = (
     | ThemeChanged
     | SessionsChanged
     | PluginsChanged
+    | SettingsChanged
     | TaskChanged
     | TaskItems
     | UpdateChanged
@@ -715,11 +723,13 @@ class MenuField:
     """Where the value comes from when not from the user."""
     action: bool
     """Whether choosing it runs an action, with dialogs, instead of editing a value."""
+    menu: bool
+    """Whether choosing it opens another menu, which the routes reach with `?menu=KEY`, instead of editing a value."""
 
 
 @dataclass(kw_only=True)
 class MenuInfo:
-    """A plugin's declared settings menu, with every row's current value."""
+    """A plugin's declared settings menu, or a command's, with every row's current value."""
 
     title: str
     fields: list[MenuField]
