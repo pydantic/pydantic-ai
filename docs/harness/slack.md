@@ -97,7 +97,7 @@ The tools act as the token's user, so messages the agent posts and canvases it e
 
 ## Tool names
 
-The agent sees the server's tool names as they are, since they already start with the service, as in `slack_send_message`. Set `tool_prefix` to put a prefix and `_` in front of them, for example `tool_prefix='work'` gives `work_slack_send_message`.
+`Slack` has no default prefix, unlike most hosted MCP capabilities: the server's tool names already start with the service, as in `slack_send_message`, so a default prefix would repeat it (`slack_slack_send_message`). The agent sees the names as they are. Set `tool_prefix` to put a prefix and `_` in front of them, for example `tool_prefix='work'` gives `work_slack_send_message`.
 
 `read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 

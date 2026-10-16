@@ -110,10 +110,12 @@ one. To add more than one `Ordinal` to an agent, give each a distinct `id` and
 
 ## Tool names
 
-The agent sees the server's tool names as they are, since they already start
-with the service, as in `ordinal_get_workspace_context`. Set `tool_prefix` to
-put a prefix and `_` in front of them, for example `tool_prefix='work'` gives
-`work_ordinal_get_workspace_context`.
+`Ordinal` has no default prefix, unlike most hosted MCP capabilities: the
+server's tool names already start with the service, as in
+`ordinal_get_workspace_context`, so a default prefix would repeat it
+(`ordinal_ordinal_get_workspace_context`). The agent sees the names as they are.
+Set `tool_prefix` to put a prefix and `_` in front of them, for example
+`tool_prefix='work'` gives `work_ordinal_get_workspace_context`.
 
 A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
 `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
