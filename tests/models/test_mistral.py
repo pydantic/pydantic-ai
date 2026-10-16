@@ -4039,3 +4039,145 @@ async def test_mistral_enum_member_docstrings_reach_the_wire(
             'type': 'object',
         }
     )
+
+
+async def test_repro_stream_parallel_tool_calls_in_separate_chunks(allow_model_requests: None):
+    """Two complete parallel tool calls arriving in separate chunks must both survive and execute."""
+    completion = [
+        [
+            chunk(delta=[MistralDeltaMessage(content='', role='assistant')]),
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        id='call_1',
+                        function=MistralFunctionCall(arguments='{"x": 1}', name='double'),
+                        type='function',
+                        index=0,
+                    )
+                ]
+            ),
+            func_chunk(
+                tool_calls=[
+                    MistralToolCall(
+                        id='call_2',
+                        function=MistralFunctionCall(arguments='{"x": 2}', name='double'),
+                        type='function',
+                        index=1,
+                    )
+                ],
+                finish_reason='tool_calls',
+            ),
+        ],
+        [
+            text_chunk('2, 4'),
+            chunk(delta=[MistralDeltaMessage(content='', role='assistant')], finish_reason='stop'),
+        ],
+    ]
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_stream_mock(completion))
+    )
+    agent = Agent(model, instructions='this is the system prompt')
+
+    executed: list[int] = []
+
+    @agent.tool_plain
+    async def double(x: int) -> int:
+        executed.append(x)
+        return x * 2
+
+    async with agent.run_stream('Double 1 and 2.') as result:
+        output = await result.get_output()
+
+    assert executed == [1, 2]
+    assert output == '2, 4'
+    response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
+    tool_call_parts = [(p.tool_call_id, p.tool_name, p.args) for p in response.parts if isinstance(p, ToolCallPart)]
+    assert tool_call_parts == [
+        ('call_1', 'double', '{"x": 1}'),
+        ('call_2', 'double', '{"x": 2}'),
+    ]
+
+
+async def test_stream_parallel_tool_calls_match_non_streaming(allow_model_requests: None):
+    """Streaming and non-streaming parallel tool calls must produce the same identities, execution, and history."""
+    tool_calls = [
+        MistralToolCall(
+            id='call_1',
+            function=MistralFunctionCall(arguments='{"x": 1}', name='double'),
+            type='function',
+            index=0,
+        ),
+        MistralToolCall(
+            id='call_2',
+            function=MistralFunctionCall(arguments='{"x": 2}', name='double'),
+            type='function',
+            index=1,
+        ),
+    ]
+
+    def build_agent(mock_client: MockMistralAI, executed: list[int]) -> Agent[None, str]:
+        model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+        agent = Agent(model, instructions='this is the system prompt')
+
+        @agent.tool_plain
+        async def double(x: int) -> int:
+            executed.append(x)
+            return x * 2
+
+        return agent
+
+    stream_executed: list[int] = []
+    stream_agent = build_agent(
+        MockMistralAI.create_stream_mock(
+            [
+                [
+                    chunk(delta=[MistralDeltaMessage(content='', role='assistant')]),
+                    func_chunk(tool_calls=[tool_calls[0]]),
+                    func_chunk(tool_calls=[tool_calls[1]], finish_reason='tool_calls'),
+                ],
+                [
+                    text_chunk('2, 4'),
+                    chunk(delta=[MistralDeltaMessage(content='', role='assistant')], finish_reason='stop'),
+                ],
+            ]
+        ),
+        stream_executed,
+    )
+    async with stream_agent.run_stream('Double 1 and 2.') as stream_result:
+        stream_output = await stream_result.get_output()
+
+    non_stream_executed: list[int] = []
+    non_stream_agent = build_agent(
+        MockMistralAI(
+            completions=[
+                completion_message(
+                    MistralAssistantMessage(content=None, role='assistant', tool_calls=tool_calls),
+                    usage=MistralUsageInfo(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+                ),
+                completion_message(
+                    MistralAssistantMessage(content='2, 4', role='assistant'),
+                    usage=MistralUsageInfo(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+                ),
+            ]
+        ),
+        non_stream_executed,
+    )
+    non_stream_result = await non_stream_agent.run('Double 1 and 2.')
+
+    assert stream_output == non_stream_result.output == '2, 4'
+    assert stream_executed == non_stream_executed == [1, 2]
+
+    stream_response = next(m for m in stream_result.all_messages() if isinstance(m, ModelResponse))
+    non_stream_response = next(m for m in non_stream_result.all_messages() if isinstance(m, ModelResponse))
+    stream_parts = [(p.tool_call_id, p.tool_name, p.args) for p in stream_response.parts if isinstance(p, ToolCallPart)]
+    non_stream_parts = [
+        (p.tool_call_id, p.tool_name, p.args) for p in non_stream_response.parts if isinstance(p, ToolCallPart)
+    ]
+    assert (
+        stream_parts
+        == non_stream_parts
+        == [
+            ('call_1', 'double', '{"x": 1}'),
+            ('call_2', 'double', '{"x": 2}'),
+        ]
+    )
