@@ -80,7 +80,7 @@ _REDIRECT_URI = 'http://127.0.0.1:1455/auth/callback'
 _REDIRECT_PATH = '/auth/callback'
 _HOST_ID_PREFIXES = ('urn:uuid:', 'urn:ietf:params:oauth:jwk-thumbprint:', 'did:key:')
 # Tolerated clock skew when checking the ID token's expiry.
-_CLOCK_SKEW = timedelta(minutes=5)
+_CLOCK_SKEW = timedelta(seconds=60)
 
 
 @dataclass
@@ -254,11 +254,17 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
             state: The CSRF token bound to the callback; auto-generated when `None`.
         """
         parsed = urlsplit(redirect_uri)
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
         if (
             parsed.scheme != 'http'
-            or parsed.hostname != '127.0.0.1'
-            or parsed.port is None
+            or parsed.netloc != f'127.0.0.1:{port}'
+            or not port
             or parsed.path != _REDIRECT_PATH
+            or parsed.query
+            or parsed.fragment
         ):
             raise UserError(
                 f'`redirect_uri` must be `http://127.0.0.1:PORT{_REDIRECT_PATH}`: Sign in with ChatGPT only '
@@ -327,8 +333,8 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
             code: The callback's `code` parameter.
             client_id: The callback's `client_id` parameter, which carries the issued client id after a
                 new registration. A sign-in that reused `client_id` may omit it. Once accepted, it is
-                kept as the flow's `client_id`, so a sign-in retried after a failed exchange can reuse
-                the registration.
+                kept as the flow's `client_id`: if the exchange fails, retry with a new flow created
+                with `client_id=flow.client_id`, so the retry reuses the registration.
         """
         if self.client_id is not None:
             if client_id is not None and client_id != self.client_id:
