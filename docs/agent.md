@@ -1107,6 +1107,8 @@ except UsageLimitExceeded as e:
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
+When a run resumes a turn the provider paused, from a message history ending in the `'suspended'` response an earlier run left behind (for example by breaking out of [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]), its usage covers only the requests it makes itself: the earlier run already counted what the suspended response was billed. The response that completes the turn still reports the whole turn's usage in the message history. Adding up the runs' usage gives what the provider billed for the conversation; to have [`UsageLimits`][pydantic_ai.usage.UsageLimits] cap that total rather than the resuming run alone, carry the earlier usage in with `usage=` or [`conversation=`](message-history.md#carrying-a-conversation-whole).
+
 ##### Capping tool calls
 
 If you need a limit on the number of successful tool invocations within a single run, use `tool_calls_limit`:
