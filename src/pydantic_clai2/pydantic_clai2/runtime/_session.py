@@ -8,13 +8,15 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
+from functools import partial
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 from uuid import uuid4
 
-from anyio import get_cancelled_exc_class, move_on_after
+from anyio import get_cancelled_exc_class, move_on_after, to_thread
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -42,7 +44,11 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -69,7 +75,8 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
 
-def _supports_local_workspace() -> bool:
+def supports_local_workspace() -> bool:
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
     return sys.platform != 'win32'
 
 
@@ -193,15 +200,16 @@ async def resolve_model_name(resolve: ModelNameResolver, model_id: str) -> Model
     return infer_model(model) if model != model_id else None
 
 
-def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
-    """The capabilities the agent was built with, so a sandbox configured on it counts too.
+def agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]] | None:
+    """The capabilities the agent was built with, so a sandbox or guardrail configured on it counts too.
 
-    A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win.
+    A run-level `LocalWorkspace` would be asked before the agent's own sandbox and win. `None` when
+    a custom `AbstractAgent` does not expose its capabilities.
     """
     try:
         return [agent.root_capability]
-    except NotImplementedError:  # A custom `AbstractAgent` need not expose its capabilities.
-        return []
+    except NotImplementedError:
+        return None
 
 
 def _command_env() -> dict[str, str]:
@@ -225,7 +233,7 @@ def local_workspace(
     None is added on platforms without a local workspace, or when a capability loaded up front supplies
     the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
     """
-    if not _supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
         return None
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
@@ -234,7 +242,7 @@ def local_workspace(
     return LocalWorkspace[DepsT](directory, env=_command_env())
 
 
-def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """`messages` with the last one marked interrupted, so core closes unanswered calls without replaying them."""
     marked = list(messages)
     if marked:
@@ -244,15 +252,16 @@ def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     return marked
 
 
-def _fork_summary(busy: ConversationSummary) -> ConversationSummary:
-    """A new saved session continuing `busy`, which another process is still running."""
+def fork_summary(source: ConversationSummary) -> ConversationSummary:
+    """A new saved session continuing `source`, such as one another process is still running."""
     return ConversationSummary(
-        workspace=busy.workspace,
-        title=f'{busy.title} (fork)',
-        subtitle=busy.subtitle,
-        tags=busy.tags,
-        title_source=busy.title_source,
-        model=busy.model,
+        workspace=source.workspace,
+        title=f'{source.title} (fork)',
+        subtitle=source.subtitle,
+        tags=source.tags,
+        title_source=source.title_source,
+        model=source.model,
+        checkout=source.checkout,
     )
 
 
@@ -277,6 +286,7 @@ class StockAgent(Agent[DepsT, OutputT]):
         deps_type: type[DepsT],
         output_type: OutputSpec[OutputT],
         capabilities: Sequence[AgentCapability[DepsT]],
+        name: str | None = None,
         defer_model_check: bool = False,
     ) -> None:
         super().__init__(
@@ -284,6 +294,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=deps_type,
             output_type=output_type,
             capabilities=capabilities,
+            name=name,
             defer_model_check=defer_model_check,
         )
         self._stock_deps_type = deps_type
@@ -300,6 +311,7 @@ class StockAgent(Agent[DepsT, OutputT]):
             deps_type=self._stock_deps_type,
             output_type=self.output_type,
             capabilities=[self.root_capability, *plugins],
+            name=self.name,
             defer_model_check=model is not None,
         )
 
@@ -322,14 +334,26 @@ class Session(Generic[DepsT, OutputT]):
         conversations: SqliteConversationStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
+        summary: ConversationSummary | None = None,
     ) -> None:
         self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self._identity: ProjectIdentity | None = None
+        """The Git checkout `workspace` is in, read once, when a session is first saved here."""
+        self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
+        """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
+        self.repl_states: ReplStates | None = (
+            ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
+            if conversations
+            else None
+        )
+        """Where code mode keeps each saved conversation's `run_code` REPL between prompts."""
         self.model: str | None = None
         self.model_chosen = True
         """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
@@ -357,9 +381,12 @@ class Session(Generic[DepsT, OutputT]):
         self.on_stream_event = on_stream_event
         self._messages: list[ModelMessage] = list(message_history)
         self._running = False
+        self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
+        self._monty_notes: list[tuple[str, str]] = []
+        """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
         self.on_context_window: Callable[[int], None] | None = None
         """Told the context window of each streamed request's model, when its profile knows one."""
@@ -376,12 +403,90 @@ class Session(Generic[DepsT, OutputT]):
         """Return a snapshot of the conversation's message list."""
         return list(self._messages)
 
-    def clear(self) -> None:
-        """Start a new conversation without replacing the agent or plugins."""
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` restores this conversation by."""
+        return self.summary.id
+
+    @property
+    def title(self) -> str | None:
+        """The saved title; `None` until the first prompt is saved."""
+        return self.summary.title if self.summary.revision else None
+
+    async def _publish(self) -> None:
+        """Tell `on_change` about a new conversation ID or title, once per change."""
+        identity = (self.conversation_id, self.title)
+        if identity == self._published:
+            return
+        self._published = identity
+        if self.on_change is not None:
+            await self.on_change(ConversationChanged(conversation_id=identity[0], title=identity[1]))
+
+    async def clear(self, conversation_id: str | None = None) -> None:
+        """Start a new conversation without replacing the agent or plugins.
+
+        It is saved under `conversation_id` once its first prompt is, or under a random ID by default.
+        Raises `ValueError` when a saved conversation already uses `conversation_id`.
+        """
+        if conversation_id is not None:
+            await self._ensure_unused(conversation_id)
+            if self.repl_states is not None:
+                # A REPL left by a session deleted outside CLAI must not reach the new conversation.
+                self.repl_states.delete(conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = ConversationSummary(id=conversation_id or str(uuid4()), workspace=self.workspace)
+        await self._publish()
+
+    async def _fork(self, conversation_id: str | None = None) -> str:
+        """Save a copy of this conversation under `conversation_id`, or a random ID, and continue in the copy.
+
+        The original is left as it was saved. Raises `ValueError` when a saved conversation already
+        uses `conversation_id`. This is `--fork-session`, named after Claude Code's flag: unlike
+        `/fork`, which runs a copy in the background, this session switches into the copy.
+        """
+        if self._running:
+            raise RuntimeError('Cannot fork a running conversation')
+        if self.conversations is None:
+            raise ValueError('Session persistence is not configured')
+        if conversation_id is not None:
+            await self._ensure_unused(conversation_id)
+        source = self.summary
+        copy = ConversationSummary(
+            id=conversation_id or str(uuid4()),
+            workspace=self.workspace,
+            title=source.title,
+            subtitle=source.subtitle,
+            tags=source.tags,
+            title_source=source.title_source,
+            model=self.model,
+        )
+        self.summary = await self.conversations.save(summary=await self._with_checkout(copy), messages=self._messages)
+        self._copy_repl(source.id, self.summary.id)
+        telemetry.record('conversation forked', messages=len(self._messages))
+        await self._publish()
+        return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
+
+    def _copy_repl(self, source: str, target: str) -> None:
+        """Give the fork `target` its own copy of the `run_code` REPL `source` saved."""
+        if self.repl_states is not None:
+            self.repl_states.copy(source=source, target=target)
+
+    async def _ensure_unused(self, conversation_id: str) -> None:
+        if self.conversations is None:
+            return
+        try:
+            await self.conversations.get(conversation_id=conversation_id)
+        except LookupError:
+            return
+        raise ValueError(f'A saved session already uses the ID {conversation_id}.')
+
+    async def renamed(self, *, conversation_id: str, title: str) -> None:
+        """Adopt a title already saved for `conversation_id`, if that is this conversation."""
+        if conversation_id == self.summary.id:
+            self.summary = replace(self.summary, title=title)
+            await self._publish()
 
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Swap the retained history, as `/compact` does after summarising it."""
@@ -396,19 +501,33 @@ class Session(Generic[DepsT, OutputT]):
         self._running = True
         try:
             if self.conversations is not None:
+                summary = replace(self.summary, outcome='ready', run_id=None, model=self.model)
                 self.summary = await self.conversations.save(
-                    summary=replace(self.summary, outcome='ready', run_id=None, model=self.model), messages=messages
+                    summary=await self._with_checkout(summary), messages=messages
                 )
             self._messages = list(messages)
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
         """Restore a saved head without invoking the model or replaying tools.
 
         A session another live process is running is not taken over: its newest saved state is
         copied into a new saved session, which this one continues while the original keeps running.
+
+        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
+        startup restore that runs before the observability plugin subscribes.
         """
+        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        await self._publish()
+        return notice
+
+    def record_resumed(self) -> None:
+        """Record the `conversation resumed` UI event for the last restore."""
+        if self._record_resumed is not None:
+            self._record_resumed()
+
+    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -433,24 +552,28 @@ class Session(Generic[DepsT, OutputT]):
                 if snapshot is not None:
                     messages = snapshot.messages
             if interrupted:
-                messages = _interrupted(messages)
+                messages = interrupted_history(messages)
             summary = saved.summary
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
             if busy is not None:
-                summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
+                self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
                     'The original keeps running there and may still change files. No tools were replayed.'
                 )
             self._messages = list(messages)
             self.summary = summary
-            telemetry.record(
+            self._record_resumed = partial(
+                telemetry.record,
                 'conversation resumed',
                 outcome=saved.summary.outcome,
                 messages=len(messages),
                 other_workspace=saved.summary.workspace != self.workspace,
                 forked=busy is not None,
             )
+            if record:
+                self.record_resumed()
             # Keep the caller's current model and approval configuration. Saved models are informational.
             return notice
         finally:
@@ -461,8 +584,20 @@ class Session(Generic[DepsT, OutputT]):
         if workspace != self.workspace:
             raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
 
+    async def _with_checkout(self, summary: ConversationSummary) -> ConversationSummary:
+        """`summary` with the Git checkout of this session's directory, so browsers can group it once that is gone.
+
+        Git is read once, off the event loop. A session resumed from another directory keeps the checkout it saved.
+        """
+        if summary.workspace != self.workspace:
+            return summary
+        if self._identity is None:
+            self._identity = await to_thread.run_sync(project_identity, self.workspace)
+        checkout = git_checkout(self._identity)
+        return summary if checkout is None else replace(summary, checkout=checkout)
+
     def _mark_interrupted(self) -> None:
-        self._messages = _interrupted(self._messages)
+        self._messages = interrupted_history(self._messages)
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:
@@ -539,6 +674,50 @@ class Session(Generic[DepsT, OutputT]):
             self._run_context.enqueue(*content, priority='asap')
         return True
 
+    async def run_in_monty(self, code: str) -> MontyCell:
+        """Run `code` as a `run_code` cell in Monty, outside the conversation; see `monty_cells`.
+
+        The cell runs with the session's tools and capabilities, so code mode must be on for it to
+        find `run_code`. The next prompt tells the model what ran.
+        """
+        if self._running:
+            raise RuntimeError('A turn is running. Run Monty cells between turns.')
+        cell = MontyCell(code=code)
+        self._running = True
+        try:
+            with session_context(self.summary.id):
+                _, capabilities = self._bind()
+                self._add_local_workspace(capabilities)
+                await self.agent.run(
+                    "Run the user's Monty cell.",
+                    output_type=str,
+                    deps=self.deps,
+                    model=cell.model(),
+                    message_history=[],
+                    conversation_id=self.summary.id,
+                    capabilities=capabilities,
+                    metadata={MONTY_CELL: True},
+                    event_stream_handler=self._stream,
+                )
+        finally:
+            self._running = False
+        self._monty_notes.append((self.summary.id, cell.note()))
+        return cell
+
+    def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
+        """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
+        configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
+        if (local := local_workspace(configured, self.workspace)) is None:
+            return False
+        capabilities.append(local)
+        return True
+
+    def _take_monty_notes(self) -> list[str]:
+        """The notes for cells run in this conversation since the last prompt; others are dropped."""
+        notes = [note for conversation_id, note in self._monty_notes if conversation_id == self.summary.id]
+        self._monty_notes.clear()
+        return notes
+
     async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
@@ -546,6 +725,9 @@ class Session(Generic[DepsT, OutputT]):
         content: str | Sequence[UserContent] | None = (
             [*([text] if text is not None else []), *images] if images else text
         )
+        if content is not None and (notes := self._take_monty_notes()):
+            # Monty holds what the user's cells did; tell the model before this prompt.
+            content = [*notes, *([content] if isinstance(content, str) else content)]
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
@@ -561,7 +743,7 @@ class Session(Generic[DepsT, OutputT]):
                         candidate = replace(candidate, title=title or 'New session')
                     accepted: list[ModelMessage] = [*previous, *submitted]
                     self.summary = await self.conversations.save(
-                        summary=replace(candidate, outcome='running'), messages=accepted
+                        summary=await self._with_checkout(replace(candidate, outcome='running')), messages=accepted
                     )
                     self._messages = accepted
                 with (
@@ -569,6 +751,9 @@ class Session(Generic[DepsT, OutputT]):
                     self.delegations.bind() if self.delegations is not None else nullcontext(),
                 ):
                     try:
+                        # The first save titles a new conversation. Inside the handlers below, so a
+                        # failed or cancelled observer still finalizes the `running` head saved above.
+                        await self._publish()
                         run_model, capabilities = self._bind()
                         if self.delegations is not None:
                             capabilities.append(
@@ -579,12 +764,9 @@ class Session(Generic[DepsT, OutputT]):
                                 )
                             )
                         workspace: Literal['new'] | None = None
-                        configured = [*_agent_capabilities(self.agent), *self.plugins]
-                        if (local := local_workspace(configured, self.workspace)) is not None:
-                            capabilities.append(local)
-                            if _stale_local_workspace(previous, self.workspace):
-                                # A conversation resumed from another directory: work in this session's.
-                                workspace = 'new'
+                        if self._add_local_workspace(capabilities) and _stale_local_workspace(previous, self.workspace):
+                            # A conversation resumed from another directory: work in this session's.
+                            workspace = 'new'
                         result = await self.agent.run(
                             content,
                             deps=self.deps,
@@ -655,7 +837,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                            self.on_context_usage(message.usage.total_tokens)
+                            self.on_context_usage(context_tokens(message))
                             break
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)

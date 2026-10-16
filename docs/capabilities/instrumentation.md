@@ -14,7 +14,7 @@ from pydantic_ai.capabilities import Instrumentation
 
 logfire.configure()  # (1)!
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation()])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation()])
 ```
 
 1. Sets the global `TracerProvider` that `Instrumentation` uses by default. Any OpenTelemetry SDK configuration works too.

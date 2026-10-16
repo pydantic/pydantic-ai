@@ -838,7 +838,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
         self._entered_model_ids: set[int] = set()
-        self._entered_models_by_selection: dict[tuple[int, str], models.Model] = {}
+        # Models built from a name with `infer_model` while the agent is entered, reused by later runs.
+        self._entered_models_by_name: dict[str, models.Model] = {}
 
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
@@ -1409,8 +1410,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1581,6 +1582,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             bootstrap_capability = model_layers[0]
         resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
+        # Models this run built from a name, which it enters so their HTTP clients close when it ends.
+        run_built_models: list[models.Model] = []
 
         # Explicit run/spec/override models are authoritative. Otherwise the capability model
         # contribution selects the initial model needed to construct RunContext and resolve
@@ -1607,6 +1610,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                run_built_models=run_built_models,
             )
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
@@ -1667,17 +1671,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
-        # Build the initial state
+        # Build the initial state. Inside a durable workflow or flow, the durability capability supplies
+        # the default ids, so a re-execution of this code gets the same ones.
+        resolved_run_id = _agent_graph.resolve_run_id(
+            run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+            message_history,
+        )
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,
             output_retries_used=0,
             run_step=0,
-            run_id=_agent_graph.resolve_run_id(
-                run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+            run_id=resolved_run_id,
+            conversation_id=_agent_graph.resolve_conversation_id(
+                conversation_id,
                 message_history,
+                default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
             ),
-            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
@@ -1694,8 +1704,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
         # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
-        # and are trusted to adapt across steps; static dict values would lock every step into a
-        # tool call and prevent the agent from producing a final response.
+        # and are trusted to adapt across steps. A static forcing choice must leave at least one
+        # output tool available so the agent can produce a final response.
         baseline_settings: ModelSettings | None = model_used.settings
         if not callable(agent_model_settings):
             baseline_settings = merge_model_settings(baseline_settings, agent_model_settings)
@@ -1703,7 +1713,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             baseline_settings = merge_model_settings(baseline_settings, run_model_settings)
         if baseline_settings:
             tool_choice = baseline_settings.get('tool_choice')
-            if tool_choice == 'required' or isinstance(tool_choice, list):
+            if tool_choice == 'required':
                 raise exceptions.UserError(
                     f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
                     f'because output tools are excluded. Use `ToolOrOutput` to combine specific function '
@@ -1711,6 +1721,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     f'`get_model_settings()` to vary `tool_choice` per step, or use '
                     f'`pydantic_ai.direct.model_request` for single-shot model calls.'
                 )
+            if isinstance(tool_choice, list):
+                output_tool_names = set(output_toolset.processors) if output_toolset is not None else set[str]()
+                if output_tool_names.isdisjoint(tool_choice):
+                    raise exceptions.UserError(
+                        f'`tool_choice={tool_choice!r}` names no output tool, so the agent cannot produce a final '
+                        f'response because it must call one of the listed tools on every step. Name an output tool '
+                        f'in the list, use `ToolOrOutput` to combine specific function tools with output capability, '
+                        f"return a callable from a capability's `get_model_settings()` to vary `tool_choice` per "
+                        f'step, or use `pydantic_ai.direct.model_request` for single-shot model calls.'
+                    )
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
@@ -1955,6 +1975,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                run_built_models=run_built_models,
             )
             model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
@@ -2054,6 +2075,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cancellation_token=cancellation_token,
             model=model_used,
             capability_owns_current_model=capability_owns_current_model,
+            run_built_models=run_built_models,
             model_resources=model_resources,
             run_capability=run_capability,
             toolset=toolset,
@@ -3122,23 +3144,50 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
+        run_built_models: list[models.Model] | None = None,
     ) -> models.Model:
-        """Resolve a concrete model selection through the capability chain."""
+        """Resolve a concrete model selection through the capability chain.
+
+        A name that only `infer_model` can resolve builds a new model, with its own provider and HTTP client.
+        While the agent is entered and has no `resolve_model_id` capability, that model is entered on the agent's
+        exit stack and reused by later runs; otherwise it's added to `run_built_models` so the run can enter it
+        and close its client when it ends.
+        """
         if not isinstance(selection, str):
             return selection
         cache_key = (id(capability), selection)
         if resolved_models is not None and (resolved_model := resolved_models.get(cache_key)) is not None:
             return resolved_model
-        if entered_model := self._entered_models_by_selection.get(cache_key):
-            if resolved_models is not None:
-                resolved_models[cache_key] = entered_model
-            return entered_model
-        resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
-        resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
-        resolved_model = resolved if resolved is not None else models.infer_model(selection)
+        if capability.has_resolve_model_id:
+            # Resolution can depend on the run's deps, so it isn't reused across runs.
+            resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
+            resolved_model = await capability.resolve_model_id(resolution_ctx, model_id=selection)
+        else:
+            resolved_model = await self._entered_model_for_name(selection)
+        if resolved_model is None:
+            resolved_model = models.infer_model(selection)
+            if run_built_models is not None:
+                run_built_models.append(resolved_model)
         if resolved_models is not None:
             resolved_models[cache_key] = resolved_model
         return resolved_model
+
+    async def _entered_model_for_name(self, name: str) -> models.Model | None:
+        """Return the model built from `name` for this entered agent, building and entering it on first use.
+
+        Returns `None` when the agent isn't entered, as nothing would close a client built here.
+        """
+        if (entered_model := self._entered_models_by_name.get(name)) is not None or self._entered_count == 0:
+            return entered_model
+        async with self._enter_lock:
+            # Concurrent runs can get here for the same name, so only the first one builds the model.
+            exit_stack = self._exit_stack
+            if exit_stack is not None and name not in self._entered_models_by_name:
+                entered_model = models.infer_model(name)
+                await exit_stack.enter_async_context(entered_model)
+                self._entered_models_by_name[name] = entered_model
+                self._entered_model_ids.add(id(entered_model))
+            return self._entered_models_by_name.get(name)
 
     async def _evaluate_model_contribution(
         self,
@@ -4179,7 +4228,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         await exit_stack.enter_async_context(model)
                         self._entered_model_ids.add(id(model))
                         if isinstance(static_selection, str):
-                            self._entered_models_by_selection[id(capability), static_selection] = model
+                            self._entered_models_by_name[static_selection] = model
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
@@ -4194,7 +4243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 finally:
                     self._exit_stack = None
                     self._entered_model_ids.clear()
-                    self._entered_models_by_selection.clear()
+                    self._entered_models_by_name.clear()
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all [`MCPToolset`s][pydantic_ai.mcp.MCPToolset] registered with the agent.
@@ -4339,6 +4388,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     cancellation_token: CancellationToken | None
     model: models.Model
     capability_owns_current_model: bool
+    run_built_models: list[models.Model]
     model_resources: _RunModelResources
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
@@ -4460,6 +4510,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
             if self.capability_owns_current_model:
                 await self.model_resources.enter_model(self.model)
+            # Including one the run's capabilities replaced, which would otherwise never be closed.
+            for built_model in self.run_built_models:
+                await self.model_resources.enter_model(built_model)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,

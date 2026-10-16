@@ -21,6 +21,7 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -31,7 +32,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -44,6 +45,7 @@ from pydantic_clai2.commands import (
     set_completions,
 )
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -52,11 +54,14 @@ from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
+    CommandEnd,
+    ConversationChanged,
     ModelProvider,
     PluginLogin,
     Renderer,
     SessionEndReason,
     SessionStart,
+    TaskEvent,
     TurnEnd,
     TurnStart,
     bare_screen,
@@ -67,6 +72,7 @@ from pydantic_clai2.runtime._session import (
     Session,
     SessionModels,
     StockAgent,
+    agent_capabilities,
     current_session_id,
     local_workspace,
     resolve_model_name,
@@ -74,12 +80,14 @@ from pydantic_clai2.runtime._session import (
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES, ImportSource
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
@@ -104,6 +112,8 @@ from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
+from pydantic_clai2.ui.stderr_relay import relay_stderr
+from pydantic_clai2.ui.telemetry_log import telemetry_log
 
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
@@ -113,55 +123,7 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
-
-
-DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
-    PluginSettings(
-        id='coder',
-        factory='pydantic_clai2.builtin_plugins.coder',
-        settings={
-            'unrestricted_filesystem': True,
-            'repo_context': False,
-            'sub_agents': False,
-            'agent_folders': ['agents'],
-        },
-    ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
-    PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
-    PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
-    PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
-    PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
-    PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
-    PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
-    PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
-    PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),
-    PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False),
-    PluginSettings(id='ordinal', factory='pydantic_clai2.builtin_plugins.ordinal', enabled=False),
-    PluginSettings(id='notion', factory='pydantic_clai2.builtin_plugins.notion', enabled=False),
-    PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False),
-    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.builtin_plugins.logfire_mcp', enabled=False),
-    PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
-    PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
-    PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
-    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
-)
-"""Built-in declarations, each integrated with the shell. `remove` restores their defaults.
-
-Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
-
-`coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
-`compaction` runs alongside `coder`, whose `ClearToolResults` only empties old tool results; see `plugins.compatibility`.
-"""
-
-STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
-    plugin.model_copy(update={'settings': {**plugin.settings, 'sub_agents': True}}) if plugin.id == 'coder' else plugin
-    for plugin in DEFAULT_PLUGINS
-)
-"""CLI-owned agents bind plugins at construction, so Coder can delegate safely.
-
-`DEFAULT_PLUGINS` keeps its run-level delegation opt-out for caller-supplied agents.
-"""
+_PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
 
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
@@ -170,8 +132,11 @@ def create_agent(model: str | None = None) -> Agent[None, str]:
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
-    """Build the CLI-owned template; caller-supplied agents are never reconstructed."""
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
+    """Build the CLI-owned template; caller-supplied agents are never reconstructed.
+
+    It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
+    """
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
 
 
 @asynccontextmanager
@@ -266,6 +231,8 @@ async def chat(
     resume: str | None = None,
     resume_from: ImportSource | None = None,
     load_plugins: bool = True,
+    session_id: str | None = None,
+    fork_session: bool = False,
     worktree: Worktree | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
@@ -276,8 +243,13 @@ async def chat(
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
+    `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
+    or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
     """
+    # Before anything is drawn, as the CLI checks these before it starts.
+    session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
@@ -301,87 +273,117 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
-    async with agent:
-        while True:
-            reason: SessionEndReason = 'error'
-            with theme.use(lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None):
-                try:
-                    async with create_task_group() as workers:
-                        workers.start_soon(shell.sessions.namer.run)
-                        try:
-                            with (
-                                transcript.capture(console),
-                                shell.defer_identity() if resume is not None else nullcontext(),
-                            ):
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
-                                if resume is not None:
-                                    source = [resume_from] if resume_from else []
-                                    console.print(
-                                        await shell.sessions.command([*source, resume] if resume else source),
-                                        markup=False,
-                                    )
-                                    resume = None
-                            warming = warming or warm_imports.start()
-                            reason = await shell.run()
-                        finally:
-                            workers.cancel_scope.cancel()
-                except BaseExceptionGroup as exc:
-                    if len(exc.exceptions) == 1:
-                        raise exc.exceptions[0] from None
-                    raise
-                finally:
-                    with transcript.capture(console):
-                        await shell.loader.close(reason)
-            if not shell.reload_requested:
-                if (executable := shell.updates.relaunch) is not None:
-                    summary = shell.session.summary
-                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
-                return
-            shell.reload_requested = False
-            if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
-                warming.join()
-            try:
-                shell = reload_clai(
-                    lambda shell=shell: create_shell(
-                        rebuild_stock(()) if rebuild_stock is not None else agent,
-                        deps=deps,
-                        plugins=plugins,
-                        usage_limits=shell.session.usage_limits,
-                        console=console,
-                        settings=shell.context.settings,
-                        store=SettingsStore(shell.context.store.path),
-                        builtin_plugins=(
-                            STOCK_PLUGINS
-                            if use_stock_defaults
-                            else DEFAULT_PLUGINS
-                            if use_defaults
-                            else builtin_plugins
-                        ),
-                        project=project,
-                        message_history=shell.session.messages,
-                        summary=shell.session.summary,
-                        transcript=shell.transcript,
-                        load_plugins=load_plugins,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
-                with transcript.capture(console):
-                    console.print(
-                        f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
-                    )
-                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
-                        console.print(
-                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
-                            '--resume to continue this session. Keep the worktree if asked to remove it.',
-                            style=theme.color(theme.INFO),
-                            markup=False,
+    with (
+        telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        relay_stderr() if console.is_terminal else nullcontext(),
+    ):
+        async with agent:
+            while True:
+                reason: SessionEndReason = 'error'
+                with theme.use(
+                    lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None
+                ):
+                    try:
+                        async with create_task_group() as workers:
+                            workers.start_soon(shell.sessions.namer.run)
+                            try:
+                                with transcript.capture(console):
+                                    # Apply launch options first, so plugins start with the conversation they
+                                    # name. The browser waits for plugins, whose models may name its sessions,
+                                    # and until it picks one, telemetry has no session to assign.
+                                    browse = resume == ''
+                                    restored = bool(resume)
+                                    notice = ''
+                                    if not browse and (resume is not None or session_id is not None):
+                                        notice = await shell.sessions.start(
+                                            resume=resume,
+                                            resume_from=resume_from,
+                                            session_id=session_id,
+                                            fork=fork_session,
+                                        )
+                                    with shell.defer_identity() if browse else nullcontext():
+                                        await shell.loader.load_all(fresh=fresh)
+                                        _report_project_plugins(shell.loader, console)
+                                        if restored:
+                                            # Now that observability has subscribed and renderers have loaded.
+                                            shell.session.record_resumed()
+                                            await shell.sessions.show_resumed()
+                                        if browse:
+                                            notice = await shell.sessions.start(
+                                                resume='',
+                                                resume_from=resume_from,
+                                                session_id=session_id,
+                                                fork=fork_session,
+                                            )
+                                        if notice:
+                                            console.print(notice, markup=False)
+                                    resume = session_id = None
+                                warming = warming or warm_imports.start()
+                                reason = await shell.run()
+                            finally:
+                                workers.cancel_scope.cancel()
+                    except BaseExceptionGroup as exc:
+                        if len(exc.exceptions) == 1:
+                            raise exc.exceptions[0] from None
+                        raise
+                    finally:
+                        with transcript.capture(console):
+                            await shell.loader.close(reason)
+                if not shell.reload_requested:
+                    if (executable := shell.updates.relaunch) is not None:
+                        summary = shell.session.summary
+                        raise Relaunch(
+                            executable=executable,
+                            session_id=summary.id if summary.revision else None,
+                            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+                            new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
                         )
-                fresh = False
-            else:
-                with transcript.capture(console):
-                    console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
-                fresh = True
+                    return
+                shell.reload_requested = False
+                if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
+                    warming.join()
+                try:
+                    shell = reload_clai(
+                        lambda shell=shell: create_shell(
+                            rebuild_stock(()) if rebuild_stock is not None else agent,
+                            deps=deps,
+                            plugins=plugins,
+                            usage_limits=shell.session.usage_limits,
+                            console=console,
+                            settings=shell.context.settings,
+                            store=SettingsStore(shell.context.store.path),
+                            builtin_plugins=(
+                                STOCK_PLUGINS
+                                if use_stock_defaults
+                                else DEFAULT_PLUGINS
+                                if use_defaults
+                                else builtin_plugins
+                            ),
+                            project=project,
+                            message_history=shell.session.messages,
+                            summary=shell.session.summary,
+                            launched=shell.sessions.launched,
+                            transcript=shell.transcript,
+                            load_plugins=load_plugins,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
+                    with transcript.capture(console):
+                        console.print(
+                            f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
+                        )
+                        if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                            console.print(
+                                'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                                '--resume to continue this session. Keep the worktree if asked to remove it.',
+                                style=theme.color(theme.INFO),
+                                markup=False,
+                            )
+                    fresh = False
+                else:
+                    with transcript.capture(console):
+                        console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
+                    fresh = True
 
 
 def _parse(name: str) -> ModelRef:
@@ -526,6 +528,7 @@ def create_shell(
     project: ProjectSettings,
     message_history: Sequence[ModelMessage] = (),
     summary: ConversationSummary | None = None,
+    launched: str | None = None,
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
     load_plugins: bool = True,
@@ -546,9 +549,8 @@ def create_shell(
         usage_limits=usage_limits,
         message_history=message_history,
         conversations=conversations,
+        summary=summary,
     )
-    if summary is not None:
-        session.summary = summary
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
@@ -560,9 +562,7 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(
-        settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
-    )
+    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -582,7 +582,7 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    sessions = Sessions(session=session, store=conversations, context=context)
+    sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
     commands = Commands()
     commands.register(
         Command(
@@ -708,8 +708,8 @@ def create_shell(
         transcript.clear()
         _print_welcome(project, console)
 
-    def clear(_: list[str]) -> str:
-        session.clear()
+    async def clear(_: list[str]) -> str:
+        await session.clear()
         reset_screen()
         return ''
 
@@ -757,7 +757,7 @@ def create_shell(
         store=store,
         console=console,
         commands=commands,
-        session_start=lambda: SessionStart(agent=agent, settings=context.settings),
+        session_start=lambda: SessionStart(agent=agent, settings=context.settings, conversation_chosen=sessions.chosen),
         builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
@@ -765,7 +765,14 @@ def create_shell(
         session_id=lambda: shell.session_id,
         status=status,
         enabled=load_plugins,
+        submit_prompt=lambda text: shell.submit_prompt(text),
+        send_input=lambda text: shell.send_input(text),
+        interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
+        sessions=sessions,
+        setting=context.setting,
+        tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
+    session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -828,7 +835,7 @@ def create_shell(
         interrupts=Interrupts(),
         screen=screen,
         sessions=sessions,
-        speculation=Speculation(context=context, console=console),
+        speculation=Speculation(context=context, console=console, repl_states=session.repl_states),
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
@@ -856,6 +863,15 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+    commands.register(
+        Command(
+            name='monty',
+            description="Run your own Python in Monty, this session's run_code sandbox: /monty CODE",
+            handler=shell.monty_command,
+            raw=True,
+            live=True,
+        )
+    )
 
     async def show_resumed(messages: Sequence[ModelMessage]) -> None:
         # The live panel swaps to the restored conversation; startup output above it stays.
@@ -868,6 +884,22 @@ def create_shell(
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
     return shell
+
+
+@dataclass(kw_only=True)
+class _ConversationFooter:
+    """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
+
+    status: Status
+    fire: Callable[[ConversationChanged], Awaitable[None]]
+    shown: str
+
+    async def changed(self, event: ConversationChanged) -> None:
+        # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
+        if event.conversation_id != self.shown:
+            self.shown = event.conversation_id
+            self.status.clear_conversation()
+        await self.fire(event)
 
 
 @dataclass(kw_only=True)
@@ -893,6 +925,8 @@ class _Shell(Generic[DepsT, OutputT]):
     updates: Updates
     transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     images: ImageInput = field(default_factory=ImageInput)
+    submitted: list[str] | None = None
+    """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
     editor: LivePrompt | None = None
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -900,6 +934,8 @@ class _Shell(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
+    """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
 
     @property
     def session_id(self) -> str | None:
@@ -908,12 +944,13 @@ class _Shell(Generic[DepsT, OutputT]):
 
     @contextmanager
     def defer_identity(self) -> Generator[None]:
-        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        """Keep startup telemetry unassigned until the requested conversation is selected, then bind roots to it."""
         self._identity_pending = True
         try:
             yield
         finally:
             self._identity_pending = False
+        telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(
@@ -923,6 +960,9 @@ class _Shell(Generic[DepsT, OutputT]):
             if str(self.sessions.store.database) == ':memory:'
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
+            fire=self.loader.fire,
+            listening=lambda: self.loader.handles(TaskEvent),
+            send_input=self.send_input,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -932,19 +972,23 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
+        mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities())
         bound = (*self.plugins, *self.loader.run_capabilities())
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
-        return (*bound, *self.speculation.capabilities(granted))
+        own = agent_capabilities(self.agent)
+        # An agent that hides its capabilities may guard tools a mount would bypass, so it gets none.
+        return (*bound, *self.speculation.capabilities(None if own is None else (*own, *granted)))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
         """Report that a failing settings-built capability is left out of later turns."""
@@ -969,6 +1013,8 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
+        if child.repl_states is not None:
+            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -978,20 +1024,54 @@ class _Shell(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /tasks [stop|background|resume ID]')
         record = self.tasks.resolve(args[1])
         if args[0] == 'stop':
-            await self.tasks.owner.cancel(record.id)
-            await self.tasks.owner.save(record)
+            await self.tasks.stop(record.id)
             return f'Stopping task {record.id[:8]} and its descendants.'
         if args[0] == 'background':
-            self.tasks.owner.background(record.id)
+            self.tasks.background(record.id)
             return f'Task {record.id[:8]} moved to background.'
         await self.tasks.owner.allow_resume(record.id)
         if self.editor is None:
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
-        self.editor.submit(
-            f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
-            f'resume={record.id!r}. Continue from its saved history and report the result.'
-        )
+        self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
+
+    def submit_prompt(self, text: str) -> None:
+        """Queue `text` to run as a turn once the running `/command` returns."""
+        if self.submitted is None:
+            raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
+        self.submitted.append(text)
+
+    async def monty_command(self, args: list[str]) -> str:
+        """`/monty CODE`: run a cell in Monty, code mode's sandbox; the next prompt tells the model."""
+        code = args[0].strip() if args else ''
+        if not code:
+            raise ValueError("Usage: /monty CODE runs your own cell in Monty, this session's run_code sandbox.")
+        if not (self.speculation.enabled or self.context.settings.code_mode):
+            raise ValueError('Code mode is off, so there is no Monty sandbox. Turn it on with /set run.code_mode true.')
+        if self.session.repl_states is None:
+            raise ValueError('This CLAI saves no sessions, so no Monty state outlives a run.')
+        self.session.plugins = self.run_plugins()
+        cell = await self.session.run_in_monty(code)
+        if cell.failed:
+            raise ValueError(f'The cell failed:\n{cell.report()}')
+        return cell.report() or '(no output)'
+
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
+
+        A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
+        editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
+        used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+        """
+        if self.prompt is not None and self.editor is None:
+            raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
+        text = expand_bare_command(text.strip())
+        if not text or self.run_now(text):
+            return
+        if self.editor is not None:
+            self.editor.submit(text)
+        else:
+            self._inbox.put_nowait(text)
 
     def request_reload(self, args: list[str]) -> str:
         if args:
@@ -1029,6 +1109,9 @@ class _Shell(Generic[DepsT, OutputT]):
             self.screen.editor = self.editor.suspended
             try:
                 async with self.editor.opened():
+                    # Input a plugin entered while plugins loaded, before the editor existed.
+                    while not self._inbox.empty():
+                        self.editor.submit(self._inbox.get_nowait())
                     self.tasks.wake = self.editor.wake
                     if self.tasks.owner.reports(conversation_id=self.session.summary.id):
                         self.editor.wake()
@@ -1077,25 +1160,35 @@ class _Shell(Generic[DepsT, OutputT]):
             async for text in commands:
                 menus.start_soon(self._run_mid_turn, text)
 
+    def background_running(self) -> bool:
+        """Whether a background fork or a delegated task runs, using the plugins loaded now."""
+        return any(record.status == 'running' for record in self.forks.records) or any(
+            record.status == 'running' for record in self.tasks.owner.records.values()
+        )
+
     def plugins_busy(self, text: str) -> bool:
         """Keep plugin-owned transports alive until all children using them settle."""
         if text.split(maxsplit=1)[0] != '/plugins':
             return False
         if not any(record.status == 'running' for record in self.tasks.owner.records.values()):
             return False
-        self.console.print(
-            'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.', markup=False
-        )
+        self.console.print(_PLUGINS_WAIT, markup=False)
+        return True
+
+    async def _refused(self, text: str) -> bool:
+        """`plugins_busy`, telling plugins the command was refused, as `send_input` callers wait for its end."""
+        if not self.plugins_busy(text):
+            return False
+        await self.loader.fire(CommandEnd(text=text, error=RuntimeError(_PLUGINS_WAIT)))
         return True
 
     async def _run_mid_turn(self, text: str) -> None:
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
-            if self.plugins_busy(text):
+            if await self._refused(text):
                 return
-            # A running conversation cannot be replaced, so the turn's footer counters stay.
-            await _execute_command(self.commands, text, console=self.console, status=None)
+            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1127,9 +1220,10 @@ class _Shell(Generic[DepsT, OutputT]):
                 self._show_status_segments()
                 if self.editor is not None:
                     text = await self.editor.read()
-                else:
-                    assert self.prompt is not None
+                elif self.prompt is not None:
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+                else:
+                    text = (await self._inbox.get()).strip()
             except PromptRewind:
                 await self._rewind()
                 continue
@@ -1152,7 +1246,8 @@ class _Shell(Generic[DepsT, OutputT]):
             self.images.notice = ''
             if not text:
                 continue
-            if self.editor is not None:
+            # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
+            if self.prompt is None:
                 self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             if await self._dispatch_input(text):
@@ -1168,6 +1263,9 @@ class _Shell(Generic[DepsT, OutputT]):
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
+        return await self._prompt(text)
+
+    async def _prompt(self, text: str) -> bool:
         if self.session.model is None and self.agent.model is None:
             self.images.retry_text = text
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
@@ -1180,35 +1278,56 @@ class _Shell(Generic[DepsT, OutputT]):
                 await self.editor.output.drain()
 
     async def _command(self, text: str) -> bool:
-        if self.plugins_busy(text):
+        if await self._refused(text):
             return False
-        if self.editor is not None and self.commands.runs_live(text):
-            return await self._live_command(text, self.editor)
-        async with self.forks.busy(), self._released():
-            await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
-        return (
-            text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
-        )
+        self.submitted = submitted = list[str]()
+        ended: list[CommandEnd] = []
+        try:
+            if self.editor is not None and self.commands.runs_live(text):
+                completed = await self._live_command(text, self.editor, ended)
+                exiting = self.interrupts.exit_requested
+            else:
+                async with self.forks.busy(), self._released():
+                    completed = await self.interrupts.run(self._execute(text, ended))
+                exiting = (
+                    text == '/exit'
+                    or self.interrupts.exit_requested
+                    or self.reload_requested
+                    or self.updates.restart_required
+                )
+        finally:
+            self.submitted = None
+        # Plugins hear of the command once Esc no longer reaches it, so a slow handler cannot cancel it.
+        for event in ended:
+            await self.loader.fire(event)
+        # A cancelled command's prompts are cancelled with it.
+        while completed and submitted and not exiting:
+            exiting = await self._prompt(submitted.pop(0))
+        return exiting
 
-    async def _live_command(self, text: str, editor: LivePrompt) -> bool:
+    async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
+        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
+        ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
 
         Suspending the editor instead would freeze its last frame, an idle prompt and a `ready`
         footer, for as long as the command runs, and echo keys raw into the terminal.
+
+        Returns whether the command completed: `False` when the user cancelled it.
         """
         async with self.forks.busy():
             self.status.activity = 'working'
             try:
-                completed = await self.interrupts.run(
-                    _execute_command(self.commands, text, console=self.console, status=self.status)
-                )
+                completed = await self.interrupts.run(self._execute(text, ended))
             finally:
                 self.status.activity = 'ready'
                 await editor.output.drain()
         if not completed:
             self.console.print('Command cancelled.', style=theme.color(theme.MUTED))
             self.console.print()
-        return self.interrupts.exit_requested
+        return completed
 
     async def _turn(self, text: str | None) -> bool:
         automated = text is None
@@ -1322,9 +1441,10 @@ class _Shell(Generic[DepsT, OutputT]):
 
 
 def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
+    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
     console.print()
     print_banner(console)
+    console.print(f'pydantic-clai2 {installed().label}', style=theme.color(theme.MUTED))
     if worktree is not None:
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
@@ -1358,28 +1478,21 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status | None) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console) -> CommandEnd:
+    """Run a command and show its result; the caller tells plugins, outside the scope that Esc cancels."""
+    ended = CommandEnd(text=text)
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
         if not is_silent(result):
+            ended.output = result
             console.print(result, markup=False)
             console.print()
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
+        ended.error = exc
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    if status is not None:
-        _reset_status(text, status)
-
-
-def _reset_status(command: str, status: Status) -> None:
-    if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
-        status.context_tokens = None
-        status.context_window = None
-        status.context_alert = False
-        status.output_tokens = None
-        status.cost = None
-        status.streamed_chars = 0
+    return ended
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
@@ -1504,7 +1617,7 @@ async def _run_prompt(
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
-                status.context_tokens = message.usage.total_tokens or None
+                status.context_tokens = context_tokens(message) or None
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)

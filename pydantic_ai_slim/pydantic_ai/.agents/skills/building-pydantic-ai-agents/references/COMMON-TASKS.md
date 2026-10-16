@@ -38,6 +38,10 @@ Read [Enable Thinking Across Providers](./CAPABILITIES-AND-HOOKS.md#enable-think
 
 Read [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers).
 
+## Debug Low Cache Hit Rate
+
+Read the debugging checklist in [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers).
+
 ## Use MCP Servers
 
 Read [Use MCP Servers](./TOOLS-CORE.md#use-mcp-servers).

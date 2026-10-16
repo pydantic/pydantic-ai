@@ -37,7 +37,7 @@ voice = Agent(instructions='You are a helpful voice assistant.')
 
 async def main(prior_history=()):
     async with voice.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         message_history=prior_history,
     ).session() as session:
         await session.send('Continue where we left off.')
@@ -83,11 +83,11 @@ from pydantic_ai import Agent
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 voice = Agent(instructions='You are a helpful voice assistant.')
-notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bullet points.')
+notetaker = Agent('{{ openai:medium }}', instructions='Summarize the conversation as bullet points.')
 
 
 async def main():
-    async with voice.realtime('openai:gpt-realtime').session() as session:
+    async with voice.realtime('{{ openai:realtime }}').session() as session:
         await session.send('Please remind me to book a train tomorrow.')
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
@@ -161,6 +161,12 @@ delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.message
 waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
 their part's audio until they are consumed.
 
+Retained audio is kept in the history
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns, on every provider. The conversation a
+tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input recorded on
+each response's [span](observability.md), carry transcripts without that audio for now; the events and
+the response a span records keep it.
+
 Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
 Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
 Gemini does not report those boundaries, so it retains input between response completions. Either
@@ -180,7 +186,7 @@ agent = Agent()
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session(
+    async with agent.realtime('{{ openai:realtime }}').session(
         retain_images_every_n=10, retain_images_max=25
     ):
         ...
@@ -200,14 +206,32 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn. A turn the user
-starts while the model is still answering, whether they [barge in](turns.md#barge-in) or push to talk
-over it, is recorded after that answer. Such a turn joins history once the provider ends the answer it
-cut off, or after a few seconds if the provider never does. In that fallback the turn is recorded where
-history stands, so it lands before the answer it interrupted, and ahead of anything sent with
-[`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was still in flight. If a reported speech
-segment never receives a transcript, the session still records its retained audio or a content-less
-`SpeechPart` when the session closes.
+even when they arrive after that turn's response or overlap the following turn (on Gemini Live and
+GPT-Live, until that response ends: see below).
+
+History follows the order of the provider's own conversation:
+
+- A spoken turn sits where the provider added it, and text, images, and tool results where they reached
+  it. A turn the user started while the model was still answering, but which the provider only committed
+  after that answer ended, is recorded after the answer. Gemini Live and GPT-Live don't say where an input
+  joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and
+  something sent while a reply is owed (requested, or already being spoken) is recorded after that reply. On
+  them, a spoken turn's transcript is complete when the reply to it ends, and words transcribed after that are
+  recorded as a turn of their own, after the reply.
+- A message appears in `all_messages()` once everything before it is final. On OpenAI, Azure OpenAI, and
+  xAI, a reply waits for the transcript of the spoken turn before it, which can arrive after the reply
+  itself is done, for up to 30 seconds after that; past that, the turn is recorded with the transcript it
+  has so far.
+- Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
+  The one exception is a tool's return, which always directly follows the response that called it: a tool
+  that finishes after later messages were recorded has its return inserted ahead of them.
+
+- Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
+  call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
+  records [text phases](../models/openai.md#text-phases).
+
+If a reported speech segment never receives a transcript, the session still records its retained audio or
+a content-less `SpeechPart`, at the latest when the session closes.
 
 With transcription disabled:
 
@@ -215,10 +239,12 @@ With transcription disabled:
 - without input retention, the session records a content-less user `SpeechPart`;
 - on providers that report speech boundaries (OpenAI, Azure, and xAI with server VAD), each turn is
   the speech between them: the silence an always-on microphone streams between utterances is no turn.
-  Gemini Live reports none, so a turn there runs to the response that answers it, and audio sent after
-  the last response is recorded as one more turn when the session closes;
-- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn; a
-  commit with no audio since the last one records nothing;
+  Gemini Live reports none, so a turn there is the audio sent since the last reply, recorded as the model
+  replies to it;
+- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
+  provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
+  and one still held back when the session closes records nothing); a commit with no audio since the last one
+  records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

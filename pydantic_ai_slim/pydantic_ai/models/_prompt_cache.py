@@ -109,6 +109,27 @@ def excess_cache_points(
     return excess
 
 
+def raise_earlier_cache_ttls(ttls: Sequence[Literal['5m', '1h']]) -> list[Literal['5m', '1h']]:
+    """Raise each cache breakpoint's TTL to the longest TTL of the breakpoints after it.
+
+    Anthropic, also on Amazon Bedrock, rejects a request where a breakpoint with a longer TTL comes after one with a
+    shorter TTL: "Cache entries with longer TTL must appear before shorter TTLs"
+    (https://platform.claude.com/docs/en/build-with-claude/prompt-caching). Raising the earlier breakpoints, rather
+    than shortening the later one, keeps the longer TTL that was asked for.
+
+    Args:
+        ttls: Each breakpoint's TTL, in the order the provider processes them.
+    """
+    raised: list[Literal['5m', '1h']] = []
+    longest: Literal['5m', '1h'] = '5m'
+    for ttl in reversed(ttls):
+        if ttl == '1h':
+            longest = ttl
+        raised.append(longest)
+    raised.reverse()
+    return raised
+
+
 LOOKBACK_SAFE_BLOCKS = 18
 """How many content blocks a moving message breakpoint can safely move past the previous request's.
 
