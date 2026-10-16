@@ -2351,8 +2351,8 @@ Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, the web UI opened a session, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
-| `on_session_end` | CLAI is quitting, the plugin is unloading, or its session closed for being idle | `reason`: `exit`, `eof`, or `error` | no |
+| `on_session_start` | CLAI has started, before the first prompt, a new live session opened (from the web UI, or `host.live.open` or `new`), or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
+| `on_session_end` | CLAI is quitting, the plugin is unloading, or its session closed (idle for an hour, or `host.live.close`) | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
