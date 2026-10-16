@@ -85,7 +85,7 @@ async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
 
 
 async def test_archiving_is_metadata_that_listing_filters(tmp_path: Path) -> None:
-    """Archiving keeps messages, revision, and activity time; a content save keeps the archive; it is reversible."""
+    """Archiving keeps messages, revision, and activity time, and is reversible; new content lists it again."""
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     kept = await store.save(summary=ConversationSummary(workspace='/a', title='Kept'), messages=[])
     old = await store.save(
@@ -101,11 +101,13 @@ async def test_archiving_is_metadata_that_listing_filters(tmp_path: Path) -> Non
     assert [e.id for e in await store.listing(archived=True)] == [old.id]
     assert [e.id for e in await store.listing()] == [old.id, kept.id]
     assert [e.id for e in await store.listing(query='old work', archived=True)] == [old.id]
-    # A writer holding the summary from before the archive does not take it back.
-    saved = await store.save(summary=old, messages=[])
-    assert saved.archived_at == archived.archived_at
     restored = await store.set_archived(conversation_id=old.id, archived=False)
-    assert restored == replace(saved, archived_at=None)
+    assert restored == old
+    assert [e.id for e in await store.listing(archived=False)] == [old.id, kept.id]
+    await store.set_archived(conversation_id=old.id, archived=True)
+    # Saving new content, even from a summary read while it was archived, lists it again.
+    saved = await store.save(summary=archived, messages=[])
+    assert saved.archived_at is None
     assert [e.id for e in await store.listing(archived=False)] == [old.id, kept.id]
     with pytest.raises(LookupError, match='No saved session'):
         await store.set_archived(conversation_id='missing', archived=True)

@@ -7,6 +7,7 @@ agent gets them (`web.orchestrator`), never the session's.
 
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from anyio import to_thread
 
@@ -124,8 +125,11 @@ class SessionTools:
 
     def _places(self, entries: Sequence[ConversationSummary]) -> dict[str, ProjectIdentity]:
         """Each workspace's project and worktree, as the sidebar groups them; reads Git, so call it off the loop."""
-        for workspace in {entry.workspace for entry in entries} - self._identities.keys():
-            self._identities[workspace] = project_identity(workspace)
+        for workspace in {entry.workspace for entry in entries}:
+            # A folder removed or recreated since it was last read resolves again, as the sidebar does.
+            known = self._identities.get(workspace)
+            if known is None or Path(workspace).exists() == known.missing:
+                self._identities[workspace] = project_identity(workspace)
         return placements(entries, identities=self._identities)
 
 

@@ -378,7 +378,9 @@ class SessionBrowser:
                 self.preview_text = self.preview(entry.id)
                 self.preview_offset, self.mode = 0, 'preview'
             elif key in ('d', 'r', 'a') and self.importing(entry):
-                self.notice = 'Not imported yet. Enter imports and resumes it; then it can be renamed or deleted.'
+                self.notice = (
+                    'Not imported yet. Enter imports and resumes it; then it can be renamed, archived, or deleted.'
+                )
             elif key == 'a':
                 self._archive_key(entry)
             elif key == 'd':

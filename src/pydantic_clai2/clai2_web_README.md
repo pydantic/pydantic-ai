@@ -30,9 +30,9 @@ where it was, or listed under Removed folders. Click one to switch to it, or use
 rename, fork, archive, or delete it. Archiving hides a session from the sidebar and `/resume`
 without deleting anything; the archive button beside the search lists archived sessions too, muted,
 and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
-be archived, and resuming an archived one unarchives it. A session whose directory is gone, such
-as a removed worktree, opens read-only; so does, with `/web` from a terminal, a session saved in another directory, since the
-terminal works where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
+be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
+directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
+terminal, a session saved in another directory, since the terminal works where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
 Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
@@ -207,7 +207,7 @@ starts each one's CLAI with a prompt, waits for and reads its turns, steers it w
 answers its questions, and reports back. It destroys a workspace only after you picked **Destroy
 ID** when it asked, in its chat. It also finds the saved sessions of every project and cleans them
 up by archiving them ("archive every session older than 3 days"), which you can undo. No tool
-deletes a session, and archiving removes no folder or worktree. It needs `workspaces` on, which the
-chat offers to do in one click, and uses the session's model. Its conversation is kept across reloads and restarts. The
-session's own agent gets none of this. See
+deletes a session, and archiving removes no folder or worktree. It needs `workspaces` on, which
+the chat offers to do in one click, and uses the session's model. Its conversation is kept across
+reloads and restarts. The session's own agent gets none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).

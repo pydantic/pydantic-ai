@@ -152,6 +152,10 @@ def test_finding_and_unarchiving(make_web: MakeWeb, tmp_path: Path) -> None:
     [row] = call(tools.sessions_find, project='ALPHA').splitlines()[3:]
     assert row.startswith(f'| {parser} | Parser / fix | alpha | {alpha} | ') and '(1 day ago)' in row
     assert call(tools.sessions_find, query='nothing like it') == 'No saved sessions match.'
+    # A folder removed since the last search is placed again, as the sidebar places it.
+    beta.rmdir()
+    [gone] = call(tools.sessions_find, query='Docs').splitlines()[3:]
+    assert ' | Docs | Removed folders | beta | ' in gone
 
     assert call(tools.sessions_archive, ['missing', parser, parser]).splitlines() == [
         'Archived 1 session:',

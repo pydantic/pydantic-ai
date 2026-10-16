@@ -210,7 +210,13 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           ) : (
             <button
               disabled={session.current || session.state === 'running' || session.state === 'busy'}
-              title={session.current ? 'The open session cannot be archived' : 'Hide it; nothing is deleted'}
+              title={
+                session.current
+                  ? 'The open session cannot be archived'
+                  : session.state === 'running' || session.state === 'busy'
+                    ? 'A running session cannot be archived'
+                    : 'Hide it; nothing is deleted'
+              }
               onClick={() => void act(() => api.archive(session.id))}
             >
               Archive

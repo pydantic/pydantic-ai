@@ -627,7 +627,7 @@ def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: '
 
 
 def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'MakeWeb') -> None:
-    """Archiving hides a session, listed again muted with `archived=true`; the open one is refused."""
+    """Archiving hides a session, listed again muted with `include_archived=true`; the open one is refused."""
     web_ = make_web(Agent(TestModel()))
     old = web_.portal.call(
         lambda: web_.shell.sessions.store.save(summary=ConversationSummary(workspace='/x', title='Stale'), messages=[])

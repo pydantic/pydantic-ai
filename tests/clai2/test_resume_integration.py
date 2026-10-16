@@ -340,5 +340,8 @@ async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
     assert (await service.command([])).startswith('Resumed')
     assert session.conversation_id == old and session.summary.archived_at is None
     assert old in [entry.id for entry in await service.listing()]
+    # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
+    await store.set_archived(conversation_id=old, archived=True)
     await session.prompt('continued')
+    assert old in [entry.id for entry in await service.listing()]
     assert (await service.unarchive(old)).archived_at is None

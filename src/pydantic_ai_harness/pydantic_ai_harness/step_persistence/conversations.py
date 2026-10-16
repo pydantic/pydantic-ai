@@ -73,7 +73,10 @@ class ConversationSummary:
     total_tokens: int = 0
     naming_tokens: int = 0
     archived_at: datetime | None = None
-    """When the conversation was archived, which `listing(archived=False)` leaves out; `None` when it is not."""
+    """When the conversation was archived, which `listing(archived=False)` leaves out; `None` when it is not.
+
+    A content save of an existing conversation clears it.
+    """
 
 
 def ensure_inactive(summary: ConversationSummary) -> None:
@@ -221,7 +224,8 @@ class SqliteConversationStore:
             prior = self._summary.validate_json(row[0])
             if prior.revision != expected:
                 raise ConversationConflict('Session changed in another process. Resume it again before continuing.')
-            # Preserve a background naming commit or an archive which raced with this content save.
+            # Preserve a background naming commit which raced with this content save. New content is activity,
+            # so it lists an archived conversation again.
             summary = replace(
                 summary,
                 title=prior.title,
@@ -231,7 +235,7 @@ class SqliteConversationStore:
                 naming_version=prior.naming_version,
                 named_revision=prior.named_revision,
                 naming_tokens=prior.naming_tokens,
-                archived_at=prior.archived_at,
+                archived_at=None,
             )
             conn.execute(
                 'UPDATE conversations SET revision=?, metadata=?, messages=?, search_text=?, updated_at=? WHERE id=?',

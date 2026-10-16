@@ -814,8 +814,8 @@ between hosts. PID reuse is conservatively treated as busy.
 
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that
-keeps its messages, content revision, and activity timestamp; later content saves
-keep it too. Archiving deletes nothing. `listing(archived=False)` leaves archived
+keeps its messages, content revision, and activity timestamp. Saving new content
+unarchives it, since the conversation is in use again. Archiving deletes nothing. `listing(archived=False)` leaves archived
 conversations out, `archived=True` lists only those, and the default `None` lists
 both, as before archiving existed.
 
