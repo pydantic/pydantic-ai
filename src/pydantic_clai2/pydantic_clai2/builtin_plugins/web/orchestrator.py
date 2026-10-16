@@ -67,7 +67,8 @@ class Orchestrator:
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
         self._turn = ItemLog()
-        self._messages: list[ModelMessage] | None = None
+        self._history: list[ModelMessage] = []
+        """The conversation as the running turn started from it."""
         self._task: asyncio.Task[None] | None = None
         self._tools: WorkspaceTools | None = None
         self._agent: Agent[None, str] | None = None
@@ -82,23 +83,29 @@ class Orchestrator:
 
     @property
     def messages(self) -> list[ModelMessage]:
-        """The conversation, read from its file on first use; empty when there is none or it cannot be read."""
-        if self._messages is None:
+        """The conversation: read from its file again between turns, as another CLAI may have saved it since.
+
+        Empty when there is none or it cannot be read.
+        """
+        if not self.running:
             try:
-                self._messages = ModelMessagesTypeAdapter.validate_json(self.path.read_bytes())
+                self._history = ModelMessagesTypeAdapter.validate_json(self.path.read_bytes())
             except (OSError, ValidationError):
-                self._messages = []
-        return self._messages
+                self._history = []
+        return self._history
 
     def _save(self, messages: list[ModelMessage]) -> None:
-        """Keep `messages`, replacing the file through a new one only you can read."""
-        self._messages = messages
+        """Replace the file with `messages`, through a new one only you can read."""
         folder = self.path.parent
         folder.mkdir(parents=True, exist_ok=True)
         descriptor, name = tempfile.mkstemp(dir=folder, prefix=f'.{HISTORY}.', suffix='.tmp')
-        with os.fdopen(descriptor, 'wb') as file:
-            file.write(ModelMessagesTypeAdapter.dump_json(messages))
-        os.replace(name, self.path)
+        try:
+            with os.fdopen(descriptor, 'wb') as file:
+                file.write(ModelMessagesTypeAdapter.dump_json(messages))
+            os.replace(name, self.path)
+        except BaseException:
+            os.unlink(name)
+            raise
 
     def enabled(self) -> bool:
         """Whether the `workspaces` plugin is on, which the orchestrator's tools work over."""
@@ -116,7 +123,6 @@ class Orchestrator:
             running=self.running,
             items=items,
             questions=self.answerer.questions,
-            model=self.host.status.model,
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -152,9 +158,10 @@ class Orchestrator:
             raise RuntimeError('The orchestrator is still working. Wait for it, or stop it.')
         if not self.enabled():
             raise RuntimeError('Turn the workspaces plugin on first.')
-        self._task = asyncio.get_running_loop().create_task(self._run(text), name='clai2-orchestrator')
+        history = self.messages
+        self._task = asyncio.get_running_loop().create_task(self._run(text, history), name='clai2-orchestrator')
 
-    async def _run(self, prompt: str) -> None:
+    async def _run(self, prompt: str, messages: list[ModelMessage]) -> None:
         item = Item(id=f'orchestrator{time.monotonic_ns()}', kind='user', text=prompt)
         self._turn.clear()
         self._turn.apply(ItemAdded(item=item))
@@ -162,7 +169,6 @@ class Orchestrator:
         outcome: TurnOutcome = 'failed'
         error: str | None = None
         usage: RunUsage | None = None
-        messages = self.messages
         try:
             model = await self.host.conversation.resolved_model()
             if model is None:
@@ -186,13 +192,16 @@ class Orchestrator:
             error = str(exc) or type(exc).__name__
         finally:
             self._turn.clear()
+            try:
+                self._save(messages)
+            except OSError as exc:
+                outcome, error = 'failed', f'The orchestrator chat could not be saved: {exc}'
             used = None
             if usage is not None:
                 used = Usage(
                     input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests
                 )
             self._send(TurnEnded(outcome=outcome, error=error, usage=used))
-            self._save(messages)
 
     def interrupt(self) -> bool:
         """Stop the running turn; `False` when none runs."""
@@ -210,7 +219,6 @@ class Orchestrator:
         if self.running:
             raise RuntimeError('Stop the orchestrator before starting a new chat.')
         self.path.unlink(missing_ok=True)
-        self._messages = []
         self._send(self.state())
 
     async def close(self) -> None:

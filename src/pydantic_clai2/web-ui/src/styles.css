@@ -2812,3 +2812,15 @@ textarea.setting-input {
 .tool-link:hover {
   background: var(--hover);
 }
+
+.orchestrator-off-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}

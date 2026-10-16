@@ -38,6 +38,11 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
     }
   }
 
+  const enableButton = (
+    <button className="primary" onClick={() => void enable()} disabled={enabling || !connected}>
+      Enable workspaces
+    </button>
+  )
   const questions = chat.questions.map((request) => (
     <QuestionCard key={request.id} request={request} asker="The orchestrator" onAnswer={orchestrator.answer} onError={onError} />
   ))
@@ -69,7 +74,7 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
           <span className="title">Orchestrator</span>
           <span className="workspace">Runs workspaces: checkouts with their own CLAI</span>
         </div>
-        {enabled && (
+        {enabled !== null && (
           <button
             className="ghost small new-chat"
             onClick={() => void orchestrator.clear().catch(report)}
@@ -81,7 +86,7 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
           </button>
         )}
       </header>
-      {enabled === false ? (
+      {enabled === null ? null : enabled === false && fresh && !chat.running ? (
         <div className="hero orchestrator-off">
           <span className="hero-icon">
             <OrchestratorIcon size={28} />
@@ -91,11 +96,9 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
             It makes checkouts of a repository, each with its own CLAI, gives their agents tasks, watches and steers them,
             and reports back. It needs the workspaces plugin.
           </p>
-          <button className="primary" onClick={() => void enable()} disabled={enabling || !connected}>
-            Enable workspaces
-          </button>
+          {enableButton}
         </div>
-      ) : enabled && fresh ? (
+      ) : fresh && !chat.running ? (
         <div className="hero">
           <h1>What should your workspaces do?</h1>
           {questions}
@@ -104,15 +107,22 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
             It makes workspaces, gives each one's CLAI a task, and reports back. It asks before destroying one.
           </p>
         </div>
-      ) : enabled ? (
+      ) : (
         <>
           <Transcript entries={chat.entries} running={chat.running} empty={null} />
           <footer className="bottom">
             {questions}
-            {composer}
+            {enabled ? (
+              composer
+            ) : (
+              <div className="orchestrator-off-bar">
+                <span>The workspaces plugin is off, so the orchestrator cannot work.</span>
+                {enableButton}
+              </div>
+            )}
           </footer>
         </>
-      ) : null}
+      )}
     </WorkspaceLinkContext.Provider>
   )
 }

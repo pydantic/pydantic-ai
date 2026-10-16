@@ -176,10 +176,11 @@ class WebPlugin(Plugin[WebSettings]):
             self._launch_page = None
         if server is not None:
             await server.stop()
+        # Its chat is in the page alone: a turn no page can watch, or answer, stops.
+        await self.remote.orchestrator.close()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         await self.stop()
-        await self.remote.orchestrator.close()
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         # The run ended before the session saved its outcome; the browser's turn ended with the run.

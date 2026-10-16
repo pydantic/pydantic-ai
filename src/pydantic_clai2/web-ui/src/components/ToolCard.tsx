@@ -76,7 +76,7 @@ export function workspaceOf(item: Item, args: Args): string | null {
 export const isWorkspaceTool = (name: string) => name in WORKSPACE_TOOLS || name === 'workspace_list'
 
 /** An orchestrator tool's problem comes back as its result, an `Error: ...` line, rather than a failed call. */
-const reportedError = (item: Item) => isWorkspaceTool(item.name) && item.text.startsWith('Error: ')
+const reportedError = (item: Item) => item.text.startsWith('Error: ')
 
 interface Summary {
   icon: React.ReactNode
@@ -85,8 +85,24 @@ interface Summary {
   mono: boolean
 }
 
-function summarize(item: Item, args: Args): Summary {
+/** An orchestrator tool call: the verb, and the workspace it works on. */
+function workspaceSummary(item: Item, args: Args): Summary {
   const running = item.state === 'running'
+  if (item.name === 'workspace_list') {
+    return { icon: <FolderIcon size={14} />, verb: running ? 'Listing' : 'Listed', subject: 'workspaces', mono: false }
+  }
+  const [doing, done] = WORKSPACE_TOOLS[item.name] ?? ['', '']
+  const subject = workspaceOf(item, args) ?? str(args.kind)
+  if (item.name !== 'workspace_create' && item.name !== 'workspace_destroy') {
+    return { icon: <OrchestratorIcon size={14} />, verb: running ? doing : done, subject, mono: true }
+  }
+  const kept = item.name === 'workspace_destroy' && item.text.startsWith('Not destroyed')
+  return { icon: <BranchIcon size={14} />, verb: running ? doing : kept ? 'Kept workspace' : done, subject, mono: true }
+}
+
+function summarize(item: Item, args: Args, orchestrating: boolean): Summary {
+  const running = item.state === 'running'
+  if (orchestrating && isWorkspaceTool(item.name)) return workspaceSummary(item, args)
   switch (item.name) {
     case 'shell':
       return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: str(args.command), mono: true }
@@ -110,7 +126,7 @@ function summarize(item: Item, args: Args): Summary {
       if (calls.length === 1 && only?.argument) {
         // A script around one call reads as that call.
         const key = only.name === 'shell' ? 'command' : only.name === 'grep' ? 'pattern' : 'path'
-        return summarize({ ...item, name: only.name }, { [key]: only.argument })
+        return summarize({ ...item, name: only.name }, { [key]: only.argument }, orchestrating)
       }
       const names = item.calls.length ? item.calls.map((call) => call.name) : calls.map((call) => call.name)
       if (names.length > 1) {
@@ -122,21 +138,7 @@ function summarize(item: Item, args: Args): Summary {
     }
     case 'ask_user_question':
       return { icon: <QuestionIcon size={14} />, verb: running ? 'Asking' : 'Asked', subject: 'you a question', mono: false }
-    case 'workspace_list':
-      return { icon: <FolderIcon size={14} />, verb: running ? 'Listing' : 'Listed', subject: 'workspaces', mono: false }
-    case 'workspace_create':
-    case 'workspace_destroy': {
-      const [doing, done] = WORKSPACE_TOOLS[item.name] ?? ['', '']
-      const refused = item.name === 'workspace_destroy' && item.text.startsWith('Not destroyed')
-      const subject = workspaceOf(item, args) ?? str(args.kind)
-      return { icon: <BranchIcon size={14} />, verb: running ? doing : refused ? 'Kept workspace' : done, subject, mono: true }
-    }
     default:
-      if (item.name in WORKSPACE_TOOLS) {
-        const [doing, done] = WORKSPACE_TOOLS[item.name] ?? ['', '']
-        const subject = workspaceOf(item, args) ?? ''
-        return { icon: <OrchestratorIcon size={14} />, verb: running ? doing : done, subject, mono: true }
-      }
       return { icon: <ToolIcon size={14} />, verb: running ? 'Calling' : 'Called', subject: item.name, mono: true }
   }
 }
@@ -188,7 +190,10 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const open = cards.open.has(raw.id)
   const args = parseArgs(raw.args)
   const item = { ...raw, diffs: argumentDiffs(raw, args) }
-  const summary = summarize(item, args)
+  const openWorkspace = useContext(WorkspaceLinkContext)
+  // The orchestrator's tools read as such only in its chat; a session's tool of the same name is another tool.
+  const orchestrating = openWorkspace !== null && isWorkspaceTool(item.name)
+  const summary = summarize(item, args, openWorkspace !== null)
   const stats = item.diffs.reduce(
     (total, diff) => {
       const { added, removed } = diffStats(diff.diff)
@@ -196,10 +201,10 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
     },
     { added: 0, removed: 0 },
   )
-  const failed = item.state === 'error' || (item.exit_code !== null && item.exit_code !== 0) || reportedError(item)
+  const refused = orchestrating && reportedError(item)
+  const failed = item.state === 'error' || (item.exit_code !== null && item.exit_code !== 0) || refused
   const firstLine = summary.subject.split('\n')[0] ?? ''
-  const openWorkspace = useContext(WorkspaceLinkContext)
-  const workspace = openWorkspace && item.state !== 'running' && !reportedError(item) ? workspaceOf(item, args) : null
+  const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
   const row = (
     <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id)} aria-expanded={open}>
       <span className="tool-icon">{summary.icon}</span>

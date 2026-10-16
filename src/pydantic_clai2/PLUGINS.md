@@ -1435,11 +1435,13 @@ workspace, a CLAI that stopped) come back as `Error: ...` lines rather than fail
 
 **Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
-among the saved sessions or in `/resume`. Every CLAI with the web UI reads the same file; when two
-run at once, each keeps its own copy, and the one that ends a turn last writes it.
+among the saved sessions or in `/resume`. Every CLAI with the web UI, a workspace's own included,
+shows the same chat: it reads the file again between turns, and each turn saves it when it ends, so
+of two turns run at once in two CLAIs, the one that ends last is kept. `/web stop` stops a running
+turn, since no page is left to watch it or answer it.
 
 **From another program.** `GET /api/orchestrator/state` returns the chat (`enabled`, `running`,
-`items`, `questions`, `model`); `POST /api/orchestrator/input` (`{"text": ...}`) starts a turn,
+`items`, `questions`); `POST /api/orchestrator/input` (`{"text": ...}`) starts a turn,
 `/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
 question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
 API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",

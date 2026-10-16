@@ -470,8 +470,6 @@ class OrchestratorState:
     running: bool
     items: list[Item]
     questions: list[Questions]
-    model: str
-    """The session's model, which the orchestrator uses too."""
 
 
 OrchestratorEvent = ItemMessage | TurnStarted | TurnEnded | QuestionAsked | QuestionClosed | OrchestratorState

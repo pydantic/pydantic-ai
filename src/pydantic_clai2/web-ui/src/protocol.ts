@@ -148,8 +148,6 @@ export interface OrchestratorState {
   running: boolean
   items: Item[]
   questions: Questions[]
-  /** The session's model, which the orchestrator uses too. */
-  model: string
 }
 
 export type OrchestratorEvent = ChatMessage | OrchestratorState

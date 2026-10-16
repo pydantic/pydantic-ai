@@ -87,9 +87,7 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
     """A message runs the orchestrator's own agent; its tool cards stream tagged for its chat, and it asks there."""
     web_ = orchestrated(make_web)
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
-        assert opened(socket) == OrchestratorState(
-            enabled=True, running=False, items=[], questions=[], model='agent default'
-        )
+        assert opened(socket) == OrchestratorState(enabled=True, running=False, items=[], questions=[])
         assert web_.post('/api/orchestrator/input', {'text': '  '}).status_code == 400
         assert web_.post('/api/orchestrator/input', {'text': 'What is there?'}).status_code == 204
         seen, asked = orchestrator_until(socket, QuestionAsked)
@@ -122,6 +120,23 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
     again = Orchestrator(host=web_.plugin.host, publish=lambda message: None)
     assert [item.kind for item in again.state().items] == ['user', 'tool', 'tool', 'assistant']
     assert web_.get('/api/state').json()['items'] == []
+    # Another CLAI starting a new chat starts one here too: the file is read again between turns.
+    again.clear()
+    assert web_.get('/api/orchestrator/state').json()['items'] == []
+
+
+def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
+    """The turn reports the failed save, and leaves no temporary file behind."""
+    web_ = orchestrated(make_web)
+    path = web_.plugin.remote.orchestrator.path
+    path.mkdir(parents=True)  # A folder where the file goes: it reads as no conversation, and cannot be replaced.
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        opened(socket)
+        web_.post('/api/orchestrator/input', {'text': 'Now fail'})
+        ended = orchestrator_until(socket, TurnEnded)[1]
+    assert ended.outcome == 'failed' and ended.error is not None
+    assert ended.error.startswith('The orchestrator chat could not be saved: ')
+    assert list(path.parent.iterdir()) == [path]
 
 
 def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -> None:
