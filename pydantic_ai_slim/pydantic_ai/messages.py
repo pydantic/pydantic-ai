@@ -4650,7 +4650,10 @@ class EnqueuedMessagesEvent:
 
 @dataclass(repr=False)
 class ToolCallEvent:
-    """Base class for events emitted when a tool call is about to be invoked.
+    """Base class for events emitted when a tool call is about to be invoked, or is settled without being invoked.
+
+    A call that isn't executed in this step still gets a call event, with `args_valid=None`, followed by
+    the result event carrying the return recorded in message history.
 
     Match against this in a `case` to handle [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]
     and [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] together.
@@ -4667,7 +4670,10 @@ class ToolCallEvent:
 
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.
-    - `None`: Validation was not performed.
+    - `None`: Validation was not performed, because the call isn't executed in this step. This is the case
+      for a resumed deferred call whose supplied result isn't `ToolApproved` (e.g. `ToolDenied`), and for an
+      output, function or deferred tool call skipped because a final result was already processed.
+      The matching result event carries the return recorded in message history.
     """
 
     @property
@@ -4680,7 +4686,11 @@ class ToolCallEvent:
 
 @dataclass(repr=False)
 class FunctionToolCallEvent(ToolCallEvent):
-    """An event indicating the start to a call to a function tool."""
+    """An event indicating the start to a call to a function tool.
+
+    When `args_valid` is `None`, the tool isn't executed in this step; see
+    [`ToolCallEvent.args_valid`][pydantic_ai.messages.ToolCallEvent.args_valid].
+    """
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
