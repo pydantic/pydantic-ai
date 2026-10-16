@@ -422,8 +422,20 @@ class InferredLifecycle:
             return True
         if isinstance(event, ToolCall) and event.tool_call_id in self._replayed_calls:
             return True
-        item_id = getattr(event, 'item_id', None)
-        return isinstance(item_id, str) and item_id in self._replayed_items
+        if isinstance(
+            event,
+            (
+                AudioDelta,
+                OutputTranscript,
+                InputTranscript,
+                ToolCall,
+                RealtimeInputSpeechStartEvent,
+                RealtimeInputSpeechEndEvent,
+                RealtimeInputTranscriptionErrorEvent,
+            ),
+        ):
+            return event.item_id is not None and event.item_id in self._replayed_items
+        return False
 
     def _response_done(self, event: ResponseDone, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
         if self._open is None and self._ended_by_usage is not None:

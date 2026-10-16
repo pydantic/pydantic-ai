@@ -11931,7 +11931,8 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
             yield OutputTranscript(text='B is streaming')
             fail_now.set()
             await finish_b.wait()
-            yield ResponseDone()  # pragma: lax no cover  # (the wait can end, and the session close, before it's read)
+            # The wait can end, and the session close, before this is read.
+            yield ResponseDone()  # pragma: lax no cover
             await asyncio.Event().wait()  # pragma: no cover
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:

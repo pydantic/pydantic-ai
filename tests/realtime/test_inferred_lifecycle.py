@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     RealtimeInputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
 )
+from pydantic_ai.realtime._lifecycle import LIFECYCLE_EVENT_TYPES
 from pydantic_ai.realtime.codec import (
     CommitAudio,
     ConversationItemCreated,
@@ -30,7 +31,7 @@ from pydantic_ai.realtime.lifecycle import InferredLifecycle, LifecycleEvent, Re
 
 def lifecycle(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[str]:
     """The lifecycle events in `frame`, by type: what the codec events alone don't say."""
-    return [type(event).__name__ for event in frame if type(event).__module__ == 'pydantic_ai.realtime._lifecycle']
+    return [type(event).__name__ for event in frame if isinstance(event, LIFECYCLE_EVENT_TYPES)]
 
 
 def test_a_commit_joins_a_transcribed_turn_that_hasnt_joined_yet() -> None:
