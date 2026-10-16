@@ -12314,31 +12314,26 @@ async def test_a_response_over_the_request_limit_within_one_frame_is_neither_rec
 
 
 @pytest.mark.parametrize(
-    'turn',
+    ('item_id', 'ended'),
     [
-        pytest.param(
-            [RealtimeInputSpeechStartEvent(item_id='u1')],
-            id='named-turn-started',
-        ),
-        pytest.param(
-            [RealtimeInputSpeechStartEvent(item_id='u1'), RealtimeInputSpeechEndEvent(item_id='u1')],
-            id='named-turn-ended',
-        ),
-        pytest.param([RealtimeInputSpeechStartEvent()], id='unnamed-turn-started'),
+        pytest.param('u1', False, id='named-turn-started'),
+        pytest.param('u1', True, id='named-turn-ended'),
+        pytest.param(None, False, id='unnamed-turn-started'),
     ],
 )
 async def test_own_record_keeps_a_turn_anchored_to_a_response_whose_retained_audio_it_drops(
-    turn: list[RealtimeCodecEvent],
+    item_id: str | None, ended: bool
 ) -> None:
     """A turn started while a response was spoken is anchored to it, and stays so once its audio leaves the record."""
-    item_id = getattr(turn[0], 'item_id', None)
+    speech_end: list[RealtimeCodecEvent] = [RealtimeInputSpeechEndEvent(item_id=item_id)]
     conn = FakeRealtimeConnection(
         [
             AudioDelta(data=b'\x01\x00'),
             OutputTranscript(text='Hello.', is_final=True),
-            *turn,
+            RealtimeInputSpeechStartEvent(item_id=item_id),
+            *(speech_end if ended else []),
             ResponseDone(),
-            *([] if len(turn) > 1 else [RealtimeInputSpeechEndEvent(item_id=item_id)]),
+            *([] if ended else speech_end),
             InputTranscript(text='Hi.', is_final=True, item_id=item_id),
         ]
     )
