@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class
+from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -21,6 +21,7 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
@@ -169,6 +170,11 @@ def create_shell(
 
     context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
+
+    async def default_model() -> Model | str | None:
+        """The model a new session starts with: the saved `model` setting, else the agent's own."""
+        saved = (await to_thread.run_sync(store.overrides)).get('model')
+        return await models.resolve(saved) if isinstance(saved, str) else agent.model
 
     def fast(args: list[str]) -> str:
         if args not in ([], ['on'], ['off']):
@@ -380,6 +386,7 @@ def create_shell(
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
         running=lambda: shell.turning,
+        default_model=default_model,
         queued=lambda: shell.queued,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed

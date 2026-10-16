@@ -801,6 +801,7 @@ class PluginHost(Generic[DepsT]):
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
         workspace: Callable[[], Path] = Path.cwd,
         live: LiveSessions | None = None,
+        default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -811,7 +812,7 @@ class PluginHost(Generic[DepsT]):
         conversations; `setting` reads its settings, as the method of the same name does; `plugins`
         is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
         directory, each read each time, as the properties of the same names are. `live` is given to a
-        process-scoped plugin's host only.
+        process-scoped plugin's host only. `default_model` resolves the model a new session starts with.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -842,6 +843,7 @@ class PluginHost(Generic[DepsT]):
         """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
         self._tasks = tasks
         self._workspace = workspace
+        self._default_model = default_model
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
@@ -902,6 +904,16 @@ class PluginHost(Generic[DepsT]):
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
         self._send_input(text)
+
+    async def default_model(self) -> Model | str | None:
+        """The model a new session starts with: the saved `model` setting, resolved as `/model NAME` does.
+
+        Without a saved one, the agent's own model, or `None` when it has none. For a plugin whose
+        own agent works for the whole process rather than one session, such as the web UI's
+        orchestrator. A host without CLAI's settings, such as in a test, returns `None` unless built
+        with `default_model=`.
+        """
+        return None if self._default_model is None else await self._default_model()
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting, such as `run.code_mode`, read now, as `/set KEY` shows it.

@@ -153,7 +153,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert until_finished(socket)[1].outcome == 'cancelled'
         assert web_.post(f'/api/tasks/{blocker.id}/resume').status_code == 204, 'a user stop is lifted by asking'
 
-        assert web_.post('/api/sessions/new').status_code == 204
+        assert web_.post('/api/sessions/new').status_code == 200
         _, fresh = receive_until(socket, Snapshot)
         assert fresh.tasks == [] and fresh.task_items == {}
         assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}

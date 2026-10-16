@@ -314,8 +314,8 @@ async def test_hub_fans_out_only_while_subscribed() -> None:
         assert hub.clients == 2
         hub.publish(Notice(text='hello'))
         assert (
-            first.get_nowait()
-            == second.get_nowait()
+            first.queue.get_nowait()
+            == second.queue.get_nowait()
             == '{"type":"notice","text":"hello","level":"info","command":null}'
         )
     assert hub.clients == 0

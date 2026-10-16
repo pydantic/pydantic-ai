@@ -218,9 +218,10 @@ class Orchestrator:
         error: str | None = None
         usage: RunUsage | None = None
         try:
-            model = await self.host.conversation.resolved_model()
+            # The saved default, as a new session starts with, never one session's own choice.
+            model = await self.host.default_model()
             if model is None:
-                raise RuntimeError('Choose a model for this session first.')
+                raise RuntimeError('Choose a model with /model first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:
                 try:
                     async for node in run:

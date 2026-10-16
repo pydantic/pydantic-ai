@@ -19,6 +19,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
+from pydantic_ai.models import Model
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -196,6 +197,7 @@ class SessionPlugins(Generic[DepsT]):
         running: Callable[[], bool] = lambda: False,
         queued: Callable[[], int] = lambda: 0,
         live_id: str | None = None,
+        default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
     ) -> None:
         """Join `process`, the plugins every live session of this CLAI shares.
 
@@ -207,7 +209,7 @@ class SessionPlugins(Generic[DepsT]):
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
-        `workspace`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
+        `workspace`, `default_model`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
         says whether a turn runs, `queued` how much input waits for it, and `live_id` names the session in
         `host.live`, by default a new ID.
         """
@@ -232,6 +234,7 @@ class SessionPlugins(Generic[DepsT]):
         self._setting = setting
         self._tasks = tasks
         self._workspace = workspace
+        self._default_model = default_model
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
@@ -521,6 +524,7 @@ class SessionPlugins(Generic[DepsT]):
             tasks=(lambda: here().tasks) if process else self._tasks,
             workspace=(lambda: here().workspace) if process else self._workspace,
             live=self._process.live if process else None,
+            default_model=self._default_model,
         )
         return host
 

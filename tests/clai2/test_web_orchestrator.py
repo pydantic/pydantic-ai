@@ -229,7 +229,7 @@ def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> 
         opened(socket)
         assert web_.post('/api/orchestrator/input', {'text': 'Hi'}).status_code == 204
         ended = orchestrator_until(socket, TurnEnded)[1]
-    assert ended == TurnEnded(outcome='failed', error='Choose a model for this session first.')
+    assert ended == TurnEnded(outcome='failed', error='Choose a model with /model first.')
 
 
 def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:

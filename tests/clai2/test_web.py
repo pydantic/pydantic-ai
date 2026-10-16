@@ -528,11 +528,11 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         assert web_.client.delete(f'/api/sessions/{first}', headers={HEADER: TOKEN}).status_code == 400
         assert web_.client.delete(f'/api/sessions/{elsewhere.id}', headers={HEADER: TOKEN}).status_code == 204
 
-        assert web_.post('/api/sessions/new').status_code == 204
+        assert web_.post('/api/sessions/new').status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert snapshot.session.id != first and snapshot.items == []
 
-        assert web_.post(f'/api/sessions/{first}/open').status_code == 204
+        assert web_.post(f'/api/sessions/{first}/open').status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.title) == (first, 'Renamed')
 
@@ -554,12 +554,12 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
 
 
 def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
-    """A turn this CLAI runs shows as running; one another live process runs, as busy; a dead one, as cancelled."""
+    """A live session's turn shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
     import os
 
-    for title, pid in (('Live', os.getpid()), ('Dead', 2**22 + 12345)):
+    for title, pid in (('Live', os.getppid()), ('Mine', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
             lambda title=title, pid=pid: store.save(
                 summary=ConversationSummary(workspace='/x', title=title, outcome='running', owner_pid=pid),
@@ -567,8 +567,12 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
             )
         )
     [removed] = web_.get('/api/sessions').json()[-1]['worktrees']
-    assert {entry['title']: entry['state'] for entry in removed['sessions']} == {'Live': 'busy', 'Dead': 'cancelled'}
-    web_.plugin.service.default().running = True
+    assert {entry['title']: entry['state'] for entry in removed['sessions']} == {
+        'Live': 'busy',
+        'Mine': 'cancelled',
+        'Dead': 'cancelled',
+    }, "this process's own turn is never busy elsewhere: no live session here holds it, so it ended unsaved"
+    web_.shell.turning = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
@@ -602,7 +606,7 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     for title, (workspace, checkout) in workspaces.items():
         summary = ConversationSummary(workspace=str(workspace.resolve()), title=title, checkout=checkout)
         web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
-    web_.plugin.host.status.workspace = str(feature.resolve())
+    web_.shell.session.workspace = str(feature.resolve())
 
     projects = web_.get('/api/sessions').json()
     shown = [
@@ -1083,8 +1087,10 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
-    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).service
-    with TestClient(create_app(remote=remote, token=TOKEN, hosts=HOSTS, static=tmp_path / 'missing')) as client:
+    service = WebPlugin.from_host(
+        PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
+    ).service
+    with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=tmp_path / 'missing')) as client:
         page = client.get(f'/?token={TOKEN}')
         assert (page.status_code, page.text) == (503, UNBUILT)
 
@@ -1093,8 +1099,10 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
     static = tmp_path / 'bare'
     static.mkdir()
     (static / 'index.html').write_text('<html><head></head></html>')
-    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).service
-    with TestClient(create_app(remote=remote, token=TOKEN, hosts=HOSTS, static=static)) as client:
+    service = WebPlugin.from_host(
+        PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
+    ).service
+    with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static)) as client:
         assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
@@ -1262,6 +1270,7 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         socket.receive_text()
         socket.receive_text()  # The orchestrator chat's state.
+        socket.receive_text()  # The live sessions.
 
         async def flood() -> None:
             # All at once, on the loop, so the WebSocket cannot forward any in between.
@@ -1477,7 +1486,7 @@ def test_sessions_continue_in_their_own_directories(
         socket.receive_text()
         running = web_.run()
 
-        assert web_.post(f'/api/sessions/{there}/open').status_code == 204
+        assert web_.post(f'/api/sessions/{there}/open').status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id, snapshot.session.workspace) == (there, str(other.resolve()))
         assert (Path.cwd(), shell.session.workspace) == (launch, str(other.resolve()))
@@ -1488,7 +1497,7 @@ def test_sessions_continue_in_their_own_directories(
         assert (loaded['web'].plugin, loaded['repo_context'] is repo_context) == (plugin, False)
         assert loaded['repo_context'].plugin.host.workspace == other.resolve()
 
-        assert web_.post('/api/sessions/new', {'workspace': str(launch)}).status_code == 204
+        assert web_.post('/api/sessions/new', {'workspace': str(launch)}).status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.items, snapshot.session.workspace) == ([], str(launch.resolve()))
         assert snapshot.session.id not in (here, there) and Path.cwd() == launch.resolve()
@@ -1505,11 +1514,10 @@ def test_sessions_continue_in_their_own_directories(
         ):
             refused = web_.post('/api/sessions/new', {'workspace': workspace})
             assert (refused.status_code, problem in refused.json()['detail']) == (400, True)
-        assert web_.post(f'/api/sessions/{lost}/open').status_code == 204
-        notice = receive_until(socket, Notice)[1]
-        assert (notice.level, notice.text) == ('error', f'{gone} does not exist.')
+        refused = web_.post(f'/api/sessions/{lost}/open')
+        assert (refused.status_code, refused.json()['detail']) == (400, f'{gone} does not exist.')
 
-        assert web_.post(f'/api/sessions/{here}/open').status_code == 204
+        assert web_.post(f'/api/sessions/{here}/open').status_code == 200
         assert receive_until(socket, Snapshot)[1].session.id == here
         copy = web_.post(f'/api/sessions/{there}/fork').json()['id']
         snapshot = receive_until(socket, Snapshot)[1]
@@ -1592,7 +1600,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
             400,
             f'This CLAI works in {shell.session.workspace}. Start CLAI in {tmp_path.resolve()}.',
         )
-        assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 204
+        assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id != first, snapshot.session.workspace) == (True, shell.session.workspace)
         web_.post('/api/input', {'text': '/exit'})

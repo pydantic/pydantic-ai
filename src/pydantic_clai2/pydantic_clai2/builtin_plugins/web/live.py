@@ -158,12 +158,17 @@ class BrowserAnswerer:
 
         With `session`, only a question of that session's: another is `LookupError`, as if it were closed.
         """
+        request = self.request(request_id, session=session)
+        response = AskUserResponse(cancelled=True) if answers is None else AskUserResponse(answers=tuple(answers))
+        check_response(request, response)
+        self.answer(request_id, response)
+
+    def request(self, request_id: str, *, session: str | None = None) -> AskUserRequest:
+        """The open request with this ID, of `session` when given; `LookupError` when it is not open."""
         entry = self._open.get(request_id)
         if entry is None or (session is not None and entry.session != session):
             raise LookupError('That question is no longer open.')
-        response = AskUserResponse(cancelled=True) if answers is None else AskUserResponse(answers=tuple(answers))
-        check_response(entry.request, response)
-        self.answer(request_id, response)
+        return entry.request
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         child = DelegationTasks.child_id()

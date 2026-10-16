@@ -121,8 +121,8 @@ class WebService:
         self._command_edits = Lock()
         """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
         self._live_sent: LiveChanged | None = None
-        self._default_sent: str | None = None
-        """The default session's conversation, as browsers without `watch` were last sent it."""
+        self._default_sent = None if (default := self._default()) is None else default.session.id
+        """The `LiveSession.id` of the default session browsers without `watch` were last sent."""
         self._unsubscribe = self.live.subscribe(self.live_changed)
 
     def close(self) -> None:
@@ -152,17 +152,18 @@ class WebService:
 
     def default(self) -> SessionChannel:
         """The session the legacy routes drive: the one the page chose last while live, else the newest."""
+        if (found := self._default()) is None:
+            raise LookupError('No session is open.')
+        return found
+
+    def _default(self) -> SessionChannel | None:
         sessions = self.live.listing()
         if not sessions:
-            raise LookupError('No session is open.')
-        chosen = next((session for session in sessions if session.id == self._chosen), sessions[-1])
-        return self.channel(chosen)
+            return None
+        return self.channel(next((session for session in sessions if session.id == self._chosen), sessions[-1]))
 
     def _default_id(self) -> str | None:
-        try:
-            return self.default().id
-        except LookupError:
-            return None
+        return None if (found := self._default()) is None else found.id
 
     def current(self) -> SessionChannel:
         """The channel of the session whose moment or run is handled now, else the default one."""
@@ -205,13 +206,14 @@ class WebService:
         if message != self._live_sent:
             self._live_sent = message
             self.hub.publish(message)
-        default = self._default_id()
-        if default != self._default_sent:
-            self._default_sent = default
+        # Another session became the default; one switching conversation sends its snapshot itself.
+        default = self._default()
+        if default is not None and default.session.id != self._default_sent:
+            self._default_sent = default.session.id
             legacy = [client for client in self.hub.connected() if client.watching is None]
-            if default is not None and legacy:
+            if legacy:
                 # A browser that never said which session it shows follows the default one, as it did before.
-                self.hub.send(legacy, dump(self.default().snapshot()))
+                self.hub.send(legacy, dump(default.snapshot()))
 
     def watch(self, client: Client, conversation_ids: Sequence[str]) -> None:
         """Replace what `client` watches; it gets a snapshot of each live session it did not watch before."""
@@ -506,9 +508,12 @@ class WebService:
     # The Workers tree: the delegated tasks of every live session, by task ID.
 
     def _task(self, task_id: str) -> tuple[SessionChannel, TaskCatalog]:
-        for channel in self.channels():
-            catalog = channel.session.tasks
-            if catalog is not None and any(task.id == task_id for task in catalog.listing()):
+        owned = [(channel, channel.session.tasks) for channel in self.channels()]
+        catalogs = [(channel, catalog) for channel, catalog in owned if catalog is not None]
+        if not catalogs:
+            raise LookupError('This CLAI runs no delegated tasks.')
+        for channel, catalog in catalogs:
+            if any(task.id == task_id for task in catalog.listing()):
                 return channel, catalog
         raise LookupError(f'No task {task_id!r} in an open session.')
 
@@ -566,10 +571,10 @@ class WebService:
 
     @property
     def catalog(self) -> SessionCatalog:
-        sessions = self.default().session.sessions
-        if sessions is None:
+        """The saved sessions, one store for every live session."""
+        if self.host.sessions is None:
             raise LookupError('This CLAI does not save sessions.')
-        return sessions
+        return self.host.sessions
 
     async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
