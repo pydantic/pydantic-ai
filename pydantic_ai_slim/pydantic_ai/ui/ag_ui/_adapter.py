@@ -454,7 +454,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case UserMessage(content=content, encrypted_value=encrypted_value):
                     structured = parse_encrypted_structured_content(encrypted_value)
                     if isinstance(content, str):
-                        loaded = structured_content_from_payload(structured[0], content) if 0 in structured else content
+                        loaded = (
+                            structured_content_from_payload(structured['0'], content) if '0' in structured else content
+                        )
                         builder.add(UserPromptPart(content=loaded if isinstance(loaded, str) else [loaded]))
                     else:
                         user_prompt_content: list[UserContent] = []
@@ -462,8 +464,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             match part:
                                 case TextInputContent(text=text):
                                     user_prompt_content.append(
-                                        structured_content_from_payload(structured[index], text)
-                                        if index in structured
+                                        structured_content_from_payload(structured[str(index)], text)
+                                        if str(index) in structured
                                         else text
                                     )
                                 case BinaryInputContent():

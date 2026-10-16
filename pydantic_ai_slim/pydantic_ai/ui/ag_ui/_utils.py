@@ -258,16 +258,15 @@ def structured_content_encrypted_value(payloads: dict[int, dict[str, Any]]) -> s
     return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'structured_content': entries}})
 
 
-def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[int, Any]:
-    """Read the structured content payloads, by content position, from a `UserMessage`'s `encrypted_value`.
+def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[str, Any]:
+    """Read the structured content payloads, keyed by content position, from a `UserMessage`'s `encrypted_value`.
 
-    Client-supplied and untrusted: anything malformed reads as no payload, so the text loads as plain text.
+    Client-supplied and untrusted: anything malformed reads as no payload, so the text loads as plain text. The
+    keys are looked up by the positions of the message's text items, never parsed, so no key can raise.
     """
     namespaced = _parse_encrypted_namespace(encrypted_value)
     entries = namespaced.get('structured_content') if namespaced is not None else None
-    if not is_str_dict(entries):
-        return {}
-    return {int(index): payload for index, payload in entries.items() if index.isascii() and index.isdecimal()}
+    return entries if is_str_dict(entries) else {}
 
 
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
