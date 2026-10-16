@@ -3512,12 +3512,13 @@ async def test_run_stream_skipped_tool_returns():
         messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Weather?')])],
     )
     adapter = VercelAIAdapter(agent, request)
-    events = [
-        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
     ]
 
-    assert [event for event in events if isinstance(event, dict) and event['type'].startswith('tool-')] == snapshot(
+    assert [event for event in events if event['type'].startswith('tool-')] == snapshot(
         [
             {'type': 'tool-input-start', 'toolCallId': 'call-weather', 'toolName': 'get_weather'},
             {'type': 'tool-input-delta', 'toolCallId': 'call-weather', 'inputTextDelta': '{"location": "Paris"}'},
