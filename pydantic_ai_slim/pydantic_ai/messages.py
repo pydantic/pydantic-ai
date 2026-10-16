@@ -2109,11 +2109,11 @@ class InstructionDeltaPart:
     trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
     """
 
-    id: Annotated[str, pydantic.Field(min_length=1)]
-    """The serialized instruction address being replaced, preserved even for unknown source namespaces.
+    id: SerializedInstructionId
+    """The id of the block being replaced, as on its [`InstructionPart`][pydantic_ai.messages.InstructionPart.id].
 
-    It's the string an [`InstructionId`][pydantic_ai.messages.InstructionId] renders to, so compare it with
-    an [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] as `str(part.id) == change.id`.
+    Serialized as the string it renders to. A change written by a newer version, for a source namespace this
+    one doesn't know, loads with `None` here, and the next request opens a new window instead of applying it.
     """
 
     content: str | None
@@ -2181,17 +2181,22 @@ def _neutralize_closing_tags(content: str) -> str:
     return _CLOSING_FRAMING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
 
 
-def _context_element(instruction_id: str, content: str) -> str:
+def _id_attribute(instruction_id: InstructionId | None) -> str:
+    """The `id` attribute naming a block, or nothing for a change a newer version wrote that this one can't address."""
+    return f' id="{html.escape(str(instruction_id))}"' if instruction_id is not None else ''
+
+
+def _context_element(instruction_id: InstructionId | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
-    return f'<context id="{html.escape(instruction_id)}">\n{_neutralize_closing_tags(content)}\n</context>'
+    return f'<context{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(content)}\n</context>'
 
 
-def _context_diff_element(instruction_id: str, previous: str, content: str) -> str:
+def _context_diff_element(instruction_id: InstructionId | None, previous: str, content: str) -> str:
     """Tag a unified diff from a block's previous text to its new text with the block's id."""
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return f'<context-diff id="{html.escape(instruction_id)}">\n{_neutralize_closing_tags(diff)}\n</context-diff>'
+    return f'<context-diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context-diff>'
 
 
 def _render_instruction_baseline(part: InstructionPart, *, inline_system: bool) -> InstructionPart:  # pyright: ignore[reportUnusedFunction]
@@ -2213,7 +2218,7 @@ def _render_instruction_baseline(part: InstructionPart, *, inline_system: bool) 
         if inline_system
         else 'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
     )
-    return replace(part, content=f'{_context_element(str(part.id), part.content)}\n{sentence}')
+    return replace(part, content=f'{_context_element(part.id, part.content)}\n{sentence}')
 
 
 @dataclass(repr=False, kw_only=True)

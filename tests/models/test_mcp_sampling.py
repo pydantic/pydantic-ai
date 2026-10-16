@@ -16,8 +16,10 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     FilePart,
     InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     RetryPromptPart,
@@ -63,7 +65,7 @@ async def test_unprojected_instruction_delta_raises():
     model = MCPSamplingModel(fake_session(create_message))
     with pytest.raises(UserError, match='prepare_messages'):
         await model.request(
-            [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='State')])],
+            [ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='State')])],
             None,
             ModelRequestParameters(),
         )

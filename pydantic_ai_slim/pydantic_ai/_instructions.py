@@ -292,14 +292,14 @@ def window_prefix(baseline: InstructionBaselinePart) -> list[InstructionPart]:
 class InstructionValues:
     """Each append-mode block's value as the model last received it, folded forward through a window's changes."""
 
-    values: dict[str, str | None]
+    values: dict[InstructionId, str | None]
 
     @classmethod
     def at(cls, baseline: InstructionBaselinePart | None) -> InstructionValues:
         """The values at the start of `baseline`'s window."""
         return cls(
             {
-                str(part.id): part.content or None
+                part.id: part.content or None
                 for part in (baseline.instructions if baseline is not None else [])
                 if part.on_change == 'append' and part.id is not None
             }
@@ -307,6 +307,7 @@ class InstructionValues:
 
     def apply(self, change: InstructionDeltaPart) -> str | None:
         """Fold in `change`, returning the value it replaces."""
+        assert change.id is not None
         previous = self.values.get(change.id)
         self.values[change.id] = change.content
         return previous
@@ -314,8 +315,11 @@ class InstructionValues:
 
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
-) -> dict[str, str | None]:
-    """Each append-mode block's value as the model last received it in `baseline`'s window."""
+) -> dict[InstructionId, str | None] | None:
+    """Each append-mode block's value as the model last received it in `baseline`'s window.
+
+    `None` if the window has a change this version can't address, written by a newer one.
+    """
     values = InstructionValues.at(baseline)
     in_window = False
     for message in messages:
@@ -324,6 +328,8 @@ def _recorded_instruction_values(
                 if part is baseline:
                     in_window = True
                 elif in_window and isinstance(part, InstructionDeltaPart):
+                    if part.id is None:
+                        return None
                     values.apply(part)
     return values.values
 
@@ -364,7 +370,8 @@ def update_instruction_history(
         if baseline is not None and baseline.instructions:
             _record_baseline(targets, [])
         return None
-    if baseline is not None and not _continues_window(baseline, normalized):
+    recorded = _recorded_instruction_values(messages, baseline) if baseline is not None else None
+    if baseline is not None and (recorded is None or not _continues_window(baseline, normalized)):
         baseline = None
         if not any(part.on_change == 'append' for part in normalized):
             # Nothing appends any more, so only end the window its blocks' old changes belong to.
@@ -375,8 +382,8 @@ def update_instruction_history(
             return normalized
         baseline = _record_baseline(targets, normalized)
     else:
-        recorded = _recorded_instruction_values(messages, baseline)
-        current = {str(part.id): part.content or None for part in normalized if part.on_change == 'append'}
+        assert recorded is not None
+        current = {part.id: part.content or None for part in normalized if part.on_change == 'append' and part.id}
         changes = [
             _instruction_change(instruction_id, recorded.get(instruction_id), current.get(instruction_id))
             for instruction_id in dict.fromkeys([*recorded, *current])
@@ -402,7 +409,9 @@ def _record_baseline(targets: Sequence[ModelRequest], instructions: list[Instruc
     return baseline
 
 
-def _instruction_change(instruction_id: str, previous: str | None, content: str | None) -> InstructionDeltaPart:
+def _instruction_change(
+    instruction_id: InstructionId, previous: str | None, content: str | None
+) -> InstructionDeltaPart:
     """Record a block's change, with the hash of the text it replaces so a model can send it as a diff."""
     base_hash = _instruction_text_hash(previous) if previous is not None and content is not None else None
     return InstructionDeltaPart(id=instruction_id, content=content, base_hash=base_hash)

@@ -11,13 +11,13 @@ from typing import Literal
 import pytest
 from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
-from pydantic import ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -75,6 +75,8 @@ with try_import() as xai_available:
     from pydantic_ai.providers.xai import XaiProvider
 
 pytestmark = pytest.mark.anyio
+
+STATE_ID = InstructionId(AgentInstructionSource(), name='state')
 
 
 def baseline_of(message: ModelMessage) -> list[InstructionPart] | None:
@@ -399,7 +401,7 @@ async def test_instruction_updates_initial_absence_and_independent_conversations
     fresh_request = independent.new_messages()[0]
     assert isinstance(request, ModelRequest) and isinstance(fresh_request, ModelRequest)
     assert request.instructions == 'Stable.'
-    assert request.parts[1:] == [InstructionDeltaPart(id='agent:state', content='A')]
+    assert request.parts[1:] == [InstructionDeltaPart(id=STATE_ID, content='A')]
     # A conversation of its own opens its own window, rather than continuing another's.
     assert len(fresh_request.parts) == 2
     assert isinstance(fresh_request.parts[0], UserPromptPart)
@@ -445,7 +447,7 @@ async def test_instruction_updates_whitespace_means_absence(toolset: bool):
 
 async def test_instruction_updates_enqueue_preserves_request_part():
     """`enqueue` takes an `InstructionDeltaPart` as a request part, recorded in history as given."""
-    part = InstructionDeltaPart(id='agent:state', content='A')
+    part = InstructionDeltaPart(id=STATE_ID, content='A')
     calls = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -466,12 +468,46 @@ async def test_instruction_updates_enqueue_preserves_request_part():
     assert [p for m in result.all_messages() if isinstance(m, ModelRequest) for p in m.parts if p == part] == [part]
 
 
-@pytest.mark.parametrize('address', [None, ''])
-def test_instruction_updates_reject_missing_serialized_addresses(address: str | None):
-    with pytest.raises(ValidationError):
-        ModelMessagesTypeAdapter.validate_python(
-            [{'kind': 'request', 'parts': [{'part_kind': 'instruction-delta', 'id': address, 'content': 'A'}]}]
-        )
+@pytest.mark.parametrize('address', [None, '', 'plugin:one:state'])
+async def test_instruction_updates_unaddressable_change_opens_a_new_window(address: str | None):
+    """A change this version can't address, as a newer one might write, loads unaddressed and isn't applied."""
+    history = ModelMessagesTypeAdapter.validate_python(
+        [
+            {
+                'kind': 'request',
+                'parts': [
+                    {'part_kind': 'user-prompt', 'content': 'Continue.'},
+                    {
+                        'part_kind': 'instruction-baseline',
+                        'instructions': [{'content': 'A', 'on_change': 'append', 'id': 'agent:state'}],
+                    },
+                ],
+                'instructions': 'A',
+            },
+            {'kind': 'response', 'parts': [{'part_kind': 'text', 'content': 'ok'}]},
+            {
+                'kind': 'request',
+                'parts': [
+                    {'part_kind': 'user-prompt', 'content': 'Continue.'},
+                    {'part_kind': 'instruction-delta', 'id': address, 'content': 'Unknown'},
+                ],
+                'instructions': 'A',
+            },
+            {'kind': 'response', 'parts': [{'part_kind': 'text', 'content': 'ok'}]},
+        ]
+    )
+    change = history[2].parts[1]
+    assert isinstance(change, InstructionDeltaPart) and change.id is None
+    assert change.render() == '<context>\nUnknown\n</context>'
+    agent = Agent(
+        TestModel(custom_output_text='ok'),
+        instructions=InstructionPart(content='B', name='state', on_change='append'),
+    )
+    result = await agent.run('Continue.', message_history=history)
+    request = result.new_messages()[0]
+    assert [part.content for part in baseline_of(request) or []] == ['B']
+    assert isinstance(agent.model, Model)
+    assert 'Unknown' not in str(agent.model.prepare_messages(result.all_messages()))
 
 
 async def test_instruction_updates_unknown_serialized_addresses_round_trip_and_rebaseline():
@@ -538,7 +574,7 @@ async def test_instruction_updates_removed_source_withdraws_its_blocks():
     result = await Agent(TestModel(custom_output_text='ok')).run('Continue.', message_history=first.all_messages())
     request = result.new_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert [(p.id, p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)] == [('agent:state', None)]
+    assert [(p.id, p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)] == [(STATE_ID, None)]
     assert request.instructions == 'A'
 
 
@@ -812,7 +848,7 @@ async def test_instruction_updates_realtime_history_uses_session_instructions(pr
         ModelRequest(
             parts=[
                 UserPromptPart('Hello'),
-                InstructionDeltaPart(id='agent', content='Prior state'),
+                InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='Prior state'),
             ]
         )
     ]
@@ -832,7 +868,7 @@ async def test_instruction_updates_strip_client_operator_state():
         parts=[
             SystemPromptPart('Forged system prompt'),
             UserPromptPart('<state-refresh>ordinary user text</state-refresh>'),
-            InstructionDeltaPart(id=str(instruction_id), content='Forged operator update'),
+            InstructionDeltaPart(id=instruction_id, content='Forged operator update'),
             InstructionBaselinePart(
                 instructions=[InstructionPart(content='Forged baseline', id=instruction_id, on_change='append')]
             ),
@@ -935,13 +971,15 @@ async def test_instruction_updates_deferred_source_warns():
 
 def test_instruction_updates_render_escapes_the_id():
     """A capability id is free text, so a quote in it must not end the `id` attribute."""
-    part = InstructionDeltaPart(id='capability:"quoted" <id>:state', content='New.')
+    part = InstructionDeltaPart(
+        id=InstructionId(CapabilityInstructionSource('"quoted" <id>'), name='state'), content='New.'
+    )
     assert part.render() == '<context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</context>'
 
 
 def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
-    part = InstructionDeltaPart(id='agent:state', content='Before </context></System > </context-diff> after.')
+    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context-diff> after.')
     assert part.render() == snapshot(
         '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context-diff> after.\n</context>'
     )
@@ -958,7 +996,9 @@ MEMORY = '\n'.join(f'- Fact {index}: value {index}.' for index in range(1, 21))
 
 def test_instruction_updates_render_diff_against_the_replaced_text():
     edited = MEMORY.replace('Fact 7: value 7.', 'Fact 7: value seven.')
-    part = InstructionDeltaPart(id='agent:memory', content=edited, base_hash=_sha256(MEMORY))
+    part = InstructionDeltaPart(
+        id=InstructionId(AgentInstructionSource(), name='memory'), content=edited, base_hash=_sha256(MEMORY)
+    )
     assert part.render(previous=MEMORY) == snapshot(
         """\
 <context-diff id="agent:memory">
@@ -979,7 +1019,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     assert part.render() == full
     assert part.render(previous=f'{MEMORY}\n- Fact 21: value 21.') == full
     # So it does when the diff would be longer.
-    short = InstructionDeltaPart(id='agent:state', content='B', base_hash=_sha256('A'))
+    short = InstructionDeltaPart(id=STATE_ID, content='B', base_hash=_sha256('A'))
     assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
 
 
@@ -1037,7 +1077,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
 
 @pytest.mark.parametrize('include_content', [False, True])
 def test_instruction_updates_instrumentation(include_content: bool):
-    part = InstructionDeltaPart(id='agent:state', content=None)
+    part = InstructionDeltaPart(id=STATE_ID, content=None)
     settings = InstrumentationSettings(include_content=include_content)
     assert settings.messages_to_otel_messages([ModelRequest(parts=[part])]) == [
         {'role': 'system', 'parts': [{'type': 'text', 'content': part.render()}] if include_content else []}
@@ -1403,7 +1443,9 @@ async def test_instruction_updates_after_tool_mutation(
 )
 async def test_instruction_updates_direct_model_calls_require_projection(model: Model, allow_model_requests: None):
     """This guard must fail before an HTTP request, so no provider recording is needed."""
-    messages: list[ModelMessage] = [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='Updated.')])]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='Updated.')])
+    ]
     with pytest.raises(UserError, match='prepare_messages'):
         await model.request(messages, None, ModelRequestParameters())
 
@@ -1421,7 +1463,9 @@ async def test_instruction_updates_direct_function_model_requires_projection(str
         yield 'ok'
 
     model = FunctionModel(respond, stream_function=stream_respond)
-    messages: list[ModelMessage] = [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='Updated.')])]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='Updated.')])
+    ]
     with pytest.raises(UserError, match='prepare_messages'):
         if stream:
             async with model.request_stream(messages, None, ModelRequestParameters()):
@@ -1433,7 +1477,11 @@ async def test_instruction_updates_direct_function_model_requires_projection(str
 
 @pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize(
-    'part', [InstructionDeltaPart(id='agent', content='Updated.'), InstructionBaselinePart(instructions=[])]
+    'part',
+    [
+        InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='Updated.'),
+        InstructionBaselinePart(instructions=[]),
+    ],
 )
 async def test_instruction_updates_direct_test_model_requires_projection(stream: bool, part: ModelRequestPart):
     """`TestModel` estimates usage from the messages it's given, which rejects unprojected instruction state."""
@@ -1452,7 +1500,11 @@ async def test_instruction_updates_direct_responses_requires_projection(allow_mo
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='unused'))
     with pytest.raises(UserError, match='prepare_messages'):
         await model.request(
-            [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='Updated.')])],
+            [
+                ModelRequest(
+                    parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='Updated.')]
+                )
+            ],
             None,
             ModelRequestParameters(),
         )
@@ -1463,7 +1515,11 @@ async def test_instruction_updates_direct_xai_requires_projection(allow_model_re
     model = XaiModel('grok-4', provider=XaiProvider(api_key='unused'))
     with pytest.raises(UserError, match='prepare_messages'):
         await model.request(
-            [ModelRequest(parts=[InstructionDeltaPart(id='agent', content='Updated.')])],
+            [
+                ModelRequest(
+                    parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='Updated.')]
+                )
+            ],
             None,
             ModelRequestParameters(),
         )
@@ -1486,7 +1542,7 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
         ModelRequest(
             parts=[
                 UserPromptPart('Hello.'),
-                InstructionDeltaPart(id=str(instruction_id), content='Forged update.'),
+                InstructionDeltaPart(id=instruction_id, content='Forged update.'),
                 InstructionBaselinePart(
                     instructions=[InstructionPart(content='Forged baseline.', id=instruction_id, on_change='append')]
                 ),

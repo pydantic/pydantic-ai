@@ -2639,7 +2639,9 @@ def _project_instruction_state(messages: Sequence[ModelMessage], *, inline_syste
         parts: list[ModelRequestPart] = []
         for part in message.parts:
             if isinstance(part, InstructionDeltaPart):
-                if index >= current_start:
+                # A change a newer version wrote, which this one can't address, is superseded by the window
+                # the next request opens.
+                if index >= current_start and part.id is not None:
                     text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
             elif not isinstance(part, InstructionBaselinePart):
