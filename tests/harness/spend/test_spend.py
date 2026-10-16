@@ -2244,7 +2244,7 @@ class TestFallbackAttempts:
             ) -> ModelResponse:
                 if response.text == 'ok':
                     raise RetryModelRequest()
-                return response  # pragma: no cover
+                return response
 
             async def on_model_request_error(
                 self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
