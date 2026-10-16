@@ -69,8 +69,8 @@ def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     return replace(tool_def, parameters_json_schema=schema)
 
 
-_Outcome = tuple[UserContent, ...] | BaseException
-"""What a finished background task hands to the run: the follow-up to deliver, or the error that ends the run."""
+_Outcome = tuple[UserContent, ...] | ToolRetryError | BaseException
+"""What a finished background task hands to the run: follow-up content, a retry, or an error."""
 
 
 def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
