@@ -153,7 +153,8 @@ class Sessions(Generic[DepsT, OutputT]):
         if resume:
             if resume_from is not None:
                 resume = await self.import_session(resume_from, resume)
-            notice = await self.session.resume(resume, record=False)
+            # A fork continues in the copy, so an archived original stays archived.
+            notice = await self.session.resume(resume, record=False, unarchive=not fork)
         else:
             notice = await self.command([resume_from] if resume_from else []) if resume is not None else ''
         if fork and notice:

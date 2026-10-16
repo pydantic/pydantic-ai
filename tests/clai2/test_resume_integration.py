@@ -340,6 +340,14 @@ async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
     assert (await service.command([])).startswith('Resumed')
     assert session.conversation_id == old and session.summary.archived_at is None
     assert old in [entry.id for entry in await service.listing()]
+    copy = await service.start(resume=old, fork=True)
+    assert 'Resumed' in copy and session.conversation_id != old, 'a fork continues in the copy'
+    assert (await store.get(conversation_id=old)).summary.archived_at is None, 'it was unarchived above'
+    await service.archive(old)
+    await service.start(resume=old, fork=True)
+    assert (await store.get(conversation_id=old)).summary.archived_at is not None, 'the original stays archived'
+    assert session.summary.archived_at is None
+    await service.resume(old)
     # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
     await store.set_archived(conversation_id=old, archived=True)
     await session.prompt('continued')
