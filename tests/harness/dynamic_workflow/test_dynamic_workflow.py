@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 from pydantic_monty import AsyncMonty
 
-from pydantic_ai import Agent, RunContext, capture_run_messages
+from pydantic_ai import Agent, DeferredToolRequests, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -48,6 +48,21 @@ def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | No
 def _wf_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> WorkflowAgent[object]:
     """Build a `WorkflowAgent` wrapping a trivial `TestModel` sub-agent."""
     return WorkflowAgent(_sub_agent(text, name), description=description)
+
+
+def _deferring_agent(name: str = 'approver') -> Agent[object, str | DeferredToolRequests]:
+    """A sub-agent whose run ends with `DeferredToolRequests`: it calls a tool that needs approval."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='d1')])
+
+    agent = Agent(FunctionModel(model_fn), name=name, output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def dangerous() -> str:
+        return 'done'  # pragma: no cover - the call is deferred for approval, never run
+
+    return agent
 
 
 class Review(BaseModel):
@@ -424,7 +439,7 @@ async def test_descriptions_override() -> None:
 async def test_missing_output_schema_falls_back_to_any(monkeypatch: pytest.MonkeyPatch) -> None:
     sub = _sub_agent(name='quirky')
 
-    def broken_output_json_schema() -> dict[str, Any]:
+    def broken_output_json_schema(output_type: object = None) -> dict[str, Any]:
         raise RuntimeError('schema unavailable')
 
     monkeypatch.setattr(sub, 'output_json_schema', broken_output_json_schema)
@@ -433,6 +448,26 @@ async def test_missing_output_schema_falls_back_to_any(monkeypatch: pytest.Monke
     desc = tools['run_workflow'].tool_def.description
     assert desc is not None
     assert 'async def quirky(*, task: str) -> Any:' in desc
+
+
+@pytest.mark.parametrize(
+    ('output_type', 'return_type'),
+    [
+        ([str, DeferredToolRequests], 'str'),
+        (str | DeferredToolRequests, 'str'),
+        ([Review, DeferredToolRequests], 'Review'),
+    ],
+    ids=['list', 'union', 'structured'],
+)
+async def test_signature_leaves_out_deferred_tool_requests(output_type: Any, return_type: str) -> None:
+    # The script cannot approve tools or resume a sub-agent run, so the marker is not a return
+    # type it can receive.
+    sub: Agent[object, Any] = Agent(TestModel(), name='approver', output_type=output_type)
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=sub)])
+    desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
+    assert desc is not None
+    assert 'DeferredToolRequests' not in desc
+    assert f'async def approver(*, task: str) -> {return_type}:' in desc
 
 
 async def test_tool_def_is_sequential_with_code_metadata() -> None:
@@ -1135,6 +1170,25 @@ async def test_sub_agent_failure_can_be_caught_in_sandbox() -> None:
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=bad)])
     code = "try:\n    await bad(task='x')\nexcept RuntimeError:\n    result = 'recovered'\nresult"
     assert await _run_script(ts, code) == 'recovered'
+
+
+async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=_deferring_agent())])
+    with pytest.raises(ModelRetry) as exc_info:
+        await _run_script(ts, "await approver(task='x')")
+    assert (
+        "RuntimeError: sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval "
+        'or deferred tool results; a workflow script cannot resume it'
+    ) in str(exc_info.value)
+
+
+async def test_sub_agent_ending_with_deferred_tool_requests_can_be_caught_in_sandbox() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=_deferring_agent())])
+    code = "try:\n    await approver(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
+    assert await _run_script(ts, code) == snapshot(
+        "sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval or deferred tool "
+        'results; a workflow script cannot resume it'
+    )
 
 
 async def test_budget_guard_terminates_even_when_error_caught_in_sandbox() -> None:

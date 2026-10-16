@@ -40,6 +40,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
@@ -191,8 +192,10 @@ class _Ended:
     outcome: DelegationOutcome
     output: str
     """What the parent model receives: the child's output, or a steering or retry message."""
+    retry: bool = False
+    """Whether `output` is raised to the parent as a `ModelRetry` rather than returned."""
     cause: Exception | None = None
-    """Set when `output` is raised to the parent as a `ModelRetry` rather than returned."""
+    """The exception behind a retry, when there is one."""
 
 
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
@@ -588,7 +591,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     duration_seconds=time.perf_counter() - started,
                 )
             )
-        if ended.cause is not None:
+        if ended.retry:
             raise ModelRetry(ended.output) from ended.cause
         return ended.output
 
@@ -663,11 +666,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if sub_agent.on_failure is not None:
                 return _Ended(outcome='failed', output=sub_agent.on_failure)
             # Soft sub-agent failures come back to the parent as a retry it can react to.
-            return _Ended(outcome='failed', output=f'Sub-agent {agent_name!r} failed: {exc}', cause=exc)
+            return _Ended(outcome='failed', output=f'Sub-agent {agent_name!r} failed: {exc}', retry=True, cause=exc)
         except _ALWAYS_PROPAGATE:
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
+        if (reason := resumable_output_reason(result.output)) is not None:
+            # The parent cannot resume the child run, so it ends like a soft child failure.
+            if sub_agent.on_failure is not None:
+                return _Ended(outcome='failed', output=sub_agent.on_failure)
+            return _Ended(
+                outcome='failed',
+                output=f'Sub-agent {agent_name!r} {reason}; a delegating agent cannot resume it.',
+                retry=True,
+            )
         return _Ended(outcome='ok', output=str(result.output))
 
     def _crash_outcome(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: Exception) -> _Ended:
@@ -685,6 +697,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 f'Sub-agent {agent_name!r} crashed: {type(exc).__name__}: {exc}. '
                 f'Treat this as a recoverable failure and decide from existing evidence.'
             ),
+            retry=True,
             cause=exc,
         )
 

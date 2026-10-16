@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -150,6 +151,21 @@ def _delegate_returns(result: Any) -> list[str]:
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
     ]
+
+
+def _deferring_agent(name: str) -> Agent[object, str | DeferredToolRequests]:
+    """A sub-agent whose run ends with `DeferredToolRequests`: it calls a tool that needs approval."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='d1')])
+
+    agent = Agent(FunctionModel(model_fn), name=name, output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def dangerous() -> str:
+        return 'done'  # pragma: no cover - the call is deferred for approval, never run
+
+    return agent
 
 
 class TestConstruction:
@@ -525,6 +541,40 @@ class TestDelegation:
             if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
         ]
         assert any("Sub-agent 'boomer' failed" in str(r) for r in retries)
+
+    async def test_deferred_tool_requests_becomes_model_retry(self) -> None:
+        # The parent cannot approve the child's tool call or resume the child run, so the
+        # delegation fails like a soft child failure instead of returning the marker's repr.
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('approver'),
+            capabilities=[SubAgents(agents=[SubAgent(_deferring_agent('approver'))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == []
+        retries = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+        ]
+        assert retries == snapshot(
+            [
+                "Sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval or "
+                'deferred tool results; a delegating agent cannot resume it.'
+            ]
+        )
+
+    async def test_deferred_tool_requests_with_on_failure_returns_steering(self) -> None:
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('approver'),
+            capabilities=[
+                SubAgents(agents=[SubAgent(_deferring_agent('approver'), on_failure='steer: do it yourself')])
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == ['steer: do it yourself']
 
     async def test_usage_not_shared_when_disabled(self) -> None:
         captured: dict[str, Any] = {}
