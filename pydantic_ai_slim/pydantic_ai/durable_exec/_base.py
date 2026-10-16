@@ -1651,7 +1651,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if request_context.model._contains_live_connection:  # pyright: ignore[reportPrivateUsage]
             raise UserError(
                 'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
-                'Open the connection inside a model activity, or select an ordinary HTTP model.'
+                'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
             )
         resolved = self._resolved_request_model(request_context.model)
         owned = resolved is not None and not resolved.registered

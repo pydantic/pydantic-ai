@@ -2427,7 +2427,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         on the connection at a time; incomplete streams and cancellation close it.
 
         Install `pydantic-ai-slim[openai-responses-websocket]` to enable this method.
-        Standalone token counting and compaction continue to use HTTP.
+        Standalone token counting and compaction continue to use HTTP. The extra pins
+        `websockets >=14,<16`, but it does not pin the openai SDK.
+
+        Args:
+            extra_headers: Additional handshake headers, merged over the headers from
+                the model settings and the provider's client defaults.
+            websocket_connection_options: Options for the underlying `websockets`
+                connection, typed against the openai SDK's `WebSocketConnectionOptions`
+                TypedDict; its shape can move with SDK releases.
+
+        Returns:
+            A clone of this model bound to the open WebSocket connection. The source
+            model is unchanged and keeps using HTTP.
         """
         try:
             from ._openai_responses_websocket import ResponsesWebSocket

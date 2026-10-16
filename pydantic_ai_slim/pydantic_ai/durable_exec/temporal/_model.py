@@ -92,6 +92,12 @@ class TemporalModel(WrapperModel):
         # Use provided model if available, otherwise first registered model
         primary_model = model or next(iter(self._models_by_id.values()))
         super().__init__(primary_model)
+        for model in self._models_by_id.values():
+            if model._contains_live_connection:  # pyright: ignore[reportPrivateUsage]
+                raise UserError(
+                    'A connected Responses WebSocket model cannot be used inside a durable workflow or flow. '
+                    'Use an HTTP-transport model inside the workflow, and open WebSocket connections outside of it.'
+                )
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
