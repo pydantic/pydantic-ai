@@ -566,6 +566,34 @@ async def test_instruction_updates_unknown_serialized_addresses_round_trip_and_r
     )
 
 
+async def test_instruction_updates_unknown_baseline_id_opens_a_new_window():
+    """A baseline block whose id this version can't read can't be tagged, so the next request opens a new window."""
+    history = ModelMessagesTypeAdapter.validate_python(
+        [
+            {
+                'kind': 'request',
+                'parts': [
+                    {'part_kind': 'user-prompt', 'content': 'Continue.'},
+                    {
+                        'part_kind': 'instruction-baseline',
+                        'instructions': [{'content': 'A', 'on_change': 'append', 'id': 'plugin:one:state'}],
+                    },
+                ],
+                'instructions': 'A',
+            },
+            {'kind': 'response', 'parts': [{'part_kind': 'text', 'content': 'ok'}]},
+        ]
+    )
+    agent = Agent(
+        TestModel(custom_output_text='ok'),
+        instructions=InstructionPart(content='A', name='state', on_change='append'),
+    )
+    result = await agent.run('Continue.', message_history=history)
+    request = result.new_messages()[0]
+    assert [str(part.id) for part in baseline_of(request) or []] == ['agent:state']
+    assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
+
+
 async def test_instruction_updates_removed_source_withdraws_its_blocks():
     """An agent with no instructions left still withdraws the blocks the baseline tracks, keeping the prefix."""
     first = await Agent(
