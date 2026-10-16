@@ -20,7 +20,6 @@ from unittest import mock
 import anyio
 import httpx2
 import pytest
-from dirty_equals import IsDatetime
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartStartEvent, RequestUsage
@@ -65,7 +64,7 @@ from pydantic_ai.realtime.lifecycle import (
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
@@ -1851,7 +1850,6 @@ async def test_a_reply_ends_after_a_quiet_stretch(monkeypatch: pytest.MonkeyPatc
     frames = connection.frames()
     first = await anext(frames)
     second = await anext(frames)
-    await frames.aclose()
     assert [event for event in [*first, *second] if isinstance(event, (OutputTranscript, ResponseDone))] == [
         OutputTranscript(text='Hello!', is_final=True),
         ResponseDone(provider_details=_CONVERSATION),
