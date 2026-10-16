@@ -2059,7 +2059,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- / search · space on/off · c configure · r reload · d remove · esc close
+ / search - Enter/Space on/off - c configure - r reload - d remove - Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -2072,17 +2072,17 @@ paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
-Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
-it, and `d` removes it. Press `/` to search: while searching, every key you type
+Enter or Space turns the highlighted plugin on or off; `c` configures it, `r`
+reloads it, and `d` removes it. Press `/` to search: while searching, every key you type
 filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
 Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
 close.
 
-Turning a plugin on with Space opens its settings menu straight away when it
+Turning a plugin on with Enter or Space opens its settings menu straight away when it
 offers one (see [settings menu](#offer-a-settings-menu-def-settings_menuself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
@@ -2834,7 +2834,7 @@ menu's `Dialogs` and saves the new value for you.
 ### Offer a settings menu: `def settings_menu(self)`
 
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
-CLAI opens it when the plugin is turned on (Space in `/plugins`, `/plugins enable`,
+CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
 the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
 it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
