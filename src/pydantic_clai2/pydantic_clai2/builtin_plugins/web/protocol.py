@@ -462,7 +462,7 @@ ItemMessage = (
 
 @dataclass(frozen=True, kw_only=True)
 class OrchestratorState:
-    """The orchestrator chat: sent on connect and when it starts over, and what `GET /api/orchestrator/state` returns."""
+    """The orchestrator chat, sent on connect, as a turn starts, and on a new chat; `GET /api/orchestrator/state` too."""
 
     type: Literal['orchestrator_state'] = 'orchestrator_state'
     enabled: bool

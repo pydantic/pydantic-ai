@@ -140,7 +140,7 @@ export type ChatMessage =
   | { type: 'question'; questions: Questions }
   | { type: 'question_closed'; id: string }
 
-/** The orchestrator chat: sent on connect and when it starts over. */
+/** The orchestrator chat: sent on connect, as a turn starts, and when it starts over. */
 export interface OrchestratorState {
   type: 'orchestrator_state'
   /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
