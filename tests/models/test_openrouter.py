@@ -2482,7 +2482,7 @@ async def test_openrouter_field_mode_thinking_backfill(
     `OpenRouterProvider` uses `'field'` mode. The history holds no `ThinkingPart`, and its tool calls sit before
     and after the last user message, as a step that didn't think leaves them. With `thinking=True`, both go
     out with `reasoning` empty; the run completing is OpenRouter accepting the request. Routing is pinned to
-    Together, so a re-record reaches the same upstream, which serves the model with reasoning on.
+    Together, so a re-record reaches the same upstream.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
     agent = Agent(OpenRouterModel('deepseek/deepseek-v4.1-flash', provider=provider), tools=[get_weather])

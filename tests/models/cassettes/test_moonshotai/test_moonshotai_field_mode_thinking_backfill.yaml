@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1072"
+      - "1018"
       content-type:
       - application/json
       host:
@@ -56,7 +56,7 @@ interactions:
         - type: function
           function:
             name: get_weather
-            description: "Get the weather for a city: the tool `weather_tool_calls_without_thinking` calls."
+            description: Get the weather for a city.
             parameters:
               additionalProperties: false
               properties:
@@ -82,23 +82,23 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-6ad282c00d53fd6fa7cc71cc
+        id: chatcmpl-6ad28391d4fd2508c327ed90
         object: chat.completion
-        created: 1792180929
+        created: 1792181138
         model: kimi-k3
         choices:
         - index: 0
           message:
             role: assistant
-            content: Paris is sunny, while London is rainy.
-            reasoning_content: Now answer both in one short sentence.
+            content: It's sunny in Paris and rainy in London.
+            reasoning_content: ""
           finish_reason: stop
         usage:
-          prompt_tokens: 391
-          completion_tokens: 33
-          total_tokens: 424
+          prompt_tokens: 379
+          completion_tokens: 25
+          total_tokens: 404
           completion_tokens_details:
-            reasoning_tokens: 9
+            reasoning_tokens: 1
           prompt_tokens_details:
             cache_write_tokens: 256
-  recorded_at: 2026-10-16T20:02:10.244333+00:00
+  recorded_at: 2026-10-16T20:05:38.993042+00:00

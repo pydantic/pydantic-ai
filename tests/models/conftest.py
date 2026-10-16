@@ -104,8 +104,9 @@ def weather_tool_calls_without_thinking() -> list[ModelMessage]:
     ]
 
 
+# The tool `weather_tool_calls_without_thinking` calls; its docstring is the description the model sees.
 def get_weather(city: str) -> str:
-    """Get the weather for a city: the tool `weather_tool_calls_without_thinking` calls."""
+    """Get the weather for a city."""
     return 'rainy'  # pragma: no cover
 
 

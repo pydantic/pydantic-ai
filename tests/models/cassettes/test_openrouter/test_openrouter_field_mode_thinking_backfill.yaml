@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1129"
+      - "1075"
       content-type:
       - application/json
       host:
@@ -55,7 +55,7 @@ interactions:
         - type: function
           function:
             name: get_weather
-            description: "Get the weather for a city: the tool `weather_tool_calls_without_thinking` calls."
+            description: Get the weather for a city.
             parameters:
               additionalProperties: false
               properties:
@@ -93,9 +93,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792180931-A44rwkLRdhB8Cbtb8Pq6
+        id: gen-1792181139-rsQJZMm1rq34KLBZEngc
         object: chat.completion
-        created: 1792180931
+        created: 1792181139
         model: deepseek/deepseek-v4.1-flash
         provider: Together
         system_fingerprint: default
@@ -111,10 +111,10 @@ interactions:
             refusal: null
             reasoning: null
         usage:
-          prompt_tokens: 452
+          prompt_tokens: 437
           completion_tokens: 12
-          total_tokens: 464
-          cost: 0.00015
+          total_tokens: 449
+          cost: 0.0001455
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -122,11 +122,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00015
-            upstream_inference_prompt_cost: 0.0001356
+            upstream_inference_cost: 0.0001455
+            upstream_inference_prompt_cost: 0.0001311
             upstream_inference_completions_cost: 0.0000144
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-16T20:02:12.041012+00:00
+  recorded_at: 2026-10-16T20:05:40.023928+00:00

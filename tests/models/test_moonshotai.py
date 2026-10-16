@@ -35,7 +35,7 @@ async def test_moonshotai_field_mode_thinking_backfill(
         message_history=weather_tool_calls_without_thinking(), model_settings=OpenAIChatModelSettings(thinking=True)
     )
 
-    assert result.output == snapshot('Paris is sunny, while London is rainy.')
+    assert result.output == snapshot("It's sunny in Paris and rainy in London.")
     messages = request_capture.body('/chat/completions')['messages']
     assert [
         message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
