@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -640,36 +640,43 @@ class ToolRetryError(Exception):
         self.tool_retry = tool_retry
         # `part_kind` rather than `isinstance`: the parts are imported under `TYPE_CHECKING` only,
         # because `messages` imports this module.
-        if tool_retry.part_kind == 'tool-return':
+        tool_name = tool_retry.tool_name if tool_retry.part_kind == 'tool-return' else None
+        content = tool_retry.content
+        if isinstance(content, list):
+            # Validation errors read the way pydantic's own `ValidationError` text does, naming the tool
+            # they're for: this is the `__cause__` of an "exceeded max retries" traceback, not the wire.
+            # A list here is always error details: a retried tool return is only ever built with them.
+            message = self._format_error_details(cast('list[pydantic_core.ErrorDetails]', content), tool_name)
+        elif tool_retry.part_kind == 'tool-return':
             # Rendered the way `ToolFailedError` below renders its own part: the content without the
-            # `{"error": ...}` wrapper a provider with no native error channel adds, because this is
-            # a human-readable message rather than the wire. The call it answers is on
-            # `tool_retry.tool_name` for anything that needs it.
+            # `{"error": ...}` wrapper a provider with no native error channel adds.
             message = tool_retry.model_response_str(wrap_if_error=False)
-        elif isinstance(tool_retry.content, str):
-            message = tool_retry.content
         else:
-            message = self._format_error_details(tool_retry.content)
+            message = content
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.tool_retry,)
 
     @staticmethod
-    def _format_error_details(errors: list[pydantic_core.ErrorDetails]) -> str:
+    def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
         """Format ErrorDetails as a human-readable message.
 
         We format manually rather than using ValidationError.from_exception_data because
         some error types (value_error, assertion_error, etc.) require an 'error' key in ctx,
         but when ErrorDetails are serialized, exception objects are stripped from ctx.
         The 'msg' field already contains the human-readable message, so we use that directly.
+        A retried tool return carries each distinct `input` once, so a later error may have none.
         """
         error_count = len(errors)
-        lines = [f'{error_count} validation error{"" if error_count == 1 else "s"}']
+        lines = [
+            f'{error_count} validation error{"" if error_count == 1 else "s"}{f" for {tool_name!r}" if tool_name else ""}'
+        ]
         for e in errors:
             loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
             lines.append(loc)
-            lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
+            input_value = f', input_value={e["input"]!r}' if 'input' in e else ''
+            lines.append(f'  {e["msg"]} [type={e["type"]}{input_value}]')
         return '\n'.join(lines)
 
 

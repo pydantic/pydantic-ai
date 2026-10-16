@@ -9,6 +9,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -25,6 +26,8 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import RetryFeedbackPart, ToolReturnPart
+
+from ._inline_snapshot import snapshot
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -285,6 +288,38 @@ def test_tool_retry_error_str_with_error_details():
     assert str(error) == (
         '1 validation error\nname\n  Input should be a valid string [type=string_type, input_value=123]'
     )
+
+
+def test_tool_retry_error_str_for_tool_argument_validation():
+    """A tool-argument validation failure reads like pydantic's own error, naming the tool.
+
+    This is the error the tool manager raises for a call whose arguments failed validation, so its text
+    is what a hook catching `ToolRetryError` sees. The retried tool return the model is sent carries each
+    distinct `input` once, so a second error about the same value shows none.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(dict[str, int]).validate_python({'n': 'abc', 'm': 'x'})
+    error = ToolRetryError(build_retried_tool_return(exc_info.value, tool_name='t', tool_call_id='c1'))
+
+    assert str(error) == snapshot("""\
+2 validation errors for 't'
+n
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='abc']
+m
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='x']\
+""")
+
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(int | bool).validate_python('abc')
+    error = ToolRetryError(build_retried_tool_return(exc_info.value, tool_name='t', tool_call_id='c1'))
+
+    assert str(error) == snapshot("""\
+2 validation errors for 't'
+int
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='abc']
+bool
+  Input should be a valid boolean, unable to interpret input [type=bool_parsing]\
+""")
 
 
 def test_tool_retry_error_str_with_value_error_type():
