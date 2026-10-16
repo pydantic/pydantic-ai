@@ -32,8 +32,9 @@ without deleting anything; the archive button beside the search lists archived s
 and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
 be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
 directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
-terminal, a session saved in another directory, since the terminal works where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
-Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+terminal, a session saved in another directory, since the terminal works where it started.
+Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts, Cmd/Ctrl+K searches sessions,
+Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch; the printed link contains it. Keep

@@ -259,21 +259,24 @@ class Sessions(Generic[DepsT, OutputT]):
 
     async def browse(self, source: ImportSource | None) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
-        entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=False)
-        self.namer.backfill(entries)
+        entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
+        self.namer.backfill([entry for entry in entries if entry.archived_at is None])
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
+        def shown(
+            saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+        ) -> list[ConversationSummary]:
+            # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
+            entries = merge(saved, imported, limit=limit)
+            return entries if archived else [entry for entry in entries if entry.archived_at is None]
+
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
-            saved: list[ConversationSummary] = (
-                []
-                if source
-                else apply(self.store.listing(query=query, limit=limit, archived=None if archived else False))
-            )
-            return merge(saved, imports.listing(query, limit), limit=limit)
+            saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
+            return shown(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
 
@@ -287,7 +290,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=merge(entries, imports.listing(), limit=200),
+                entries=shown(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,

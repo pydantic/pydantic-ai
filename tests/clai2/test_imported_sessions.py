@@ -536,6 +536,35 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     assert (await service.command([])).startswith('Resumed Fix the parser')
 
 
+async def test_an_archived_copy_keeps_its_original_out_of_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _ = sessions_service(tmp_path)
+    claude_session(tmp_path)
+
+    def pick(browser: SessionBrowser) -> str:
+        return next(entry.id for entry in browser.entries if entry.tags == ('claude',))
+
+    monkeypatch.setattr(SessionBrowser, 'run', pick)
+    await service.command([])
+    copy = service.session.conversation_id
+    await service.session.clear()
+    await service.archive(copy)
+
+    def hidden(browser: SessionBrowser) -> str:
+        assert copy not in [entry.id for entry in browser.entries]
+        browser.reload()
+        assert copy not in [entry.id for entry in browser.entries]
+        browser.archived = True
+        browser.reload()
+        [listed] = [entry for entry in browser.entries if entry.id == copy]
+        assert listed.archived_at is not None and not browser.importing(listed)
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', hidden)
+    assert await service.command([]) == ''
+
+
 def test_browser_marks_sessions_to_import() -> None:
     entries = [ConversationSummary(id='claude', workspace='/w', title='From Claude Code', tags=('claude',))]
     keys = iter(['d', 'r', 'ctrl-c'])

@@ -815,9 +815,9 @@ between hosts. PID reuse is conservatively treated as busy.
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that
 keeps its messages, content revision, and activity timestamp. Saving new content
-unarchives it, since the conversation is in use again. Archiving deletes nothing. `listing(archived=False)` leaves archived
-conversations out, `archived=True` lists only those, and the default `None` lists
-both, as before archiving existed.
+unarchives it, since the conversation is in use again. Archiving deletes nothing.
+`listing(archived=False)` leaves archived conversations out, `archived=True` lists
+only those, and the default `None` lists both, as before archiving existed.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
