@@ -1362,12 +1362,15 @@ The settings menu is full-screen with one row per setting. Up/Down moves, Enter
 edits a row, `r` puts a row back to its default, and **Save & close** or Esc
 leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
 from the next turn, without reloading. Run `/google_workspace` again at any time
-to change a setting or pick a different key.
+to change a setting or pick a different key. The same rows show in the
+[web UI](#web-this-session-in-your-browser)'s plugins panel, where Access token key
+and Products have a **Change…** button: the key picker, the masked token prompt,
+and the products checklist open as dialogs in the page.
 
 | Row | Stored as | Default | Does |
 |---|---|---|---|
 | Access token key | the key's name, in the credential store | `GOOGLE_ACCESS_TOKEN` | which `/keys` entry holds the Google OAuth access token |
-| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one, and at least one stays on |
+| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one and saves it, **Done** or Esc goes back, and at least one stays on |
 | Read-only tools | `read_only` | `true` | keep only the tools Google marks as read-only |
 | Server instructions | `include_instructions` | `true` | pass the Google servers' own instructions to the agent |
 
@@ -1378,8 +1381,8 @@ CLAI runs tools without asking first, so `read_only` defaults to `true`. Set it 
 plugin settings, which are plain SQLite and reject a `token` or `auth` entry.
 Enter on the key row lists your saved key names so you can pick one (type to
 filter; Esc leaves the choice unchanged). **Enter a different API key** asks for a
-new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`,
-replacing any value already stored under that name. Only the chosen key's name is
+new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`.
+If a value is already stored under that name, it asks before replacing it. Only the chosen key's name is
 remembered, in the credential store. Several plugins and connections can share one
 named key, such as GitHub integrations all using `GITHUB_TOKEN`. While the plugin
 refers to a key, `/keys` refuses to rename it; pick another key here first. To

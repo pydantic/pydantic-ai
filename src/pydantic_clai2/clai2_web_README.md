@@ -43,7 +43,7 @@ terminal.
 <!-- From #10319 -->
 
 ```diff
-@@ -2384 +2384,2 @@ only from its settings menu or its `login` command, and Esc cancels the wait. Se
+@@ -2384 +2384,2 @@
 -default, and opens its settings menu (`/plugins configure linear` reopens it). The
 +default, and opens its settings menu (`/plugins configure linear` reopens it, and
 +the web UI's plugins panel shows it too). The
@@ -52,8 +52,19 @@ terminal.
 <!-- From #10328 -->
 
 ```diff
-@@ -24 +24,2 @@ otherwise browser sign-in, which also signs new users up and works over SSH:
+@@ -24 +24,2 @@
 -`/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 +`/logfire login`). Reopen it with `/plugins configure logfire_mcp`, or in the web UI's
 +plugins panel; see
+```
+
+<!-- From #10330 -->
+
+```diff
+@@ -17,2 +17,3 @@
+-token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
+-entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
++token kept in `/keys`. `/google_workspace` opens its settings menu (the web UI's
++plugins panel shows it too): the `/keys` entry to use (`GOOGLE_ACCESS_TOKEN` by
++default), products, and read-only tools; see
 ```
