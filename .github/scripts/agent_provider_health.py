@@ -1038,13 +1038,18 @@ def _check_command(args: argparse.Namespace) -> int:
         raw_issue = os.environ.get('PYDANTIC_AI_RECOVERY_ISSUE')
         if (
             os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
-            and os.environ.get('GITHUB_REF') == f'refs/heads/{client.default_branch()}'
             and raw_issue is not None
             and raw_issue.isascii()
             and raw_issue.isdecimal()
-            and int(raw_issue) > 0
         ):
-            recovery_issue = int(raw_issue)
+            try:
+                requested_issue = int(raw_issue)
+            except ValueError:
+                requested_issue = 0
+            if requested_issue > 0:
+                default_branch = client.default_branch()
+                if default_branch is not None and os.environ.get('GITHUB_REF') == f'refs/heads/{default_branch}':
+                    recovery_issue = requested_issue
         health = check_health(
             workflow or 'unknown',
             task_key or 'unknown',

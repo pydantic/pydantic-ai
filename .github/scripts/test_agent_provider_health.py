@@ -122,6 +122,7 @@ class FakeGitHub(health.GitHubClient):
         self.pull_requests: dict[int, dict[str, object]] = {}
         self.commit_pulls: dict[str, list[dict[str, object]]] = {}
         self.reviews: dict[int, list[dict[str, object]]] = {}
+        self.default_branch_calls = 0
 
     def request(self, method: str, path: str, payload: object | None = None) -> object:
         if method == 'GET':
@@ -162,6 +163,7 @@ class FakeGitHub(health.GitHubClient):
         return self.jobs.get((run_id, attempt), [])
 
     def default_branch(self) -> str | None:
+        self.default_branch_calls += 1
         return 'main'
 
     def open_incidents(self) -> list[health.Issue]:
@@ -565,6 +567,26 @@ def test_workflow_and_task_incidents_match_only_their_scope() -> None:
     assert health.check_health(*context, quota, [other_task_issue]).ready
     provider_issue = _issue(12, health.IncidentMarker('provider', 'zai', 'balance', '12', None))
     assert not health.check_health(*context, quota, [provider_issue]).ready
+
+
+def test_fresh_manual_task_identity_does_not_match_old_pr_task_incident() -> None:
+    """A new manual run has a distinct task key while workflow and provider incidents still block."""
+    workflow = 'CI Review'
+    old_task_key = f'{workflow}:workflow_run:feature-branch:head-a1b2:'
+    fresh_task_key = f'{workflow}:workflow_dispatch:main:head-a1b2:12345'
+    quota = health.Quota('healthy')
+    old_task_incident = _issue(21, health.IncidentMarker('task', f'{workflow}:{old_task_key}', 'timeout', '90', None))
+    old_task_result = health.check_health(workflow, old_task_key, 'workflow_run', 1, quota, [old_task_incident])
+    fresh_manual_result = health.check_health(
+        workflow, fresh_task_key, 'workflow_dispatch', 1, quota, [old_task_incident]
+    )
+
+    assert not old_task_result.ready
+    assert fresh_manual_result.ready
+    workflow_incident = _issue(22, health.IncidentMarker('workflow', workflow, 'execution', '91', None))
+    provider_incident = _issue(23, health.IncidentMarker('provider', 'zai', 'rate_limit', '92', None))
+    assert not health.check_health(workflow, fresh_task_key, 'workflow_dispatch', 1, quota, [workflow_incident]).ready
+    assert not health.check_health(workflow, fresh_task_key, 'workflow_dispatch', 1, quota, [provider_incident]).ready
 
 
 def test_health_recovery_bypasses_only_the_selected_single_non_provider_incident() -> None:
@@ -1277,8 +1299,56 @@ def test_check_command_accepts_recovery_issue_only_on_default_dispatch_ref(
     assert health.main(['check', '--output', str(output)]) == 0
     decision = _health_from_json(json.loads(output.read_text()))
     assert decision.recovery_issue == selected
+    assert client.default_branch_calls == 1
     assert decision.run_id == '101'
     assert decision.ready is (selected is not None)
+
+
+@pytest.mark.parametrize(
+    ('event_name', 'raw_issue'),
+    [
+        ('workflow_dispatch', None),
+        ('workflow_dispatch', ''),
+        ('workflow_dispatch', '0'),
+        ('workflow_dispatch', '-7'),
+        ('workflow_dispatch', 'bad'),
+        ('workflow_dispatch', '７'),
+        ('workflow_dispatch', '7' * 5000),
+        ('workflow_run', '7'),
+    ],
+)
+def test_check_command_skips_default_branch_lookup_without_valid_manual_recovery(
+    event_name: str, raw_issue: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runs without valid manual recovery input never need the repository default branch."""
+
+    class NoDefaultBranchLookupGitHub(FakeGitHub):
+        def default_branch(self) -> str | None:
+            raise AssertionError('default_branch must not be called')
+
+    client = NoDefaultBranchLookupGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'nightly-sweep')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', event_name)
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', event_name)
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('GITHUB_RUN_ID', '101')
+    if raw_issue is None:
+        monkeypatch.delenv('PYDANTIC_AI_RECOVERY_ISSUE', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', raw_issue)
+    output = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(output)]) == 0
+    decision = _health_from_json(json.loads(output.read_text()))
+    assert decision.recovery_issue is None
+    assert decision.ready
 
 
 def test_check_and_incident_outputs_keep_hostile_provider_data_out(

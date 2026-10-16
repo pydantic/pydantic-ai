@@ -251,8 +251,14 @@ and enter the incident number as `recover_issue`. A fresh healthy quota check mu
 pass before the controller closes that provider incident. Scheduled recovery closes
 only provider rate-limit or quota-exhaustion incidents after a known reset time elapses.
 
-For workflow or task recovery, dispatch the affected workflow from the repository's
-default branch. Set `recovery_issue` to the incident number.
+For a workflow-scoped incident, dispatch the affected workflow from the repository's
+default branch and set `recovery_issue` to its incident number. This lets one fresh
+manual run bypass that matching workflow blocker; it does not close the incident.
+
+Task incidents block only the exact task key in their marker. Manual task keys include
+the run ID, so a fresh dispatch has a new identity and can run with healthy quota
+without `recovery_issue`. An exact matching task identity can use `recovery_issue` to
+bypass that task blocker. This input never closes an incident.
 
 For **CI Review**, provide `aw_context` as JSON with `item_type` set to
 `pull_request` and `item_number` set to the PR number. Verify the fresh run executed
@@ -264,8 +270,9 @@ workflow requires to run its agent and publish results. After the corrected work
 is deployed, complete the existing UI Security review Environment approval for the
 fresh PR run.
 
-Inspect the affected host stage and output. Link that evidence to the incident and
-close it manually. A green run that skips the model or affected stage is not proof.
+For workflow and task incidents, inspect the affected host stage and output, link that
+evidence to the incident, and close it manually. A green run that skips the model or
+affected stage is not proof.
 Resolve closed-PR tasks as retired only after API verification and representative
 workflow recovery. Record why each task is retired. Do not describe retired tasks as
 same-target recoveries.
