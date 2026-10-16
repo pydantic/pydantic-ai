@@ -200,7 +200,7 @@ def run_keys(
     return menu.build().run(), frames
 
 
-FOOTER = '/ search · space on/off · c configure · r reload · d remove · esc close'
+FOOTER = '/ search - Enter/Space on/off - c configure - r reload - d remove - Esc close'
 EMPTY = '(type to filter)'
 
 
@@ -244,11 +244,9 @@ def test_search_and_navigation(
     query: str,
     name: str | None,
 ) -> None:
-    """Enter ends a search keeping the matches; a second Enter picks the highlighted row."""
+    """Enter ends a search keeping the matches; `q` then closes on the highlighted row."""
     loader = make_loader(tmp_path, 'alpha', 'beta', 'coDer', 'quiet')
-    result, frames = run_keys(
-        PluginMenu(loader, apply=run_now), [*keys, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
-    )
+    result, frames = run_keys(PluginMenu(loader, apply=run_now), [*keys, 'q'], monkeypatch=monkeypatch, capsys=capsys)
     assert result.item is not None
     if name is None:
         assert is_save_and_close(result.item)
@@ -279,6 +277,35 @@ def test_hotkeys_act_on_the_kept_matches(
     assert all(entry.loaded is None for entry in loader.entries())
 
 
+@pytest.mark.parametrize('toggle', [Key.ENTER, ' '])
+def test_enter_toggles_like_space_and_keeps_the_menu_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], toggle: str
+) -> None:
+    """Enter used to select the row and close the menu without toggling anything."""
+    loader = make_loader(tmp_path, 'alpha', 'beta')
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now),
+        [toggle, Key.DOWN, toggle, toggle, Key.ESCAPE],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+    )
+    assert result.cancelled, 'only Esc closed the menu'
+    assert '● alpha' in frames[1] and '○ beta' in frames[1]
+    assert '● beta' in frames[3] and '○ beta' in frames[4]
+    assert [entry.name for entry in loader.entries() if entry.loaded is not None] == ['alpha']
+
+
+def test_enter_on_save_and_close_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    loader = make_loader(tmp_path, 'alpha')
+    result, _ = run_keys(
+        PluginMenu(loader, apply=run_now), [Key.END, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
+    )
+    assert result.item is not None and is_save_and_close(result.item)
+    assert all(entry.loaded is None for entry in loader.entries())
+
+
 @pytest.mark.parametrize('keys', [['/', Key.ENTER], ['/', 'x', Key.BACKSPACE, Key.ENTER]])
 def test_enter_on_an_empty_search_lets_one_esc_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], keys: list[str]
@@ -292,7 +319,7 @@ def test_enter_on_an_empty_search_lets_one_esc_close(
     assert len(frames) == len(keys) + 1
 
 
-@pytest.mark.parametrize('key', [' ', 'c'])
+@pytest.mark.parametrize('key', [Key.ENTER, ' ', 'c'])
 def test_configure_from_search(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], key: str
 ) -> None:

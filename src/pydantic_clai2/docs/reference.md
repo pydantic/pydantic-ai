@@ -845,8 +845,8 @@ picker, under **Fallback chains** below your models (`/model chains` opens it th
 
 - **New fallback chain...** asks for a name, then for its models: **a** adds a saved
   model or a typed `PROVIDER[@PROFILE]:MODEL` (including `PROVIDER@*:MODEL`), **d**
-  removes one, **[** and **]** move one earlier or later, and **Save chain** saves it.
-  Esc leaves without saving.
+  removes one, **[** and **]** move one earlier or later, and Enter on **Save chain**
+  saves it. Enter on a model does nothing. Esc leaves without saving.
 - **Enter** on `chain:NAME` selects it, like any model; `/model chain:NAME` does too.
 - **Ctrl+E** changes a chain's models, **Ctrl+R** renames it, and **Ctrl+D** deletes
   it, after asking. The model you are using, or your saved default, cannot be renamed
@@ -1563,7 +1563,7 @@ Markdown file. Save and quit the editor to keep your changes. Unchanged text
 changes nothing, and an editor that exits with an error, such as Vim's `:cq`,
 cancels. A graphical editor must wait for its window to close, for example
 `code --wait`. On Windows, when neither variable is set, or when the editor
-cannot start, a built-in editor opens instead: Ctrl-S saves, Esc cancels.
+cannot start, a built-in editor opens instead: Ctrl+S saves, Esc cancels.
 
 Your instructions are the `run.instructions` setting, saved with your other
 preferences, so later sessions and `/fork` use them too. They apply from your
@@ -2292,8 +2292,8 @@ Git repositories need an `__init__.py` or `plugin.py` at their root; install
 any dependencies in CLAI's Python environment first. See
 [where plugins live](../PLUGINS.md#where-plugins-live) for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
-configure, reload, and remove it. Press `/` to search plugin names; while you
+reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`,
+and `d` configure, reload, and remove it. Press `/` to search plugin names; while you
 search, every key you type filters, Enter keeps the matches so the keys act on
 them, and Esc clears the search. Esc or `q` closes the menu without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.

@@ -1,0 +1,150 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 381dc559-59ed-4dd8-b5ab-5732a6a22476
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "407"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Use lookup with q="x", then tell me the answer.
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: lookup
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties:
+                    q:
+                      type: string
+                  required:
+                  - q
+                  type: object
+              description: Look something up.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "473"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 878
+        output:
+          message:
+            content:
+            - text: |
+                <thinking> The user has requested to use the lookup tool with the query "x". I will proceed to call the lookup tool with this query. </thinking>
+            - toolUse:
+                input:
+                  q: x
+                name: lookup
+                toolUseId: tooluse_Hxv0eMSmApGI11w9DQq1wy
+            role: assistant
+        stopReason: tool_use
+        usage:
+          inputTokens: 413
+          outputTokens: 47
+          serverToolUsage: {}
+          totalTokens: 460
+  recorded_at: 2026-10-15T23:52:57.078808+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - c59d2d23-f5a4-49a8-96c0-cc75976a01d7
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "838"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Use lookup with q="x", then tell me the answer.
+        - role: assistant
+          content:
+          - text: |
+              <thinking> The user has requested to use the lookup tool with the query "x". I will proceed to call the lookup tool with this query. </thinking>
+          - toolUse:
+              toolUseId: tooluse_Hxv0eMSmApGI11w9DQq1wy
+              name: lookup
+              input:
+                q: x
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_Hxv0eMSmApGI11w9DQq1wy
+              content:
+              - text: the answer is 42
+              status: success
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: lookup
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties:
+                    q:
+                      type: string
+                  required:
+                  - q
+                  type: object
+              description: Look something up.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "290"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 686
+        output:
+          message:
+            content:
+            - text: The result of the lookup with query "x" is "the answer is 42".
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 491
+          outputTokens: 20
+          serverToolUsage: {}
+          totalTokens: 511
+  recorded_at: 2026-10-15T23:52:57.834572+00:00
