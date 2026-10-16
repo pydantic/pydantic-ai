@@ -721,13 +721,17 @@ class TestSkillLibraryLayering:
         os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
         reason='POSIX mode bits must apply to this process.',
     )
-    @pytest.mark.parametrize('mode', [0o000, 0o300], ids=['no-access', 'not-listable'])
+    @pytest.mark.parametrize(
+        ('locked', 'mode'),
+        [('.agents/skills', 0o000), ('.agents/skills', 0o300), ('.agents', 0o000)],
+        ids=['no-access', 'not-listable', 'parent-not-traversable'],
+    )
     async def test_skipping_missing_directories_also_skips_an_unreadable_library(
-        self, tmp_path: Path, mode: int
+        self, tmp_path: Path, locked: str, mode: int
     ) -> None:
         # Permissions can change mid-session, which must not fail every later run.
-        unreadable = tmp_path / '.agents' / 'skills'
-        _write_skill(unreadable, 'deploy')
+        _write_skill(tmp_path / '.agents' / 'skills', 'deploy')
+        unreadable = tmp_path / locked
         _write_skill(tmp_path / '.claude' / 'skills', 'review')
         skills: Skills[Any] = Skills(['.agents/skills', '.claude/skills'], missing_directories='skip')
         unreadable.chmod(mode)

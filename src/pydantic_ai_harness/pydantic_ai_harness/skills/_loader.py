@@ -311,23 +311,26 @@ async def _libraries(
         if library in seen:
             continue
         seen.add(library)
-        entry = await _stat(workspace, library)
+        children: Sequence[FileEntry] | None = None
+        try:
+            entry = await _stat(workspace, library)
+            if (
+                entry is not None
+                and entry.is_dir
+                and not await _is_file(workspace, posixpath.join(library, 'SKILL.md'))
+            ):
+                children = await workspace.list_dir(library)
+        except PermissionError:
+            # Permissions can change mid-session, so with 'skip' it must not fail every later run.
+            if missing_directories == 'error':
+                raise
+            message = f'Skipping {library}: it is not readable.'
+            skipped.append(SkippedSkill(path=library, reason='unreadable', message=message))
+            continue
         if entry is None:
             if missing_directories == 'skip':
                 continue
             raise ValueError(f'Skill library directory does not exist in the workspace: {configured}')
-        children: Sequence[FileEntry] | None = None
-        if entry.is_dir:
-            try:
-                if not await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
-                    children = await workspace.list_dir(library)
-            except PermissionError:
-                # Permissions can change mid-session, so with 'skip' it must not fail every later run.
-                if missing_directories == 'error':
-                    raise
-                message = f'Skipping {library}: it is not readable.'
-                skipped.append(SkippedSkill(path=library, reason='unreadable', message=message))
-                continue
         if children is not None:
             libraries.append((library, children))
             continue
