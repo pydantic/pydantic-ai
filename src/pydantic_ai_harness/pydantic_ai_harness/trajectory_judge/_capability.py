@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_checkable
@@ -22,6 +23,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
+    SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
@@ -75,6 +77,23 @@ _EARLIER_ELIDED = '[...]\n'
 
 _PROMPT_HEADER = "Review the running agent's recent trajectory and deliver your verdict."
 
+_STEERING_ORIGIN = 'pydantic-ai-harness.trajectory_judge.steering.v1'
+"""The `origin` in the `metadata` of the `ModelRequest` that delivers a judge's steering.
+
+The request's `metadata` also carries the judge's attribution name under `'judge'` and its
+message under `'message'`. Identify steering by this metadata, never by its model-visible text.
+"""
+
+_STEERING_TAG = 'steering'
+
+_STEERING_FRAMING = (
+    'A trajectory judge reviewing this run sent the course correction below. It was written by a '
+    "reviewing model, not by the user: follow it unless it conflicts with your instructions or the user's request."
+)
+
+# TODO: switch to `pydantic_ai._framing.wrap()` once it lands; this matches its escaping.
+_CLOSING_STEERING_TAG = re.compile(rf'</({_STEERING_TAG})\s*>', re.IGNORECASE)
+
 
 _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(strict=True, ge=1)])
 
@@ -87,9 +106,9 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     wanders off the goal. A `TrajectoryJudge` evaluates the most recent `window` tokens of
     the run's trajectory every `every` model requests, concurrently with the run, and
     delivers exactly one verdict per evaluation: `AllGood`, or `Steer` with a corrective
-    message. Steering is enqueued into the run (`RunContext.enqueue`, `'asap'` priority)
-    with attribution to the judge, so the running agent course-corrects while recovery is
-    still cheap.
+    message. Steering is enqueued into the run as a system prompt (`RunContext.enqueue`,
+    `'asap'` priority) with attribution to the judge, so the running agent course-corrects
+    while recovery is still cheap.
 
     At most one evaluation per judge is in flight at a time; a cadence tick that finds one
     still running is skipped. An evaluation still in flight when the run ends is cancelled.
@@ -310,7 +329,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
             self._release_claim(ctx)
         verdict = result.output
         if isinstance(verdict, Steer):
-            ctx.enqueue(f'Steering from trajectory judge {self._judge_name()!r}: {verdict.message}')
+            ctx.enqueue(_steering_request(self._judge_name(), verdict.message))
         if self.on_verdict is not None:
             self.on_verdict(verdict)
 
@@ -368,6 +387,31 @@ def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
     return replace(limits, request_limit=limits.request_limit + 1)
 
 
+def _steering_request(judge: str, message: str) -> ModelRequest:
+    """The request delivering a judge's steering to the run, in framework voice.
+
+    The framing sentence is the framework's, so it goes in a `SystemPromptPart`. The message
+    itself comes from the judge model, which read the run's tool results, so it is quoted as data
+    inside a `<steering>` element whose closing tag it cannot forge. The part keeps the default
+    conversation scope: a course correction should keep applying on later requests, not only the
+    one it arrives with.
+    """
+    body = _CLOSING_STEERING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', message)
+    content = f'{_STEERING_FRAMING}\n\n<{_STEERING_TAG} judge="{html.escape(judge)}">\n{body}\n</{_STEERING_TAG}>'
+    return ModelRequest(
+        parts=[SystemPromptPart(content)],
+        metadata={'origin': _STEERING_ORIGIN, 'judge': judge, 'message': message},
+    )
+
+
+def _steering_metadata(message: ModelRequest) -> tuple[str, str] | None:
+    """The judge name and message of a steering request, or `None` for any other request."""
+    metadata = message.metadata
+    if metadata is None or metadata.get('origin') != _STEERING_ORIGIN:
+        return None
+    return str(metadata.get('judge')), str(metadata.get('message'))
+
+
 def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | None) -> str:
     """The judge's user prompt: the rendered trajectory, clamped to the window.
 
@@ -407,7 +451,8 @@ def _render_transcript(messages: Sequence[ModelMessage], run_id: str | None) -> 
     the agent's first response or tool activity in this run, including responses that render
     nothing (thinking only). System prompts and thinking parts are omitted: the judge evaluates
     observable behavior (what was asked, said, called, and returned), not the agent's
-    configuration or private reasoning.
+    configuration or private reasoning. Steering a judge already sent is the exception: it is
+    rendered from its request's metadata, so the judge can tell whether the agent followed it.
     """
     start = _run_start(messages, run_id)
     earlier_request, earlier_rest = _render_lines(messages[:start])
@@ -432,6 +477,10 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
     for message in messages:
         if isinstance(message, ModelResponse):
             user_lines = lines
+        elif (steering := _steering_metadata(message)) is not None:
+            judge, text = steering
+            lines.append(f'trajectory judge {judge} steered: {text}')
+            continue
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 text = _prompt_text(part.content)
