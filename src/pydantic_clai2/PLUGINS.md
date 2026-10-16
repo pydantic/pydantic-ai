@@ -491,6 +491,15 @@ its link, where Esc cancels it. From the web UI's plugins panel, **Change…** o
 row asks each step as a dialog in the page. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
+In the [web UI](#web-this-session-in-your-browser), the plugin adds a **Logfire live view** side
+panel: the project's live view filtered to the current conversation's trace
+(`?q=trace_id='...'`), with the latest run's details open (`traceId` and `spanId`), so it follows
+each new turn. The project's page comes from Logfire's `/v1/info` for the write token the plugin
+sends with, asked once per load when the panel first shows; without a token, or with sending off,
+the panel says how to set a project up. Logfire's `frame-ancestors` admits no `http://127.0.0.1`
+port today, so the panel opens the live view in a window beside the web UI. The panel lives in
+`pydantic_clai2.builtin_plugins.logfire_live`.
+
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
@@ -1260,6 +1269,13 @@ status, origin, and description, and a switch that turns it on or off as `/plugi
   for a list of strings, and JSON for anything else. Each change is validated by the model and
   saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
   in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+
+Plugins' [side panels](#show-a-page-beside-the-conversation-get_side_panels) each get a button
+at the top right; Cmd/Ctrl+Shift+L toggles the first one, such as `observability`'s Logfire live
+view. A panel sits on the right, resized by dragging its left edge; the browser remembers which
+one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
+others open in a window beside this one, which follows the panel as its page changes. The page's
+own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot
@@ -2048,6 +2064,7 @@ contributes nothing:
 | `get_status_segments()` | text appended to the status row |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
+| `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
 | `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
@@ -2831,6 +2848,43 @@ Fragments are truncated from the right on a narrow terminal and are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+### Show a page beside the conversation: `get_side_panels()`
+
+The [web UI](#web-this-session-in-your-browser) shows each `SidePanel` as a button at the top
+right that opens a resizable panel on the right. A panel names itself (`id`, `title`, and
+`icon`, `panel` or `traces`) and has a `view`: an async function returning a `PanelView`, an
+`http` or `https` `url` to show, or a `note` saying why there is none, such as how to set the
+plugin up. With no `url`, the panel shows the note and a button that opens the plugin's settings.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import PanelView, Plugin, SidePanel
+
+
+class Dashboard(Plugin):
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        return (SidePanel(id='board', title='Dashboard', view=self.board),)
+
+    async def board(self) -> PanelView:
+        return PanelView(url=f'https://dash.example.com/sessions/{self.host.session_id}')
+```
+
+The page asks for every view when it connects, when the conversation changes, when a turn starts
+or ends, after each command, and, while a turn runs with a panel or its window open, every few
+seconds, so the page can follow the conversation. Keep `view` quick: cache what needs the network.
+A view that raises, or takes more than ten seconds, shows that in the panel instead, and a `url`
+that is not a well-formed `http` or `https` address with a host is refused.
+
+Only `https` pages, or `http` pages on `127.0.0.1` or `localhost`, can be framed: the web UI's
+own `Content-Security-Policy` allows no others. For those, the server reads the response headers,
+at the page's address without the query, until it has them once, and frames the page only when
+its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Options`, lets the
+web UI's address show it; a browser would draw an error box instead. The server follows no
+redirect, so a page that redirects or answers an error is not framed, nor one that does not
+answer within five seconds; those are read again next time. Otherwise the panel offers to open the page in a
+window beside CLAI's, and points that window at the view's new `url` as it changes.
 
 ### Offer a spinner: `get_spinners()`
 

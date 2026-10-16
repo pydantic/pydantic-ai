@@ -6,8 +6,9 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePath
 from typing import Literal
+from urllib.parse import urlsplit
 
-from anyio import get_cancelled_exc_class, to_thread
+from anyio import fail_after, get_cancelled_exc_class, to_thread
 from pydantic import JsonValue
 from pydantic.errors import PydanticInvalidForJsonSchema
 from termflow.themes import PALETTES
@@ -24,6 +25,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
+from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
     Choice,
@@ -37,6 +39,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     MenuInfo,
     Notice,
     Palette,
+    PanelInfo,
     PluginForm,
     PluginRow,
     PluginsChanged,
@@ -64,10 +67,12 @@ from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    PanelView,
     PluginCatalog,
     PluginHost,
     PluginInfo,
     SessionCatalog,
+    SidePanel,
     TurnOutcome,
 )
 from pydantic_clai2.plugins.loader import PluginError
@@ -84,6 +89,8 @@ Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 PluginAction = Literal['enable', 'disable', 'reload']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
+VIEW_TIMEOUT = 10.0
+"""Seconds a side panel's view may take before the panel says it did not answer, so one cannot hold up the rest."""
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
@@ -114,6 +121,8 @@ class Remote:
         """The conversation browsers were last sent, so a retitle sends only the title."""
         self._theme = self._theme_name()
         """The theme browsers were last sent, so a command that changes it sends it again."""
+        self.frames = FrameCheck()
+        """Which side panel pages this page can frame; each page's headers are read once."""
 
     # What the browser sees.
 
@@ -417,6 +426,28 @@ class Remote:
         """Answer a settings menu's open dialog, or cancel it with `None`."""
         self.dialogs.answer(dialog_id, value)
 
+    # Side panels.
+
+    async def panels(self, *, origin: str) -> list[PanelInfo]:
+        """Every loaded plugin's side panels as they are now, for a page served from `origin`."""
+        found: list[PanelInfo] = []
+        declared = {} if self.host.plugins is None else self.host.plugins.side_panels()
+        for plugin, panels in declared.items():
+            for panel in panels:
+                view = await _view(panel)
+                found.append(
+                    PanelInfo(
+                        plugin=plugin,
+                        id=panel.id,
+                        title=panel.title,
+                        icon=panel.icon,
+                        url=view.url,
+                        note=view.note,
+                        embed=view.url is not None and await self.frames(view.url, ancestor=origin),
+                    )
+                )
+        return found
+
     # The sidebar's sessions.
 
     @property
@@ -535,6 +566,30 @@ class Remote:
     async def delete(self, conversation_id: str) -> None:
         await self.catalog.delete(conversation_id)
         self.hub.publish(SessionsChanged())
+
+
+async def _view(panel: SidePanel) -> PanelView:
+    """What `panel` shows now; a failing view, or a page that is not on the web, shows why instead."""
+    try:
+        with fail_after(VIEW_TIMEOUT):
+            view = await panel.view()
+    except TimeoutError:
+        return PanelView(note=f'{panel.title} did not answer in time.')
+    # Any plugin's bug: one broken panel must not take the others, or the page, down.
+    except Exception as error:  # noqa: BLE001
+        return PanelView(note=f'{panel.title} failed: {str(error) or type(error).__name__}')
+    if view.url is not None and not _web_page(view.url):
+        return PanelView(note=f'{panel.title} offered a page that is not on the web; only http and https open here.')
+    return view
+
+
+def _web_page(url: str) -> bool:
+    """Whether `url` is a well-formed `http` or `https` address, which the browser can open."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # Such as an unclosed `[` in an IPv6 host.
+        return False
+    return parts.scheme in ('http', 'https') and bool(parts.hostname) and not any(char.isspace() for char in url)
 
 
 def _worktrees(

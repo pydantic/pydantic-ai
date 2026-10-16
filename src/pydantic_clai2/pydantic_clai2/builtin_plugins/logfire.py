@@ -29,10 +29,20 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, Va
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir, parse_destination, remembered
+from pydantic_clai2.builtin_plugins.logfire_live import live_view_url, project_url
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
-from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
+from pydantic_clai2.plugins import (
+    PanelView,
+    Plugin,
+    PluginHost,
+    PluginLoadFailed,
+    SessionEnd,
+    SessionStart,
+    SidePanel,
+    TurnEnd,
+)
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
@@ -114,6 +124,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         self._unsubscribe: Callable[[], None] | None = None
         self._httpx_instrumentors: list[HTTPXClientInstrumentor | HTTPX2ClientInstrumentor] = []
         token, send_to_logfire = _destination(settings, host)
+        self._sending = send_to_logfire is not False
+        self._project: str | None = None
+        """The project's page in Logfire, once Logfire named it."""
         api_key = _variables_key(settings, host)
         private_dir = logfire_dir()
         propagator = get_global_textmap()
@@ -169,6 +182,26 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._session_tracing, self.instrumentation)
+
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        return (SidePanel(id='live', title='Logfire live view', icon='traces', view=self._live_view),)
+
+    async def _live_view(self) -> PanelView:
+        """The live view of the conversation's trace, focused on its latest run, once traces go to a project."""
+        config = self.instance.config
+        tokens = [config.token] if isinstance(config.token, str) else config.token or []
+        if not self._sending or not tokens:
+            return PanelView(note=NOT_SENDING)
+        if self._project is None:
+            base_url = config.advanced.generate_base_url(tokens[0])
+            self._project = await project_url(SETUP, base_url=base_url, token=tokens[0])
+            if self._project is None:
+                return PanelView(note=f'{base_url} did not say which project the write token belongs to.')
+        turn = self._session_tracing.turn()
+        if turn is None:
+            return PanelView(url=self._project)
+        trace, run = turn
+        return PanelView(url=live_view_url(self._project, trace=trace, run=run))
 
     def settings_menu(self) -> SettingsMenu:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
@@ -257,6 +290,12 @@ async def _user_email(settings: LogfireSettings) -> str | None:
         return account.email
     return None
 
+
+NOT_SENDING = (
+    'Traces stay on this machine: no Logfire project is set up. Pick one on the Logfire project row of '
+    "this plugin's settings, and its live view shows here."
+)
+"""The live view panel without a project to show."""
 
 CREDENTIALS_FILE = 'logfire_credentials.json'
 """The file the SDK writes on `logfire auth`/`projects use` and reads from `data_dir`."""

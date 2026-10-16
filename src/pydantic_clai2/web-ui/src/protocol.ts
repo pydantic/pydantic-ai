@@ -245,6 +245,19 @@ export interface PluginRow {
   serving: boolean
 }
 
+/** A plugin's side panel, as it is now. */
+export interface PanelInfo {
+  plugin: string
+  id: string
+  title: string
+  icon: 'panel' | 'traces'
+  /** The page to show; `null` shows `note` alone, such as how to set the plugin up. */
+  url: string | null
+  note: string
+  /** The page lets this one frame it; otherwise it opens in a window of its own. */
+  embed: boolean
+}
+
 /** One row of a plugin's declared settings menu, with its current value. */
 export interface MenuField {
   key: string
