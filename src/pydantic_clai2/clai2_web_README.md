@@ -6,8 +6,8 @@
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
 blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
-model picker, and a stop button. The
-terminal and the browser drive the same session: a prompt typed in either runs once, and both
+model picker, and a stop button. Scrolling up while output streams keeps your place; **Jump to latest** follows
+it again. The terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
 ends the web UI; `/web status` shows its address.
 
@@ -27,13 +27,17 @@ the current ones first and search across all of them. A folder outside Git is a 
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed; an older session from a removed folder is placed by
 where it was, or listed under Removed folders. Click one to switch to it, or use its menu to
-rename, fork, or delete it. A session whose directory is gone, such as a removed worktree, opens
-read-only; so does, with `/web` from a terminal, a session saved in another directory, since the
-terminal works where it started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts,
-Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+rename, fork, archive, or delete it. Archiving hides a session from the sidebar and `/resume`
+without deleting anything; the archive button beside the search lists archived sessions too, muted,
+and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
+be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
+directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
+terminal, a session saved in another directory, since the terminal works where it started.
+Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts, Cmd/Ctrl+K searches sessions,
+Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
-every request must carry a token that is new each launch; the printed link contains it. Keep
+every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with
 `/plugins enable web`, and `--web` loads it for that launch only. See
 [the plugin guide](PLUGINS.md#web-this-session-in-your-browser) for settings and limits.
@@ -227,6 +231,12 @@ takes the launch's token from a file only you can read, instead of making one, f
 starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
 leaves the token out, and no browser opens.
 
+`/update` works from the page too (typed in the composer, it opens Settings › About, whose
+**Update…** asks first): the page shows uv's progress, then
+"Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
+same session, and says which version it updated to. A failed install, or nothing to install,
+says so and nothing restarts. A terminal session with `/web` running comes back with it running.
+
 ## Workspaces
 
 The `workspaces` plugin makes workspaces: a checkout of a repository on its own branch, with its
@@ -258,7 +268,9 @@ Click **Orchestrator** in the sidebar, right below **New session**, to open its 
 separate agent with its own conversation, and the only one with these tools: it makes workspaces,
 starts each one's CLAI with a prompt, waits for and reads its turns, steers it with more prompts,
 answers its questions, and reports back. It destroys a workspace only after you picked **Destroy
-ID** when it asked, in its chat. It needs `workspaces` on, which the chat offers to do in one
-click, and uses the session's model. Its conversation is kept across reloads and restarts. The
-session's own agent gets none of this. See
+ID** when it asked, in its chat. It also finds the saved sessions of every project and cleans them
+up by archiving them ("archive every session older than 3 days"), which you can undo. No tool
+deletes a session, and archiving removes no folder or worktree. It needs `workspaces` on, which
+the chat offers to do in one click, and uses the session's model. Its conversation is kept across
+reloads and restarts. The session's own agent gets none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).

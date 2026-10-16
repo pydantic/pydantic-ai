@@ -173,7 +173,7 @@ export function SettingsWindow({
               version={settingsVersion}
               grouped
               group={modelGroup}
-              opened={(field) => field.note === 'current'}
+              opened={(menu) => menu.fields.find((field) => field.key === 'model')?.value}
               onError={onError}
               onNotice={onNotice}
             />

@@ -114,6 +114,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, try_import
+from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
@@ -2697,7 +2698,7 @@ async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() 
     ]
     ws = FakeWebSocket([json.dumps(frame) for frame in frames])
     conn = OpenAIRealtimeConnection(ws, input_transcription_enabled=False)  # type: ignore[arg-type]
-    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in lifecycle_events(conn)]
 
     assert not any(isinstance(event, UserTurnStarted | UserTurnEnded) for event in events)
     assert conn._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
@@ -2724,7 +2725,7 @@ async def test_idle_timeout_commit_is_not_a_spoken_turn() -> None:
         {'type': 'input_audio_buffer.committed', 'item_id': 'spoken', 'previous_item_id': 'idle'},
     ]
     conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
-    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in lifecycle_events(conn)]
 
     assert events[:-1] == [
         SessionUsage(usage=RequestUsage(details={'input_transcription_seconds': 5}), response_scoped=False),
@@ -4588,7 +4589,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
                     'type': 'function_call',
                     'name': 'get_weather',
                     'call_id': 'tc_1',
-                    'arguments': '{"city": "Paris"}',
+                    'arguments': '{"city":"Paris"}',
                 },
             },
             {

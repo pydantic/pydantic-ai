@@ -110,10 +110,11 @@ class Command:
     built-in like `/model`. The hidden command is reported, not dropped silently.
     """
     menu: 'Callable[[], SettingsMenu] | None' = None
-    """The settings menu the bare command opens, declared so another surface can show the same one.
+    """A settings menu over what the bare command changes, for surfaces that cannot show the terminal's own.
 
-    The terminal still runs `handler`; the web UI shows this menu in the page instead, editing the
-    same values through the same `FieldSource`. Built each time it is shown.
+    The terminal still runs `handler`, whose menu may offer more, such as `/spinner`'s speed keys; the
+    web UI shows this one in the page instead, so its edits must save and apply as the command's do.
+    Built each time it is shown.
     """
 
 

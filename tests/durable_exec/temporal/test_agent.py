@@ -86,7 +86,6 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import DynamicToolset
@@ -104,6 +103,7 @@ from pydantic_ai.workspaces import (
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...realtime_connections import InferredConnection
 from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
@@ -1916,10 +1916,10 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
