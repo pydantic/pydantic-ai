@@ -30,7 +30,12 @@ from pydantic import TypeAdapter
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
-from pydantic_ai.models._continuation import merge_responses, observe_continuation_segments
+from pydantic_ai.models._continuation import (
+    billed_beyond,
+    merge_responses,
+    observe_continuation_segments,
+    resumed_response,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
@@ -877,18 +882,18 @@ def _continuation_boundaries(
 
     Folded the way core's continuation loop folds them, starting from the suspended response
     a resumed request ends in, so each boundary is the response core would have committed had
-    the chain failed right after that segment.
+    the chain failed right after that segment. That suspended response was charged by the run
+    that produced it, so it is the baseline: each boundary carries only what was billed beyond it,
+    as the response core records for the request does.
     """
     if len(segments) < 2:
         return []
-    messages = request_context.messages
-    merged = messages[-1] if messages else None
-    if not (isinstance(merged, ModelResponse) and merged.state == 'suspended'):
-        merged = None
+    resumed = resumed_response(request_context.messages)
+    merged = resumed
     boundaries: list[ModelResponse] = []
     for segment in segments[:-1]:
         merged = segment if merged is None else merge_responses(merged, segment)
-        boundaries.append(merged)
+        boundaries.append(billed_beyond(merged, resumed))
     return boundaries
 
 

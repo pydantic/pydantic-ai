@@ -25,7 +25,6 @@ from tests.clai2.menu_script import Script, make_context, pick, typed
 ADD = chain_menu._Row.ADD  # pyright: ignore[reportPrivateUsage]
 SAVE = chain_menu._Row.SAVE  # pyright: ignore[reportPrivateUsage]
 TYPE = chain_menu._Row.TYPE  # pyright: ignore[reportPrivateUsage]
-Member = chain_menu._Member  # pyright: ignore[reportPrivateUsage]
 Move = chain_menu._Move  # pyright: ignore[reportPrivateUsage]
 Remove = chain_menu._Remove  # pyright: ignore[reportPrivateUsage]
 CLOSE = MenuResult(cancelled=True)
@@ -88,7 +87,7 @@ async def test_edit_a_chains_models_and_their_order(tmp_path: Path) -> None:
     context = chain_context(tmp_path)
     context.store.save_chain(name='best', models=['a:1', 'b:2', 'c:3'])
     script = Script(
-        lists=[pick(EditChain(name='best')), pick(Move(0, 1)), pick(Remove(2)), pick(Member(0)), pick(SAVE), CLOSE],
+        lists=[pick(EditChain(name='best')), pick(Move(0, 1)), pick(Remove(2)), pick(SAVE), CLOSE],
         choices=[],
         texts=[],
     )
@@ -192,6 +191,10 @@ def test_chain_editor_keys_and_details(
         (1, ['['], Move(1, -1)),
         (1, ['d'], Remove(1)),
         (2, ['a'], ADD),
+        (2, ['enter'], ADD),
+        (3, ['enter'], SAVE),
+        # Enter on a model has no action, and the editor stays open until Esc.
+        (0, ['enter', 'escape'], None),
         # Keys that cannot apply to a row do nothing: the first model up, the last down, or a row that is not a model.
         (0, ['[', 'escape'], None),
         (1, [']', 'escape'], None),

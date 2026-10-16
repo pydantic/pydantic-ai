@@ -11,6 +11,7 @@ from pydantic_clai2.mcp._form import Editor, edit_form, edit_in_editor, install_
 from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned, sign_in
 from pydantic_clai2.mcp._settings import references, target
 from pydantic_clai2.plugins.sign_in import sign_in_now, sign_out_now
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
@@ -231,7 +232,7 @@ class MCPCommand:
         if extra:
             return await sign_out_now(method)
         await to_thread.run_sync(method.sign_out)  # A fresh sign-in, also when the stored one still works.
-        message = await sign_in_now(method, self.runners)
+        message = await sign_in_now(method, TerminalDialogs(self.runners))
         if not await to_thread.run_sync(method.signed_in):
             return message
         return f'{message}\n{await self.servers.start(name)}'
