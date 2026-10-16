@@ -597,25 +597,31 @@ async def test_direct_model_request_stream():
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
 @pytest.mark.parametrize('stream', [False, True])
-async def test_request_timeout_covers_sdk_retries(allow_model_requests: None, stream: bool):
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_request_timeout_covers_sdk_retries(
+    allow_model_requests: None, stream: bool, anyio_backend: str, clock: Clock
+):
     """Unlike `timeout`, an SDK retry doesn't re-arm `request_timeout`: it ends the request across all attempts."""
     attempts = 0
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        await anyio.sleep(0.01)
+        clock.advance(LONG_TIMEOUT / 2 if attempts == 1 else LONG_TIMEOUT / 2 + 1)
+        if attempts == 2:
+            # A positive sleep schedules a timer, letting the overdue deadline run before this response returns.
+            await anyio.sleep(0.001)
         # `retry-after-ms` keeps the SDK's backoff between attempts short.
         return httpx2.Response(503, json={'error': {'message': 'overloaded'}}, headers={'retry-after-ms': '1'})
 
     async with AsyncOpenAI(
         api_key='test',
         base_url='https://api.openai.com/v1',
-        max_retries=1000,
+        max_retries=1,
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     ) as openai_client:
         model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
-        agent = Agent(model, model_settings={'request_timeout': 0.2, 'timeout': 10})
+        agent = Agent(model, model_settings={'request_timeout': LONG_TIMEOUT, 'timeout': 10})
 
         with pytest.raises(ModelRequestTimeout):
             if stream:
@@ -624,4 +630,4 @@ async def test_request_timeout_covers_sdk_retries(allow_model_requests: None, st
             else:
                 await agent.run('hello')
 
-    assert attempts > 1
+    assert attempts == 2
