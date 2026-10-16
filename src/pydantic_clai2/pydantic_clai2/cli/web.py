@@ -1,5 +1,6 @@
 """`clai2 --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,9 +16,10 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT, SessionEndReason
-from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins.loader import SessionPlugins
 from pydantic_clai2.runtime.imported_sessions import ImportSource
-from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace, workspace_directory
 
 WEB = 'web'
@@ -58,23 +60,65 @@ async def run_web(
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
+    launched_in, launch_project = Path.cwd().resolve(), project
     workspace = None
     if resume and resume_from is None and (saved := await _start_in(store=store, conversation_id=resume)):
         workspace, project = saved
+    shell = _web_session(
+        settings_for=settings_for,
+        project=project,
+        console=console,
+        workspace=workspace,
+        store=store,
+    )
+    with open(os.devnull, 'w', encoding='utf-8') as sink:
+        # Sessions opened from the browser log nothing: their output would interleave with this one's.
+        shell.process.live.build = lambda directory: _web_session(
+            settings_for=settings_for,
+            project=launch_project if directory in (None, launched_in) else load_project_settings(directory),
+            console=Console(file=sink, force_terminal=False),
+            workspace=directory or launched_in,
+            process=shell.process,
+        )
+        await _serve_web(
+            shell,
+            console=console,
+            resume=resume,
+            resume_from=resume_from,
+            session_id=session_id,
+            fork_session=fork_session,
+            port=port,
+            token=token,
+            restart=restart,
+        )
+
+
+def _web_session(
+    *,
+    settings_for: Callable[[ProjectSettings], Settings],
+    project: ProjectSettings,
+    console: Console,
+    workspace: Path | None,
+    store: SettingsStore | None = None,
+    process: ClaiProcess[None] | None = None,
+) -> SessionRuntime[None, str]:
+    """A session of `clai2 --web` in `workspace`: over a new process with `store`, or joining `process`."""
     settings = settings_for(project)
-    agent = create_stock_agent()
     shell = create_shell(
-        agent,
+        create_stock_agent(),
         deps=None,
         plugins=(),
         usage_limits=UsageLimits(request_limit=settings.request_limit),
         console=console,
         settings=settings,
         store=store,
-        builtin_plugins=STOCK_PLUGINS,
+        builtin_plugins=STOCK_PLUGINS if process is None else (),
         project=project,
         headless=True,
         workspace=workspace,
+        process=process,
+        # Ctrl-C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
+        signals=process is None,
     )
     SessionWorkspace(
         session=shell.session,
@@ -82,12 +126,27 @@ async def run_web(
         loader=shell.loader,
         status=shell.status,
         settings=settings_for,
-        keep=WEB,
         busy=shell.background_running,
     ).attach(sessions=shell.sessions, commands=shell.commands)
+    return shell
+
+
+async def _serve_web(
+    shell: SessionRuntime[None, str],
+    *,
+    console: Console,
+    resume: str | None,
+    resume_from: ImportSource | None,
+    session_id: str | None,
+    fork_session: bool,
+    port: int | None,
+    token: str | None,
+    restart: WebHandoff | None,
+) -> None:
+    """Run `shell`, the session CLAI started with, serving the web UI until it ends; other live sessions end first."""
     reason: SessionEndReason = 'error'
     served: WebHandoff | None = None
-    async with agent, create_task_group() as workers:
+    async with shell.agent, create_task_group() as workers:
         workers.start_soon(shell.process.namer.run)
         try:
             notice = ''
@@ -117,7 +176,8 @@ async def run_web(
                 # A launcher keeps its token, so the address it reads leaves the token out.
                 console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
             console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
-            reason = await shell.run()
+            async with shell.process.live.serving():
+                reason = await shell.run()
         except get_cancelled_exc_class():
             reason = 'exit'
             raise
@@ -126,17 +186,17 @@ async def run_web(
             # Before closing the plugins stops the web UI.
             served = serving(shell.loader)
             with CancelScope(shield=True):
-                await shell.loader.close(reason)
+                await shell.close(reason)
     if (relaunch := shell.relaunch(web=served)) is not None:
         raise relaunch
 
 
-def _loaded_web(loader: PluginLoader[DepsT]) -> WebPlugin | None:
+def _loaded_web(loader: SessionPlugins[DepsT]) -> WebPlugin | None:
     loaded = next((entry.loaded for entry in loader.entries() if entry.name == WEB), None)
     return loaded.plugin if loaded is not None and isinstance(loaded.plugin, WebPlugin) else None
 
 
-def serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+def serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
     """The port and token of the web UI `loader`'s `web` plugin serves now; `None` while it serves none."""
     web = _loaded_web(loader)
     if web is None or web.server is None:
@@ -144,7 +204,7 @@ def serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
     return WebHandoff(port=web.server.port, token=web.token)
 
 
-async def serve_again(loader: PluginLoader[DepsT], handoff: WebHandoff) -> str:
+async def serve_again(loader: SessionPlugins[DepsT], handoff: WebHandoff) -> str:
     """Serve the web UI on the port and with the token CLAI used before `/update`, opening no browser."""
     web = _loaded_web(loader)
     if web is None:

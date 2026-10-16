@@ -80,6 +80,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
+        self.held_elsewhere: Callable[[str], bool] = lambda conversation_id: False
+        """Whether another live session of this process holds a conversation, which `resume` then refuses."""
 
     @property
     def follows_workspace(self) -> bool:
@@ -92,7 +94,10 @@ class Sessions(Generic[DepsT, OutputT]):
         With `relocate`, the session first moves into the directory it was saved in, unless the
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
+        One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
         """
+        if self.held_elsewhere(conversation_id):
+            raise ValueError(f'Session {conversation_id} is open in another live session of this CLAI.')
         if self.relocate is not None and not allow_other_workspace:
             workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
             if workspace != self.session.workspace:

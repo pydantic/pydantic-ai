@@ -1,0 +1,225 @@
+"""The live sessions of one CLAI process: which session holds which conversation, opening, closing, idle closing.
+
+Every `SessionRuntime` joins its process's `LiveRuntimes` when it is built and leaves it when it closes.
+The terminal's session and the session `clai2 --web` starts with run under their own driver. Sessions
+opened with `open` or `new` run here, each as a task of `serving`, and close after an idle hour.
+"""
+
+import logging
+import time
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Protocol
+
+from anyio import CancelScope, Event, create_task_group, sleep
+from anyio.abc import TaskGroup, TaskStatus
+
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.plugins import LiveSession, SessionEndReason
+from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime
+from pydantic_clai2.runtime.session_workspace import workspace_directory
+
+IDLE_AFTER = 3600.0
+"""Seconds a session opened with `open` or `new` stays live with nothing running, queued, or watching it."""
+CHECK_EVERY = 60.0
+"""Seconds between looks for idle sessions."""
+_LOGGER = logging.getLogger(__name__)
+
+
+class Served(Protocol):
+    """A live session as `LiveRuntimes` runs it; `SessionRuntime` is one."""
+
+    @property
+    def live_session(self) -> LiveRuntime:
+        """The session as `host.live` lists it."""
+        ...
+
+    @property
+    def context(self) -> CommandContext:
+        """Its settings."""
+        ...
+
+    @property
+    def idle(self) -> bool:
+        """Whether nothing runs or waits in it."""
+        ...
+
+    async def serve(self, *, resume: str | None, ready: Callable[[], None]) -> SessionEndReason:
+        """Restore `resume`, load plugins, call `ready`, and take input until it ends or is cancelled."""
+        ...
+
+
+Builder = Callable[[Path | None], Served]
+"""Builds a session in a directory, by default the one CLAI started in, ready to `serve`."""
+
+
+@dataclass(kw_only=True)
+class _Live:
+    runtime: Served
+    active: float
+    """When it was last seen busy, watched, or changing, by the registry's clock."""
+    scope: CancelScope | None = None
+    """Cancels a session `serving` runs; `None` for one its own driver runs."""
+    ready: bool = True
+    """False while `open` or `new` loads it; until then it is not listed and not closed for being idle."""
+    closing: bool = False
+    done: Event = field(default_factory=Event)
+    """Set once a session `serving` runs has closed."""
+
+
+class LiveRuntimes(JoinedSessions):
+    """The process's live sessions by `LiveSession.id`, as `host.live` reaches them; a conversation is held by one."""
+
+    def __init__(
+        self,
+        *,
+        conversations: SqliteConversationStore,
+        clock: Callable[[], float] = time.monotonic,
+        idle_after: float = IDLE_AFTER,
+        check_every: float = CHECK_EVERY,
+    ) -> None:
+        """`clock`, `idle_after`, and `check_every` time idle closing."""
+        self._live: dict[str, _Live] = {}
+        super().__init__(lambda: [live.runtime.live_session for live in self._live.values()])
+        self._conversations = conversations
+        self.clock = clock
+        self.idle_after = idle_after
+        self.check_every = check_every
+        self.build: Builder | None = None
+        """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as in the terminal."""
+        self.focused: str | None = None
+        """The session the terminal shows, never closed for being idle; `None` under `clai2 --web`."""
+        self._group: TaskGroup | None = None
+        self._opening: dict[str, Event] = {}
+
+    def listing(self) -> list[LiveSession]:
+        """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
+        return [live.runtime.live_session for live in self._live.values() if live.ready]
+
+    def add(self, runtime: Served) -> None:
+        """Count `runtime` among the live sessions, following the settings the others save."""
+        runtime.context.saved = lambda key: self._saved(runtime, key)
+        self._live[runtime.live_session.id] = _Live(runtime=runtime, active=self.clock())
+        self.changed(runtime.live_session)
+
+    def remove(self, runtime: Served) -> None:
+        """Stop counting `runtime`, once it has closed."""
+        self._live.pop(runtime.live_session.id, None)
+        self.changed(runtime.live_session)
+
+    def changed(self, session: LiveRuntime) -> None:
+        if (live := self._live.get(session.id)) is not None:
+            live.active = self.clock()
+        super().changed(session)
+
+    def holding(self, conversation_id: str) -> LiveSession | None:
+        """The live session holding `conversation_id`, even one still opening, unless it is closing."""
+        live = self._holder(conversation_id)
+        return live.runtime.live_session if live is not None and not live.closing else None
+
+    def _holder(self, conversation_id: str) -> _Live | None:
+        return next(
+            (
+                live
+                for live in self._live.values()
+                if live.runtime.live_session.conversation.conversation_id == conversation_id
+            ),
+            None,
+        )
+
+    @asynccontextmanager
+    async def serving(self) -> AsyncGenerator[None]:
+        """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all."""
+        async with create_task_group() as group:
+            self._group = group
+            group.start_soon(self._close_idle_ones)
+            try:
+                yield
+            finally:
+                self._group = None
+                group.cancel_scope.cancel()
+
+    async def open(self, conversation_id: str, /) -> LiveSession:
+        while True:
+            live = self._holder(conversation_id)
+            if live is not None and live.ready and not live.closing:
+                return live.runtime.live_session
+            waiting = self._opening.get(conversation_id) or (live.done if live is not None and live.closing else None)
+            if waiting is None:
+                break
+            await waiting.wait()
+        opened = self._opening[conversation_id] = Event()
+        try:
+            saved = await self._conversations.get(conversation_id=conversation_id)
+            return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
+        finally:
+            del self._opening[conversation_id]
+            opened.set()
+
+    async def new(self, workspace: Path | None = None) -> LiveSession:
+        return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+
+    async def close(self, live_id: str, /) -> None:
+        live = self._live.get(live_id)
+        if live is None or not live.ready:
+            raise LookupError(f'No live session {live_id}')
+        if live.scope is None:
+            raise ValueError(
+                f'Live session {live_id} runs under its own driver, such as the terminal; it closes there.'
+            )
+        live.closing = True
+        live.scope.cancel()
+        await live.done.wait()
+
+    async def close_idle(self) -> None:
+        """Close each session `serving` runs that has been idle and unwatched for `idle_after` seconds."""
+        now = self.clock()
+        for live_id, live in list(self._live.items()):
+            if live.scope is None or live.closing or not live.ready:
+                continue
+            if live_id == self.focused or live.runtime.live_session.watchers or not live.runtime.idle:
+                live.active = now
+            elif now - live.active >= self.idle_after:
+                await self.close(live_id)
+
+    async def _close_idle_ones(self) -> None:
+        while True:
+            await sleep(self.check_every)
+            await self.close_idle()
+
+    async def _start(self, workspace: Path | None, *, resume: str | None) -> LiveSession:
+        if self._group is None or self.build is None:
+            return await super().new()
+        runtime = self.build(workspace)
+        self._live[runtime.live_session.id].ready = False
+        return await self._group.start(self._serve, runtime, resume)
+
+    async def _serve(self, runtime: Served, resume: str | None, *, task_status: TaskStatus[LiveSession]) -> None:
+        live = self._live[runtime.live_session.id]
+
+        def started() -> None:
+            live.ready = True
+            task_status.started(runtime.live_session)
+            self.changed(runtime.live_session)
+
+        try:
+            with CancelScope() as live.scope:
+                await runtime.serve(resume=resume, ready=started)
+        except Exception:
+            if not live.ready:
+                raise
+            # One session failing must not end the others.
+            _LOGGER.exception('Live session %s failed', runtime.live_session.id)
+        finally:
+            live.done.set()
+
+    def _saved(self, origin: Served, key: str) -> None:
+        """Have every other live session follow a setting `origin` saved; `model` and `run.*` stay per session."""
+        if key == 'model' or key.startswith('run.'):
+            return
+        for live in list(self._live.values()):
+            if live.runtime is not origin:
+                live.runtime.context.adopt(key, origin.context.settings)

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from anyio import Lock, create_memory_object_stream, create_task_group
+from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -58,7 +58,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
-from pydantic_clai2.plugins.process_plugins import handling
+from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime._session import (
     Session,
     StockAgent,
@@ -379,7 +379,8 @@ def create_shell(
         setting=context.setting,
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
-        running=lambda: session.running,
+        running=lambda: shell.turning,
+        queued=lambda: shell.queued,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
@@ -495,8 +496,12 @@ def create_shell(
         await render_history(messages, console=console, renderer=renderer)
 
     sessions.on_resume = show_resumed
+    sessions.held_elsewhere = lambda conversation_id: (
+        process.live.holding(conversation_id) not in (None, shell.live_session)
+    )
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
+    process.live.add(shell)
     return shell
 
 
@@ -561,6 +566,66 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _identity_pending: bool = field(default=False, init=False)
     _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
+    turning: bool = field(default=False, init=False)
+    """Whether a turn runs: from its `TurnStart` until its run ends, before plugins hear `TurnEnd`."""
+    _handling: bool = field(default=False, init=False, repr=False)
+    """Whether input, a turn or a command, is being handled."""
+
+    @property
+    def live_session(self) -> LiveRuntime:
+        """This session as `host.live` lists it."""
+        return self.loader.live_session
+
+    @property
+    def queued(self) -> int:
+        """How many inputs wait for the running turn or command to end."""
+        return len(self.editor.queued_messages) if self.editor is not None else self._inbox.qsize()
+
+    @property
+    def idle(self) -> bool:
+        """Whether nothing runs or waits: no turn, command, queued input, background fork, or delegated task."""
+        return not (self._handling or self.session.running or self.queued or self.background_running())
+
+    async def serve(self, *, resume: str | None, ready: Callable[[], None]) -> SessionEndReason:
+        """Run as a session with no terminal of its own, as one the browser opened, until it ends or is cancelled.
+
+        Opens the agent, restores the conversation `resume`, loads the plugins, calls `ready`, then
+        takes input. The plugins end on the way out, with `'exit'` when cancelled, as idle closing does.
+        """
+        reason: SessionEndReason = 'error'
+        try:
+            async with self.agent:
+                if resume is not None and (notice := await self.sessions.start(resume=resume)):
+                    self.console.print(notice, markup=False)
+                await self.loader.load_all()
+                if resume is not None:
+                    self.session.record_resumed()
+                ready()
+                reason = await self.run()
+        except get_cancelled_exc_class():
+            reason = 'exit'
+            raise
+        finally:
+            with CancelScope(shield=True):
+                await self.close(reason)
+        return reason
+
+    async def close(self, reason: SessionEndReason) -> None:
+        """End this session's plugins and leave the process's live sessions."""
+        try:
+            await self.loader.close(reason)
+        finally:
+            self.process.live.remove(self)
+
+    @contextmanager
+    def _handling_input(self) -> Generator[None]:
+        self._handling = True
+        self.live_session.changed()
+        try:
+            yield
+        finally:
+            self._handling = False
+            self.live_session.changed()
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
@@ -707,6 +772,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.editor.submit(text)
         else:
             self._inbox.put_nowait(text)
+        self.live_session.changed()
 
     def request_reload(self, args: list[str]) -> str:
         if args:
@@ -865,9 +931,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             except PromptWakeup:
                 if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
                     continue
-                async with self.forks.busy():
-                    if await self._turn(None):
-                        return 'exit'
+                with self._handling_input():
+                    async with self.forks.busy():
+                        if await self._turn(None):
+                            return 'exit'
                 continue
             except KeyboardInterrupt:
                 if self.interrupts.press():
@@ -885,8 +952,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             if self.prompt is None:
                 self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
-            if await self._dispatch_input(text):
-                return 'exit'
+            with self._handling_input():
+                if await self._dispatch_input(text):
+                    return 'exit'
 
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
@@ -981,7 +1049,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             ended = await self.run_turn(start, images=images, automated=automated)
 
         previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
-        completed = await self.interrupts.run(run_turn())
+        self.turning = True
+        self.live_session.changed()
+        try:
+            completed = await self.interrupts.run(run_turn())
+        finally:
+            self.turning = False
+            self.live_session.changed()
         if not completed:
             for record in self.tasks.records():
                 if (

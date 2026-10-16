@@ -1435,7 +1435,6 @@ def follow_workspaces(
         loader=shell.loader,
         status=shell.status,
         settings=settings,
-        keep='web',
     )
     workspace.attach(sessions=shell.sessions, commands=shell.commands)
     return workspace
@@ -1559,8 +1558,8 @@ def test_a_session_moves_only_between_turns(
     loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
     assert loaded['web'].plugin is plugin
     repo_context = loaded['repo_context'].plugin
-    web_.portal.call(lambda: shell.loader.restart(project=(), keep='absent'))
-    assert loaded['repo_context'].plugin is not repo_context, 'a plugin not named to keep loads again too'
+    web_.portal.call(lambda: shell.loader.restart(project=()))
+    assert loaded['repo_context'].plugin is not repo_context, 'a session-scoped plugin loads again'
     assert loaded['web'].plugin is plugin, 'a process-scoped plugin follows no session directory'
     assert list(loaded)[-1] == 'web'
 
