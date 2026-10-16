@@ -1,5 +1,6 @@
 """Auxiliary naming never changes the conversation head or stalls a foreground turn."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -177,7 +178,8 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
         summary=ConversationSummary(workspace='/a', title_source='user'),
         messages=[ModelRequest(parts=[UserPromptPart('keep my title')])],
     )
-    namer, client = SessionNamer(store=store, timeout=0.01), NamingClient(generate=generate, on_named=on_named)
+    namer, client = SessionNamer(store=store, timeout=0.01), NamingClient(generate=generate)
+    namer.listeners.append(on_named)
     # A conversation that needs no name saves nothing, so the shell hears nothing about it.
     assert namer.submit(named_by_user.id, client=client)
     assert namer.submit(summary.id, client=client)
@@ -193,8 +195,10 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
     assert notified == [(summary.id, 'Fix renderer')]
 
 
-async def test_one_worker_names_each_conversation_with_the_session_that_queued_it(tmp_path: Path) -> None:
-    """The process's one namer uses the asking session's model and tells only that session the new title."""
+async def test_one_worker_names_each_conversation_with_the_model_of_the_session_that_queued_it(
+    tmp_path: Path,
+) -> None:
+    """The process's one namer uses the asking session's model, and tells every live session the title."""
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     first, second = [
         await store.save(
@@ -209,14 +213,18 @@ async def test_one_worker_names_each_conversation_with_the_session_that_queued_i
         async def generate(prompt: str) -> NamingResult:
             return NamingResult(name=SessionName(title=f'Named by {name}'))
 
-        async def on_named(conversation_id: str, title: str) -> None:
+        return NamingClient(generate=generate)
+
+    def listener(name: str) -> Callable[[str, str], Awaitable[None]]:
+        async def named(conversation_id: str, title: str) -> None:
             heard.append((name, conversation_id, title))
-            if len(heard) == 2:
+            if len(heard) == 4:
                 done.set()
 
-        return NamingClient(generate=generate, on_named=on_named)
+        return named
 
     namer = SessionNamer(store=store)
+    namer.listeners.extend([listener('a'), listener('b')])
     assert namer.submit(first.id, client=client('a'))
     namer.backfill([second], client=client('b'))
     with anyio.fail_after(10):
@@ -224,4 +232,9 @@ async def test_one_worker_names_each_conversation_with_the_session_that_queued_i
             group.start_soon(namer.run)
             await done.wait()
             group.cancel_scope.cancel()
-    assert heard == [('a', first.id, 'Named by a'), ('b', second.id, 'Named by b')]
+    assert heard == [
+        ('a', first.id, 'Named by a'),
+        ('b', first.id, 'Named by a'),
+        ('a', second.id, 'Named by b'),
+        ('b', second.id, 'Named by b'),
+    ]

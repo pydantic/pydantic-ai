@@ -90,7 +90,7 @@ async def test_runtimes_share_the_process_services(tmp_path: Path) -> None:
 
 
 async def test_closing_one_runtime_leaves_the_others_tasks_running(tmp_path: Path) -> None:
-    """The owner stays open while any runtime runs, so A's exit does not cancel B's background task."""
+    """The owner stays open while any runtime runs: A's exit cancels A's tasks, whose plugins close, not B's."""
     process = ClaiProcess.open(SettingsStore(tmp_path / 'config.db'))
     started, release = anyio.Event(), anyio.Event()
 
@@ -103,6 +103,8 @@ async def test_closing_one_runtime_leaves_the_others_tasks_running(tmp_path: Pat
     b, b_output = runtime_over(process, tmp_path / 'b', Agent(FunctionModel(stream_function=blocked)))
     background = task(conversation_id=b.session.summary.id)
     background.background = True
+    # A's own: one of its conversation, and one it started in a conversation it has since left.
+    own, earlier = task(task_id='d' * 32, conversation_id=a.session.summary.id), task(task_id='e' * 32)
     reasons: dict[str, str] = {}
 
     async def run(name: str, runtime: SessionRuntime[None, str]) -> None:
@@ -116,12 +118,16 @@ async def test_closing_one_runtime_leaves_the_others_tasks_running(tmp_path: Pat
             process.tasks.owner.records[background.id] = background
             assert b.background_running() and not a.background_running()
             assert b.plugins_busy('/plugins list') and not a.plugins_busy('/plugins list')
+            process.tasks.owner.records.update({own.id: own, earlier.id: earlier})
+            process.tasks.started[earlier.id] = a.tasks
+            assert a.background_running()
             a.send_input('hello')
             a.send_input('/exit')
             await run('a', a)
             assert '> hello\n\nsuccess (no tool calls)' in a_output.getvalue()
             # B's turn is still streaming, and its task is neither cancelled nor finished.
             assert (background.status, background.outcome) == ('running', None)
+            assert [(record.outcome, record.user_stopped) for record in (own, earlier)] == [('cancelled', False)] * 2
             release.set()
             b.send_input('/exit')
     assert reasons == {'a': 'exit', 'b': 'exit'}

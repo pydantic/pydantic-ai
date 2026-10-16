@@ -144,13 +144,16 @@ class TaskRouter:
         return next((view for view in self.views if view.conversation_id() == conversation_id), None)
 
     def detach(self, view: 'Tasks') -> None:
-        """Stop routing to a session that closed; its running tasks keep running for the others."""
+        """Stop routing to a session that closed."""
         self.views.remove(view)
         self.started = {task_id: owner for task_id, owner in self.started.items() if owner is not view}
 
     @asynccontextmanager
-    async def opened(self) -> AsyncGenerator[DelegationTasks]:
-        """Open the owner for the first caller and close it after the last, cancelling the tasks still running."""
+    async def opened(self, view: 'Tasks | None' = None) -> AsyncGenerator[DelegationTasks]:
+        """Open the owner for the first caller and close it after the last, cancelling the tasks still running.
+
+        A session's `view` that leaves before the others cancels its own tasks, which run with its plugins.
+        """
         async with self._lock:
             if not self._users:
                 await self._stack.enter_async_context(self.owner.opened())
@@ -161,8 +164,12 @@ class TaskRouter:
             with anyio.CancelScope(shield=True):
                 async with self._lock:
                     self._users -= 1
-                    if not self._users:
+                    last = not self._users
+                    if last:
                         await self._stack.aclose()
+                if not last and view is not None:
+                    for record in [record for record in self.owner.records.values() if view.runs(record)]:
+                        await self.owner.cancel(record.id, user=False)
 
     async def observe(self, update: DelegationTaskEvent) -> None:
         """Record the task's progress, then tell the session holding its conversation."""
@@ -248,13 +255,15 @@ class Tasks:
         """Only children of the active conversation, including its descendants."""
         return tuple(r for r in self.owner.records.values() if r.conversation_id == self.conversation_id())
 
-    def running(self) -> bool:
-        """Whether a task of the active conversation, or one this session started before, still runs."""
-        return any(
-            record.status == 'running'
-            and (record.conversation_id == self.conversation_id() or self.router.started.get(record.id) is self)
-            for record in self.owner.records.values()
+    def runs(self, record: DelegationTask) -> bool:
+        """Whether `record` runs for this session: in the active conversation, or one it started before."""
+        return record.status == 'running' and (
+            record.conversation_id == self.conversation_id() or self.router.started.get(record.id) is self
         )
+
+    def running(self) -> bool:
+        """Whether a task of this session still runs."""
+        return any(self.runs(record) for record in self.owner.records.values())
 
     async def observe(self, update: DelegationTaskEvent) -> None:
         """What the owner tells the router, which reaches this view when it holds the task's conversation."""

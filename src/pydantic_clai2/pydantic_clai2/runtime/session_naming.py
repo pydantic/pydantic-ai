@@ -70,12 +70,10 @@ async def generate_name(*, model: Model | str, prompt: str) -> NamingResult:
 
 @dataclass(frozen=True, kw_only=True)
 class NamingClient:
-    """How one live session names a conversation it queued: its model, its setting, and its retitling."""
+    """How the live session that queued a conversation names it: its model, and its naming setting."""
 
     generate: Callable[[str], Awaitable[NamingResult | None]]
     enabled: Callable[[], bool] = lambda: True
-    on_named: Callable[[str, str], Awaitable[None]] | None = None
-    """Told each saved conversation ID and title."""
 
 
 class SessionNamer:
@@ -90,13 +88,15 @@ class SessionNamer:
         """Bind dependencies without spawning a task."""
         self.store = store
         self.timeout = timeout
+        self.listeners: list[Callable[[str, str], Awaitable[None]]] = []
+        """Told each saved conversation ID and title: every live session, which retitles the one it holds."""
         self._pending: OrderedDict[str, NamingClient] = OrderedDict()
         self._wake = anyio.Event()
 
     def submit(self, conversation_id: str, *, client: NamingClient) -> bool:
         """Coalesce to the most recent committed head, keeping at most ten queued sessions.
 
-        `client` is the session that asked, whose model names it and who hears the new title.
+        `client` is the session that asked, whose model names it. The session holding it hears the title.
         """
         if not client.enabled() or conversation_id in self._pending or len(self._pending) >= 10:
             return False
@@ -130,7 +130,7 @@ class SessionNamer:
                             title = await self._name(conversation_id=conversation_id, client=client)
                         # Outside the timeout: telling the shell may wait for the terminal, and the name is saved.
                         if title is not None:
-                            await self._notify(client, conversation_id, title)
+                            await self._notify(conversation_id, title)
                 except Exception:
                     logging.getLogger(__name__).debug('Session naming failed for %s', conversation_id, exc_info=True)
 
@@ -138,13 +138,12 @@ class SessionNamer:
         """Name a saved revision. Safe to drive directly in tests without a background loop."""
         title = await self._name(conversation_id=conversation_id, client=client)
         if title is not None:
-            await self._notify(client, conversation_id, title)
+            await self._notify(conversation_id, title)
         return title is not None
 
-    @staticmethod
-    async def _notify(client: NamingClient, conversation_id: str, title: str) -> None:
-        if client.on_named is not None:
-            await client.on_named(conversation_id, title)
+    async def _notify(self, conversation_id: str, title: str) -> None:
+        for listener in tuple(self.listeners):
+            await listener(conversation_id, title)
 
     async def _name(self, *, conversation_id: str, client: NamingClient) -> str | None:
         """Generate and save a name; the saved title, or `None` when nothing was saved."""
