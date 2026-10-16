@@ -52,6 +52,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _is_turn_scoped,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -1579,10 +1580,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # who can't use the beta opts out by setting the profile flag to `False`, which falls back to
         # leaving finished turn-scoped prompts out of the request.
         if anthropic_profile.get('supports_turn_scoped_system_prompts', False) and any(
-            isinstance(part, SystemPromptPart) and part.scope == 'turn'
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+            _is_turn_scoped(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
         ):
             betas.add(_ANTHROPIC_TURN_SCOPED_SYSTEM_BETA)
 

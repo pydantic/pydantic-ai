@@ -79,6 +79,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _is_turn_scoped,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -2612,10 +2613,6 @@ def _move_turn_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[Mode
         }
         moved.append(replace(message, parts=[*parts, *turn_scoped], metadata=metadata))
     return moved
-
-
-def _is_turn_scoped(part: ModelRequestPart) -> bool:
-    return isinstance(part, SystemPromptPart) and part.scope == 'turn'
 
 
 def _current_turn_start(messages: Sequence[ModelMessage]) -> int:

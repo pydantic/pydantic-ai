@@ -594,7 +594,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
 model = AnthropicModel(
-    'claude-opus-5-5',
+    '{{ anthropic:large.name }}',
     profile=AnthropicModelProfile(supports_turn_scoped_system_prompts=False),
 )
 ```

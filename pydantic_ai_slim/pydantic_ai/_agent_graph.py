@@ -2768,23 +2768,20 @@ def _drop_unanswered_turn_scoped_prompts(messages: list[_messages.ModelMessage])
     is removed, unless every trailing request was, in which case one empty request is kept so the
     history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does.
     """
+    is_turn_scoped = _messages._is_turn_scoped  # pyright: ignore[reportPrivateUsage]
     start = len(messages)
     while start and isinstance(messages[start - 1], _messages.ModelRequest):
         start -= 1
     for index in range(len(messages) - 1, start - 1, -1):
         message = messages[index]
         assert isinstance(message, _messages.ModelRequest)
-        if not any(_is_turn_scoped_prompt(part) for part in message.parts):
+        if not any(is_turn_scoped(part) for part in message.parts):
             continue
-        parts = [part for part in message.parts if not _is_turn_scoped_prompt(part)]
+        parts = [part for part in message.parts if not is_turn_scoped(part)]
         if not parts and len(messages) - start > 1:
             del messages[index]
         else:
             messages[index] = replace(message, parts=parts)
-
-
-def _is_turn_scoped_prompt(part: _messages.ModelRequestPart) -> bool:
-    return isinstance(part, _messages.SystemPromptPart) and part.scope == 'turn'
 
 
 async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
