@@ -378,8 +378,9 @@ class ScopedTask(Generic[T]):
 
         As with a plain `await`, an error the task raised wins over a cancellation of the awaiter, and so does a result
         it returned after absorbing a native cancellation: the awaiter can record it before `raise_if_cancelling`
-        re-asserts the cancellation. A result after an `anyio` cancellation is dropped for the cancellation, since the
-        cancelled scope would raise again at the next checkpoint anyway.
+        re-asserts the cancellation. After an `anyio` cancellation, the awaiter's cancellation is re-raised instead of
+        a result, since finalizing under the cancelled scope would raise a `CancelledError` the scope doesn't catch. An
+        awaiter that must keep that result reads it from `task`.
         """
         try:
             await self.wait()

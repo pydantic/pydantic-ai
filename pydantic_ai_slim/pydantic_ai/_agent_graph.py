@@ -1709,8 +1709,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                                 raise
                             model_response = e.response
                         except asyncio.CancelledError:
-                            # `wrap_model_request` returned a response before an `anyio` cancellation reached it:
-                            # record it before the cancellation propagates, so cancellation doesn't discard it.
+                            # `wrap_model_request` returned a response, but `wrap.result()` raised the `anyio`
+                            # cancellation instead: record the response before the cancellation propagates.
                             if not wrap_task.cancelled():
                                 self._append_response(ctx, wrap_task.result(), record_usage=not _handler_usage_recorded)
                             raise
