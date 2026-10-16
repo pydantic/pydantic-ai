@@ -1242,12 +1242,13 @@ sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --
 moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
 gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
 directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
-command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, `/spinner`, or
-`/mcp`, opens that menu in the page instead and runs nothing: `/set` and `/settings` open the
-Settings window's General section, `/mcp` its MCP servers section, the others a dialog. Its
-edits go through the menu's own source, as in the terminal, which prints what each one saved.
-Any other bare command that opens a terminal menu, such as `/model`, opens it in the terminal;
-the browser's model picker selects with `/model NAME` instead.
+command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
+opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
+window's General section, the others a dialog, except where a section lists the command, as Keys &
+accounts lists `/keys`, `/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go
+through the menu's own source, as in the terminal, which prints what each one saved. Any other
+bare command that opens a terminal menu, such as `/model`, opens it in the terminal; the
+browser's model picker selects with `/model NAME` instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
@@ -2473,7 +2474,10 @@ zero-argument callable returning a `SettingsMenu` (see
 [Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)). The terminal
 still runs `handler`; the web UI shows that menu in the page when the bare command is
 typed there, editing the same values through the same `FieldSource`, with its actions
-asking through the page's dialogs. `/set`, `/theme`, and `/spinner` declare theirs.
+asking through the page's dialogs. `/set`, `/theme`, `/spinner`, `/model`, and `/effort`
+declare theirs.
+`/keys`, `/accounts`, and `/login` declare theirs too: their actions ask through
+`Dialogs` in the terminal and the page alike.
 A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
 which loads the plugin again after an edit; `menu=` is for a command's menu over
 something else.
@@ -2890,6 +2894,11 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `actions`, for rows that need more than one value typed or picked, such as
   choosing a `/keys` entry or signing in: the row's key maps to an async function
   that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `menus`, for rows that open another `SettingsMenu`, such as each saved model's
+  settings in `/model`'s menu: the row's key maps to a zero-argument callable that
+  builds it when it opens. Leaving it returns to this menu, in the terminal and in
+  the web UI, which shows it beneath the row. The keys are read as the menu opens, so
+  a row an action adds meanwhile opens its menu once the menu opens again.
 - `searchable`, whether typing filters the list (default `True`).
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
@@ -3282,6 +3291,11 @@ lists an account from the time it signed in until the user removes it there;
 removing one does not sign it out of your plugin, and the menu says so. Offer your
 own logout for that.
 
+The web UI's **Keys & accounts** section lists your accounts too, and renames,
+reorders, and removes them there. `handler` and `profile_handler` take no `Dialogs`,
+so signing in to your accounts from the page asks the user to run `/login NAME` in
+the terminal instead.
+
 ### Account usage: `usage`
 
 Set `usage` on your `PluginLogin` to show each account's current usage in
@@ -3601,7 +3615,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text

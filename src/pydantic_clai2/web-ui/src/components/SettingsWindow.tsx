@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
+import type { MenuField } from '../protocol'
 import { McpSection } from './McpSection'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, PuzzleIcon, ServerIcon, SlidersIcon } from './icons'
+import { BackIcon, BrainIcon, KeyIcon, PuzzleIcon, ServerIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -24,11 +25,25 @@ export const SECTIONS = [
     commands: ['set', 'settings'],
   },
   {
+    id: 'models',
+    label: 'Models',
+    icon: BrainIcon,
+    hint: 'The model each prompt uses, and each saved model\'s settings, as /model and /model settings change them.',
+    commands: ['model'],
+  },
+  {
     id: 'plugins',
     label: 'Plugins',
     icon: PuzzleIcon,
     hint: 'Turn plugins on and off and edit their settings, as /plugins does.',
     commands: [],
+  },
+  {
+    id: 'keys',
+    label: 'Keys & accounts',
+    icon: KeyIcon,
+    hint: 'Saved API keys and signed-in accounts, as /keys and /accounts manage them. Secrets never leave CLAI.',
+    commands: ['keys', 'login', 'accounts'],
   },
   {
     id: 'mcp',
@@ -39,7 +54,17 @@ export const SECTIONS = [
   },
 ] as const satisfies readonly Section[]
 
+/** The Keys & accounts section's cards: each the declared menu of a command. */
+const KEYS_MENUS = [
+  { command: 'keys', title: 'API keys' },
+  { command: 'accounts', title: 'Accounts' },
+] as const
+
 export type SettingsSection = (typeof SECTIONS)[number]['id']
+
+/** `/model`'s rows in cards: the model for the next prompt, then the saved models with add and remove, then chains. */
+const modelGroup = (field: MenuField) =>
+  field.key === 'model' ? 'Model' : field.key.startsWith('chain:') ? 'Fallback chains' : 'Saved models'
 
 /** The section a bare command's menu opens, or `null` for one that opens a dialog of its own. */
 export function commandSection(command: string): SettingsSection | null {
@@ -127,6 +152,34 @@ export function SettingsWindow({
               onError={onError}
               onNotice={onNotice}
             />
+          )}
+          {section === 'models' && (
+            <MenuForm
+              target={{ kind: 'commands', name: 'model' }}
+              version={settingsVersion}
+              grouped
+              group={modelGroup}
+              opened={(field) => field.note === 'current'}
+              onError={onError}
+              onNotice={onNotice}
+            />
+          )}
+          {section === 'keys' && (
+            <div className="settings-groups">
+              {KEYS_MENUS.map(({ command, title }) => (
+                <section key={command} className="settings-group">
+                  <h3 className="settings-group-title">{title}</h3>
+                  <div className="settings-card">
+                    <MenuForm
+                      target={{ kind: 'commands', name: command }}
+                      version={settingsVersion}
+                      onError={onError}
+                      onNotice={onNotice}
+                    />
+                  </div>
+                </section>
+              ))}
+            </div>
           )}
           {section === 'plugins' && (
             <PluginsPanel

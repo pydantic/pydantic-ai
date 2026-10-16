@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
-from dirty_equals import IsJson
+from dirty_equals import IsJson, IsOneOf
 from pydantic import BaseModel
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -389,7 +389,11 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function:failure_response:,function:success_response:',
+                        'chat function:success_response:',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
@@ -618,7 +622,11 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function::failure_response_stream,function::success_response_stream',
+                        'chat function::success_response_stream',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::success_response_stream',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]}],
@@ -1652,7 +1660,11 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                        'chat function:prompted_output_func:',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:prompted_output_func:',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],

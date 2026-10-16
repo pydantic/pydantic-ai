@@ -532,6 +532,11 @@ that cache implicitly or not at all ignore it. Set it to `false` to turn caching
 to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
 over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
+In the web UI, `/model` typed in the composer opens the Settings window's **Models** section
+instead: the model for the next prompt, each saved model's settings (this editor's rows), and
+adding and removing models. `/effort` opens a dialog with the active model's settings, effort
+among them. `/fast` still toggles, as in the terminal.
+
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
 removes the native effort override. Custom parameters stay unchanged: remove any
@@ -625,7 +630,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
@@ -788,6 +793,13 @@ GitHub Copilot (premium requests); plugins can report their own, as the Claude
 Code plugin does. `…` means it is still loading and `?` that the service did not
 answer; the right-hand panel says why.
 
+In the web UI, `/accounts` and `/login` open the Settings window's **Keys & accounts**
+section, beside the saved `/keys`, with the same steps behind each account's button. There,
+ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the link or code, an
+API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
+and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
+only in the terminal.
+
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
 as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
@@ -867,6 +879,9 @@ Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
 confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
 clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+In the web UI, `/keys` opens the Settings window's **Keys & accounts** section,
+which lists the names, says what uses each, and asks the same steps as dialogs; a
+value goes from the page to CLAI, never back.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
@@ -1734,6 +1749,9 @@ It stays `?` until the first request of the session or after a model change, and
 a model with no known window. With `compaction` off, the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
+Until a response in the conversation reports its usage, the used figure is an estimate
+from the text's length that leaves out most tool definitions, shown with `~`, such as `~13k/1m`.
+It usually reads low, so it can rise sharply once the first response arrives.
 
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller

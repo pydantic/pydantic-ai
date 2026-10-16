@@ -3329,6 +3329,42 @@ textarea.setting-input {
   }
 }
 
+/* Settings: Models. A row that opens another menu, such as a saved model's settings, shows it beneath, inset. */
+
+.setting-open svg {
+  transition: transform 0.12s ease;
+}
+
+.setting-open[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.setting-submenu {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.setting-submenu .setting:last-child {
+  border-bottom: 0;
+}
+
+.setting-submenu .setting-select,
+.setting-submenu .setting.inline .setting-input {
+  width: 180px;
+}
+
+.settings-pane.models .setting-select {
+  width: 300px;
+}
+
+.settings-pane.models .setting-submenu .setting-select {
+  width: 180px;
+}
+
 /* A dialog's text keeps its line breaks and indentation, as the terminal's panel shows them. */
 .dialog-description p,
 .dialog-shown p {
