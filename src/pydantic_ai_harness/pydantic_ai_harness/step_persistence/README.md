@@ -580,9 +580,11 @@ space in the file until you run `VACUUM`.
 snapshot holding the keys of its messages in order. Unlike `SqliteStepStore`,
 they keep a stored message when the snapshots referencing it are pruned, as they
 do externalized media: with several writers at once, deleting a message along
-with its last snapshot could race with a save that is about to reference it.
-`FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's
-directory stays readable and greppable on its own.
+with its last snapshot could race with a save that is about to reference it. So
+messages that only pruned snapshots referenced, such as those compaction
+replaced, stay stored, and pruning doesn't bound these stores' size or remove
+that content. `FileStepStore` keeps writing each snapshot as a complete JSON
+file, so a run's directory stays readable and greppable on its own.
 
 ## Persisting media
 
