@@ -119,8 +119,10 @@ class Provider(ABC, Generic[InterfaceClient]):
 
         Returns whether the client was last used on a different event loop that isn't running now. Connections
         belong to the event loop that opened them, so a client can't be used from another one, and one whose
-        loop has closed can't be closed either. While the other loop is still running, for example in another
-        thread, its runs may still be using the client, so it isn't replaced under them.
+        loop has closed can't be closed either. While the loop it was last used on is still running, for example in
+        another thread, its runs may still be using the client, so it isn't replaced under them. Only that last
+        loop is checked: with three or more loops taking turns, a run still going on an earlier one can see the
+        client replaced.
         """
         try:
             loop = asyncio.get_running_loop()
