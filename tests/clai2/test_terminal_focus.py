@@ -16,6 +16,7 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.config import PluginSettings, Settings
@@ -347,6 +348,68 @@ async def test_the_resume_browser_shows_a_live_session_and_wakes_it_for_its_repo
     assert await desk.run(body) == 'exit'
     assert 'Showing session' in desk.shown()
     await home.close('exit')
+
+
+async def test_prompts_queued_for_a_session_stay_its_own_when_the_terminal_shows_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resume browser opens over a running turn; the prompt queued behind that turn runs in its session."""
+    started, release, calls = {'home': anyio.Event()}, {'home': anyio.Event()}, {'home': 0}
+    desk = Desk(tmp_path, agent=blocked('home', started, release, calls))
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        other = desk.runtimes[b.id]
+
+        def pick(browser: SessionBrowser) -> str:
+            return b.conversation.conversation_id
+
+        monkeypatch.setattr(SessionBrowser, 'run', pick)
+        home.send_input('first')
+        await started['home'].wait()
+        home.send_input('second')
+        assert home.queued == 1
+        home.send_input('/resume')
+        await until(desk.live, lambda: terminal.shown is other)
+        assert (home.queued, other.queued) == (1, 0)
+        release['home'].set()
+        await until(desk.live, lambda: calls['home'] == 2 and home.idle)
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+    (other,) = desk.runtimes.values()
+    assert (prompts(home), prompts(other)) == (['first', 'second'], [])
+    await home.close('exit')
+
+
+def prompts(runtime: SessionRuntime[None, str]) -> list[str]:
+    return [
+        part.content
+        for message in runtime.session.messages
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+    ]
+
+
+def test_clai2_web_keeps_its_terminal_on_the_session_it_started_with(tmp_path: Path) -> None:
+    fleet = Fleet(tmp_path)
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=SurfaceTerminal(width=100, height=30), width=100, height=30),
+        settings=None,
+        store=None,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=fleet.folder('web'),
+        process=fleet.process,
+    )
+    assert shell.terminal is not None and shell.editor is None
+    assert shell.sessions.show_live != shell.show_live
 
 
 class Opener(Plugin):

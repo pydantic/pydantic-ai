@@ -142,7 +142,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `/reload` and `/update` unless the terminal shows them (only that session, or the one
   CLAI started with, restarts it, and never while another session runs a turn), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
-  watcher, or terminal focus.
+  watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
+  every live session (`CommandContext.adopt`) unless its project file sets it.
+  There is no turn cap.
 - **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
   owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
   history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
@@ -152,9 +154,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   terminal's. `/resume` of a conversation another live session holds shows that one
   (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
   live, and the session CLAI started with is closed for idleness like any other while
-  hidden. With one live session nothing changes, and the toolbar adds `N live` only for more. `/set` of anything but `model` and `run.*` reaches
-  every live session (`CommandContext.adopt`) unless its project file sets it.
-  There is no turn cap.
+  hidden. Prompts queued for a session stay its own when the terminal shows another.
+  `clai2 --web` keeps its terminal on the session it started with. With one live
+  session nothing changes, and the toolbar adds `N live` only for more.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.

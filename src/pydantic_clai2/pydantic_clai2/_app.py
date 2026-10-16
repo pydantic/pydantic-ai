@@ -44,7 +44,7 @@ from pydantic_clai2.runtime._session import (
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
-from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell, web_serving
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
@@ -289,8 +289,7 @@ async def chat(
                     finally:
                         # The session shown last restarts CLAI: `/reload` and `/update` work in it.
                         last = terminal.ended_in or shell
-                        # Before closing the plugins stops the web UI.
-                        served = None if last.updates.relaunch is None else web_serving(shell.loader)
+                        served = terminal.served
                         if not terminal.home_closed:
                             with transcript.capture(console):
                                 await shell.close(reason)

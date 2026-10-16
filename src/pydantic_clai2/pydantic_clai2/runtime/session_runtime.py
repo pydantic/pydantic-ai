@@ -483,17 +483,24 @@ def create_shell(
         await render_history(messages, console=console, renderer=renderer)
 
     sessions.on_resume = show_resumed
-    sessions.show_live = shell.show_live
     shell.session.claim = lambda conversation_id: process.live.claim(conversation_id, holder=shell.live_session)
     process.live.add(shell)
     # Headless, a session still edits prompts in a terminal console, but reads no lines from a pipe.
     if not headless or console.is_terminal:
-        _show_in_terminal(shell, transcript=transcript)
+        _show_in_terminal(shell, transcript=transcript, shows_others=not headless)
     return shell
 
 
-def _show_in_terminal(shell: 'SessionRuntime[DepsT, OutputT]', *, transcript: TranscriptBuffer | None) -> None:
-    """Show `shell` in a new `Terminal`, keeping the output `transcript` retains, as across a reload."""
+def _show_in_terminal(
+    shell: 'SessionRuntime[DepsT, OutputT]', *, transcript: TranscriptBuffer | None, shows_others: bool
+) -> None:
+    """Show `shell` in a new `Terminal`, keeping the output `transcript` retains, as across a reload.
+
+    With `shows_others`, `/resume` of a conversation another live session holds shows that session there;
+    `clai2 --web` keeps its terminal on the session it started with.
+    """
+    if shows_others:
+        shell.sessions.show_live = shell.show_live
     Terminal[DepsT, OutputT](
         console=shell.console,
         transcript=transcript if transcript is not None else TranscriptBuffer(),
@@ -653,6 +660,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         finally:
             self._handling = False
             self.live_session.changed()
+
+    def handoff(self) -> WebHandoff | None:
+        """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
+        return None if self.updates.relaunch is None else web_serving(self.loader)
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
@@ -864,6 +875,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
+        if self.editor is not None and editor is None:
+            # Prompts queued for this session stay its own while the terminal shows another.
+            for text in self.editor.take_queued():
+                self._inbox.put_nowait(text)
         self.editor = editor
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None

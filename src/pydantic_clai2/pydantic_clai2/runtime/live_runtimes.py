@@ -92,9 +92,9 @@ class LiveRuntimes(JoinedSessions):
         self.idle_after = idle_after
         self.check_every = check_every
         self.build: Builder | None = None
-        """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as in the terminal."""
+        """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as with `-p`."""
         self.focused: str | None = None
-        """The session the terminal shows, never closed for being idle; `None` under `clai2 --web`."""
+        """The session the terminal shows, never closed for being idle; `None` while no terminal shows one."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
         """Conversations being opened or resumed, set once that is done."""

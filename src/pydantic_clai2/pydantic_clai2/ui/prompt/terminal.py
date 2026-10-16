@@ -20,6 +20,7 @@ from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 
 if TYPE_CHECKING:
+    from pydantic_clai2.cli.self_update import WebHandoff
     from pydantic_clai2.runtime.session_runtime import SessionRuntime
 
 DepsT = TypeVar('DepsT')
@@ -62,6 +63,8 @@ class Terminal(Generic[DepsT, OutputT]):
         """The session whose end ended `drive`: the one shown then."""
         self.home_closed = False
         """Whether `drive` closed its session itself, as it ended while another was shown."""
+        self.served: WebHandoff | None = None
+        """The web UI for `/update` to serve again, from the session whose end ended `drive`."""
         self._reason: SessionEndReason = 'error'
         self._ended = Event()
         self._completer = PromptCompleter(Commands())
@@ -97,8 +100,11 @@ class Terminal(Generic[DepsT, OutputT]):
         )
 
     def ended(self, runtime: 'SessionRuntime[DepsT, OutputT]', reason: SessionEndReason) -> None:
-        """Note that the session shown, `runtime`, ended for `reason`, which ends `drive`."""
-        self.ended_in, self._reason = runtime, reason
+        """Note that the session shown, `runtime`, ended for `reason`, which ends `drive`.
+
+        Its web UI hand-off is read now, before its plugins end: it may be the last live session.
+        """
+        self.ended_in, self._reason, self.served = runtime, reason, runtime.handoff()
         self._ended.set()
 
     async def drive(self, home: 'SessionRuntime[DepsT, OutputT]') -> SessionEndReason:
@@ -141,10 +147,10 @@ class Terminal(Generic[DepsT, OutputT]):
             return
         self.editor = LivePrompt(
             console=self.console,
-            commands=home.commands,
+            commands=self._shown().commands,
             history=self.history,
             images=self.images,
-            interrupts=home.interrupts,
+            interrupts=self._shown().interrupts,
             toolbar=lambda: self._shown().status.toolbar(),
             steer=lambda text: self._shown().steer(text),
             run_now=lambda text: self._shown().run_now(text),
