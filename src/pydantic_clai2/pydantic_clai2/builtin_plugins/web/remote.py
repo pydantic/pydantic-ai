@@ -330,7 +330,7 @@ class Remote:
         if info.settings_model is None or info.settings is None:
             if info.status != 'on':
                 raise ValueError(f'Turn {name} on to change its settings.')
-            raise ValueError(f'{name} takes no settings.')
+            raise ValueError(f'{name} has no settings form; replace its declaration with /plugins add.')
         values = info.settings.model_dump(by_alias=True)
         for key in reset:
             values.pop(key, None)
@@ -339,6 +339,9 @@ class Remote:
             await self.plugin_catalog.save_settings(name, settings)
         except PluginError as error:
             raise ValueError(str(error)) from error
+        except TypeError as error:
+            # Its model changed since the listing above, as a reload that re-imports it does.
+            raise ValueError(f'{name} changed; reload the panel and try again.') from error
         finally:
             self.hub.publish(PluginsChanged())
 
