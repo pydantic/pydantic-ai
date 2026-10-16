@@ -35,6 +35,7 @@ from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.repl_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 
 REPL_TOOL = 'run_code'
@@ -89,6 +90,8 @@ class Item:
     diffs: list[Diff] = field(default_factory=list[Diff])
     calls: list[SubCall] = field(default_factory=list[SubCall])
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
+    by_user: bool = False
+    """A `run_code` cell the user ran with `/repl`, rather than one the model wrote."""
 
 
 @dataclass(kw_only=True)
@@ -459,10 +462,17 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
 
 
 def user_text(part: UserPromptPart) -> str:
-    """A prompt's text, naming the attachments the browser does not show."""
+    """A prompt's text, naming the attachments the browser does not show.
+
+    Notes telling the model about `/repl` cells are left out: the REPL panel shows those cells.
+    """
     if isinstance(part.content, str):
         return part.content
-    return '\n'.join(item if isinstance(item, str) else f'[{type(item).__name__}]' for item in part.content)
+    return '\n'.join(
+        item if isinstance(item, str) else f'[{type(item).__name__}]'
+        for item in part.content
+        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+    )
 
 
 def history_items(messages: Sequence[ModelMessage]) -> list[Item]:

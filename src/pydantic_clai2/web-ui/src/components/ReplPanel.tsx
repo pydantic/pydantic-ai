@@ -1,4 +1,5 @@
-import { memo, useLayoutEffect, useRef } from 'react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { api } from '../api'
 import { cell } from '../code'
 import { highlight } from '../markdown'
 import type { Item, StatusInfo, SubCall } from '../protocol'
@@ -67,6 +68,7 @@ const CellView = memo(function CellView({ item, number, turn, restart }: Cell) {
       <section className={`repl-cell ${item.state}`}>
         <div className="repl-prompt">
           <span className="repl-label">In [{number}]</span>
+          {item.by_user && <span className="badge on">you</span>}
           {running && <span className="shimmer repl-running">running</span>}
           {item.state === 'error' && <span className="badge error">error</span>}
           {item.state === 'interrupted' && <span className="badge">interrupted</span>}
@@ -99,14 +101,62 @@ const CellView = memo(function CellView({ item, number, turn, restart }: Cell) {
 })
 
 /** The `run_code` REPL: every cell the model ran in code mode, its sandbox calls, and its output. */
+/** Run your own cell in the session's REPL with `/repl`: Enter runs it, Shift+Enter adds a line. */
+function CellInput({ disabled, reason, onError }: { disabled: boolean; reason: string; onError: (message: string) => void }) {
+  const [code, setCode] = useState('')
+  const area = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const element = area.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`
+  }, [code])
+  const run = async () => {
+    const text = code.trim()
+    if (!text || disabled) return
+    setCode('')
+    try {
+      await api.send(`/repl ${text}`)
+    } catch (error) {
+      setCode(text)
+      onError(error instanceof Error ? error.message : String(error))
+    }
+  }
+  return (
+    <div className={`repl-input ${disabled ? 'disabled' : ''}`} title={disabled ? reason : undefined}>
+      <span className="repl-label">&gt;&gt;&gt;</span>
+      <textarea
+        ref={area}
+        rows={1}
+        value={code}
+        disabled={disabled}
+        placeholder={disabled ? reason : 'Run Python in this REPL. The model hears about it on your next prompt.'}
+        aria-label="Run a REPL cell"
+        spellCheck={false}
+        onChange={(event) => setCode(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            void run()
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 export function ReplPanel({
   entries,
   status,
+  running,
   onClose,
+  onError,
 }: {
   entries: Entry[]
   status: StatusInfo | null
+  running: boolean
   onClose: () => void
+  onError: (message: string) => void
 }) {
   const found = cells(entries)
   const scroller = useRef<HTMLDivElement>(null)
@@ -139,8 +189,13 @@ export function ReplPanel({
           found.map((entry) => <CellView key={entry.item.id} {...entry} />)
         )}
       </div>
+      <CellInput
+        disabled={!codeMode || running}
+        reason={!codeMode ? 'Turn code mode on to use the REPL' : 'Cells run between turns'}
+        onError={onError}
+      />
       <footer className="repl-foot">
-        Read-only. The REPL is kept with the session between turns and on resume; <code>restart</code> clears it.
+        Kept with the session between turns and on resume; <code>restart</code> clears it.
       </footer>
     </aside>
   )

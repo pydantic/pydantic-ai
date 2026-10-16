@@ -1811,3 +1811,38 @@ pre {
 .repl-foot code {
   font-size: 11px;
 }
+
+.repl-input {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  font: 12.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.repl-input:focus-within {
+  border-color: var(--focus);
+}
+
+.repl-input.disabled {
+  opacity: 0.6;
+}
+
+.repl-input textarea {
+  flex: 1;
+  min-height: 20px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.repl-input textarea::placeholder {
+  color: var(--faint);
+}
