@@ -119,7 +119,8 @@ async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatc
     # The converter leaves out `http_options`, as `batches.create` does for inlined requests.
     converted = _InlinedRequest_to_mldev(
         client._api_client,  # pyright: ignore[reportPrivateUsage]
-        # Validated from the dicts `generate_content` sends, as the constructor's types only name the SDK's models.
+        # Validated from the dicts `_build_content_and_config` builds for `generate_content`, as the constructor's types
+        # only name the SDK's models.
         InlinedRequest.model_validate({'contents': contents, 'config': config}),
     )
     body = encode_unserializable_types(convert_to_dict(converted['request']))

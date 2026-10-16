@@ -24,6 +24,7 @@ from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
 from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
+from .models._batch_settings import resolve_batch_settings
 
 __all__ = (
     'model_request',
@@ -159,7 +160,7 @@ async def model_request_batch(
             [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with.
     """
     model_instance = models.infer_model(model)
-    resolved = batch_models.resolve_batch_settings(model_instance, batch_settings, max_requests=None)
+    resolved = resolve_batch_settings(model_instance, batch_settings, max_requests=None)
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
 
