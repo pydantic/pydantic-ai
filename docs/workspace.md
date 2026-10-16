@@ -442,10 +442,6 @@ limits.
   the job instead of starting a second process. If a launch fails after claiming its job directory, the
   retry reports a pending launch; once the process has stopped, remove the stale job files under
   `.pydantic-ai-harness/shell/`.
-- **Capabilities that make requests from their tools**, such as `ExaSearch`, `YouSearch`, `LocalStack`
-  against an external instance, and `CapabilityCreation`, record each request on every engine, including
-  DBOS, which otherwise runs function tools in workflow code. Recovery reuses the recorded result. The
-  records are named after each capability's `id`, so keep it stable once deployed.
 
 The engine guides cover the rest, such as matching capabilities across Temporal workers.
 

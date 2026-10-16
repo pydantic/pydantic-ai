@@ -304,7 +304,7 @@ calls.
 
 ## Durable execution
 
-Under [durable execution](../workspace.md#durable-execution), each Exa request is recorded, so a
+Under [durable execution](../durable_execution/overview.md), each Exa request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.

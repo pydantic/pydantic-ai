@@ -305,7 +305,7 @@ calls.
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution), each Exa request is recorded, so a
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each Exa request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
