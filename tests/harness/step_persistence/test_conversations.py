@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import pydantic_ai_harness.step_persistence.conversations as conversations_module
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -21,18 +22,19 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, SqliteStepStore, StepEvent
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
-    SqliteConversationStore,
+    SqliteSessionStore,
     conversation_text,
     ensure_inactive,
 )
 
 
 async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('repair renderer')]),
         ModelResponse(parts=[TextPart('result ' * 12000)]),
@@ -40,7 +42,7 @@ async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
     ]
     first = await store.save(summary=ConversationSummary(workspace='/a', title='Renderer'), messages=messages)
     second = await store.save(summary=ConversationSummary(workspace='/b', title='Other'), messages=[])
-    reopened = SqliteConversationStore(database=store.database)
+    reopened = SqliteSessionStore(database=store.database)
     loaded = await reopened.get(conversation_id=first.id)
     assert ModelMessagesTypeAdapter.dump_json(loaded.messages) == ModelMessagesTypeAdapter.dump_json(messages)
     assert loaded.summary.revision == 1
@@ -55,7 +57,7 @@ async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
 
 
 async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     source = ConversationSummary(workspace='/a', title='Fallback')
     first = await store.save(summary=source, messages=[])
     assert await store.name(source=first, title='Generated', tags=('sqlite',), tokens=12)
@@ -86,7 +88,7 @@ async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
 
 async def test_archiving_is_metadata_that_listing_filters(tmp_path: Path) -> None:
     """Archiving keeps messages, revision, and activity time, and is reversible; new content lists it again."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     kept = await store.save(summary=ConversationSummary(workspace='/a', title='Kept'), messages=[])
     old = await store.save(
         summary=ConversationSummary(workspace='/a', title='Old'),
@@ -114,7 +116,7 @@ async def test_archiving_is_metadata_that_listing_filters(tmp_path: Path) -> Non
 
 
 async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     with closing(sqlite3.connect(store.database)) as conn, conn:
         conn.execute("UPDATE conversations SET metadata = json_remove(metadata, '$.archived_at')")
@@ -124,7 +126,7 @@ async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path:
 
 
 async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=first, messages=[])
     with pytest.raises(ConversationConflict):
@@ -136,7 +138,7 @@ async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
 
 
 async def test_corrupt_history_is_not_an_empty_session(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     with closing(sqlite3.connect(store.database)) as conn:
         conn.execute('UPDATE conversations SET messages=?', ('not json',))
@@ -167,7 +169,7 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     steps = SqliteStepStore(database=store.database)
@@ -194,7 +196,7 @@ async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Pat
 
 
 async def test_stale_naming_usage_is_still_accounted(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=first, messages=[])
     assert not await store.name(source=first, title='Too late', tokens=123)
@@ -206,7 +208,7 @@ async def test_stale_naming_usage_is_still_accounted(tmp_path: Path) -> None:
 
 async def test_unicode_and_multimodal_search(tmp_path: Path) -> None:
 
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     messages = [
         ModelRequest(
             parts=[UserPromptPart(['école', TextContent('Straße'), BinaryContent(data=b'x', media_type='image/png')])]
@@ -246,7 +248,7 @@ def test_windows_owner_probe(monkeypatch: pytest.MonkeyPatch, output: str, busy:
 
 
 async def test_delete_with_only_run_catalog(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     with closing(sqlite3.connect(store.database)) as conn:
         conn.execute('CREATE TABLE runs (run_id TEXT, conversation_id TEXT)')
@@ -261,3 +263,11 @@ def test_windows_probe_rejects_relative_system_root(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sys, 'platform', 'win32')
     with pytest.raises(ValueError, match='absolute Windows path'):
         ensure_inactive(ConversationSummary(workspace='/a', outcome='running', owner_pid=123))
+
+
+def test_the_old_session_store_name_is_a_deprecated_alias() -> None:
+    with pytest.warns(HarnessDeprecationWarning, match='renamed to `.*conversations.SqliteSessionStore`'):
+        alias = conversations_module.SqliteConversationStore
+    assert alias is SqliteSessionStore
+    with pytest.raises(AttributeError, match='no attribute'):
+        conversations_module.Unknown

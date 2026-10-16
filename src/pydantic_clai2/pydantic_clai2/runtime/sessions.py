@@ -19,7 +19,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
     SavedConversation,
-    SqliteConversationStore,
+    SqliteSessionStore,
     conversation_text,
     ensure_inactive,
 )
@@ -54,7 +54,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self,
         *,
         session: Session[DepsT, OutputT],
-        store: SqliteConversationStore,
+        store: SqliteSessionStore,
         context: CommandContext,
         launched: str | None = None,
     ) -> None:

@@ -17,6 +17,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import KW_ONLY
 from datetime import datetime
 from typing import Literal
@@ -100,6 +101,16 @@ class ConversationRecord:
 class ConversationConflict(UserError):
     """Raised when a conversation changed in the store since it was loaded, so saving it would lose those changes."""
 
+    conversation_id: str
+    """The conversation that changed."""
+
+    def __init__(self, conversation_id: str):
+        self.conversation_id = conversation_id
+        super().__init__(
+            f'Conversation {conversation_id!r} was saved or deleted since it was loaded, '
+            'or already exists in the store. Load it again before saving.'
+        )
+
 
 class ConversationStore(ABC):
     """A store for conversations, keeping each one's messages as a log in which each message is stored once.
@@ -114,7 +125,7 @@ class ConversationStore(ABC):
     await store.save(result.conversation)
     ```
 
-    A backend implements the storage primitives below; the store works out which messages are new,
+    A backend implements the five storage primitives below; the store works out which messages are new,
     where a rewritten history branches, and what a fork shares.
     """
 
@@ -128,6 +139,7 @@ class ConversationStore(ABC):
             usage=record.usage,
             conversation_id=record.conversation_id,
             deferred_tool_requests=record.deferred_tool_requests,
+            revision=record.revision,
         )
 
     async def save(self, conversation: Conversation, *, scope: str | None = None) -> ConversationRecord:
@@ -137,6 +149,11 @@ class ConversationStore(ABC):
         instead, the messages from the first difference on branch off the last message both share.
         The entries they replace stay stored while another conversation's history still uses them.
 
+        The save is checked against the conversation's
+        [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
+        `None` for a conversation the store doesn't have yet. On success, `revision` is advanced on
+        the conversation passed in, so it can be saved again after another run.
+
         Args:
             conversation: The conversation to save, usually a run's
                 [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation].
@@ -144,9 +161,13 @@ class ConversationStore(ABC):
                 saved with before.
 
         Raises:
-            ConversationConflict: If another writer saved the conversation since this one read it.
+            ConversationConflict: If the conversation was saved or deleted since it was loaded, or
+                one with its `conversation_id` already exists when it wasn't loaded from the store.
         """
-        record = await self.read_record(conversation.conversation_id)
+        conversation_id = conversation.conversation_id
+        record = await self.read_record(conversation_id)
+        if (record.revision if record is not None else None) != conversation.revision:
+            raise ConversationConflict(conversation_id)
         history = await self.read_history(record.head_id) if record is not None else []
         shared = 0
         for entry, message in zip(history, conversation.messages):
@@ -159,9 +180,8 @@ class ConversationStore(ABC):
             entry = ConversationEntry(parent_id=parent_id, message=message)
             new_entries.append(entry)
             parent_id = entry.id
-        await self.write_entries(new_entries)
         updated = ConversationRecord(
-            conversation_id=conversation.conversation_id,
+            conversation_id=conversation_id,
             head_id=parent_id,
             usage=conversation.usage,
             deferred_tool_requests=conversation.deferred_tool_requests,
@@ -169,7 +189,8 @@ class ConversationStore(ABC):
             forked_from=record.forked_from if record is not None else None,
             revision=record.revision + 1 if record is not None else 0,
         )
-        await self.write_record(updated, expected_revision=record.revision if record is not None else None)
+        await self.write_record(updated, new_entries=new_entries, expected_revision=conversation.revision)
+        conversation.revision = updated.revision
         return updated
 
     async def fork(
@@ -211,6 +232,7 @@ class ConversationStore(ABC):
             messages=[entry.message for entry in history[:keep]],
             usage=fork.usage,
             conversation_id=fork.conversation_id,
+            revision=fork.revision,
         )
 
     async def list_conversations(self, *, scope: str | None = None) -> list[ConversationRecord]:
@@ -244,8 +266,17 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def write_record(self, record: ConversationRecord, *, expected_revision: int | None) -> None:
-        """Store a record, replacing the one with `expected_revision`.
+    async def write_record(
+        self,
+        record: ConversationRecord,
+        *,
+        new_entries: Sequence[ConversationEntry] = (),
+        expected_revision: int | None,
+    ) -> None:
+        """Store a record and the new entries its history adds, replacing the record with `expected_revision`.
+
+        `new_entries` are in order, each after the one it points at. A backend that can should
+        store them and the record together, so a conflict leaves neither behind.
 
         Raises:
             ConversationConflict: If the stored record's revision isn't `expected_revision`, or a
@@ -268,14 +299,13 @@ class ConversationStore(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    async def write_entries(self, entries: Sequence[ConversationEntry]) -> None:
-        """Store new entries, in order, each after the one it points at."""
-        raise NotImplementedError
-
 
 class InMemoryConversationStore(ConversationStore):
-    """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that keeps everything in memory, for tests and examples."""
+    """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that keeps everything in memory, for tests and examples.
+
+    It keeps its own copy of each message, as a store that serializes them would, so a run changing
+    the messages it was given doesn't change what was saved.
+    """
 
     def __init__(self) -> None:
         self._records: dict[str, ConversationRecord] = {}
@@ -290,12 +320,18 @@ class InMemoryConversationStore(ConversationStore):
             dataclasses.replace(record) for record in self._records.values() if scope is None or record.scope == scope
         ]
 
-    async def write_record(self, record: ConversationRecord, *, expected_revision: int | None) -> None:
+    async def write_record(
+        self,
+        record: ConversationRecord,
+        *,
+        new_entries: Sequence[ConversationEntry] = (),
+        expected_revision: int | None,
+    ) -> None:
         stored = self._records.get(record.conversation_id)
         if (stored.revision if stored is not None else None) != expected_revision:
-            raise ConversationConflict(
-                f'Conversation {record.conversation_id!r} changed in the store since it was loaded.'
-            )
+            raise ConversationConflict(record.conversation_id)
+        for entry in new_entries:
+            self._entries[entry.id] = deepcopy(entry)
         self._records[record.conversation_id] = dataclasses.replace(record)
 
     async def delete_record(self, conversation_id: str) -> None:
@@ -309,8 +345,4 @@ class InMemoryConversationStore(ConversationStore):
         self._entries = {entry_id: entry for entry_id, entry in self._entries.items() if entry_id in reachable}
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
-        return self._entries[entry_id]
-
-    async def write_entries(self, entries: Sequence[ConversationEntry]) -> None:
-        for entry in entries:
-            self._entries[entry.id] = entry
+        return deepcopy(self._entries[entry_id])

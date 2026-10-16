@@ -18,29 +18,44 @@ def _entry_count(store: InMemoryConversationStore) -> int:
 async def test_a_saved_conversation_loads_whole() -> None:
     store = InMemoryConversationStore()
     agent = Agent(TestModel())
-    result = await agent.run('Hello')
+    conversation = (await agent.run('Hello')).conversation
 
-    await store.save(result.conversation)
-    loaded = await store.load(result.conversation.conversation_id)
+    await store.save(conversation)
+    loaded = await store.load(conversation.conversation_id)
 
-    assert loaded == result.conversation
+    assert loaded == conversation
+    assert conversation.revision == 0
     assert await store.load('unknown') is None
 
 
 async def test_continuing_a_conversation_stores_only_its_new_messages() -> None:
     store = InMemoryConversationStore()
     agent = Agent(TestModel())
-    first = await agent.run('Hello')
-    await store.save(first.conversation)
-    conversation = await store.load(first.conversation.conversation_id)
-    assert conversation is not None
+    first = (await agent.run('Hello')).conversation
+    await store.save(first)
 
-    second = await agent.run('Again', conversation=conversation)
-    await store.save(second.conversation)
+    second = (await agent.run('Again', conversation=first)).conversation
+    await store.save(second)
 
-    assert _entry_count(store) == len(second.conversation.messages)
-    loaded = await store.load(first.conversation.conversation_id)
-    assert loaded == second.conversation
+    assert second.revision == 1
+    assert _entry_count(store) == len(second.messages)
+    assert await store.load(first.conversation_id) == second
+
+
+async def test_the_store_keeps_its_own_copy_of_each_message() -> None:
+    store = InMemoryConversationStore()
+    request = ModelRequest(parts=[UserPromptPart('one')])
+    conversation = Conversation(messages=[request])
+    await store.save(conversation)
+
+    request.run_id = 'changed after saving'
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    loaded.messages[0].run_id = 'changed after loading'
+
+    reloaded = await store.load(conversation.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages[0].run_id is None
 
 
 async def test_a_rewritten_history_branches_off_the_last_shared_message() -> None:
@@ -55,6 +70,7 @@ async def test_a_rewritten_history_branches_off_the_last_shared_message() -> Non
     compacted = Conversation(
         messages=[messages[0], ModelResponse(parts=[TextPart('summary')])],
         conversation_id=conversation.conversation_id,
+        revision=conversation.revision,
     )
 
     await store.save(compacted)
@@ -73,7 +89,7 @@ async def test_a_paused_conversation_keeps_what_it_is_waiting_on_and_its_scope()
     second = await store.save(conversation)
 
     assert (first.scope, second.scope) == ('user-1', 'user-1')
-    assert (first.revision, second.revision) == (0, 1)
+    assert (first.revision, second.revision, conversation.revision) == (0, 1, 1)
     loaded = await store.load(conversation.conversation_id)
     assert loaded is not None
     assert loaded.deferred_tool_requests == requests
@@ -83,19 +99,49 @@ async def test_a_save_from_a_stale_copy_conflicts() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
     await store.save(conversation)
+    mine = await store.load(conversation.conversation_id)
+    theirs = await store.load(conversation.conversation_id)
+    assert mine is not None and theirs is not None
+    mine.messages.append(ModelResponse(parts=[TextPart('mine')]))
+    theirs.messages.append(ModelResponse(parts=[TextPart('theirs')]))
+    await store.save(mine)
+
+    with pytest.raises(ConversationConflict, match='was saved or deleted since it was loaded') as conflict:
+        await store.save(theirs)
+
+    assert conflict.value.conversation_id == conversation.conversation_id
+    assert await store.load(conversation.conversation_id) == mine
+    assert _entry_count(store) == 2
+
+
+async def test_a_new_conversation_under_a_taken_id_or_one_deleted_since_loading_conflicts() -> None:
+    store = InMemoryConversationStore()
+    taken = Conversation(conversation_id='taken')
+    await store.save(taken)
+
+    with pytest.raises(ConversationConflict):
+        await store.save(Conversation(conversation_id='taken'))
+    await store.delete('taken')
+    with pytest.raises(ConversationConflict):
+        await store.save(taken)
+
+
+async def test_a_record_written_over_a_stale_revision_conflicts() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
     stale = await store.read_record(conversation.conversation_id)
     assert stale is not None
     await store.save(conversation)
 
-    with pytest.raises(ConversationConflict, match='changed in the store since it was loaded'):
+    with pytest.raises(ConversationConflict):
         await store.write_record(stale, expected_revision=stale.revision)
 
 
 async def test_a_fork_shares_the_history_it_keeps() -> None:
     store = InMemoryConversationStore()
     agent = Agent(TestModel())
-    result = await agent.run('Hello')
-    original = result.conversation
+    original = (await agent.run('Hello')).conversation
     await store.save(original, scope='user-1')
     stored_entries = _entry_count(store)
 
@@ -114,9 +160,10 @@ async def test_a_fork_shares_the_history_it_keeps() -> None:
     assert record.forked_from == (await store.read_history(record.head_id))[-1].id
     assert (await store.fork(original.conversation_id, at=0)).messages == []
 
-    continued = await agent.run('Again', conversation=first_only)
-    await store.save(continued.conversation)
-    assert await store.load(first_only.conversation_id) == continued.conversation
+    assert first_only.revision == 0
+    continued = (await agent.run('Again', conversation=first_only)).conversation
+    await store.save(continued)
+    assert await store.load(first_only.conversation_id) == continued
     assert await store.load(original.conversation_id) == original
 
 
@@ -169,10 +216,10 @@ async def test_a_saved_request_a_run_sends_is_stored_again_with_its_run_metadata
     loaded = await store.load(conversation.conversation_id)
     assert loaded is not None
 
-    result = await Agent(TestModel()).run(conversation=loaded)
-    await store.save(result.conversation)
+    continued = (await Agent(TestModel()).run(conversation=loaded)).conversation
+    await store.save(continued)
 
     # The run fills in the request's `run_id`, so the save branches off before it.
-    assert result.conversation.messages[0] != conversation.messages[0]
+    assert continued.messages[0] != conversation.messages[0]
     assert _entry_count(store) == 3
-    assert await store.load(conversation.conversation_id) == result.conversation
+    assert await store.load(conversation.conversation_id) == continued

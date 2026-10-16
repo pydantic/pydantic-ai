@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 
 with warnings.catch_warnings():
     warnings.simplefilter('ignore', HarnessDeprecationWarning)
@@ -53,7 +53,7 @@ async def test_structured_name_and_auxiliary_usage(anyio_backend: str) -> None:
 
 
 async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a', title='Fallback'),
         messages=[ModelRequest(parts=[UserPromptPart('old' * 2000 + ' fix renderer')])],
@@ -80,7 +80,7 @@ async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
 
 
 async def test_empty_missing_model_and_late_result(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
 
     async def no_model(prompt: str) -> None:
@@ -101,7 +101,7 @@ async def test_empty_missing_model_and_late_result(tmp_path: Path) -> None:
 
 
 async def test_worker_is_bounded_single_flight_and_drained(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('hello')])]
     )
@@ -137,7 +137,7 @@ async def test_worker_is_bounded_single_flight_and_drained(tmp_path: Path) -> No
 
 
 async def test_backfill_disabled_and_failure_containment(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('hello')])]
     )
@@ -160,7 +160,7 @@ async def test_backfill_disabled_and_failure_containment(tmp_path: Path) -> None
 
 
 async def test_queued_work_disabled_before_execution(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     checked = anyio.Event()
 
     async def generate(prompt: str) -> NamingResult:

@@ -40,7 +40,7 @@ from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
-    SqliteConversationStore,
+    SqliteSessionStore,
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -341,7 +341,7 @@ class Session(Generic[DepsT, OutputT]):
         plugins: Sequence[AgentCapability[DepsT]] = (),
         message_history: Sequence[ModelMessage] = (),
         usage_limits: UsageLimits | None = None,
-        conversations: SqliteConversationStore | None = None,
+        conversations: SqliteSessionStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
         summary: ConversationSummary | None = None,

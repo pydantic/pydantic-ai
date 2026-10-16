@@ -15,7 +15,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
-    SqliteConversationStore,
+    SqliteSessionStore,
     conversation_text,
 )
 
@@ -79,7 +79,7 @@ class SessionNamer:
     def __init__(
         self,
         *,
-        store: SqliteConversationStore,
+        store: SqliteSessionStore,
         generate: Callable[[str], Awaitable[NamingResult | None]],
         enabled: Callable[[], bool] = lambda: True,
         timeout: float = 60,

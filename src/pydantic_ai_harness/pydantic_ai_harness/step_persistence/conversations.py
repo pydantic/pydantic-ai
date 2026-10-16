@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.media import SqliteMediaStore, externalize_media, restore_media
 
 
@@ -145,7 +146,7 @@ def conversation_text(messages: Sequence[ModelMessage]) -> str:
     return '\n'.join(lines)
 
 
-class SqliteConversationStore:
+class SqliteSessionStore:
     """Local conversation heads with atomic compare-and-swap writes.
 
     Messages share the step store's media format. Deletion removes associated top-level run records and checkpoints but leaves shared blobs; only explicitly catalogued conversations are browsable.
@@ -375,3 +376,10 @@ class SqliteConversationStore:
                             (source.id,),
                         )
                 conn.execute('DELETE FROM runs WHERE conversation_id=?', (source.id,))
+
+
+def __getattr__(name: str) -> object:
+    if name == 'SqliteConversationStore':
+        warn_class_renamed(name, 'SqliteSessionStore', __name__)
+        return SqliteSessionStore
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
