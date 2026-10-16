@@ -673,6 +673,16 @@ pre {
   color: var(--text);
 }
 
+.update-line {
+  display: block;
+  max-width: 60ch;
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

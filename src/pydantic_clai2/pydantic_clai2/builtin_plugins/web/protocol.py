@@ -247,6 +247,18 @@ class TaskEntry:
     usage: Usage
 
 
+@dataclass(frozen=True, kw_only=True)
+class UpdateInfo:
+    """`/update` installing a newer CLAI, as the page shows it until the install ends or CLAI is back."""
+
+    target: str
+    """The version, or on the `main` channel the short commit, being installed."""
+    line: str = ''
+    """The last line uv printed."""
+    restarting: bool = False
+    """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
+
+
 @dataclass(kw_only=True)
 class Snapshot:
     """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
@@ -265,6 +277,9 @@ class Snapshot:
     """Each running task's transcript so far, by task ID."""
     follows_workspace: bool = False
     """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
+    version: str = ''
+    """The running CLAI's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
+    update: UpdateInfo | None = None
 
 
 @dataclass(kw_only=True)
@@ -478,6 +493,14 @@ class TaskChanged:
 
 
 @dataclass(kw_only=True)
+class UpdateChanged:
+    """`/update` started installing, uv printed a line, CLAI is restarting, or the install ended (`None`)."""
+
+    type: Literal['update'] = 'update'
+    update: UpdateInfo | None
+
+
+@dataclass(kw_only=True)
 class PluginsChanged:
     """A command ran, which may have changed the plugins or their settings; an open plugins panel lists them again."""
 
@@ -551,6 +574,7 @@ ServerMessage = (
     | PluginsChanged
     | TaskChanged
     | TaskItems
+    | UpdateChanged
 )
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 

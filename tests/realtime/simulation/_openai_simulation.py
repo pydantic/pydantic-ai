@@ -15,8 +15,8 @@ from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
-from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel
+from pydantic_ai.realtime.lifecycle import RealtimeFrame, StaleEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 from pydantic_ai.realtime.xai import XaiRealtimeModel
@@ -93,18 +93,18 @@ class OpenAISimulation(Simulation):
         connection._create_response = cut_off  # pyright: ignore[reportPrivateUsage]
 
         # The session reads the codec stream; the lifecycle stream the same frames make is checked on the side.
-        tagged_frames = connection._tagged_frames  # pyright: ignore[reportPrivateUsage]
+        connection_frames = connection.frames
         observe = self.checker.observe_lifecycle_stream(lambda: connection._inputs_received)  # pyright: ignore[reportPrivateUsage]
 
-        async def observed() -> AsyncIterator[list[TaggedEvent]]:
-            async for frame in tagged_frames():
-                for event, stale in frame:
-                    if not stale:
+        async def observed() -> AsyncIterator[RealtimeFrame]:
+            async for frame in connection_frames():
+                for event in frame:
+                    if not isinstance(event, StaleEvent):
                         observe(event)
                 yield frame
             observe(None)
 
-        connection._tagged_frames = observed  # pyright: ignore[reportPrivateUsage]
+        connection.frames = observed
 
     def build_model(self) -> RealtimeModel:
         if self.openai.dialect == 'azure':

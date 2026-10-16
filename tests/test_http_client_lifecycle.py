@@ -35,6 +35,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as huggingface_imports_successful:
+    from huggingface_hub import AsyncInferenceClient
+    from huggingface_hub.utils import _http as huggingface_http  # pyright: ignore[reportPrivateUsage]
+
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
@@ -525,3 +528,61 @@ def test_unentered_huggingface_model_gets_new_client_on_new_event_loop(
     agent = Agent(HuggingFaceModel('Qwen/Qwen3-8B', provider=provider))
     assert _run_on_new_event_loops(agent, count=1) == ['Paris']
     assert provider.client is hf_client
+
+
+@pytest.fixture
+def huggingface_http_clients(monkeypatch: pytest.MonkeyPatch, allow_model_requests: None) -> list[httpx.AsyncClient]:
+    """Every HTTP client a Hugging Face `AsyncInferenceClient` opens, answered without a network."""
+    clients: list[httpx.AsyncClient] = []
+    create_client = huggingface_http._GLOBAL_ASYNC_CLIENT_FACTORY  # pyright: ignore[reportPrivateUsage]
+
+    def create_tracked_client() -> httpx.AsyncClient:
+        client = create_client()
+        clients.append(client)
+        return client
+
+    async def handle(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={**_OPENAI_RESPONSE, 'system_fingerprint': 'test'})
+
+    monkeypatch.setattr(huggingface_http, '_GLOBAL_ASYNC_CLIENT_FACTORY', create_tracked_client)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', handle)
+    return clients
+
+
+@pytest.mark.skipif(not huggingface_imports_successful(), reason='huggingface_hub not installed')
+async def test_huggingface_provider_closes_its_client_on_exit(huggingface_http_clients: list[httpx.AsyncClient]):
+    provider = HuggingFaceProvider(base_url='https://hf.example.com/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('Qwen/Qwen3-8B', provider=provider))
+
+    async with agent:
+        assert (await agent.run('What is the capital of France?')).output == 'Paris'
+        assert (await agent.run('What is the capital of France?')).output == 'Paris'
+        assert [client.is_closed for client in huggingface_http_clients] == [False]
+    assert [client.is_closed for client in huggingface_http_clients] == [True]
+
+    # The closed client can't be used again, so a run after the agent exits gets a new one.
+    assert (await agent.run('What is the capital of France?')).output == 'Paris'
+    assert [client.is_closed for client in huggingface_http_clients] == [True, False]
+    async with provider:
+        pass
+    assert [client.is_closed for client in huggingface_http_clients] == [True, True]
+
+    # An exit without a matching enter does nothing.
+    await provider.__aexit__(None, None, None)
+    assert (await agent.run('What is the capital of France?')).output == 'Paris'
+    assert [client.is_closed for client in huggingface_http_clients] == [True, True, False]
+
+
+@pytest.mark.skipif(not huggingface_imports_successful(), reason='huggingface_hub not installed')
+async def test_huggingface_provider_leaves_passed_in_client_open(huggingface_http_clients: list[httpx.AsyncClient]):
+    hf_client = AsyncInferenceClient(base_url='https://hf.example.com/v1', api_key='test-key')
+    provider = HuggingFaceProvider(hf_client=hf_client, api_key='test-key')
+    agent = Agent(HuggingFaceModel('Qwen/Qwen3-8B', provider=provider))
+
+    async with agent:
+        assert (await agent.run('What is the capital of France?')).output == 'Paris'
+    assert provider.client is hf_client
+    assert [client.is_closed for client in huggingface_http_clients] == [False]
+
+    await hf_client.close()
+    assert [client.is_closed for client in huggingface_http_clients] == [True]
