@@ -878,6 +878,16 @@ async def test_for_run_sees_the_workspace_a_capability_function_supplies(tmp_pat
     assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
+async def test_a_workspace_capability_only_for_run_returns_is_asked_after_for_run(tmp_path: Path) -> None:
+    class PerRunWorkspace(AbstractCapability[Path]):
+        async def for_run(self, ctx: RunContext[Path]) -> AbstractCapability[Path]:
+            return LocalWorkspace(ctx.deps)
+
+    result = await Agent(TestModel(), deps_type=Path, capabilities=[PerRunWorkspace()]).run('go', deps=tmp_path)
+
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
 async def test_for_run_cannot_change_the_workspace_selected_before_it(tmp_path: Path) -> None:
     class ReadOnlyPerRun(LocalWorkspace[Any]):
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
