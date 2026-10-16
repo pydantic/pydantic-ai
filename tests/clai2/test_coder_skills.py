@@ -1,4 +1,4 @@
-"""Agent Skills in the built-in `coder` plugin: folders, the model's catalog, `/skill-name` commands, and notices."""
+"""Agent Skills in the built-in `coder` plugin: folders, the model's catalog, `/skill-name` commands, notices, and turning skills off."""
 
 import io
 import os

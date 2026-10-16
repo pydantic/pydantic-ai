@@ -18,7 +18,7 @@ from pydantic_clai2.ui.rendering.tool_output import terminal_text
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.coder import CoderSource
 
-CLOSE = ':close'
+_CLOSE = ':close'
 """The list's last option. Skill names never start with `:`."""
 
 _HELP = (
@@ -27,7 +27,7 @@ _HELP = (
 )
 
 
-def skill_options(skills: Sequence[SkillDefinition], disabled: Sequence[str]) -> list[Option]:
+def _skill_options(skills: Sequence[SkillDefinition], disabled: Sequence[str]) -> list[Option]:
     """One toggle per skill, `[x]` marking the ones on, then the turned-off names no folder here has."""
     found = {skill.name for skill in skills}
     options = [
@@ -48,7 +48,7 @@ def skill_options(skills: Sequence[SkillDefinition], disabled: Sequence[str]) ->
         for name in disabled
         if name not in found
     ]
-    options.append(Option(value=CLOSE, label=SAVE_AND_CLOSE, description='Changes are already saved.'))
+    options.append(Option(value=_CLOSE, label=SAVE_AND_CLOSE, description='Changes are already saved.'))
     return options
 
 
@@ -60,10 +60,10 @@ async def edit_skills(source: CoderSource[DepsT], skills: Sequence[SkillDefiniti
         disabled = source.disabled_skills()
         choice = await dialogs.choose(
             title='Skills',
-            options=skill_options(skills, disabled),
+            options=_skill_options(skills, disabled),
             description=prose(f'{notice}\n\n{_HELP}' if notice else _HELP),
         )
-        if choice is None or choice == CLOSE:
+        if choice is None or choice == _CLOSE:
             return messages
         turned_on = choice in disabled
         names = [name for name in disabled if name != choice] if turned_on else [*disabled, choice]
