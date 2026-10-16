@@ -6,7 +6,8 @@
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
 blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
-model picker, and a stop button. The
+model picker, and a stop button. Scrolling up while output streams keeps your place; **Jump to latest** follows it
+again. The
 terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
 ends the web UI; `/web status` shows its address.
