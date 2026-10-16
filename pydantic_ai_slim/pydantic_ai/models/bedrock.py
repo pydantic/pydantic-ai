@@ -1283,6 +1283,7 @@ class BedrockConverseModel(Model[BaseClient]):
             # (see `_build_additional_model_request_fields`), while other models aren't prevented from calling them.
             if not _has_tool_blocks(bedrock_messages):
                 return None
+            # TODO(#10435): enforce `'none'` in core for models without a native `none`, which can still call these.
             tool_choice = None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
