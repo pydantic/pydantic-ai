@@ -32,7 +32,7 @@ Start with the smallest set that does the job, and add the rest as you need it:
 |---|---|---|---|
 | A typed agent behind an API | `pydantic-ai`, or `pydantic-ai-slim` with your [provider's extra](install.md#slim-install) | [Agents](agent.md), [Output](output.md), [Dependencies](dependencies.md) | [Usage limits](agent.md#usage-limits), a [fallback model](models/overview.md#fallback-model), [instrumentation](logfire.md), [tests](testing.md), a [UI adapter](ui/overview.md) |
 | A durable workflow | `pydantic-ai-slim` with one engine's extra, such as `[dbos]`, `[temporal]` or `[prefect]`; `pydantic-ai-harness` with `[absurd]` or `[pgtask]` | [Durable execution](durable_execution/overview.md) and one engine's page | [Deferred tools](deferred-tools.md) for approval, [Persistence](persistence.md) for state between runs |
-| A coding or long-running agent | `pydantic-ai-harness` | [Pydantic AI Harness](harness/index.md) and [Coder](harness/coder.md) | A [sandbox](harness/index.md#execution-environments), [`SpendLimits`](harness/spend.md), [`StepPersistence`](harness/step-persistence.md), [workspace capabilities under an engine](harness/durable-execution.md) |
+| A coding or long-running agent | `pydantic-ai-harness` | [Pydantic AI Harness](harness/index.md) and [Coder](harness/coder.md) | A [sandbox](harness/index.md#execution-environments), [`SpendLimits`](harness/spend.md), [`StepPersistence`](harness/step-persistence.md), [workspace capabilities under an engine](workspace.md#durable-execution) |
 | An eval suite | `pydantic-evals` (included in `pydantic-ai`) | [Evals quick start](evals/quick-start.md) | [Trajectory evaluators](evals/evaluators/agentic.md), [online evaluation](evals/online-evaluation.md) |
 
 ## A complete service {#end-to-end}
