@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
@@ -562,7 +562,7 @@ def create_shell(
     )
     store = store or SettingsStore()
     transcript = transcript if transcript is not None else TranscriptBuffer()
-    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
     session = Session(
         agent,
         deps=deps,

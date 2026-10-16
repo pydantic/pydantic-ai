@@ -27,11 +27,16 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.media import SqliteMediaStore, externalize_media, restore_media
 
 
-class ConversationConflict(ValueError):
-    """Another writer changed or deleted this conversation. Reload before writing."""
+class SessionConflict(ValueError):
+    """Another writer changed or deleted this session, or another process is using it. Reload before writing.
+
+    Called `ConversationConflict` before `pydantic_ai.conversation_store.ConversationConflict`
+    took that name.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -103,7 +108,7 @@ def ensure_inactive(summary: ConversationSummary) -> None:
     else:
         ensure_posix_inactive(pid=summary.owner_pid)
         return
-    raise ConversationConflict(f'Session is busy in process {summary.owner_pid}.')
+    raise SessionConflict(f'Session is busy in process {summary.owner_pid}.')
 
 
 def ensure_posix_inactive(*, pid: int) -> None:
@@ -114,7 +119,7 @@ def ensure_posix_inactive(*, pid: int) -> None:
         return
     except PermissionError:
         pass
-    raise ConversationConflict(f'Session is busy in process {pid}.')
+    raise SessionConflict(f'Session is busy in process {pid}.')
 
 
 @dataclass(kw_only=True)
@@ -145,7 +150,7 @@ def conversation_text(messages: Sequence[ModelMessage]) -> str:
     return '\n'.join(lines)
 
 
-class SqliteConversationStore:
+class SqliteSessionStore:
     """Local conversation heads with atomic compare-and-swap writes.
 
     Messages share the step store's media format. Deletion removes associated top-level run records and checkpoints but leaves shared blobs; only explicitly catalogued conversations are browsable.
@@ -208,7 +213,7 @@ class SqliteConversationStore:
             row = conn.execute('SELECT metadata FROM conversations WHERE id = ?', (summary.id,)).fetchone()
             if row is None:
                 if expected != 0:
-                    raise ConversationConflict('Session was deleted. Start a new session before saving.')
+                    raise SessionConflict('Session was deleted. Start a new session before saving.')
                 conn.execute(
                     'INSERT INTO conversations VALUES (?, ?, ?, ?, ?, ?)',
                     (
@@ -223,7 +228,7 @@ class SqliteConversationStore:
                 return summary
             prior = self._summary.validate_json(row[0])
             if prior.revision != expected:
-                raise ConversationConflict('Session changed in another process. Resume it again before continuing.')
+                raise SessionConflict('Session changed in another process. Resume it again before continuing.')
             # Preserve a background naming commit which raced with this content save. New content is activity,
             # so it lists an archived conversation again.
             summary = replace(
@@ -363,7 +368,7 @@ class SqliteConversationStore:
         with self._connection() as conn:
             deleted = conn.execute('DELETE FROM conversations WHERE id=? AND revision=?', (source.id, source.revision))
             if deleted.rowcount != 1:
-                raise ConversationConflict('Session changed or was deleted. Refresh the browser.')
+                raise SessionConflict('Session changed or was deleted. Refresh the browser.')
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if 'runs' in tables:
                 for table in ('events', 'snapshots', 'snapshot_idempotency_keys', 'tool_effects'):
@@ -375,3 +380,13 @@ class SqliteConversationStore:
                             (source.id,),
                         )
                 conn.execute('DELETE FROM runs WHERE conversation_id=?', (source.id,))
+
+
+def __getattr__(name: str) -> object:
+    if name == 'SqliteConversationStore':
+        warn_class_renamed(name, 'SqliteSessionStore', __name__)
+        return SqliteSessionStore
+    if name == 'ConversationConflict':
+        warn_class_renamed(name, 'SessionConflict', __name__)
+        return SessionConflict
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

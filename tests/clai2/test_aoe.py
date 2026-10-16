@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
 from pydantic_clai2.builtin_plugins import aoe
 from pydantic_clai2.config import PluginSettings, Settings
@@ -171,7 +171,7 @@ async def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Fixture:
 
 
 def make_session(tmp_path: Path, model: FunctionModel | TestModel | None = None) -> Session[None, str]:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     return Session(Agent(model or TestModel(call_tools=[])), deps=None, conversations=store, workspace=tmp_path)
 
 
@@ -315,7 +315,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
         await env.status('waiting')
         return AskUserResponse(cancelled=True)
 
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     agent = Agent(
         QuestionModel(call_tools=['ask_user_question']),
         deps_type=type(None),
@@ -617,7 +617,7 @@ async def test_unreadable_mapping_leaves_the_plugin_quiet(env: Fixture, tmp_path
 
 
 async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(
         Agent(TestModel()),
         deps=None,

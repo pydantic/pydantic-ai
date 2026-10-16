@@ -54,6 +54,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     usage: NotRequired[_usage.RunUsage]
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
+    conversation_revision: NotRequired[str | None]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -73,6 +74,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     usage: _usage.RunUsage
     run_id: str
     conversation_id: str
+    conversation_revision: str | None
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -106,7 +108,7 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
+_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'conversation_revision', 'metadata')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -917,6 +919,7 @@ class AgentRunResult(Generic[OutputDataT]):
             'usage': self._state.usage,
             'run_id': self._state.run_id,
             'conversation_id': self._state.conversation_id,
+            'conversation_revision': self._state.conversation_revision,
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
@@ -1046,9 +1049,17 @@ class AgentRunResult(Generic[OutputDataT]):
         it is waiting on. The messages list and the usage are copies, so the returned conversation
         can be stored, carried into another run, and mutated without touching this result's own
         accounting.
+
+        It is built on first access and is the same object on every access after, so a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advancing its
+        [`revision`][pydantic_ai.conversation.Conversation.revision] on `save` carries into a run
+        started from `result.conversation` afterwards.
         """
+        # Kept in `__dict__` beside the dataclass fields, like `_workspace`, so it isn't serialized.
+        if (conversation := self.__dict__.get('_conversation')) is not None:
+            return conversation
         output = self.output
-        return Conversation(
+        conversation = Conversation(
             messages=list(self.all_messages()),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
@@ -1059,7 +1070,10 @@ class AgentRunResult(Generic[OutputDataT]):
                 if isinstance(output, DeferredToolRequests)
                 else None
             ),
+            revision=self._state.conversation_revision,
         )
+        self.__dict__['_conversation'] = conversation
+        return conversation
 
     @property
     def timestamp(self) -> datetime:

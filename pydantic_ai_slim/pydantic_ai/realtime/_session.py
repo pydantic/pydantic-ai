@@ -796,6 +796,8 @@ class RealtimeSession:
         self._provider_url = model.base_url if model is not None else None
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        # The revision of the stored conversation the session continues, set by `AgentRealtime.session`.
+        self._conversation_revision: str | None = None
         self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
@@ -1446,6 +1448,7 @@ class RealtimeSession:
         `new_messages()` agree. `_output_tool_name` stays `None`: plain text never came from a tool.
         """
         state.message_history = self.all_messages()
+        state.conversation_revision = self._conversation_revision
         return AgentRunResult(
             self._final_result_text() or '',
             None,
@@ -1808,6 +1811,7 @@ class RealtimeSession:
             messages=self.all_messages(),
             usage=copy(self.usage),
             conversation_id=self._conversation_id,
+            revision=self._conversation_revision,
         )
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
