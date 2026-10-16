@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../protocol'
+import type { LiveEntry, Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../protocol'
 import { WorkersTree } from './WorkersTree'
 import { WorkspacesSection } from './WorkspacesSection'
 import {
@@ -28,6 +28,10 @@ export interface SidebarHandle {
 
 interface Props {
   version: number
+  /** The live session the main pane shows. */
+  shown: string | null
+  /** The sessions live in this CLAI, by conversation ID, whose rows show what each is doing. */
+  live: Record<string, LiveEntry>
   viewing: string | null
   /** The session being opened, which shows a spinner. */
   opening: string | null
@@ -63,15 +67,45 @@ export function ago(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+type Dot = SessionEntry['state'] | 'queued' | 'asking'
+
+const DOT_LABELS: Partial<Record<Dot, string>> = {
+  running: 'Running',
+  queued: 'Running, with input queued',
+  asking: 'Waiting for your answer',
+  busy: 'Running in another CLAI',
+  failed: 'Last turn failed',
+  cancelled: 'Last turn interrupted',
+}
+
+/** What a session's dot shows: a live session's state from this CLAI, else what its saved row says. */
+function dot(session: SessionEntry, live: Record<string, LiveEntry>): Dot {
+  const state = live[session.id]?.state
+  if (state === undefined) return session.state
+  if (state !== 'idle') return state
+  // An idle live session's row may still say `running` until the list is fetched again.
+  return session.state === 'running' ? 'ready' : session.state
+}
+
 /** Whether a turn runs in one of these sessions, so a collapsed group still shows it. */
-function live(worktrees: Worktree[]): boolean {
-  return worktrees.some((worktree) => worktree.sessions.some((s) => s.state === 'running' || s.state === 'busy'))
+function active(worktrees: Worktree[], live: Record<string, LiveEntry>): boolean {
+  return worktrees.some((worktree) =>
+    worktree.sessions.some((s) => ['running', 'queued', 'asking', 'busy'].includes(dot(s, live))),
+  )
+}
+
+/** A session's status dot, named for screen readers; none for a session that is not doing anything. */
+function StateDot({ state }: { state: Dot }) {
+  const label = DOT_LABELS[state]
+  return <span className={`state ${state}`} role={label ? 'img' : undefined} aria-label={label} title={label} />
 }
 
 /** Saved sessions grouped by project, then worktree, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   {
     version,
+    shown,
+    live,
     viewing,
     opening,
     theme,
@@ -158,87 +192,95 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     }
   }
 
-  const row = (session: SessionEntry) => (
-    <div
-      key={session.id}
-      className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
-    >
-      {renaming === session.id ? (
-        <input
-          className="rename"
-          autoFocus
-          defaultValue={session.title}
-          onBlur={() => setRenaming(null)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              setRenaming(null)
-            }
-            if (event.key === 'Enter') {
-              const title = event.currentTarget.value
-              setRenaming(null)
-              void act(() => api.rename(session.id, title))
-            }
-          }}
-        />
-      ) : (
-        <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
-          <span className={`state ${session.state}`} />
-          <span className="session-title">{session.title}</span>
-          {session.archived && <span className="worktree-tag">archived</span>}
-          {opening === session.id && <span className="spinner" aria-label="Opening" />}
-          <span className="session-time">{session.state === 'running' ? '' : ago(session.updated_at)}</span>
-        </button>
-      )}
-      <button
-        className="session-more"
-        onClick={(event) => {
-          // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
-          const list = event.currentTarget.closest('.projects')?.getBoundingClientRect()
-          const rect = event.currentTarget.getBoundingClientRect()
-          setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
-          setMenu(menu === session.id ? null : session.id)
-        }}
-        title="Session actions"
-        aria-label="Session actions"
+  const isShown = (session: SessionEntry) => session.id === shown
+
+  const row = (session: SessionEntry) => {
+    const state = dot(session, live)
+    const current = isShown(session)
+    return (
+      <div
+        key={session.id}
+        className={`session ${current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
       >
-        <MoreIcon size={14} />
-      </button>
-      {menu === session.id && (
-        <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
-          <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
-          <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
-          {session.archived ? (
-            <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
-          ) : (
-            <button
-              disabled={session.current || session.state === 'running' || session.state === 'busy'}
-              title={
-                session.current
-                  ? 'The open session cannot be archived'
-                  : session.state === 'running' || session.state === 'busy'
-                    ? 'A running session cannot be archived'
-                    : 'Hide it; nothing is deleted'
+        {renaming === session.id ? (
+          <input
+            className="rename"
+            autoFocus
+            defaultValue={session.title}
+            onBlur={() => setRenaming(null)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setRenaming(null)
               }
-              onClick={() => void act(() => api.archive(session.id))}
-            >
-              Archive
-            </button>
-          )}
-          <button
-            className="danger"
-            disabled={session.current}
-            onClick={() =>
-              window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
-              void act(() => api.remove(session.id))
-            }
-          >
-            Delete
+              if (event.key === 'Enter') {
+                const title = event.currentTarget.value
+                setRenaming(null)
+                void act(() => api.rename(session.id, title))
+              }
+            }}
+          />
+        ) : (
+          <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
+            <StateDot state={state} />
+            <span className="session-title">{session.title}</span>
+            {session.archived && <span className="worktree-tag">archived</span>}
+            {opening === session.id && <span className="spinner" aria-label="Opening" />}
+            <span className="session-time">
+              {state === 'running' || state === 'queued' || state === 'asking' ? '' : ago(session.updated_at)}
+            </span>
           </button>
-        </div>
-      )}
-    </div>
-  )
+        )}
+        <button
+          className="session-more"
+          onClick={(event) => {
+            // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
+            const list = event.currentTarget.closest('.projects')?.getBoundingClientRect()
+            const rect = event.currentTarget.getBoundingClientRect()
+            setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
+            setMenu(menu === session.id ? null : session.id)
+          }}
+          title="Session actions"
+          aria-label="Session actions"
+        >
+          <MoreIcon size={14} />
+        </button>
+        {menu === session.id && (
+          <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
+            <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
+            <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
+            {session.archived ? (
+              <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
+            ) : (
+              <button
+                disabled={current || session.state === 'running' || session.state === 'busy'}
+                title={
+                  current
+                    ? 'The open session cannot be archived'
+                    : session.state === 'running' || session.state === 'busy'
+                      ? 'A running session cannot be archived'
+                      : 'Hide it; nothing is deleted'
+                }
+                onClick={() => void act(() => api.archive(session.id))}
+              >
+                Archive
+              </button>
+            )}
+            <button
+              className="danger"
+              disabled={current}
+              onClick={() =>
+                window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
+                void act(() => api.remove(session.id))
+              }
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // A lone checkout needs no heading of its own, unless it is gone.
   const isNested = (project: Project) =>
@@ -251,7 +293,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       project.worktrees.some(
         (worktree) =>
           !(isNested(project) && !query && (collapsed[`${project.key}\0${worktree.root}`] ?? false)) &&
-          worktree.sessions.some((session) => session.current),
+          worktree.sessions.some(isShown),
       ),
   )
   const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
@@ -331,7 +373,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               >
                 <FolderIcon size={14} />
                 <span className="project-name">{project.name}</span>
-                {closed && live(project.worktrees) && <span className="state running" />}
+                {closed && active(project.worktrees, live) && <StateDot state="running" />}
                 <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
               </button>
               {!closed &&
@@ -352,11 +394,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                           <BranchIcon size={12} />
                           <span className="worktree-name">{worktree.label}</span>
                           {worktree.missing && <span className="worktree-tag">removed</span>}
-                          {shut && live([worktree]) && <span className="state running" />}
+                          {shut && active([worktree], live) && <StateDot state="running" />}
                           <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
                         </button>
                       )}
-                      {!shut && worktree.sessions.flatMap((session) => [row(session), session.current && workers])}
+                      {!shut && worktree.sessions.flatMap((session) => [row(session), isShown(session) && workers])}
                     </div>
                   )
                 })}

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../api'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { SessionContext } from '../api'
 import type { Dialog } from '../protocol'
 import { CheckIcon, SearchIcon } from './icons'
 
@@ -17,13 +17,14 @@ export function DialogLayer({ dialogs, onError }: { dialogs: Dialog[]; onError: 
 function DialogBox({ dialog, onError }: { dialog: Dialog; onError: (message: string) => void }) {
   const [sending, setSending] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
+  const session = useContext(SessionContext)
 
   /** Answer, or back out with `null`; a rejected answer keeps the dialog open with the reason. */
   const answer = async (value: string | null) => {
     if (sending) return
     setSending(true)
     try {
-      await api.answerDialog(dialog.id, value)
+      await session.answerDialog(dialog.id, value)
     } catch (error) {
       if (value === null) onError(message(error))
       else setProblem(message(error))

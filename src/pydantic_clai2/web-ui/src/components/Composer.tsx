@@ -1,5 +1,5 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { api, interrupt } from '../api'
+import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { SessionContext, api, interrupt } from '../api'
 import type { CompletionInfo } from '../protocol'
 import { ArrowUpIcon, ChevronIcon, CheckIcon, StopIcon } from './icons'
 
@@ -23,7 +23,7 @@ interface Props {
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
-  /** Where a message goes, and what stops the running turn: the session's by default. */
+  /** Where a message goes, and what stops the running turn: the shown session's by default. */
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
   commands?: boolean
@@ -56,6 +56,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
+  const session = useContext(SessionContext)
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
 
@@ -76,7 +77,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      const found = await api.complete(value)
+      const found = await session.complete(value)
       if (id === request.current) {
         setSuggestions(found.slice(0, 50))
         setSelected(0)
@@ -84,7 +85,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } catch {
       if (id === request.current) setSuggestions([])
     }
-  }, [commands])
+  }, [commands, session])
 
   useEffect(() => {
     if (!models) return
@@ -124,7 +125,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     try {
       if (chat) await chat.send(value)
       else {
-        const entered = await api.send(value)
+        const entered = await session.send(value)
         if (entered.menu !== null) onMenu?.(entered.menu)
       }
     } catch (error) {
@@ -176,7 +177,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const pickModel = async (name: string) => {
     setModels(null)
     try {
-      await api.selectModel(name)
+      await session.selectModel(name)
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
     }
@@ -260,7 +261,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           {running && !text.trim() ? (
             <button
               className="send stop"
-              onClick={() => void interrupt(onError, chat?.interrupt)}
+              onClick={() => void interrupt(onError, chat?.interrupt ?? session.interrupt)}
               title="Interrupt (Esc)"
               aria-label="Interrupt"
             >

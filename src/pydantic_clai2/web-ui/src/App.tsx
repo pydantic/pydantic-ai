@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
-import { api, connect, interrupt, orchestrator, type Connection } from './api'
+import { SessionContext, api, connect, interrupt, orchestrator, sessionApi, type Connection, type Socket } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
@@ -19,7 +19,7 @@ import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
-import { initial, initialOrchestrator, reduce, reduceOrchestrator } from './state'
+import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action } from './state'
 import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
@@ -39,6 +39,11 @@ function initialTheme(): Theme {
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initial)
+  // The live session the main pane shows; the others' messages do not come, and their dots come from `live`.
+  const chat = shownChat(state)
+  const shown = state.shown
+  const live = state.live
+  const session = useMemo(() => sessionApi(shown), [shown])
   const [orchestration, dispatchOrchestrator] = useReducer(reduceOrchestrator, initialOrchestrator)
   const [pane, setPane] = useState<Pane>(() =>
     localStorage.getItem('clai-pane') === 'orchestrator' ? 'orchestrator' : 'session',
@@ -48,7 +53,7 @@ export function App() {
   const [sidebar, setSidebar] = useState(true)
   const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
-  // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
+  // The session the user picked, until it shows: CLAI makes it live, then its snapshot comes.
   const [opening, setOpening] = useState<Opening | null>(null)
   // The delegated task whose transcript the main pane shows instead of the session's.
   const [worker, setWorker] = useState<string | null>(null)
@@ -91,10 +96,14 @@ export function App() {
   const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
+  const socket = useRef<Socket | null>(null)
+  // What a new connection watches again, read when it opens.
+  const watching = useRef(shown)
+  watching.current = shown
 
   // Batch a burst of streamed messages into one render per frame; hidden tabs get no frames, so a timer.
   useEffect(() => {
-    let pending: ServerMessage[] = []
+    let pending: (ServerMessage | Action)[] = []
     let scheduled = false
     let frame = 0
     let timer = 0
@@ -107,19 +116,29 @@ export function App() {
         else dispatch(message)
       }
     }
-    const disconnect = connect((message) => {
+    const queue = (message: ServerMessage | Action) => {
       pending.push(message)
       if (scheduled) return
       scheduled = true
       if (document.hidden) timer = window.setTimeout(flush, 50)
       else frame = requestAnimationFrame(flush)
-    }, setConnection)
+    }
+    // A reconnect watches the shown session again, in order with the messages, so the default session's snapshot
+    // that every connection starts with waits aside.
+    const opened = connect(queue, setConnection, () => watching.current, (id) => queue({ type: 'show', id }))
+    socket.current = opened
     return () => {
-      disconnect()
+      socket.current = null
+      opened.close()
       cancelAnimationFrame(frame)
       window.clearTimeout(timer)
     }
   }, [])
+
+  // Watch the shown session: its fresh snapshot comes, then its messages, while the others run on unwatched.
+  useEffect(() => {
+    if (shown !== null && connection === 'open') socket.current?.watch(shown)
+  }, [shown, connection])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
@@ -161,15 +180,15 @@ export function App() {
   const firstPanel = panels[0]
   useEffect(() => {
     if (connection === 'open') void loadPanels()
-  }, [connection, state.session?.id, state.running, state.pluginsVersion, loadPanels])
+  }, [connection, chat.session?.id, chat.running, state.pluginsVersion, loadPanels])
   const panelShown = shownPanel !== null
   useEffect(() => {
-    if (!state.running || panels.length === 0) return
+    if (!chat.running || panels.length === 0) return
     const timer = window.setInterval(() => {
       if (panelShown || following()) void loadPanels(true)
     }, 3000)
     return () => window.clearInterval(timer)
-  }, [state.running, panels.length, panelShown, loadPanels])
+  }, [chat.running, panels.length, panelShown, loadPanels])
   useEffect(() => followWindows(panels), [panels])
   // With no key, the shortcut: close the open panel, or open the first.
   const shownKey = shownPanel ? panelKey(shownPanel) : null
@@ -199,12 +218,12 @@ export function App() {
 
   useEffect(() => {
     if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
-    else document.title = state.session?.title ? `${state.session.title} · CLAI` : 'CLAI'
-  }, [state.session?.title, pane])
+    else document.title = chat.session?.title ? `${chat.session.title} · CLAI` : 'CLAI'
+  }, [chat.session?.title, pane])
 
-  // A switch of the live session ends any read-only preview, drops a transcript still on its way so it cannot
+  // A switch of the shown session ends any read-only preview, drops a transcript still on its way so it cannot
   // reopen it, and ends the wait for it if it is the one picked.
-  const sessionId = state.session?.id
+  const sessionId = chat.session?.id
   useEffect(() => {
     picked.current++
     setPreview(null)
@@ -212,7 +231,7 @@ export function App() {
     setOpening((current) => (current?.id === sessionId ? null : current))
   }, [sessionId])
 
-  // The shell may not switch at all (it reports a failed `/resume` in the terminal), so stop waiting eventually.
+  // The session may not show at all (it closed meanwhile), so stop waiting eventually.
   useEffect(() => {
     if (!opening) return
     const timer = window.setTimeout(() => setOpening(null), 15000)
@@ -237,12 +256,24 @@ export function App() {
   const showError = useCallback((message: string) => showToast(message, 'error'), [showToast])
   const showNotice = useCallback((message: string) => showToast(message, 'info'), [showToast])
 
+  // Show a live session, by conversation ID; the effect above watches it, and its snapshot replaces what shows.
+  const show = useCallback((id: string) => {
+    setPane('session')
+    setWorker(null)
+    setPreview(null)
+    dispatch({ type: 'show', id })
+  }, [])
+
   const followsWorkspace = state.followsWorkspace
   const newSession = useCallback(() => {
     setPane('session')
     if (followsWorkspace) setChoosing(true)
-    else void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
-  }, [followsWorkspace, showError])
+    else
+      void api
+        .newSession()
+        .then(({ id }) => show(id))
+        .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+  }, [followsWorkspace, show, showError])
 
   // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
   const closePreview = useCallback(() => {
@@ -251,60 +282,54 @@ export function App() {
     setOpening(null)
   }, [])
 
-  const open = useCallback(
-    async (session: Opening) => {
-      setOpening(session)
-      try {
-        await api.open(session.id)
-      } catch (error) {
-        setOpening(null)
-        showError(error instanceof Error ? error.message : String(error))
-      }
-    },
-    [showError],
-  )
-
   const view = useCallback(
     async (session: SessionEntry) => {
       // Only the last session clicked is shown, however the requests for earlier ones resolve.
       const request = ++picked.current
       setPane('session')
       setWorker(null)
-      if (session.current) {
+      if (session.id === shown) {
         setPreview(null)
         setOpening(null)
         return
       }
       setOpening(session)
       try {
-        const saved = await api.transcript(session.id)
-        if (request !== picked.current) return
-        if (saved.openable && !state.running) {
-          await open(session)
-        } else {
-          setPreview(saved)
-          setOpening(null)
+        // A saved session opens live, whatever the others run, unless CLAI can only show it, as when its
+        // directory is gone; a live one opens at once.
+        if (!(session.id in live)) {
+          const saved = await api.transcript(session.id)
+          if (request !== picked.current) return
+          if (!saved.openable) {
+            setPreview(saved)
+            setOpening(null)
+            return
+          }
         }
+        const { id } = await api.open(session.id)
+        if (request !== picked.current) return
+        setOpening((current) => (current ? { ...current, id } : current))
+        show(id)
       } catch (error) {
         if (request !== picked.current) return
         setOpening(null)
         showError(error instanceof Error ? error.message : String(error))
       }
     },
-    [state.running, showError, open],
+    [shown, live, show, showError],
   )
 
   const openWorker = useCallback((id: string) => {
     setPreview(null)
     setWorker(id)
   }, [])
-  const workerTask = worker === null ? null : (state.tasks.find((task) => task.id === worker) ?? null)
-  const links = useMemo(() => ({ tasks: state.tasks, parent: null, open: openWorker }), [state.tasks, openWorker])
+  const workerTask = worker === null ? null : (chat.tasks.find((task) => task.id === worker) ?? null)
+  const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: openWorker }), [chat.tasks, openWorker])
 
-  // Esc stops the turn of what the main pane shows.
+  // Esc stops the turn of what the main pane shows: the orchestrator's, or the shown session's alone.
   const orchestrating = pane === 'orchestrator'
-  const running = orchestrating ? orchestration.chat.running : state.running
-  const stop = orchestrating ? orchestrator.interrupt : api.interrupt
+  const running = orchestrating ? orchestration.chat.running : chat.running
+  const stop = orchestrating ? orchestrator.interrupt : session.interrupt
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = MAC ? event.metaKey : event.ctrlKey
@@ -341,25 +366,25 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [running, stop, orchestrating, workerTask, showError, togglePanel, openSettings, newSession])
 
-  const status = state.status
+  const status = chat.status
   const title = workerTask
     ? `${workerTask.agent}: ${workerTask.prompt.split('\n')[0]}`
     : preview
       ? preview.title
-      : (state.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : (state.session?.workspace ?? '')
-  const entries = preview ? preview.items : state.entries
-  const project = (state.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
-  const fresh = !preview && !workerTask && entries.length === 0 && state.session !== null
+      : (chat.session?.title ?? 'New session')
+  const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
+  const entries = preview ? preview.items : chat.entries
+  const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
+  const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
   const composerElement = (
     <Composer
       ref={composer}
-      running={state.running}
-      meter={<TurnMeter status={status} startedAt={state.turnStartedAt} />}
-      controls={<Switches status={status} running={state.running} onError={showError} />}
+      running={chat.running}
+      meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
+      controls={<Switches status={status} running={chat.running} onError={showError} />}
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
-      placeholder={state.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      placeholder={chat.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
       local={local}
       onMenu={openMenu}
       draft={draft}
@@ -368,7 +393,7 @@ export function App() {
     />
   )
 
-  return (
+  const page = (
     <div
       className={`app ${sidebar ? '' : 'no-sidebar'} ${monty && !orchestrating ? 'with-monty' : ''} ${shownPanel && !orchestrating ? 'with-side-panel' : ''}`}
       style={{ '--side-panel-width': `min(${panelWidth}px, 70vw)` } as CSSProperties}
@@ -377,6 +402,8 @@ export function App() {
         <Sidebar
           ref={sidebarRef}
           version={state.sessionsVersion}
+          shown={shown}
+          live={live}
           viewing={preview?.id ?? null}
           opening={opening?.id ?? null}
           theme={theme}
@@ -384,9 +411,11 @@ export function App() {
           onTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           themeInfo={state.theme}
           onPickTheme={(name) =>
-            void api.send(`/theme ${name}`).catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+            void session
+              .send(`/theme ${name}`)
+              .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
           }
-          onView={(session) => void view(session)}
+          onView={(entry) => void view(entry)}
           onNew={newSession}
           orchestrating={orchestrating}
           orchestratorRunning={orchestration.chat.running}
@@ -398,7 +427,7 @@ export function App() {
           onPlugins={openPlugins}
           onSettings={openSettings}
           onError={showError}
-          tasks={state.tasks}
+          tasks={chat.tasks}
           worker={workerTask?.id ?? null}
           onWorker={openWorker}
         />
@@ -428,7 +457,7 @@ export function App() {
               </div>
               {status && !preview && !workerTask && (
                 <div className="topbar-status">
-                  <span className={`activity ${state.running ? 'busy' : ''}`}>{state.running ? status.activity : 'ready'}</span>
+                  <span className={`activity ${chat.running ? 'busy' : ''}`}>{chat.running ? status.activity : 'ready'}</span>
                   <span className="context" title="Context used / window">
                     {compact(status.context_tokens)} / {compact(status.context_window)}
                   </span>
@@ -461,16 +490,9 @@ export function App() {
             </header>
             {preview && (
               <div className="preview-banner">
-                {preview.openable
-                  ? 'A turn is running. You can switch to this session once it ends.'
-                  : preview.missing
-                    ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
-                    : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
-                {preview.openable && !state.running && (
-                  <button className="primary small" onClick={() => void open(preview)}>
-                    Continue here
-                  </button>
-                )}
+                {preview.missing
+                  ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                  : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
                 <button className="ghost small" onClick={closePreview}>
                   Back to current
                 </button>
@@ -479,8 +501,8 @@ export function App() {
             {workerTask ? (
               <WorkerView
                 task={workerTask}
-                tasks={state.tasks}
-                live={state.taskItems[workerTask.id]}
+                tasks={chat.tasks}
+                live={chat.taskItems[workerTask.id]}
                 onOpen={openWorker}
                 onBack={() => setWorker(null)}
                 onError={showError}
@@ -491,7 +513,7 @@ export function App() {
                   What should we build{project ? ' in ' : ''}
                   {project && <span className="hero-project">{project}</span>}?
                 </h1>
-                {state.questions.map((request) => (
+                {chat.questions.map((request) => (
                   <QuestionCard key={request.id} request={request} onError={showError} />
                 ))}
                 {composerElement}
@@ -504,13 +526,13 @@ export function App() {
                 <WorkersContext.Provider value={links}>
                   <Transcript
                     entries={entries}
-                    running={!preview && state.running}
+                    running={!preview && chat.running}
                     empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
                   />
                 </WorkersContext.Provider>
                 <footer className="bottom">
                   {!preview &&
-                    state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
+                    chat.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
                   {!preview && composerElement}
                 </footer>
               </>
@@ -561,7 +583,7 @@ export function App() {
           section={settings}
           onSection={setSettings}
           onClose={closeSettings}
-          running={state.running}
+          running={chat.running}
           pluginsVersion={state.pluginsVersion}
           settingsVersion={state.settingsVersion}
           pluginFocus={pluginFocus}
@@ -582,7 +604,7 @@ export function App() {
         <MontyPanel
           entries={entries}
           status={status}
-          running={state.running}
+          running={chat.running}
           onClose={() => setMonty(false)}
           onError={showError}
         />
@@ -603,10 +625,12 @@ export function App() {
           onError={showError}
         />
       )}
-      {choosing && state.session && (
-        <NewSessionDialog current={state.session.workspace} onClose={() => setChoosing(false)} />
+      {choosing && chat.session && (
+        <NewSessionDialog current={chat.session.workspace} onOpened={show} onClose={() => setChoosing(false)} />
       )}
-      <DialogLayer dialogs={state.dialogs} onError={showError} />
+      <DialogLayer dialogs={chat.dialogs} onError={showError} />
     </div>
   )
+  // The composer, questions, dialogs, and Monty all talk to the shown session.
+  return <SessionContext.Provider value={session}>{page}</SessionContext.Provider>
 }

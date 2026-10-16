@@ -1,3 +1,4 @@
+import { createContext } from 'react'
 import type {
   AnswerBody,
   CompletionInfo,
@@ -5,6 +6,7 @@ import type {
   JsonValue,
   MenuEdited,
   MenuInfo,
+  Opened,
   OrchestratorState,
   PanelInfo,
   PluginAction,
@@ -14,6 +16,7 @@ import type {
   Switch,
   TaskTranscript,
   Transcript,
+  WatchMessage,
   WorkspacesInfo,
 } from './protocol'
 
@@ -74,22 +77,38 @@ export interface MenuTarget {
 
 const fieldsPath = (target: MenuTarget) => `/api/${target.kind}/${encodeURIComponent(target.name)}/fields`
 
+/** The routes of one live session, by conversation ID; `null` is the default session's, before the first snapshot. */
+export function sessionApi(id: string | null) {
+  const base = id === null ? '/api' : `/api/sessions/${encodeURIComponent(id)}`
+  return {
+    send: (text: string) => call<Entered>('POST', `${base}/input`, { text }),
+    interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
+    complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
+    selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
+    answer: (request: string, answers: AnswerBody[] | null) =>
+      call<void>('POST', `${base}/questions/${request}`, { answers }),
+    answerDialog: (dialog: string, value: string | null) => call<void>('POST', `${base}/dialogs/${dialog}`, { value }),
+  }
+}
+
+export type SessionApi = ReturnType<typeof sessionApi>
+
+/** The routes of the session the main pane shows, for the composer, questions, and dialogs. */
+export const SessionContext = createContext<SessionApi>(sessionApi(null))
+
 export const api = {
-  send: (text: string) => call<Entered>('POST', '/api/input', { text }),
   /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
   update: () => call<void>('POST', '/api/input', { text: '/update' }),
-  interrupt: () => call<{ interrupted: boolean }>('POST', '/api/interrupt'),
-  complete: (text: string) => call<CompletionInfo[]>('GET', `/api/complete?text=${encodeURIComponent(text)}`),
   models: () => call<string[]>('GET', '/api/models'),
-  selectModel: (name: string) => call<void>('POST', '/api/model', { name }),
   setSwitch: (key: Switch, on: boolean) => call<void>('POST', '/api/switch', { key, on }),
-  answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
   sessions: (query: string, archived = false) =>
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
+  /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
-    call<void>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
-  open: (id: string) => call<void>('POST', `/api/sessions/${id}/open`),
+    call<Opened>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
+  /** Make a saved session live, or find the live one; it answers its conversation ID. */
+  open: (id: string) => call<Opened>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
@@ -108,7 +127,6 @@ export const api = {
     call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}`, { value }),
   runAction: (target: MenuTarget, key: string) =>
     call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}/action`),
-  answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
   workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
   openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
@@ -140,10 +158,7 @@ export async function openWorkspacePage(id: string): Promise<void> {
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */
-export async function interrupt(
-  onError: (message: string) => void,
-  stop: () => Promise<unknown> = api.interrupt,
-): Promise<void> {
+export async function interrupt(onError: (message: string) => void, stop: () => Promise<unknown>): Promise<void> {
   try {
     await stop()
   } catch (error) {
@@ -153,13 +168,33 @@ export async function interrupt(
 
 export type Connection = 'connecting' | 'open' | 'closed' | 'expired'
 
+/** The open WebSocket: `watch` names the live session the page shows, so only its messages come. */
+export interface Socket {
+  watch: (id: string) => void
+  close: () => void
+}
+
 /** Keep one WebSocket open, reconnecting with backoff; each connection starts with a snapshot.
 
+Each new connection watches `watching()` again, after calling `onWatch` with it, before any of its messages arrive.
 A CLAI restarted since this page loaded has a new token: after a few failed attempts this checks, and
 reports `expired` instead of retrying forever.
  */
-export function connect(onMessage: (message: ServerMessage) => void, onState: (state: Connection) => void): () => void {
+export function connect(
+  onMessage: (message: ServerMessage) => void,
+  onState: (state: Connection) => void,
+  watching: () => string | null,
+  onWatch: (id: string) => void,
+): Socket {
   let socket: WebSocket | null = null
+  // The session this connection watches, so asking again for the same one sends nothing.
+  let watched: string | null = null
+  const send = (id: string) => {
+    if (socket?.readyState !== WebSocket.OPEN || id === watched) return
+    watched = id
+    const message: WatchMessage = { type: 'watch', sessions: [id] }
+    socket.send(JSON.stringify(message))
+  }
   let stopped = false
   let delay = 500
   let failures = 0
@@ -185,6 +220,12 @@ export function connect(onMessage: (message: ServerMessage) => void, onState: (s
     socket.onopen = () => {
       delay = 500
       failures = 0
+      watched = null
+      const id = watching()
+      if (id !== null) {
+        onWatch(id)
+        send(id)
+      }
       onState('open')
     }
     socket.onmessage = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
@@ -195,9 +236,12 @@ export function connect(onMessage: (message: ServerMessage) => void, onState: (s
     }
   }
   open()
-  return () => {
-    stopped = true
-    window.clearTimeout(timer)
-    socket?.close()
+  return {
+    watch: send,
+    close: () => {
+      stopped = true
+      window.clearTimeout(timer)
+      socket?.close()
+    },
   }
 }
