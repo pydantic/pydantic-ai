@@ -44,7 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._utils import BaseExceptionGroup, get_event_loop
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
@@ -2174,6 +2174,70 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
     assert observed == ['on_run_error', 'wrap_run']
+
+
+async def test_iter_break_in_cancelled_scope_lets_shielded_wrap_run_cleanup_finish():
+    """Breaking out of `iter()` inside a cancelled `anyio` scope must not cut short `wrap_run` cleanup it shields."""
+    cleanup_started = anyio.Event()
+    cleanup_permitted = anyio.Event()
+    cleanup_complete = anyio.Event()
+
+    class ShieldedCleanup(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            try:
+                return await handler()
+            finally:
+                with anyio.CancelScope(shield=True):
+                    cleanup_started.set()
+                    await cleanup_permitted.wait()
+                    cleanup_complete.set()
+
+    async def permit_cleanup() -> None:
+        await cleanup_started.wait()
+        # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+        for _ in range(3):
+            await anyio.lowlevel.checkpoint()
+        cleanup_permitted.set()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[ShieldedCleanup()])
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(permit_cleanup)
+            with anyio.CancelScope() as scope:
+                async with agent.iter('go') as agent_run:
+                    async for _node in agent_run:
+                        scope.cancel()
+                        break
+
+    assert cleanup_complete.is_set()
+
+
+async def test_iter_break_teardown_propagates_external_cancellation():
+    """Cancelling the task while `wrap_run` cleans up after a `break` out of `iter()` must still cancel it."""
+    cleanup_started = anyio.Event()
+
+    class PendingCleanup(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            try:
+                return await handler()
+            finally:
+                cleanup_started.set()
+                await anyio.Event().wait()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[PendingCleanup()])
+
+    async def drive() -> None:
+        async with agent.iter('go') as agent_run:
+            async for _node in agent_run:
+                break
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
 
 
 async def test_cancel_after_completion_is_a_noop():

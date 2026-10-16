@@ -408,11 +408,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
                 # always still pending here.
                 elif not _wrap_task.done():  # pragma: no branch
-                    _wrap_task.cancel()
-                    try:
-                        await _wrap_task
-                    except (asyncio.CancelledError, BaseException):
-                        pass
+                    await _utils.cancel_and_drain(_wrap_task)
 
         # If neither on_run_error nor wrap_run recovered, re-raise. In an
         # @asynccontextmanager, not re-raising suppresses the exception.
