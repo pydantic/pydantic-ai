@@ -1,6 +1,7 @@
 """Tests for exception classes."""
 
 import pickle
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -36,6 +37,8 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+
+from ._inline_snapshot import snapshot
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -263,6 +266,19 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
     assert str(restored) == str(exc)
     for attr, expected in check_attrs.items():
         assert getattr(restored, attr) == expected
+
+
+def test_categorized_http_error_reads_as_its_category():
+    """An HTTP error with a category is named after the category wherever its class is shown, but stays both."""
+    error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model')
+
+    assert type(error) is not ModelRateLimitError
+    assert isinstance(error, ModelHTTPError) and isinstance(error, ModelRateLimitError)
+    assert (type(error).__module__, type(error).__qualname__) == ('pydantic_ai.exceptions', 'ModelRateLimitError')
+    assert repr(error) == snapshot("ModelRateLimitError('status_code: 429, model_name: model, body: None')")
+    assert traceback.format_exception_only(error) == snapshot(
+        ['pydantic_ai.exceptions.ModelRateLimitError: status_code: 429, model_name: model, body: None\n']
+    )
 
 
 def test_tool_retry_error_pickle_round_trip():

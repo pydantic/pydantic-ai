@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -822,7 +822,7 @@ class ModelHTTPError(ModelAPIError):
             in_stream=in_stream,
         )
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
+    def __reduce__(self) -> tuple[Any, ...]:
         return self.__class__, (self.status_code, self.model_name, self.body), self.__getstate__()
 
     def __getstate__(self) -> dict[str, Any]:
@@ -941,34 +941,62 @@ _HTTPErrorCategory = type[
 """An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
 
 
-# The classes `ModelHTTPError.for_category` raises. They're private: catch `ModelHTTPError` or the category.
+class _CategorizedHTTPError(ModelHTTPError):
+    """The base of the classes `ModelHTTPError.for_category` raises, each also a subclass of one error category.
+
+    They're private: catch `ModelHTTPError` or the category. Each takes its category's name, so the error reads as
+    the category in tracebacks, `repr()`, OpenTelemetry spans and `ModelRequestAttempt.error`.
+    """
+
+    category: ClassVar[type[ModelAPIError]]
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls.category = next(base for base in cls.__bases__ if base is not _CategorizedHTTPError)
+        cls.__name__ = cls.category.__name__
+        cls.__qualname__ = cls.category.__qualname__
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Pickle finds a class by its name, which is the category's, so rebuild the error from its category.
+        return (
+            _categorized_http_error,
+            (self.category, self.status_code, self.model_name, self.body),
+            self.__getstate__(),
+        )
 
 
-class _HTTPModelRateLimitError(ModelHTTPError, ModelRateLimitError):
+def _categorized_http_error(
+    category: type[ModelAPIError], status_code: int, model_name: str, body: object | None
+) -> ModelHTTPError:
+    """Rebuild a pickled `_CategorizedHTTPError`; its state is restored afterwards."""
+    return _HTTP_CATEGORY_CLASSES[category](status_code, model_name, body)
+
+
+class _HTTPModelRateLimitError(_CategorizedHTTPError, ModelRateLimitError):
     pass
 
 
-class _HTTPModelQuotaExceededError(ModelHTTPError, ModelQuotaExceededError):
+class _HTTPModelQuotaExceededError(_CategorizedHTTPError, ModelQuotaExceededError):
     pass
 
 
-class _HTTPModelUnavailableError(ModelHTTPError, ModelUnavailableError):
+class _HTTPModelUnavailableError(_CategorizedHTTPError, ModelUnavailableError):
     pass
 
 
-class _HTTPModelOverloadedError(ModelHTTPError, ModelOverloadedError):
+class _HTTPModelOverloadedError(_CategorizedHTTPError, ModelOverloadedError):
     pass
 
 
-class _HTTPModelServerError(ModelHTTPError, ModelServerError):
+class _HTTPModelServerError(_CategorizedHTTPError, ModelServerError):
     pass
 
 
-class _HTTPModelContextWindowExceededError(ModelHTTPError, ModelContextWindowExceededError):
+class _HTTPModelContextWindowExceededError(_CategorizedHTTPError, ModelContextWindowExceededError):
     pass
 
 
-_HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[ModelHTTPError]] = {
+_HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] = {
     ModelRateLimitError: _HTTPModelRateLimitError,
     ModelQuotaExceededError: _HTTPModelQuotaExceededError,
     ModelUnavailableError: _HTTPModelUnavailableError,

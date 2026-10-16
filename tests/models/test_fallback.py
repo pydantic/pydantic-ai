@@ -25,6 +25,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
+    ModelRateLimitError,
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
@@ -452,6 +453,32 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
             },
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_categorized_http_error_attempt_reads_as_its_category(capfire: CaptureLogfire) -> None:
+    """A failed attempt's record and span name an HTTP error with a category by the category, not a private class."""
+
+    def rate_limited(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-function-model')
+
+    agent = Agent(
+        FallbackModel(FunctionModel(rate_limited), success_model),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    response = agent.run_sync('hello').all_messages()[-1]
+
+    assert isinstance(response, ModelResponse)
+    assert response.failed_attempts is not None
+    assert [attempt.error for attempt in response.failed_attempts] == snapshot(
+        ['ModelRateLimitError: status_code: 429, model_name: test-function-model, body: None']
+    )
+    assert [
+        event['attributes']['exception.type']
+        for span in capfire.exporter.exported_spans_as_dict()
+        for event in span.get('events', [])
+        if event['name'] == 'exception'
+    ] == snapshot(['pydantic_ai.exceptions.ModelRateLimitError'])
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')

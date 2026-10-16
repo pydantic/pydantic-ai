@@ -364,7 +364,9 @@ available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
 
 A [custom model](#custom-models) can raise the same errors with
 [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category], which builds a `ModelHTTPError`
-that is also an instance of the given category, so code that handles either catches it:
+that is also an instance of the given category, so code that handles either catches it. Its class is named after the
+category, so tracebacks, `repr()`, OpenTelemetry spans and [`failed_attempts`](#fallback-model) show it as, say,
+`ModelRateLimitError`:
 
 ```python {title="custom_model_errors.py"}
 from pydantic_ai import ModelHTTPError, ModelRateLimitError

@@ -4456,7 +4456,7 @@ async def test_bedrock_stream_first_event_error_falls_back(
                 model_name='us.amazon.nova-micro-v1:0',
                 provider_name='bedrock',
                 outcome='error',
-                error="_HTTPModelRateLimitError: status_code: 429, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'throttlingException', 'Message': 'slow down'}}",
+                error="ModelRateLimitError: status_code: 429, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'throttlingException', 'Message': 'slow down'}}",
                 timestamp=IsDatetime(),
                 duration=IsInstance(timedelta),
             )

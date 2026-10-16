@@ -3193,6 +3193,19 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert type(rebuilt) is type(error)
 
 
+def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():
+    """An HTTP error with a category has the category's name, so it crosses marked as the HTTP variant."""
+    error = ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='gpt-test', headers={'retry-after': '3'}
+    )
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+    assert isinstance(rebuilt, ModelHTTPError) and isinstance(rebuilt, ModelRateLimitError)
+    assert (rebuilt.status_code, rebuilt.retry_after) == (429, 3.0)
+
+    assert type(_crossed(ModelRateLimitError('gpt-test', 'slow down'))) is ModelRateLimitError
+
+
 def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
     """Only the categories in `pydantic_ai.exceptions` report their legacy class: a subclass defined elsewhere,
     like an adapter-specific error, reports its own name, as it did before categories existed."""
