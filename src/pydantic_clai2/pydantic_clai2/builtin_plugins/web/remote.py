@@ -20,8 +20,8 @@ from pydantic_ai.messages import UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
+    SessionConflict,
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationTasks
@@ -831,7 +831,7 @@ def _busy(summary: ConversationSummary) -> bool:
     """Whether another live CLAI is running this saved session now, rather than having died mid-turn."""
     try:
         ensure_inactive(summary)
-    except ConversationConflict:
+    except SessionConflict:
         return True
     return False
 

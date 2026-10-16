@@ -11,6 +11,7 @@ from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.step_persistence._messages import keyed_messages
+from pydantic_ai_harness.step_persistence._store import _OBJECT_LIST_ADAPTER  # pyright: ignore[reportPrivateUsage]
 
 RECORD_ADAPTER: TypeAdapter[ConversationRecord] = TypeAdapter(ConversationRecord)
 _MESSAGE_ADAPTER: TypeAdapter[ModelMessage] = TypeAdapter(ModelMessage)
@@ -23,8 +24,7 @@ async def keyed_entry_messages(
     payload: object = ModelMessagesTypeAdapter.dump_python([entry.message for entry in entries], mode='json')
     if media_store is not None:
         payload = await externalize_media(payload, media_store=media_store, threshold_bytes=threshold_bytes)
-    assert isinstance(payload, list)
-    return keyed_messages(payload)  # pyright: ignore[reportUnknownArgumentType]
+    return keyed_messages(_OBJECT_LIST_ADAPTER.validate_python(payload))
 
 
 async def load_message(text: str, *, media_store: MediaStore | None) -> ModelMessage:

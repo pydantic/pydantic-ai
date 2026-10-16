@@ -38,8 +38,8 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
+    SessionConflict,
     SqliteSessionStore,
     ensure_inactive,
 )
@@ -554,10 +554,10 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            busy: ConversationConflict | None = None
+            busy: SessionConflict | None = None
             try:
                 ensure_inactive(saved.summary)
-            except ConversationConflict as conflict:
+            except SessionConflict as conflict:
                 busy = conflict
             messages = saved.messages
             interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')

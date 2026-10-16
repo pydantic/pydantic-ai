@@ -252,7 +252,13 @@ class ConversationStore(ABC):
         return sorted(records, key=lambda record: record.updated_at, reverse=True)
 
     async def delete(self, conversation_id: str) -> None:
-        """Delete a conversation, and the entries no other conversation's history still uses."""
+        """Delete a conversation, so it no longer loads or lists.
+
+        Whether the entries no other conversation's history uses are deleted with it depends on the
+        backend: [`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore]
+        deletes them, and each backend documents what it does. Don't rely on `delete` alone to
+        erase a conversation's messages unless your backend says it does.
+        """
         await self.delete_record(conversation_id)
 
     async def _history_of(self, record: ConversationRecord) -> list[ConversationEntry] | None:
@@ -311,7 +317,11 @@ class ConversationStore(ABC):
 
     @abstractmethod
     async def delete_record(self, conversation_id: str) -> None:
-        """Delete a conversation's record, and the entries no remaining record's history reaches."""
+        """Delete a conversation's record, and, where the backend can do so safely, the entries no remaining record's history reaches.
+
+        A backend that keeps those entries, say because it can't tell them from ones a concurrent
+        save is about to use, should say so in its documentation.
+        """
         raise NotImplementedError
 
     @abstractmethod

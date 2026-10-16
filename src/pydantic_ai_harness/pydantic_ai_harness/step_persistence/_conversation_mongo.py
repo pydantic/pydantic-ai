@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import NotRequired
 
+from pydantic import TypeAdapter
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
+from typing_extensions import TypedDict
 
 from pydantic_ai.conversation_store import (
     ConversationConflict,
@@ -29,6 +32,18 @@ from pydantic_ai_harness.step_persistence._store import (
 )
 
 _MongoDocument = dict[str, object]
+
+
+# What a `conversation_entries` document holds; `depth` is added by the `$graphLookup` reading a history.
+class _EntryDocument(TypedDict):
+    _id: str
+    parent_id: str | None
+    sha256: str
+    depth: NotRequired[int]
+
+
+_ENTRY_DOCUMENT_ADAPTER: TypeAdapter[_EntryDocument] = TypeAdapter(_EntryDocument)
+_ENTRY_DOCUMENTS_ADAPTER: TypeAdapter[list[_EntryDocument]] = TypeAdapter(list[_EntryDocument])
 
 
 class MongoConversationStore(ConversationStore):
@@ -158,7 +173,7 @@ class MongoConversationStore(ConversationStore):
         """The entries from the first one up to `head_id`, in order, read with one `$graphLookup`."""
         if head_id is None:
             return []
-        chain: list[_MongoDocument] = []
+        chain: list[_EntryDocument] = []
         async for doc in await self._db['conversation_entries'].aggregate(
             [
                 {'$match': {'_id': head_id}},
@@ -174,28 +189,24 @@ class MongoConversationStore(ConversationStore):
                 },
             ]
         ):
-            ancestors = doc.pop('ancestors')
-            assert isinstance(ancestors, list)
-            chain = [doc, *sorted(ancestors, key=lambda ancestor: ancestor['depth'])]  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+            ancestors = _ENTRY_DOCUMENTS_ADAPTER.validate_python(doc.pop('ancestors'))
+            chain = [_ENTRY_DOCUMENT_ADAPTER.validate_python(doc), *sorted(ancestors, key=lambda a: a.get('depth', 0))]
         chain.reverse()
-        if not chain or chain[0].get('parent_id') is not None:
+        if not chain or chain[0]['parent_id'] is not None:
             raise missing_entries_error(head_id)
         stored = {
-            message['_id']: str(message['message'])
-            async for message in find_message_docs(
-                self._db['conversation_messages'], {str(doc['sha256']) for doc in chain}
-            )
+            str(message['_id']): str(message['message'])
+            async for message in find_message_docs(self._db['conversation_messages'], {doc['sha256'] for doc in chain})
         }
         entries: list[ConversationEntry] = []
         for doc in chain:
             text = stored.get(doc['sha256'])
             if text is None:
                 raise missing_entries_error(head_id)
-            parent_id = doc.get('parent_id')
             entries.append(
                 ConversationEntry(
-                    id=str(doc['_id']),
-                    parent_id=None if parent_id is None else str(parent_id),
+                    id=doc['_id'],
+                    parent_id=doc['parent_id'],
                     message=await load_message(text, media_store=self._media_store),
                 )
             )

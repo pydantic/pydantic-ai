@@ -889,7 +889,7 @@ reconstruct it by concatenating overlapping run snapshots.
 
 `save(summary=..., messages=...)` compares the supplied content revision and
 returns the committed summary. A stale writer or a deleted session raises
-`ConversationConflict`. `get(conversation_id=...)` restores messages through the
+`SessionConflict`. `get(conversation_id=...)` restores messages through the
 same media format used by step snapshots. `listing(query=..., limit=..., offset=...)`
 returns summaries without loading messages; search matches saved user/assistant
 text and metadata using Unicode case folding, including text entries within

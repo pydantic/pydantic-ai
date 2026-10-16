@@ -25,8 +25,8 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, SqliteStepStore, StepEvent
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
+    SessionConflict,
     SqliteSessionStore,
     conversation_text,
     ensure_inactive,
@@ -67,7 +67,7 @@ async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
     assert second.naming_tokens == 12
     assert second.naming_version == 1
     assert not await store.name(source=first, title='Stale')
-    with pytest.raises(ConversationConflict, match='another process'):
+    with pytest.raises(SessionConflict, match='another process'):
         await store.save(summary=first, messages=[])
     assert await store.name(source=second, title='Mine', manual=True)
     current = (await store.get(conversation_id=first.id)).summary
@@ -80,9 +80,9 @@ async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
     assert not await store.name(source=current, title='Resurrect', manual=True)
     with pytest.raises(LookupError, match='No saved session'):
         await store.get(conversation_id=first.id)
-    with pytest.raises(ConversationConflict, match='deleted'):
+    with pytest.raises(SessionConflict, match='deleted'):
         await store.save(summary=current, messages=[])
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         await store.delete(source=current)
 
 
@@ -129,7 +129,7 @@ async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
     store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=first, messages=[])
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         await store.delete(source=first)
     assert (await store.get(conversation_id=first.id)).summary == second
     for limit, offset in [(0, 0), (1, -1)]:
@@ -149,7 +149,7 @@ async def test_corrupt_history_is_not_an_empty_session(tmp_path: Path) -> None:
 
 def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> None:
     running = ConversationSummary(workspace='/a', outcome='running', owner_pid=os.getpid())
-    with pytest.raises(ConversationConflict, match='busy'):
+    with pytest.raises(SessionConflict, match='busy'):
         ensure_inactive(running)
     ensure_inactive(replace(running, outcome='completed'))
     ensure_inactive(replace(running, owner_pid=None))
@@ -164,7 +164,7 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
         raise PermissionError
 
     monkeypatch.setattr(os, 'kill', denied)
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         ensure_inactive(running)
 
 
@@ -241,7 +241,7 @@ def test_windows_owner_probe(monkeypatch: pytest.MonkeyPatch, output: str, busy:
     monkeypatch.setattr(subprocess, 'run', tasklist)
     running = ConversationSummary(workspace='/a', outcome='running', owner_pid=123)
     if busy:
-        with pytest.raises(ConversationConflict, match='busy'):
+        with pytest.raises(SessionConflict, match='busy'):
             ensure_inactive(running)
     else:
         ensure_inactive(running)
@@ -265,9 +265,12 @@ def test_windows_probe_rejects_relative_system_root(monkeypatch: pytest.MonkeyPa
         ensure_inactive(ConversationSummary(workspace='/a', outcome='running', owner_pid=123))
 
 
-def test_the_old_session_store_name_is_a_deprecated_alias() -> None:
+def test_the_old_session_store_names_are_deprecated_aliases() -> None:
     with pytest.warns(HarnessDeprecationWarning, match='renamed to `.*conversations.SqliteSessionStore`'):
         alias = conversations_module.SqliteConversationStore
     assert alias is SqliteSessionStore
+    with pytest.warns(HarnessDeprecationWarning, match='renamed to `.*conversations.SessionConflict`'):
+        conflict = conversations_module.ConversationConflict
+    assert conflict is SessionConflict
     with pytest.raises(AttributeError, match='no attribute'):
         conversations_module.Unknown

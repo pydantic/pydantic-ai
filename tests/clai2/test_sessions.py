@@ -39,9 +39,9 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, Work
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
     GitCheckout,
+    SessionConflict,
     SqliteSessionStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
@@ -114,10 +114,10 @@ async def test_stale_writer_and_failed_compaction_leave_memory_unchanged(tmp_pat
     await second.resume(first.summary.id)
     previous = second.messages
     await first.prompt('second')
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         await second.prompt('stale')
     assert second.messages == previous
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         await second.commit_messages([])
     assert second.messages == previous
 
