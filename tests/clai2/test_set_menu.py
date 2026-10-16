@@ -177,13 +177,13 @@ class _Stored:
         return self.value
 
     def problem(self, row: FieldRow, text: str) -> str | None:
-        return None
+        raise NotImplementedError
 
     def apply(self, row: FieldRow, raw: str) -> str:
-        return 'saved'
+        raise NotImplementedError
 
     def reset(self, row: FieldRow) -> str:
-        return 'reset'
+        raise NotImplementedError
 
 
 @pytest.mark.parametrize(('value', 'initial'), [('src', 'src'), ('', ''), ('evil\x1b[2J', '')])
