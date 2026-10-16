@@ -35,7 +35,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import LocalStack
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[LocalStack()],
 )
 
@@ -205,7 +205,7 @@ you supply your own.
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - LocalStack:
       endpoint_url: http://localhost.localstack.cloud:4566

@@ -61,7 +61,7 @@ from pydantic_ai_harness import ManagedPrompt
 logfire.configure()
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         ManagedPrompt(
             'support_agent',
@@ -100,7 +100,7 @@ class Deps:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     deps_type=Deps,
     capabilities=[
         ManagedPrompt(
@@ -144,7 +144,7 @@ class Deps:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     deps_type=Deps,
     capabilities=[
         ManagedPrompt(
@@ -196,7 +196,7 @@ support_prompt = logfire.var(
     default='You are a helpful customer support agent. Be friendly and concise.',
 )
 
-agent = Agent('openai:gpt-5', capabilities=[ManagedPrompt(support_prompt, label='production')])
+agent = Agent('{{ openai:medium }}', capabilities=[ManagedPrompt(support_prompt, label='production')])
 ```
 
 When `name` is a prompt name (not a `Variable`), pass `logfire_instance=` to declare the variable
