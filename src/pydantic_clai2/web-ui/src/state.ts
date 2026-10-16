@@ -247,15 +247,17 @@ export type OrchestratorAction = OrchestratorEvent | { type: 'enabled'; enabled:
 
 /** The chat's `items` from the server, keeping the notices and turn summaries this page added after the item they followed.
 
-The server sends the whole chat as a turn starts; an empty one is a new chat, which drops them too.
+The server sends the whole chat as a turn starts, its prompt last; theirs stay above it, even when a turn that failed
+before it was saved leaves fewer items. An empty chat is a new one, which drops them too.
  */
-function withLocal(entries: Entry[], items: Item[]): Entry[] {
+function withLocal(entries: Entry[], items: Item[], running: boolean): Entry[] {
   if (items.length === 0) return items
+  const last = running ? items.length - 1 : items.length
   const after: Entry[][] = [[], ...items.map(() => [])]
   let seen = 0
   for (const entry of entries) {
     if (entry.kind !== 'notice' && entry.kind !== 'turn') seen++
-    else after[Math.min(seen, items.length)]?.push(entry)
+    else after[Math.min(seen, last)]?.push(entry)
   }
   return [...(after[0] ?? []), ...items.flatMap((item, index) => [item, ...(after[index + 1] ?? [])])]
 }
@@ -270,7 +272,7 @@ export function reduceOrchestrator(view: OrchestratorView, action: OrchestratorA
     model: action.model,
     chat: {
       ...chat,
-      entries: withLocal(chat.entries, action.items),
+      entries: withLocal(chat.entries, action.items, action.running),
       running: action.running,
       questions: action.questions,
       turnStartedAt: action.running ? chat.turnStartedAt : null,

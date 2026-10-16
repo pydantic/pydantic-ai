@@ -106,7 +106,7 @@ async def orchestrator_completions(host: PluginHost[None], text: str) -> list[Co
         return [
             CompletionInfo(text=choice, start=len(args[0]), display=choice) for choice in choices if args[0] in choice
         ]
-    return await completions(host, text) if name in SHARED else []
+    return await completions(host, text) if name in SHARED and not picks_session_model(name, args) else []
 
 
 async def orchestrator_help(host: PluginHost[None]) -> str:
