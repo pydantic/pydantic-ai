@@ -21,13 +21,17 @@ Setting these fields on `WebSearch` itself disables the `local` fallback, since 
 them. To fall back to a local search that applies the restriction itself on such models, put the restriction on the
 native tool instead:
 
-```python {title="web_search_restricted_fallback.py" test="skip" lint="skip"}
+```python {title="web_search_restricted_fallback.py"}
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.native_tools import WebSearchTool
 
-def search_pydantic_docs(query: str) -> str: ...  # only searches pydantic.dev
 
-WebSearch(native=WebSearchTool(allowed_domains=['pydantic.dev']), local=search_pydantic_docs)
+def search_pydantic_docs(query: str) -> str:
+    """Search pydantic.dev only."""
+    return f'pydantic.dev results for {query}'
+
+
+web_search = WebSearch(native=WebSearchTool(allowed_domains=['pydantic.dev']), local=search_pydantic_docs)
 ```
 
 ```python {title="web_search.py" test="skip" lint="skip"}
