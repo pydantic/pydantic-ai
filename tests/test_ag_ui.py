@@ -2582,7 +2582,7 @@ def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x":1}')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='result')]),
         ModelResponse(parts=[TextPart(content='Done')]),
     ]
@@ -2596,7 +2596,7 @@ def test_dump_load_roundtrip_tools() -> None:
 
 def test_dump_load_roundtrip_failed_tool_return() -> None:
     original: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x":1}')]),
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -2626,7 +2626,7 @@ def test_dump_load_roundtrip_load_capability() -> None:
     resuming agent would forget its loaded capabilities. Dumped at exactly 0.1.11 to pin the floor.
     """
     original: list[ModelMessage] = [
-        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id":"foobar"}')]),
         ModelRequest(
             parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
         ),
@@ -3287,7 +3287,7 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
                 NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
-                    args='{"query": "test"}',
+                    args='{"query":"test"}',
                     provider_name='anthropic',
                 ),
                 NativeToolReturnPart(
@@ -3314,7 +3314,7 @@ def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
                 NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
-                    args='{"query": "test"}',
+                    args='{"query":"test"}',
                     provider_name='anthropic',
                 ),
                 NativeToolReturnPart(
@@ -3584,7 +3584,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
                     {
                         'id': 'call_1',
                         'type': 'function',
-                        'function': {'name': 'search', 'arguments': '{"q": "test"}'},
+                        'function': {'name': 'search', 'arguments': '{"q":"test"}'},
                     },
                 ],
             },
@@ -3602,7 +3602,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
             ModelResponse(
                 parts=[
                     TextPart(content='Before tools'),
-                    ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                    ToolCallPart(tool_name='search', args='{"q":"test"}', tool_call_id='call_1'),
                     TextPart(content='After tools'),
                 ],
                 timestamp=IsDatetime(),

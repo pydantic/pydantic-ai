@@ -32,7 +32,15 @@ import pytest
 from cassetter import Cassette
 
 from pydantic_ai import Agent, ToolOutput
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai.request_types import StepStartUIPart, UIMessage
@@ -315,3 +323,48 @@ async def test_openai_tool_return_order_wire_stable(allow_model_requests: None):
 
     original_body, reordered_body = bodies
     assert reordered_body == original_body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui',
+            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
+        ),
+    ],
+)
+async def test_openai_spaced_tool_call_args_roundtrip_wire_stable(
+    allow_model_requests: None,
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+):
+    """Raw tool-call args with whitespace re-send with an identical request body after a UI round-trip.
+
+    Many models (DeepSeek, Mistral, Cerebras, older GPT-4o snapshots) return arguments like `{"city": "Paris"}`,
+    which the history keeps as that string. Vercel AI carries the call's input as an object, so the round-tripped
+    copy holds a dict that serializes compactly. The prompt cache is keyed on the bytes sent, so both forms must
+    render the same `arguments` string. This is mocked rather than recorded because VCR here doesn't match on the
+    request body, and the real `gpt-4o` already returns compact arguments.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', '{"city": "Paris", "days": 2}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ModelResponse(parts=[TextPart('It is sunny in Paris.')]),
+    ]
+
+    bodies: list[str] = []
+    for messages in (history, roundtrip(history)):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
+    assert '"arguments": "{\\"city\\":\\"Paris\\",\\"days\\":2}"' in original_body
