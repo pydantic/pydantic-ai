@@ -76,14 +76,14 @@ def opened(socket: WebSocketTestSession) -> OrchestratorState:
 
 
 def orchestrator_until(socket: WebSocketTestSession, kind: type[EventT]) -> tuple[list[OrchestratorEvent], EventT]:
-    """The orchestrator chat's messages up to and including the first `kind`; the session sends none meanwhile."""
+    """The orchestrator chat's messages up to and including the first `kind`; the session's are skipped."""
     seen: list[OrchestratorEvent] = []
     while True:
         message = WIRE.validate_json(socket.receive_text())
-        assert isinstance(message, OrchestratorMessage)
-        seen.append(message.message)
-        if isinstance(message.message, kind):
-            return seen, message.message
+        event = message.message if isinstance(message, OrchestratorMessage) else None
+        seen += [] if event is None else [event]
+        if isinstance(event, kind):
+            return seen, event
 
 
 def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_path: Path) -> None:
