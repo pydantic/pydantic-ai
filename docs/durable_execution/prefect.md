@@ -13,7 +13,7 @@ Prefect 3.0 brings [transactional semantics](https://www.prefect.io/blog/transac
 * **Flows** are the top-level entry points for your workflow. They can contain tasks and other flows.
 * **Tasks** are individual units of work that can be retried, cached, and monitored independently.
 
-When a task runs again under an identical context, such as a retry of the same flow run, it loads its recorded result instead of re-executing. This replays completed work, but it does not make external side effects exactly-once: a task interrupted after its side effect happened but before its result was recorded runs again on retry. Make side-effecting tools idempotent, for example by passing an idempotency key to the external service. See [Caching and Idempotency](#caching-and-idempotency).
+When a task runs again under an identical context, such as a retry of the same flow run, it loads its recorded result instead of re-executing. This doesn't make external side effects exactly-once; see [Caching and Idempotency](#caching-and-idempotency).
 
 The diagram below shows the overall architecture of an agentic application with Prefect.
 Prefect uses client-side task orchestration by default, with optional server connectivity for advanced features like scheduling and monitoring.
