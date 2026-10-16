@@ -26,6 +26,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
+    WrapModelRequestHandler,
 )
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -1417,6 +1418,46 @@ async def test_parallel_tool_enqueues_land_after_their_own_returns():
             'user-prompt:a2',
         ]
     )
+
+
+async def test_enqueue_from_tool_is_its_own_request_when_the_request_was_rebuilt():
+    """When a wrapper has replaced the request's messages with copies, the tool's request isn't there to add to.
+
+    The enqueued content is then added as its own request, so the model still sees it and history keeps it.
+    """
+    received: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class CopyMessages(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            request_context.messages = copy.deepcopy(request_context.messages)
+            return await handler(request_context)
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[CopyMessages()])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert [[part.part_kind for part in message.parts] for message in result.all_messages()[2:4]] == [
+        ['tool-return'],
+        ['user-prompt'],
+    ]
+    assert [part.part_kind for part in received[-1][-1].parts] == ['tool-return', 'user-prompt']
 
 
 @pytest.mark.vcr
