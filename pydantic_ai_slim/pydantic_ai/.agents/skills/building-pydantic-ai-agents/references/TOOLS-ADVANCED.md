@@ -45,6 +45,8 @@ Two key rules:
 
 Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`). A realtime session emits both the same way, with each deferred call as its own batch.
 
+In a realtime session, a call the model's provider runs itself (an MCP tool on the provider's side that requires approval) arrives in `requests.native_approvals` as a `NativeToolCallPart`, apart from your own tools in `requests.approvals`. `build_results(approve_all=True)` skips it: answer it by its `tool_call_id` in `approvals`. One left undecided is denied.
+
 ## Make an Agent Resilient with Retries
 
 Raise `ModelRetry` from inside the tool when the model should correct and try again.

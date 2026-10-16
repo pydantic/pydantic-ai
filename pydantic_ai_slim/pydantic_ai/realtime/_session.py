@@ -22,6 +22,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
+from .._deferred import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
 from .._run_context import context_window_fraction
@@ -57,6 +58,7 @@ from ..messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -122,6 +124,8 @@ from .codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    NativeToolApproval,
+    NativeToolApprovalRequest,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -143,7 +147,7 @@ if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
-    from ..tools import DeferredToolRequests, DeferredToolResults
+    from ..tools import DeferredToolResults
     from .model import RealtimeModel, RealtimeProviderSession
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
@@ -633,6 +637,20 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
     )
 
 
+def _native_tool_approval(call: NativeToolCallPart, decision: DeferredToolResult | None) -> NativeToolApproval:
+    """The answer to a provider's request to run `call`, from what the approval handler decided (if anything)."""
+    if isinstance(decision, ToolApproved):
+        if decision.override_args is None:
+            return NativeToolApproval(call.tool_call_id, approved=True)
+        # The provider runs the call with its own arguments: approving it with others can't be honored.
+        reason = f'The {call.tool_name!r} tool was approved with other arguments, which the provider cannot use.'
+    elif isinstance(decision, ToolDenied):
+        reason = decision.message
+    else:
+        reason = f'The {call.tool_name!r} tool requires approval, which was not given during the realtime session.'
+    return NativeToolApproval(call.tool_call_id, approved=False, reason=reason)
+
+
 def _is_user_speech_request(message: ModelMessage) -> bool:
     """Whether a history request is a transcribed (or audio-only) user speech turn."""
     if not isinstance(message, ModelRequest) or not message.parts:
@@ -1034,6 +1052,8 @@ class RealtimeSession:
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._undecided_native_approvals: set[str] = set()
+        """The provider's own calls it asked to approve, whose answer hasn't gone out: the exchange waits on it."""
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
         # Serializes everything we send. Tool results go out from background tasks while the caller may
@@ -1680,7 +1700,7 @@ class RealtimeSession:
         """
         if self._closed or self._pump_finished:
             return False
-        return self._response_active or bool(self._pending_response_requests)
+        return self._response_active or bool(self._pending_response_requests) or bool(self._undecided_native_approvals)
 
     def _release_exchange(self) -> None:
         self._response_active = False
@@ -2442,7 +2462,9 @@ class RealtimeSession:
                             input_id=input_index,
                             request=request if position == 0 else None,
                             solicits=reply_asked and isinstance(content, (str, CreateResponse, ToolResult)),
-                            tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
+                            tool_call_id=content.tool_call_id
+                            if isinstance(content, (ToolResult, NativeToolApproval))
+                            else None,
                         )
                     )
                     await self._connection.send(content)
@@ -3781,6 +3803,45 @@ class RealtimeSession:
         """
         self._queue_put(DeferredToolRequestsEvent(requests))
 
+    async def _answer_native_tool_approval(self, request: NativeToolApprovalRequest) -> None:
+        """Ask the approval handler whether the provider may run one of its own tool calls, and tell it.
+
+        The call goes through the same `HandleDeferredToolCalls` path as a function tool that requires
+        approval, announced with a `DeferredToolRequestsEvent` and, once a handler decides, a
+        `DeferredToolResultsEvent`. Without a decision the call is denied: an approval nobody gave isn't one.
+        Closing the session cancels this task, so a handler still deciding then answers no provider that's gone.
+        """
+        try:
+            await self._decide_native_tool_approval(request)
+        finally:
+            self._undecided_native_approvals.discard(request.tool_call_id)
+            self._exchange_progress.set()
+
+    async def _decide_native_tool_approval(self, request: NativeToolApprovalRequest) -> None:
+        call = NativeToolCallPart(
+            tool_name=request.tool_name,
+            args=request.args,
+            tool_call_id=request.tool_call_id,
+            provider_name=self._provider_name,
+        )
+        # Apart from the function tools that require approval, so no policy for those decides it by mistake.
+        requests = DeferredToolRequests(
+            native_approvals=[call], metadata={call.tool_call_id: request.metadata} if request.metadata else {}
+        )
+        await self._announce_deferred_requests(requests)
+        async with self._tool_manager_lock:
+            if (ctx := self._tool_manager.ctx) is not None:  # pragma: no branch
+                # The conversation so far, as a function tool's handler sees it (see `_execute_tool`).
+                ctx.messages[:] = self._own_messages()
+            tool_manager = self._tool_manager
+        results = await tool_manager.resolve_deferred_tool_calls(requests)
+        decision: DeferredToolResult | None = None
+        if results is not None:
+            # (Results are only ever for the calls asked about: this one.)
+            decision = results.to_tool_call_results().get(call.tool_call_id)
+            self._queue_put(DeferredToolResultsEvent(results))
+        await self._send_frame(_native_tool_approval(call, decision), reply_asked=False)
+
     async def _execute_tool(
         self,
         call_part: ToolCallPart,
@@ -4324,6 +4385,14 @@ class RealtimeSession:
             return False
         if isinstance(event, InputRejected):
             self._handle_input_rejected(event)
+            return False
+        if isinstance(event, NativeToolApprovalRequest):
+            # Decided in the background: an approval handler may wait on a person, and the provider goes on
+            # talking (and may ask about more calls) meanwhile.
+            self._undecided_native_approvals.add(event.tool_call_id)
+            task = asyncio.create_task(self._answer_native_tool_approval(event))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._tool_task_done)
             return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:

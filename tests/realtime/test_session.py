@@ -87,6 +87,8 @@ from pydantic_ai.realtime import (
     TranscriptUpdate,
     _session as realtime_session_module,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
+from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime._retained_audio import RetainedAudioBudget
 from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
@@ -105,6 +107,8 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    NativeToolApproval,
+    NativeToolApprovalRequest,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -119,7 +123,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -12148,6 +12152,291 @@ async def test_usage_reported_as_the_session_ends_counts_against_the_limits() ->
     with pytest.raises(UsageLimitExceeded):
         async with RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(input_tokens_limit=5)):
             pass
+
+
+# --- approving a call the provider runs itself -----------------------------------------------------------
+
+
+_CRM_CALL = NativeToolCallPart(
+    tool_name='crm_lookup', args={'email': 'ada@example.com'}, tool_call_id='mcp_1', provider_name='fake'
+)
+
+
+class _ProviderToolConnection(FakeRealtimeConnection):
+    """A provider that asks to approve its own CRM lookup, runs it only once approved, and then answers.
+
+    Its reply ends with the request, as one whose model goes on in a reply of its own once the call is decided.
+    With `request_only`, it asks before any output, outside any response.
+    """
+
+    def __init__(self, *, request_only: bool = False) -> None:
+        request = NativeToolApprovalRequest(
+            'mcp_1', tool_name='crm_lookup', args={'email': 'ada@example.com'}, metadata={'server': 'crm'}
+        )
+        super().__init__(
+            [request]
+            if request_only
+            else [
+                PartStartEvent(index=0, part=_CRM_CALL),
+                PartEndEvent(index=0, part=_CRM_CALL),
+                request,
+                ResponseDone(),
+            ]
+        )
+        self._decided: asyncio.Queue[NativeToolApproval] = asyncio.Queue()
+        self.awaiting_decision = asyncio.Event()
+        """Set once the session has handled everything the provider said before the decision."""
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        if isinstance(content, NativeToolApproval):
+            self._decided.put_nowait(content)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for event in super().__aiter__():
+            yield event
+        # The session pulls the next event only once it has handled the last one.
+        self.awaiting_decision.set()
+        decision = await self._decided.get()
+        result = NativeToolReturnPart(
+            tool_name='crm_lookup',
+            content='Ada is a customer.' if decision.approved else decision.reason,
+            tool_call_id='mcp_1',
+            provider_name='fake',
+            outcome='success' if decision.approved else 'denied',
+        )
+        for event in (
+            PartStartEvent(index=0, part=result),
+            PartEndEvent(index=0, part=result),
+            OutputTranscript(text='Done.', is_final=True),
+            ResponseDone(),
+        ):
+            yield event
+
+
+class _CoreProviderToolConnection(_ProviderToolConnection):
+    """The same provider, on version 2 of the lifecycle contract: the session core keeps its history and waits."""
+
+    _lifecycle_version = 2
+
+    def __init__(self, *, request_only: bool = False) -> None:
+        super().__init__(request_only=request_only)
+        self._lifecycle = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
+        self._inputs = 0
+
+    async def send(self, content: RealtimeInput) -> None:
+        self._lifecycle.input_sent(self._inputs, content)
+        self._inputs += 1
+        await super().send(content)
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        async for event in super().__aiter__():
+            yield self._lifecycle.message([event])
+        await asyncio.Event().wait()
+
+
+async def _run_native_approval(
+    capabilities: list[AbstractCapability[Any]],
+) -> tuple[_ProviderToolConnection, list[RealtimeEvent], list[ModelMessage]]:
+    agent: Agent[None, str] = Agent()
+    conn = _ProviderToolConnection()
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=capabilities).session() as session:
+        events = [e async for e in session]
+    return conn, events, session.all_messages()
+
+
+def _native_returns(messages: list[ModelMessage]) -> list[NativeToolReturnPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart)
+    ]
+
+
+async def test_a_provider_tool_call_approved_by_the_handler() -> None:
+    """The provider asks to run one of its own tools; the session's approval handler approves it.
+
+    It is the same `HandleDeferredToolCalls` path a function tool that requires approval takes, announced and
+    resolved with the same events, and the call and its outcome are recorded as the native parts the
+    connection reports.
+    """
+    seen: list[DeferredToolRequests] = []
+
+    def approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        seen.append(requests)
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
+
+    conn, events, messages = await _run_native_approval([HandleDeferredToolCalls(handler=approve)])
+
+    assert seen == [
+        DeferredToolRequests(
+            native_approvals=[
+                NativeToolCallPart(
+                    tool_name='crm_lookup',
+                    args={'email': 'ada@example.com'},
+                    tool_call_id='mcp_1',
+                    provider_name='fake',
+                )
+            ],
+            metadata={'mcp_1': {'server': 'crm'}},
+        )
+    ]
+    assert conn.sent == [NativeToolApproval('mcp_1', approved=True)]
+    assert [type(e) for e in events if isinstance(e, (DeferredToolRequestsEvent, DeferredToolResultsEvent))] == [
+        DeferredToolRequestsEvent,
+        DeferredToolResultsEvent,
+    ]
+    assert [type(part) for m in messages if isinstance(m, ModelResponse) for part in m.parts] == [
+        NativeToolCallPart,
+        NativeToolReturnPart,
+        SpeechPart,
+    ]
+    assert [(part.outcome, part.content) for part in _native_returns(messages)] == [('success', 'Ada is a customer.')]
+
+
+@pytest.mark.parametrize(
+    'decision,reason',
+    [
+        (ToolDenied('Not for this caller.'), 'Not for this caller.'),
+        (
+            ToolApproved(override_args={'email': 'bob@example.com'}),
+            "The 'crm_lookup' tool was approved with other arguments, which the provider cannot use.",
+        ),
+    ],
+    ids=['denied', 'approved-with-other-args'],
+)
+async def test_a_provider_tool_call_the_handler_does_not_simply_approve_is_denied(
+    decision: ToolApproved | ToolDenied, reason: str
+) -> None:
+    def decide(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={'mcp_1': decision})
+
+    conn, _, messages = await _run_native_approval([HandleDeferredToolCalls(handler=decide)])
+
+    assert conn.sent == [NativeToolApproval('mcp_1', approved=False, reason=reason)]
+    assert [(part.outcome, part.content) for part in _native_returns(messages)] == [('denied', reason)]
+
+
+async def test_a_provider_tool_call_is_not_approved_by_a_policy_for_function_tools() -> None:
+    # A handler written for the run's own tools approves what it was asked about: the provider's call isn't that.
+    def approve_function_tools(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approve_all=True)
+
+    conn, _, _ = await _run_native_approval([HandleDeferredToolCalls(handler=approve_function_tools)])
+
+    assert conn.sent == [
+        NativeToolApproval(
+            'mcp_1',
+            approved=False,
+            reason="The 'crm_lookup' tool requires approval, which was not given during the realtime session.",
+        )
+    ]
+
+
+async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
+    # An approval nobody gave isn't one: without a handler, the call is denied rather than left waiting.
+    conn, events, _ = await _run_native_approval([])
+
+    assert conn.sent == [
+        NativeToolApproval(
+            'mcp_1',
+            approved=False,
+            reason="The 'crm_lookup' tool requires approval, which was not given during the realtime session.",
+        )
+    ]
+    assert not any(isinstance(e, DeferredToolResultsEvent) for e in events)
+
+
+async def _consume(session: Any) -> None:
+    async for _ in session:
+        pass
+
+
+async def _settle_loop() -> None:
+    """Let every task that can run do so: what hasn't happened by then is waiting on something."""
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize('core', [False, True], ids=['codec', 'core'])
+@pytest.mark.parametrize('waiting_since', ['before the request', 'after its response ended'])
+async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str, core: bool) -> None:
+    """The response that asked ended, but the exchange goes on once the call is decided: a wait covers the decision."""
+    decide_now = asyncio.Event()
+
+    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        await decide_now.wait()
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
+
+    agent: Agent[None, str] = Agent()
+    conn = _CoreProviderToolConnection() if core else _ProviderToolConnection()
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(
+        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
+    ).session() as session:
+        consumer: asyncio.Task[None] | None = None
+        if waiting_since == 'before the request':
+            await session.send('Look up Ada.')
+            waiter = asyncio.create_task(session.wait_for_reply())
+        else:
+            consumer = asyncio.create_task(_consume(session))
+            await asyncio.wait_for(conn.awaiting_decision.wait(), _LIVENESS_TIMEOUT)
+            waiter = asyncio.create_task(session.wait_for_reply())
+        await asyncio.wait_for(conn.awaiting_decision.wait(), _LIVENESS_TIMEOUT)
+        await _settle_loop()
+        assert not waiter.done()
+        decide_now.set()
+        await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
+        if consumer is not None:
+            consumer.cancel()
+    assert conn.sent[-1] == NativeToolApproval('mcp_1', approved=True)
+
+
+async def test_closing_while_the_approval_handler_decides_answers_nothing() -> None:
+    deciding = asyncio.Event()
+
+    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        deciding.set()
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    agent: Agent[None, str] = Agent()
+    conn = _ProviderToolConnection()
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(
+        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
+    ).session() as session:
+        consumer = asyncio.create_task(_consume(session))
+        await asyncio.wait_for(deciding.wait(), _LIVENESS_TIMEOUT)
+    consumer.cancel()
+    assert conn.sent == []
+
+
+async def test_a_wait_covers_an_approval_asked_between_responses() -> None:
+    """A provider can ask before any output of the response the call belongs to: the decision is owed all the same."""
+    decide_now = asyncio.Event()
+
+    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        await decide_now.wait()
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
+
+    agent: Agent[None, str] = Agent()
+    conn = _CoreProviderToolConnection(request_only=True)
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(
+        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
+    ).session() as session:
+        consumer = asyncio.create_task(_consume(session))
+        await asyncio.wait_for(conn.awaiting_decision.wait(), _LIVENESS_TIMEOUT)
+        waiter = asyncio.create_task(session.wait_for_reply())
+        await _settle_loop()
+        assert not waiter.done()
+        decide_now.set()
+        await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
+    consumer.cancel()
 
 
 async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_report() -> None:

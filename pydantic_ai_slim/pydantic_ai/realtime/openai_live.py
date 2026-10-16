@@ -115,6 +115,7 @@ from .codec import (
     CommitAudio,
     CreateResponse,
     InputTranscript,
+    NativeToolApproval,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -770,6 +771,8 @@ class OpenAILiveConnection(RealtimeConnection):
                 'OpenAI GPT-Live drives turn-taking itself: manual turn control, cancellation, and '
                 'output truncation are not available.'
             )
+        if isinstance(content, NativeToolApproval):
+            raise UserError('OpenAI GPT-Live never asks to approve a tool call it runs itself.')
         if isinstance(content, BinaryImage):
             # The voice model sees no images; the delegated backend does, as ordinary Responses input.
             await self._send_event(
