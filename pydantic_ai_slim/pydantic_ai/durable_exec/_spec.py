@@ -93,6 +93,16 @@ class DurabilityEngineSpec:
     [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can recover it.
     """
 
+    accepts_cancellation_token: bool = False
+    """Whether a run inside the durable container may take a [`CancellationToken`][pydantic_ai.CancellationToken].
+
+    A token is a same-process handle, and firing it out of band would cancel the run at a point the
+    engine didn't record, breaking replay. Opt in only when the container's code runs on a
+    deterministic event loop that the engine's own message handlers (e.g. a Temporal signal) also run
+    on, so a token created in the container and fired from such a handler cancels the run at the same
+    point on replay.
+    """
+
     def __post_init__(self) -> None:
         errors: list[str] = []
         if not self.durable_unit_noun:
