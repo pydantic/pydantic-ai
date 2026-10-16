@@ -86,7 +86,6 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import DynamicToolset
@@ -104,6 +103,7 @@ from pydantic_ai.workspaces import (
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...realtime_connections import InferredConnection
 from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
@@ -541,6 +541,12 @@ async def test_temporal_agent_rejects_cancellation_token() -> None:
     that cannot cross the durable execution boundary."""
     with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
         await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
+
+
+async def test_temporal_agent_rejects_timeout() -> None:
+    """The deprecated wrapper agent has no replay-safe clock, so it points to `TemporalDurability` instead."""
+    with pytest.raises(UserError, match='`timeout` is not supported by the deprecated `TemporalAgent`'):
+        await _legacy_migration_agent.run('hello', timeout=1)
 
 
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
@@ -1910,10 +1916,10 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -1954,13 +1960,6 @@ async def test_temporal_agent_realtime_session_outside_workflow():
     async with simple_temporal_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
-
-
-async def test_temporal_agent_rejects_connect():
-    """Runs use the Temporal model, so a connection would open a socket that no run uses."""
-    with pytest.raises(UserError, match='`TemporalAgent` does not support explicit connections'):
-        async with simple_temporal_agent.connect():
-            pytest.fail('TemporalAgent runs cannot use a connection')  # pragma: no cover
 
 
 async def simple_event_stream_handler(
@@ -3456,6 +3455,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
             '_run_held_toolsets',
             '_tool_name_path',
             'agent',
+            'deadline',
             'deps',
             'discovered_tool_names',
             'max_retries',

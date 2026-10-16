@@ -4467,7 +4467,7 @@ async def test_tool_call_extra_content_not_sent_to_other_provider(allow_model_re
     await direct_model_request(model, messages)
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1]['tool_calls'] == snapshot(
-        [{'id': 'call_1', 'type': 'function', 'function': {'name': 'get_weather', 'arguments': '{"city": "Taipei"}'}}]
+        [{'id': 'call_1', 'type': 'function', 'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'}}]
     )
 
 
