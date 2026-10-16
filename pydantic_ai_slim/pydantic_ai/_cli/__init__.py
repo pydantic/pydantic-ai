@@ -606,10 +606,16 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                    # `args_valid is None`: the call won't run, e.g. it was skipped
+                                    # because a final result was already processed.
+                                    if event.args_valid is not None:
+                                        pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    pending_calls.pop(event.tool_call_id, None)
-                                    content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
+                                    # Pop on any result: a call that has to be retried would otherwise
+                                    # stay pending and pin its indicator for the rest of the run.
+                                    called = pending_calls.pop(event.tool_call_id, None) is not None
+                                    if called and event.part.outcome != 'retried':
+                                        content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
                                 calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
                                 live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
 

@@ -479,7 +479,7 @@ CASES = [
                         },
                         {
                             'name': get_temperature.__qualname__,
-                            'arguments': '{"city": "Tokyo"}',
+                            'arguments': '{"city":"Tokyo"}',
                             'call_id': 'call_00_iD0U8IMtyIljI0ET7GLz1318',
                             'type': 'function_call',
                         },
@@ -649,7 +649,7 @@ CASES = [
                         },
                         {
                             'name': get_temperature.__qualname__,
-                            'arguments': '{"city": "Tokyo"}',
+                            'arguments': '{"city":"Tokyo"}',
                             'call_id': 'call_00_xjY8Z2BvSlzgEmmw0DtH0464',
                             'type': 'function_call',
                         },

@@ -84,13 +84,10 @@ from ..messages import (
     UserPromptPart,
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import (
-    _seeded_retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
-)
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
-from ._utils import seed_pcm_audio, seed_speech_content, seed_user_content
+from ._utils import seed_pcm_audio, seed_retry_feedback_text, seed_speech_content, seed_user_content
 from .codec import (
     AudioDelta,
     InputRejected,
@@ -650,7 +647,7 @@ async def _seed_request_items(
             ):
                 items.append(_message_item('user', content))
         elif isinstance(part, RetryFeedbackPart):
-            items.append(_message_item('user', [_text_content('input_text', _seeded_retry_feedback_text(part))]))
+            items.append(_message_item('user', [_text_content('input_text', seed_retry_feedback_text(part))]))
         else:
             assert_never(part)
     return items

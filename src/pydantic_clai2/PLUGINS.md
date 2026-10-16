@@ -1245,7 +1245,8 @@ history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
-and a change made in the terminal shows in the browser once the command ends.
+which applies at once, even while a turn runs, and a change made in the terminal shows in the
+browser once the command ends.
 
 The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
 cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes
@@ -1307,7 +1308,8 @@ as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugi
 
 Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
 default and checks every request. The `Host` header must name the server's own address, which
-stops DNS rebinding. Every request must carry a random token, new each launch: API calls in a
+stops DNS rebinding. Every request must carry a random token, new each launch but kept across
+`/update`'s restart (see below): API calls in a
 header that another site's page cannot set, the page and its files in the address, as the
 printed link does, and the WebSocket as a query parameter, from the server's own origin. No
 cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
@@ -1318,6 +1320,17 @@ private. `/web stop` is refused under `clai2 --web`, where the browser is the on
 The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
 package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
 commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
+
+`/update`, typed in the browser or the terminal, shows in the page: uv's latest line while it
+installs (`on_update_progress`), then all it printed and the command's result. A failed install,
+or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
+new build serving the web UI again on the same port with the same token, and resumes the session;
+the page says it is restarting, reconnects by itself, and names the new version. That holds for
+`clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
+restarts as a terminal session with the web UI running, though the browser does not open again.
+The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
+you can read and CLAI removes before anything else runs, never on its command line, which `ps`
+shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
@@ -2059,7 +2072,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- / search · space on/off · c configure · r reload · d remove · esc close
+ / search - Enter/Space on/off - c configure - r reload - d remove - Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -2072,17 +2085,17 @@ paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
-Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
-it, and `d` removes it. Press `/` to search: while searching, every key you type
+Enter or Space turns the highlighted plugin on or off; `c` configures it, `r`
+reloads it, and `d` removes it. Press `/` to search: while searching, every key you type
 filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
 Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
 close.
 
-Turning a plugin on with Space opens its settings menu straight away when it
+Turning a plugin on with Enter or Space opens its settings menu straight away when it
 offers one (see [settings menu](#offer-a-settings-menu-def-settings_menuself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
@@ -2249,7 +2262,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` / `on_update_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2257,9 +2270,9 @@ saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
 saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
 
-Eight `async` methods fire outside the agent run, in the shell:
+Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2271,6 +2284,7 @@ Eight `async` methods fire outside the agent run, in the shell:
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_update_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2308,6 +2322,16 @@ it started or finished. These events never reach the main run's hooks: they are 
 shows. It fires for every stream event of every running task, down to each text and thinking
 delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
 elsewhere. A failure is printed and the task goes on.
+
+`on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
+uv: `target` is the version, or on the `main` channel the short commit, being installed, and
+`stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
+line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
+or `restarting` when CLAI is about to exit and start the new build in its place, and
+`on_session_end` follows. `output` comes only while the web UI serves: reading uv's output turns
+its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
+has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
+install runs after CLAI exits.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2834,7 +2858,7 @@ menu's `Dialogs` and saves the new value for you.
 ### Offer a settings menu: `def settings_menu(self)`
 
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
-CLAI opens it when the plugin is turned on (Space in `/plugins`, `/plugins enable`,
+CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
 the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
 it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
@@ -3207,6 +3231,42 @@ add one name, the later one wins. Unloading the plugin removes it.
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
+
+### Ask for one line under printed output: `read_line`
+
+A sign-in often prints a URL and then asks for something to paste back, such as
+the address the browser ended on. Print with `host.console`, then ask with
+`read_line` from `pydantic_clai2.ui.prompt.line_input`:
+
+```python
+from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.ui.prompt.line_input import read_line
+
+
+async def sign_in(host: PluginHost, authorization_url: str) -> str:
+    host.console.print(authorization_url, markup=False, highlight=False)
+    pasted = await read_line(
+        'Or paste the address your browser ended on (Esc cancels): ', console=host.console, hidden=True
+    )
+    if pasted is None:
+        return 'Sign-in cancelled.'
+    ...
+```
+
+The prompt and the typed answer are pinned under the transcript, the way
+`ask_user` shows its questions, so the URL stays on screen above them. It returns
+the answer when the user presses Enter, and `None` on Esc or Ctrl-C. Pasting
+works, and pasted line breaks are dropped. Pass `hidden=True` to show how many
+characters were typed instead of the text, for an answer that carries a secret
+such as an authorization code. Cancelling the task that awaits it, because the
+browser's callback won the race, closes the prompt. A slash command or
+`/login` handler can call it directly; a tool or hook asking mid-run takes the
+screen first, inside `async with host.full_screen()`. Without the live editor it
+is a plain terminal prompt.
+
+Do not draw a prompt yourself from a `run_worker` operation. By default
+`run_worker` takes the live panel, and the transcript with your URL, off the
+screen while the operation runs.
 
 ### Several accounts: `resolve_profile` and `profile_handler`
 

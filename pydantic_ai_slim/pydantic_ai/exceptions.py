@@ -31,6 +31,7 @@ __all__ = (
     'UndrainedPendingMessagesError',
     'AgentRunError',
     'RunCancelled',
+    'RunTimedOut',
     'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
@@ -264,7 +265,8 @@ class RunCancelled(AgentRunError):
     """Raised when the agent run was cancelled by the application itself.
 
     Raised by [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] and
-    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
+    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], and as its subclass
+    [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] when a run's `timeout=` expires.
     This is a normal, catchable application-level outcome: the run stopped because your own code
     asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
     a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
@@ -436,6 +438,18 @@ class RunCancelled(AgentRunError):
     def conversation_id(self) -> str | None:
         """The conversation identifier, or `None` if the run was cancelled before starting."""
         return self._conversation_id
+
+
+class RunTimedOut(RunCancelled, TimeoutError):
+    """Raised when an agent run doesn't finish before its deadline.
+
+    The deadline comes from `timeout=` on the agent run methods, or is inherited from the run that
+    started this one from inside a tool (see [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline]).
+    The run is stopped exactly like [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], whose
+    subclass this is, so `except RunCancelled` sees every first-party stop and
+    [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] holds everything the run
+    completed, ready to resume from. It is also a `TimeoutError`, like the error `asyncio.timeout()` raises.
+    """
 
 
 class SuspendedResponseExpired(AgentRunError):
@@ -637,17 +651,17 @@ class ToolRetryError(Exception):
     """
 
     def __init__(self, tool_retry: RetryFeedbackPart | ToolReturnPart):
+        from .messages import ToolReturnPart
+
         self.tool_retry = tool_retry
-        # `part_kind` rather than `isinstance`: the parts are imported under `TYPE_CHECKING` only,
-        # because `messages` imports this module.
-        tool_name = tool_retry.tool_name if tool_retry.part_kind == 'tool-return' else None
+        tool_name = tool_retry.tool_name if isinstance(tool_retry, ToolReturnPart) else None
         content = tool_retry.content
         if isinstance(content, list):
             # Validation errors read the way pydantic's own `ValidationError` text does, naming the tool
             # they're for: this is the `__cause__` of an "exceeded max retries" traceback, not the wire.
             # A list here is always error details: a retried tool return is only ever built with them.
             message = self._format_error_details(cast('list[pydantic_core.ErrorDetails]', content), tool_name)
-        elif tool_retry.part_kind == 'tool-return':
+        elif isinstance(tool_retry, ToolReturnPart):
             # Rendered the way `ToolFailedError` below renders its own part: the content without the
             # `{"error": ...}` wrapper a provider with no native error channel adds.
             message = tool_retry.model_response_str(wrap_if_error=False)

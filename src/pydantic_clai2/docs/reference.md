@@ -243,6 +243,13 @@ resuming the current conversation. Switching back to `stable` offers the latest 
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
+`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+typed in the page or in the terminal: the page shows uv's progress and the result. After
+an install, CLAI restarts with the web UI on the same port and token, so the page
+reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
+Like any command, `/update` entered while a turn runs waits for the turn to end.
+
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
@@ -315,7 +322,8 @@ accounts it started with. `/model settings` edits to the running model apply to 
 next model request in the same turn. `/resume` can browse, rename, and delete
 sessions mid-turn, but a running conversation cannot be swapped out: picking one
 tells you to enter `/resume ID`, which restores it once the turn ends. With
-arguments, these commands queue like any other.
+arguments, these commands queue like any other, except `/theme NAME`, which
+repaints at once as the picker does.
 
 `/plugins` runs right away during a turn too, with or without arguments, so
 `/plugins disable NAME` does not wait behind the turn or your queued messages.
@@ -833,8 +841,8 @@ picker, under **Fallback chains** below your models (`/model chains` opens it th
 
 - **New fallback chain...** asks for a name, then for its models: **a** adds a saved
   model or a typed `PROVIDER[@PROFILE]:MODEL` (including `PROVIDER@*:MODEL`), **d**
-  removes one, **[** and **]** move one earlier or later, and **Save chain** saves it.
-  Esc leaves without saving.
+  removes one, **[** and **]** move one earlier or later, and Enter on **Save chain**
+  saves it. Enter on a model does nothing. Esc leaves without saving.
 - **Enter** on `chain:NAME` selects it, like any model; `/model chain:NAME` does too.
 - **Ctrl+E** changes a chain's models, **Ctrl+R** renames it, and **Ctrl+D** deletes
   it, after asking. The model you are using, or your saved default, cannot be renamed
@@ -1548,7 +1556,7 @@ Markdown file. Save and quit the editor to keep your changes. Unchanged text
 changes nothing, and an editor that exits with an error, such as Vim's `:cq`,
 cancels. A graphical editor must wait for its window to close, for example
 `code --wait`. On Windows, when neither variable is set, or when the editor
-cannot start, a built-in editor opens instead: Ctrl-S saves, Esc cancels.
+cannot start, a built-in editor opens instead: Ctrl+S saves, Esc cancels.
 
 Your instructions are the `run.instructions` setting, saved with your other
 preferences, so later sessions and `/fork` use them too. They apply from your
@@ -1734,6 +1742,9 @@ It stays `?` until the first request of the session or after a model change, and
 a model with no known window. With `compaction` off, the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
+Until a response in the conversation reports its usage, the used figure is an estimate
+from the text's length that leaves out most tool definitions, shown with `~`, such as `~13k/1m`.
+It usually reads low, so it can rise sharply once the first response arrives.
 
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller
@@ -2274,8 +2285,8 @@ Git repositories need an `__init__.py` or `plugin.py` at their root; install
 any dependencies in CLAI's Python environment first. See
 [where plugins live](../PLUGINS.md#where-plugins-live) for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
-configure, reload, and remove it. Press `/` to search plugin names; while you
+reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`,
+and `d` configure, reload, and remove it. Press `/` to search plugin names; while you
 search, every key you type filters, Enter keeps the matches so the keys act on
 them, and Esc clears the search. Esc or `q` closes the menu without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.

@@ -67,6 +67,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   send: (text: string) => call<void>('POST', '/api/input', { text }),
+  /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
+  update: () => call<void>('POST', '/api/input', { text: '/update' }),
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/interrupt'),
   complete: (text: string) => call<CompletionInfo[]>('GET', `/api/complete?text=${encodeURIComponent(text)}`),
   models: () => call<string[]>('GET', '/api/models'),
@@ -160,7 +162,8 @@ export function connect(onMessage: (message: ServerMessage) => void, onState: (s
     }
     if (!stopped) {
       timer = window.setTimeout(open, delay)
-      delay = Math.min(delay * 2, 8000)
+      // At most 2 seconds apart, so a page waiting on `/update`'s restart is back soon after CLAI is.
+      delay = Math.min(delay * 2, 2000)
     }
   }
   const open = () => {
