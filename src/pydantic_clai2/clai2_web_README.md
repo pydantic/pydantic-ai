@@ -72,6 +72,26 @@ current model and the saved default. Creating, editing, and renaming fallback ch
 terminal's `/model chains`. `/effort` typed in the composer opens a dialog with the active model's
 settings, effort among them, and `/fast` still toggles fast mode.
 
+<!-- From #10457 -->
+**Keys & accounts** (`#settings/keys`, or `/keys`, `/login`, or `/accounts` in the composer) lists
+your saved API keys by name, with what uses each, and your accounts in the order `PROVIDER@*` tries
+them. Each row's button asks what to do as the terminal's menus do: add, replace (masked), rename,
+or delete a key; sign in again, rename, try earlier or later, or sign out of an account; add one.
+A key's value is typed in the page but never sent back to it. Signing in to ChatGPT/Codex or GitHub
+Copilot shows its link or code on a waiting screen you can cancel; the ChatGPT/Codex sign-in
+finishes when the browser comes back to the machine CLAI runs on. An API-key account picks or saves
+a `/keys` entry. Connections (`openrouter`, `vllm`) and plugins' sign-ins ask in the terminal, so
+the page says to run `/login NAME` there.
+
+<!-- From #10459 -->
+**MCP servers** (`#settings/mcp`, or `/mcp` typed in the composer) lists your MCP servers with
+their state: running, ready, off, an error, or needing a sign-in.
+**Add server** opens `/mcp install`'s form as dialogs, its JSON in a multi-line field, and a
+server's **Manage** starts, stops, or restarts it, shows its tools and recent logs, signs in or out,
+edits, or removes it, as `/mcp`'s subcommands do; the terminal prints each result, and a change
+made there shows here too. A repository's MCP files show as a banner whose **Review** shows their
+contents before you trust them.
+
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
 footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and

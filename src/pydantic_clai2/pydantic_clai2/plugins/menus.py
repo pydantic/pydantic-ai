@@ -107,7 +107,8 @@ class Dialogs(Protocol):
 
         `secret` masks it. `check` says why non-empty text is not acceptable, or returns `None`;
         the dialog stays open until it accepts the text or the text is empty. `description` says
-        more above the input, such as where to find the value, with a link to open.
+        more above the input, such as where to find the value, with a link to open. An `initial`
+        of several lines is edited over several lines where the surface can, as the web UI does.
         """
         ...
 
