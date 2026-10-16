@@ -17,7 +17,7 @@ from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse, check_response
+from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -27,6 +27,7 @@ from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
+from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
     Choice,
     CompletionInfo,
@@ -60,9 +61,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     TurnEnded,
     TurnStarted,
-    Usage,
     Worktree,
     history_items,
+    usage_info,
     user_text,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
@@ -117,6 +118,8 @@ class Remote:
         """The delegated tasks, which the plugin's `on_task_event` keeps up to date."""
         self.dialogs = BrowserDialogs(publish=hub.publish)
         """Where the settings menus opened in this page ask their questions."""
+        self.orchestrator = Orchestrator(host=host, publish=hub.publish)
+        """The orchestrator chat, a separate agent with its own conversation, beside the session."""
         self.running = False
         self._translator = EventTranslator()
         """One for the whole load, so item IDs stay unique across turns in a browser that keeps them all."""
@@ -177,7 +180,7 @@ class Remote:
             cost=None if status.cost is None else str(status.cost),
             streamed_tokens=math.ceil(status.streamed_chars / 4),
             output_tokens=status.output_tokens,
-            run=None if self._usage is None else _usage(self._usage),
+            run=None if self._usage is None else usage_info(self._usage),
             code_mode=self._switch(CODE_MODE),
             speculation=self._switch(SPECULATION),
         )
@@ -239,7 +242,7 @@ class Remote:
             TurnEnded(
                 outcome=outcome,
                 error=None if error is None else str(error) or type(error).__name__,
-                usage=None if usage is None else _usage(usage),
+                usage=None if usage is None else usage_info(usage),
             )
         )
         self.publish_status()
@@ -298,10 +301,7 @@ class Remote:
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
         """Answer an open question, or decline it with `None`; `ValueError` when the answers do not fit it."""
-        request = self.answerer.request(request_id)
-        response = AskUserResponse(cancelled=True) if answers is None else AskUserResponse(answers=tuple(answers))
-        check_response(request, response)
-        self.answerer.answer(request_id, response)
+        self.answerer.reply(request_id, answers)
 
     # The plugins panel.
 
@@ -663,10 +663,6 @@ def _worktrees(
         for root, (identity, sessions) in found.items()
     ]
     return sorted(worktrees, key=lambda worktree: not worktree.current)
-
-
-def _usage(usage: RunUsage) -> Usage:
-    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
 
 
 def _form(info: PluginInfo) -> PluginForm | None:

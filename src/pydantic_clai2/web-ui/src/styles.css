@@ -2995,3 +2995,147 @@ textarea.setting-input {
   flex: none;
   color: var(--muted);
 }
+/* The Workspaces section: the workspaces plugin's checkouts, each opening its own CLAI's page. */
+.workspace {
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+}
+
+.workspace-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workspace-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace-open {
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.workspace-open:hover:not(:disabled) {
+  border-color: var(--lithium);
+  color: var(--text);
+}
+
+.workspace-open:disabled {
+  opacity: 0.5;
+}
+
+/* The orchestrator: its sidebar entry, below New session, and its chat */
+
+.orchestrator-entry .state {
+  margin-left: auto;
+}
+
+.orchestrator-entry.active {
+  background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
+  color: var(--text);
+}
+
+/* While the orchestrator chat shows, the current session is not what the main pane shows. */
+.sidebar.orchestrating .session.current {
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar.orchestrating .session.current:hover {
+  background: var(--hover);
+}
+
+.sidebar.orchestrating .session.current .session-title {
+  color: var(--text-soft);
+}
+
+.topbar .new-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.pill.static,
+.pill.static:hover {
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+.orchestrator-off {
+  align-items: center;
+}
+
+.orchestrator-off .hero-hint {
+  max-width: 460px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.hero-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--lithium);
+}
+
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.tool-head .tool-row {
+  width: auto;
+  min-width: 0;
+}
+
+.open > .tool-head > .row-toggle .chevron {
+  opacity: 1;
+}
+
+.tool-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--lithium);
+  font-size: 12px;
+}
+
+.tool-link:hover {
+  background: var(--hover);
+}
+
+.orchestrator-off-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}

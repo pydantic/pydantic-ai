@@ -4,6 +4,7 @@ import type {
   JsonValue,
   MenuEdited,
   MenuInfo,
+  OrchestratorState,
   PanelInfo,
   PluginAction,
   PluginRow,
@@ -12,6 +13,7 @@ import type {
   Switch,
   TaskTranscript,
   Transcript,
+  WorkspacesInfo,
 } from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
@@ -94,12 +96,42 @@ export const api = {
     call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}/action`),
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
+  workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
+  openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
+}
+
+/** The orchestrator chat: its own agent and conversation, beside the session. */
+export const orchestrator = {
+  state: () => call<OrchestratorState>('GET', '/api/orchestrator/state'),
+  send: (text: string) => call<void>('POST', '/api/orchestrator/input', { text }),
+  interrupt: () => call<{ interrupted: boolean }>('POST', '/api/orchestrator/interrupt'),
+  answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', '/api/orchestrator/answer', { id, answers }),
+  clear: () => call<void>('POST', '/api/orchestrator/clear'),
+}
+
+/** Start a workspace's CLAI if needed and open its own page in a new tab. */
+export async function openWorkspacePage(id: string): Promise<void> {
+  // Opened now, while the click still counts as one, and pointed at the page once its CLAI answers.
+  const tab = window.open('', '_blank')
+  try {
+    const { url } = await api.openWorkspace(id)
+    if (tab) {
+      tab.opener = null
+      tab.location.href = url
+    } else window.location.assign(url)
+  } catch (error) {
+    tab?.close()
+    throw error
+  }
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */
-export async function interrupt(onError: (message: string) => void): Promise<void> {
+export async function interrupt(
+  onError: (message: string) => void,
+  stop: () => Promise<unknown> = api.interrupt,
+): Promise<void> {
   try {
-    await api.interrupt()
+    await stop()
   } catch (error) {
     onError(error instanceof Error ? error.message : String(error))
   }

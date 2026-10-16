@@ -162,6 +162,26 @@ export type ItemMessage =
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
 
+/** A transcript's item, turn, and question messages, which the session and the orchestrator chat both get. */
+export type ChatMessage =
+  | ItemMessage
+  | { type: 'turn_start'; item: Item | null }
+  | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
+  | { type: 'question'; questions: Questions }
+  | { type: 'question_closed'; id: string }
+
+/** The orchestrator chat: sent on connect, as a turn starts, and when it starts over. */
+export interface OrchestratorState {
+  type: 'orchestrator_state'
+  /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
+  enabled: boolean
+  running: boolean
+  items: Item[]
+  questions: Questions[]
+}
+
+export type OrchestratorEvent = ChatMessage | OrchestratorState
+
 export type ServerMessage =
   | {
       type: 'snapshot'
@@ -178,12 +198,9 @@ export type ServerMessage =
       /** Each running task's transcript so far, by task ID. */
       task_items: Record<string, Item[]>
     }
-  | ItemMessage
-  | { type: 'turn_start'; item: Item | null }
-  | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
+  | ChatMessage
   | { type: 'status'; status: StatusInfo }
-  | { type: 'question'; questions: Questions }
-  | { type: 'question_closed'; id: string }
+  | { type: 'orchestrator'; message: OrchestratorEvent }
   | { type: 'dialog'; dialog: Dialog }
   | { type: 'dialog_shown'; id: string; text: string }
   | { type: 'dialog_closed'; id: string }
@@ -309,6 +326,24 @@ export interface MenuField {
   note: string
   /** Choosing it runs an action, with dialogs, instead of editing a value. */
   action: boolean
+}
+
+/** A workspace as the sidebar lists it; never its token. */
+export interface WorkspaceRow {
+  id: string
+  kind: string
+  repo: string
+  branch: string
+  path: string
+  status: 'ready' | 'running' | 'stopped'
+  /** Its page's address without the token, while its CLAI runs. */
+  url: string | null
+}
+
+/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
+export interface WorkspacesInfo {
+  enabled: boolean
+  workspaces: WorkspaceRow[]
 }
 
 export interface MenuInfo {

@@ -2,6 +2,7 @@ import type {
   Dialog,
   Item,
   ItemMessage,
+  OrchestratorEvent,
   Questions,
   ServerMessage,
   SessionInfo,
@@ -224,5 +225,36 @@ export function reduce(state: State, message: ServerMessage): State {
       return { ...state, sessionsVersion: state.sessionsVersion + 1 }
     case 'plugins':
       return { ...state, pluginsVersion: state.pluginsVersion + 1 }
+    case 'orchestrator':
+      // The orchestrator chat keeps its own state, with `reduceOrchestrator`.
+      return state
+  }
+}
+
+/** The orchestrator chat: a transcript of its own, kept by the same reducer as the session's. */
+export interface OrchestratorView {
+  /** Whether the `workspaces` plugin is on, which the orchestrator needs; `null` until the server says. */
+  enabled: boolean | null
+  chat: State
+}
+
+export const initialOrchestrator: OrchestratorView = { enabled: null, chat: initial }
+
+/** What the orchestrator chat gets on the WebSocket, or `enabled` from asking the server again. */
+export type OrchestratorAction = OrchestratorEvent | { type: 'enabled'; enabled: boolean }
+
+export function reduceOrchestrator(view: OrchestratorView, action: OrchestratorAction): OrchestratorView {
+  if (action.type === 'enabled') return { ...view, enabled: action.enabled }
+  if (action.type !== 'orchestrator_state') return { ...view, chat: reduce(view.chat, action) }
+  const chat = view.chat
+  return {
+    enabled: action.enabled,
+    chat: {
+      ...chat,
+      entries: action.items,
+      running: action.running,
+      questions: action.questions,
+      turnStartedAt: action.running ? chat.turnStartedAt : null,
+    },
   }
 }

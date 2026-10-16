@@ -4,6 +4,7 @@ import { MOD } from '../platform'
 import { Logo } from './Logo'
 import type { Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../protocol'
 import { WorkersTree } from './WorkersTree'
+import { WorkspacesSection } from './WorkspacesSection'
 import {
   BranchIcon,
   ChevronIcon,
@@ -11,6 +12,7 @@ import {
   FolderIcon,
   MoonIcon,
   MoreIcon,
+  OrchestratorIcon,
   PaletteIcon,
   PuzzleIcon,
   SearchIcon,
@@ -35,6 +37,10 @@ interface Props {
   onView: (session: SessionEntry) => void
   /** Start a new session, asking where it runs when sessions run in their own directories. */
   onNew: () => void
+  /** Whether the main pane shows the orchestrator chat, and whether its turn runs. */
+  orchestrating: boolean
+  orchestratorRunning: boolean
+  onOrchestrator: () => void
   onCollapse: () => void
   onPlugins: () => void
   onError: (message: string) => void
@@ -72,6 +78,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     onPickTheme,
     onView,
     onNew,
+    orchestrating,
+    orchestratorRunning,
+    onOrchestrator,
     onCollapse,
     onPlugins,
     onError,
@@ -224,7 +233,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
       <div className="sidebar-top">
         <div className="brand">
           <Logo />
@@ -238,6 +247,16 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       <button className="new-session" onClick={onNew} title={`New session (${MOD}Shift+O)`}>
         <ComposeIcon size={16} />
         <span>New session</span>
+      </button>
+      <button
+        className={`new-session orchestrator-entry ${orchestrating ? 'active' : ''}`}
+        onClick={onOrchestrator}
+        title="Orchestrator: an agent that runs workspaces for you"
+        aria-pressed={orchestrating}
+      >
+        <OrchestratorIcon size={16} />
+        <span>Orchestrator</span>
+        {orchestratorRunning && <span className="state running" aria-label="Working" />}
       </button>
       <label className="search">
         <SearchIcon size={14} />
@@ -256,6 +275,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">
+        <WorkspacesSection version={version} onError={onError} />
         {!listed && workers}
         {projects.length === 0 && (
           <div className="empty-list">

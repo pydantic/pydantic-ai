@@ -1188,6 +1188,7 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
     hub = web_.plugin.hub
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         socket.receive_text()
+        socket.receive_text()  # The orchestrator chat's state.
 
         async def flood() -> None:
             # All at once, on the loop, so the WebSocket cannot forward any in between.

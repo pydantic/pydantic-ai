@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
@@ -180,6 +181,11 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
+
+
+def usage_info(usage: RunUsage) -> Usage:
+    """The browser's copy of a run's usage."""
+    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
 
 
 @dataclass(kw_only=True)
@@ -503,8 +509,32 @@ class TaskItems:
     messages: list[ItemMessage]
 
 
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorState:
+    """The orchestrator chat, sent on connect, as a turn starts, and on a new chat; `GET /api/orchestrator/state` too."""
+
+    type: Literal['orchestrator_state'] = 'orchestrator_state'
+    enabled: bool
+    """Whether the `workspaces` plugin is on; the orchestrator runs only then."""
+    running: bool
+    items: list[Item]
+    questions: list[Questions]
+
+
+OrchestratorEvent = ItemMessage | TurnStarted | TurnEnded | QuestionAsked | QuestionClosed | OrchestratorState
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorMessage:
+    """A message for the orchestrator chat, on the session's WebSocket."""
+
+    type: Literal['orchestrator'] = 'orchestrator'
+    message: OrchestratorEvent
+
+
 ServerMessage = (
     Snapshot
+    | OrchestratorMessage
     | ItemMessage
     | TurnStarted
     | TurnEnded
@@ -676,6 +706,38 @@ class MenuEdited:
     messages: list[str]
     menu: MenuInfo | None
     """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
+
+
+WorkspaceState = Literal['ready', 'running', 'stopped']
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRow:
+    """A workspace as the sidebar lists it; never its token."""
+
+    id: str
+    kind: str
+    repo: str
+    branch: str
+    path: str
+    status: WorkspaceState
+    url: str | None
+    """Its page's address without the token, while its CLAI runs."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspacesInfo:
+    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
+
+    enabled: bool
+    workspaces: list[WorkspaceRow]
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceOpened:
+    """A workspace's page, with its token, for this page to open."""
+
+    url: str
 
 
 @dataclass(kw_only=True)

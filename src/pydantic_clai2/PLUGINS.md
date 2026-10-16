@@ -1418,7 +1418,74 @@ from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`).
 `listing()`, `get(id)`, `create(kind=, repo=, ref=)`, `start(id)`, `stop(id)`, `destroy(id)`, each
 returning a `Workspace` record, and `token(id)`, the running CLAI's token, for a client that talks to
 it; never show it to the model. A new backend implements `backend.Backend`: `create`, `start`,
-`alive`, `stop`, and `destroy`.
+`alive`, `stop`, and `destroy`. `configured(host.plugins)` builds that `Workspaces` from the loaded
+plugin's settings, or returns `None` while it is off.
+
+**In the web UI.** While `workspaces` is on, the sidebar shows a **Workspaces** section above the
+projects: each workspace's ID, branch, and status, refreshed every five seconds, and **Open**, which
+starts its CLAI if needed (`POST /api/workspaces/ID/open`) and opens its own page in a new tab. Only
+that response carries the workspace's token, to the page that already has its own; `GET
+/api/workspaces` never does.
+
+### Orchestrator: an agent that runs workspaces
+
+The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the sidebar, right below
+**New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
+orchestrator is an agent of its own, separate from the session's: its own conversation, its own
+instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
+destroying one), and only the tools below plus `ask_user_question`. It has no shell, file, code
+mode, or other CLAI tools, and the session's agent, in the terminal or the browser, gets none of
+these.
+
+It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
+off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
+in its composer; choose another for the session to change it. One turn runs at a time, with a small
+dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
+chat** starts over; the workspaces stay. Each workspace's CLAI is driven through its web UI with
+[`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace kept
+between tool calls and closed when `web` unloads; the CLAIs keep running. A tool card that names a
+workspace has an **Open** link to its page, as the sidebar's Workspaces section has.
+
+| Tool | Does |
+|---|---|
+| `workspace_list()` | every workspace, and the kinds the model may make |
+| `workspace_create(kind, repo='', ref='')` | a new workspace; nothing runs in it yet |
+| `workspace_destroy(workspace)` | stop its CLAI and remove it, only once the user confirmed (below) |
+| `session_start(workspace, prompt)` | start its CLAI unless it runs, and send `prompt` |
+| `session_send(workspace, text)` | another prompt, queued behind a running turn |
+| `session_read(workspace, last=5)` | in short: whether a turn runs, how the last one ended, what is asked, and the last items, each cut to 600 characters |
+| `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
+| `session_interrupt(workspace)` | stop the running turn |
+| `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+
+**Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
+orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
+ask that way. Its questions show only in the orchestrator chat and only you answer them there,
+never the terminal, so the model cannot give the answer itself.
+`session_start` and `session_send` send prompts only: a `/command` would run in the workspace's CLAI
+with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse it and
+the model asks you to type it in the workspace's page.
+
+The model never sees a token: tools return addresses without one, and problems (an unknown
+workspace, a CLAI that stopped) come back as `Error: ...` lines rather than failing the run.
+
+**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
+alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
+among the saved sessions or in `/resume`. Every CLAI with the web UI, a workspace's own included,
+has the same chat: each turn starts from the file as it is then, which an open page catches up to,
+and saves it when it ends, unless another CLAI changed the file meanwhile: that turn then fails and
+is not kept, rather than writing over the other CLAI's.
+A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
+it rather than from the file. That save replaces the file unless another CLAI changed it meanwhile,
+in which case the turns not saved are dropped in favour of the file.
+`/web stop` stops a running turn, since no page is left to watch it or answer it.
+
+**From another program.** `GET /api/orchestrator/state` returns the chat (`enabled`, `running`,
+`items`, `questions`); `POST /api/orchestrator/input` (`{"text": ...}`) starts a turn,
+`/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
+question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
+API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
+"message": ...}`, the state first after the session's snapshot.
 
 ### `github`: tools from GitHub's hosted MCP server
 

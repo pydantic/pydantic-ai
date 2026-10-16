@@ -1,10 +1,23 @@
 import { memo, useContext } from 'react'
 import { cell } from '../code'
 import { OpenCardsContext } from '../openCards'
+import { WorkspaceLinkContext } from '../workspaceLink'
 import { highlight } from '../markdown'
 import type { Diff, Item } from '../protocol'
 import { DiffView, diffStats } from './DiffView'
-import { ChevronIcon, FileIcon, PencilIcon, QuestionIcon, SearchIcon, TerminalIcon, ToolIcon } from './icons'
+import {
+  BranchIcon,
+  ChevronIcon,
+  ExternalIcon,
+  FileIcon,
+  FolderIcon,
+  OrchestratorIcon,
+  PencilIcon,
+  QuestionIcon,
+  SearchIcon,
+  TerminalIcon,
+  ToolIcon,
+} from './icons'
 import { WorkerChips } from './WorkersTree'
 
 type Args = Record<string, unknown>
@@ -41,6 +54,31 @@ export function codeCalls(code: string): Call[] {
   })
 }
 
+/** The orchestrator's tools, as `[running, done]` verbs; each names the workspace it works on. */
+const WORKSPACE_TOOLS: Record<string, [string, string]> = {
+  workspace_create: ['Creating workspace', 'Created workspace'],
+  workspace_destroy: ['Destroying workspace', 'Destroyed workspace'],
+  session_start: ['Starting', 'Started'],
+  session_send: ['Sending to', 'Sent to'],
+  session_read: ['Reading', 'Read'],
+  session_wait: ['Waiting for', 'Waited for'],
+  session_interrupt: ['Interrupting', 'Interrupted'],
+  session_answer: ['Answering', 'Answered'],
+}
+
+/** The workspace an orchestrator tool call works on: its `workspace` argument, or the one `workspace_create` made. */
+export function workspaceOf(item: Item, args: Args): string | null {
+  if (!(item.name in WORKSPACE_TOOLS)) return null
+  if (typeof args.workspace === 'string' && args.workspace) return args.workspace
+  return /^Created workspace (\S+) /.exec(item.text)?.[1] ?? null
+}
+
+/** Whether `name` is one of the orchestrator's tools, each shown on its own rather than folded into a group. */
+export const isWorkspaceTool = (name: string) => name in WORKSPACE_TOOLS || name === 'workspace_list'
+
+/** An orchestrator tool's problem comes back as its result, an `Error: ...` line, rather than a failed call. */
+const reportedError = (item: Item) => item.text.startsWith('Error: ')
+
 interface Summary {
   icon: React.ReactNode
   verb: string
@@ -48,8 +86,24 @@ interface Summary {
   mono: boolean
 }
 
-function summarize(item: Item, args: Args): Summary {
+/** An orchestrator tool call: the verb, and the workspace it works on. */
+function workspaceSummary(item: Item, args: Args): Summary {
   const running = item.state === 'running'
+  if (item.name === 'workspace_list') {
+    return { icon: <FolderIcon size={14} />, verb: running ? 'Listing' : 'Listed', subject: 'workspaces', mono: false }
+  }
+  const [doing, done] = WORKSPACE_TOOLS[item.name] ?? ['', '']
+  const subject = workspaceOf(item, args) ?? str(args.kind)
+  if (item.name !== 'workspace_create' && item.name !== 'workspace_destroy') {
+    return { icon: <OrchestratorIcon size={14} />, verb: running ? doing : done, subject, mono: true }
+  }
+  const kept = item.name === 'workspace_destroy' && item.text.startsWith('Not destroyed')
+  return { icon: <BranchIcon size={14} />, verb: running ? doing : kept ? 'Kept workspace' : done, subject, mono: true }
+}
+
+function summarize(item: Item, args: Args, inOrchestrator: boolean): Summary {
+  const running = item.state === 'running'
+  if (inOrchestrator && isWorkspaceTool(item.name)) return workspaceSummary(item, args)
   switch (item.name) {
     case 'shell':
       return { icon: <TerminalIcon size={14} />, verb: running ? 'Running' : 'Ran', subject: str(args.command), mono: true }
@@ -73,7 +127,7 @@ function summarize(item: Item, args: Args): Summary {
       if (calls.length === 1 && only?.argument) {
         // A script around one call reads as that call.
         const key = only.name === 'shell' ? 'command' : only.name === 'grep' ? 'pattern' : 'path'
-        return summarize({ ...item, name: only.name }, { [key]: only.argument })
+        return summarize({ ...item, name: only.name }, { [key]: only.argument }, inOrchestrator)
       }
       const names = item.calls.length ? item.calls.map((call) => call.name) : calls.map((call) => call.name)
       if (names.length > 1) {
@@ -137,7 +191,10 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const open = cards.open.has(raw.id)
   const args = parseArgs(raw.args)
   const item = { ...raw, diffs: argumentDiffs(raw, args) }
-  const summary = summarize(item, args)
+  const openWorkspace = useContext(WorkspaceLinkContext)
+  // The orchestrator's tools read as such only in its chat; a session's tool of the same name is another tool.
+  const orchestrating = openWorkspace !== null && isWorkspaceTool(item.name)
+  const summary = summarize(item, args, openWorkspace !== null)
   const stats = item.diffs.reduce(
     (total, diff) => {
       const { added, removed } = diffStats(diff.diff)
@@ -145,26 +202,41 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
     },
     { added: 0, removed: 0 },
   )
-  const failed = item.state === 'error' || (item.exit_code !== null && item.exit_code !== 0)
+  const refused = orchestrating && reportedError(item)
+  const failed = item.state === 'error' || (item.exit_code !== null && item.exit_code !== 0) || refused
   const firstLine = summary.subject.split('\n')[0] ?? ''
+  const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
+  const row = (
+    <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id)} aria-expanded={open}>
+      <span className="tool-icon">{summary.icon}</span>
+      <span className={item.state === 'running' ? 'shimmer verb' : 'verb'}>{summary.verb}</span>
+      <span className={summary.mono ? 'subject mono' : 'subject'} title={summary.subject}>
+        {firstLine}
+        {summary.subject.includes('\n') ? ' …' : ''}
+      </span>
+      {item.diffs.length > 0 && (
+        <span className="stats">
+          <span className="added">+{stats.added}</span> <span className="removed">−{stats.removed}</span>
+        </span>
+      )}
+      {failed && <span className="badge error">{item.exit_code !== null && item.exit_code !== 0 ? `exit ${item.exit_code}` : 'failed'}</span>}
+      {item.state === 'interrupted' && <span className="badge">interrupted</span>}
+      <ChevronIcon size={12} className="chevron" />
+    </button>
+  )
   return (
     <div className={`tool ${open ? 'open' : ''} ${item.state}`}>
-      <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id)} aria-expanded={open}>
-        <span className="tool-icon">{summary.icon}</span>
-        <span className={item.state === 'running' ? 'shimmer verb' : 'verb'}>{summary.verb}</span>
-        <span className={summary.mono ? 'subject mono' : 'subject'} title={summary.subject}>
-          {firstLine}
-          {summary.subject.includes('\n') ? ' …' : ''}
-        </span>
-        {item.diffs.length > 0 && (
-          <span className="stats">
-            <span className="added">+{stats.added}</span> <span className="removed">−{stats.removed}</span>
-          </span>
-        )}
-        {failed && <span className="badge error">{item.exit_code !== null && item.exit_code !== 0 ? `exit ${item.exit_code}` : 'failed'}</span>}
-        {item.state === 'interrupted' && <span className="badge">interrupted</span>}
-        <ChevronIcon size={12} className="chevron" />
-      </button>
+      {workspace && openWorkspace && item.name !== 'workspace_destroy' ? (
+        <div className="tool-head">
+          {row}
+          <button className="tool-link" onClick={() => openWorkspace(workspace)} title={`Open ${workspace}'s page`}>
+            <ExternalIcon size={12} />
+            Open
+          </button>
+        </div>
+      ) : (
+        row
+      )}
       <WorkerChips item={raw} />
       {item.diffs.length > 0 && !open && (
         <div className="tool-diffs">
