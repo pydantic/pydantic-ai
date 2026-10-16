@@ -883,6 +883,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Safe to call directly from async tools, sync tools running in another
         thread, and capability hooks.
 
+        Content made of parts and enqueued with `priority='asap'` during a tool call (from the tool or
+        a capability hook wrapping the call) goes into the
+        [`ModelRequest`][pydantic_ai.messages.ModelRequest] that carries that call's
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Anything else is added
+        to the history as its own messages.
+
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
@@ -920,7 +926,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
-        pending = PendingMessage.from_content(*content, priority=priority)
+        pending = PendingMessage.from_content(*content, priority=priority, tool_call_id=self.tool_call_id)
         if pending is None:
             return None
         self.pending_messages.append(pending)
