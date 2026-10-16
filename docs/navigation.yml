@@ -46,8 +46,6 @@ navigation:
           - "agents"
           - "core-concepts/agents"
           - "agent"
-          - "core-concepts/usage-limits"
-          - "usage-limits"
       - page: "Dependencies"
         path: "dependencies.md"
         slug: "core-concepts/dependencies"
@@ -1521,6 +1519,11 @@ redirects:
   - from: "project"
     to: "project/contributing"
     status: 302
+  # Topics documented as a section of a larger page.
+  - from: "core-concepts/usage-limits"
+    to: "core-concepts/agent#usage-limits"
+  - from: "usage-limits"
+    to: "core-concepts/agent#usage-limits"
   # Markdown endpoints used by documentation agents.
   - from: "install/index.md"
     to: "overview/install/index.md"
