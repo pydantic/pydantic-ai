@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,70 +11,95 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '249'
+      - "229"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is 2+2?
-          type: text
-        role: user
-      model: claude-opus-5-5
-      output_config:
-        effort: xhigh
-      stream: false
-      thinking:
-        display: summarized
-        type: adaptive
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is 2+2?
+            type: text
+        model: claude-opus-5-5
+        output_config:
+          effort: xhigh
+        stream: true
+        thinking:
+          type: adaptive
+          display: summarized
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '557'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-e4a71a8e523b785cf3c0bf91e81fcc6d-1ac4981da9568729-01
+      - 00-4660cda65800e698d798c92fa0c38a71-d301ff2886c48743-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container: null
-      content:
-      - text: '**2 + 2 = 4**'
-        type: text
-      id: msg_011CfK1KaDxQSFmFbicsgBJN
-      model: claude-opus-5-5
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 15
-        output_tokens: 13
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CfY3tVqjz8TdaNT1mFqiR","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":15,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"This"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" se"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ems simple enough to answ"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"er directly."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSnAQKEAgSGAI4AUIIdGhpbmtpbmcSDLQ9DR3rehHTw5IVcBoMA8twc31tcg06JeNQIjAmxCTCrvEYnaO1WvYOppQNef4HOYU1LeqUSKDMvQGZ1smn6+VAwqBS5mXEuEPdqLoquQP3my+XB8/EXkeh+RDxGgLAJHCEitnXWssu/6LQao+0pqu7RpldBjV4qdW8TaTQtKsiYdISTBH1KH9svVfA3fdxPMemVNSrwmaduwxel69mawr5kp0ai1set8WUJmN7U3FqaqAKcXhs051nPTc+nQWyqbEXz5NWpbhda3VK77ZS5m9UWqdJSNkIAqqinmviYHIVN4yh9fOcaYFZR9MIca/H13306kpbLytNkxCvLx3Iyls2+L0zzAmbuE3dfDfgRm9L89h4qTTbfqAgw/TB6yRDqvYzqNOXbf0AqtWJwyXQ8/8czjE7km89hHmboVLppXGCRUUmy4iLEh/dFsOCIWF0OutT/JH7tkA+cMmU87RekVWzwzE/agF6k0eG8+CRNehpDmNq7T/rTsDkRDw40pii1D0caIchixyCknwlsJ05bH5e1ic2SlEpdOvRm1Z68RklYjScRRV+6FN5joG1wLGgBYH9ExyNgm+S9+nVjtYRbCO3q5fOKNWFAMKBdnFDlf2t76Eg6n2lhJnDdMRHSOOUa7rkZ7vJlflRgmvedYEE6p+eyW8Lbb4EzGiP8XqrkSXHqw/bCv3CI/gYAQ=="}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"2 + 2 ="}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **4**"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":15,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":18,"output_tokens_details":{"thinking_tokens":6}}    }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-29T16:31:45.352314+00:00

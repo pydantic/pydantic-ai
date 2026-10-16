@@ -3,7 +3,7 @@
 import pytest
 from rich.text import Text
 
-from pydantic_clai2.prompt_buffer import PromptBuffer
+from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 
 PASTE = '\n'.join(f'line {index}' for index in range(5))
 

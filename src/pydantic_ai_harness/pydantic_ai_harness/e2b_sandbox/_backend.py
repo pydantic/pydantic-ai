@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
-import sniffio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -49,7 +48,13 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import absolute_path, command_argv, safe_credential_reason, stop_shielded
+from pydantic_ai_harness._workspace_provider import (
+    absolute_path,
+    command_argv,
+    running_on_asyncio,
+    safe_credential_reason,
+    stop_shielded,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -58,8 +63,8 @@ __all__ = ('E2BSandboxBackend',)
 
 try:
     import e2b
-except ImportError as error:  # pragma: no cover - exercised by the isolated missing-extra test
-    raise ImportError('Install `pydantic-ai-harness[e2b]` to use E2BSandbox.') from error
+except ImportError as _import_error:
+    raise ImportError('Install `pydantic-ai-harness[e2b]` to use E2BSandbox.') from _import_error
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +274,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox is still running: one killed elsewhere surfaces on the next operation. Calling this
         does not make you responsible for killing the sandbox; whoever holds the `ref` decides, as before.
         """
-        if self._ref is None and sniffio.current_async_library() == 'asyncio':
+        if self._ref is None and running_on_asyncio():
             # An AnyIO shield cannot stop native Task.cancel(); the backend owns this task
             # until it has recorded the paid sandbox, even if every caller leaves.
             task = self._acquisition
@@ -549,7 +554,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         line = shlex.join(command_argv(command, shell))
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        if sniffio.current_async_library() != 'asyncio':
+        if not running_on_asyncio():
             # E2B's command handle starts its output reader with `asyncio.create_task`.
             raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.

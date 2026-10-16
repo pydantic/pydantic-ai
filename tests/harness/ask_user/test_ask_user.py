@@ -6,11 +6,13 @@ import json
 import re
 from collections.abc import AsyncIterator, Sequence
 
+import anyio
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -25,6 +27,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import (
     DECLINED,
+    TIMED_OUT,
     TOOL_NAME,
     AskUserAnswer,
     AskUserAnsweredEvent,
@@ -33,6 +36,7 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
     QuestionOption,
+    ask_user_result,
     check_response,
 )
 
@@ -235,6 +239,88 @@ class TestAskUser:
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
         assert first.instructions is not None and TOOL_NAME in first.instructions
+
+
+class TestDeferred:
+    async def test_the_run_pauses_and_the_host_answers_on_resume(self) -> None:
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[AskUser(answerer=None), observer],
+        )
+        paused = await agent.run('go')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.calls
+        request = AskUserRequest.from_tool_call(call)
+        assert request == observer.requested[0].request
+        assert request.id == 'c1' and [q.header for q in request.questions] == ['Approach', 'Targets']
+        assert observer.answered == []
+
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='Approach', selected=('Patch',)),
+                AskUserAnswer(header='Targets', custom_answer='all of them'),
+            )
+        )
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)}),
+        )
+        assert json.loads(str(resumed.output)) == {'Approach': ['Patch'], 'Targets': ['all of them']}
+
+    def test_a_declined_or_misfit_answer_is_rendered_like_an_inline_one(self) -> None:
+        request = AskUserRequest(questions=(question(),))
+        assert ask_user_result(request, AskUserResponse(cancelled=True)) == DECLINED
+        with pytest.raises(ValueError, match='unanswered questions'):
+            ask_user_result(request, AskUserResponse())
+
+    def test_a_timeout_needs_an_answerer(self) -> None:
+        with pytest.raises(UserError, match='cannot be combined with `answerer=None`'):
+            AskUser(answerer=None, timeout=5)
+
+    @pytest.mark.parametrize('timeout', [0, -1])
+    def test_a_timeout_must_be_positive(self, timeout: float) -> None:
+        with pytest.raises(UserError, match='must be positive'):
+            AskUser(answerer=ScriptedAnswerer(), timeout=timeout)
+
+
+class TestTimeout:
+    async def test_a_slow_answerer_is_cancelled_and_the_model_told(self) -> None:
+        cancelled = False
+
+        async def never(request: AskUserRequest) -> AskUserResponse:
+            nonlocal cancelled
+            try:
+                await anyio.sleep_forever()
+            finally:
+                cancelled = True
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=never, timeout=0.01), observer],
+        )
+        result = await agent.run('go')
+        assert result.output == TIMED_OUT
+        assert cancelled
+        (answered,) = observer.answered
+        assert answered.timed_out and answered.response == AskUserResponse(cancelled=True)
+        assert answered.request_id == observer.requested[0].request.id
+
+    async def test_an_answer_within_the_timeout_is_used(self) -> None:
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=ScriptedAnswerer(), timeout=60), observer],
+        )
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert observer.answered[0].timed_out is False
 
 
 class TestCheckResponse:

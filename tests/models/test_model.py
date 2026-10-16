@@ -1,6 +1,7 @@
 import os
 import re
 import warnings
+from copy import deepcopy
 from importlib import import_module
 from unittest.mock import patch
 
@@ -27,6 +28,7 @@ from pydantic_ai.models import (
     parse_model_id,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 
 from ..conftest import try_import
@@ -220,6 +222,14 @@ TEST_CASES = [
         'github-copilot',
         'github_copilot',
         GitHubCopilotModel,
+    ),
+    pytest.param(
+        {'META_API_KEY': 'meta-api-key'},
+        'meta:muse-spark-1.3',
+        'muse-spark-1.3',
+        'meta',
+        'openai',
+        OpenAIResponsesModel,
     ),
     pytest.param(
         {'MOONSHOTAI_API_KEY': 'moonshotai-api-key'},
@@ -695,3 +705,19 @@ def test_profile_context_window_callable_override():
         model = OpenAIChatModel('gpt-5', profile=profile)
     assert model.profile.get('context_window') is None
     assert inferred_context_windows[0] is not None
+
+
+def test_wrapper_model_deepcopy():
+    """`deepcopy` builds the copy without `__init__`, so `wrapped` is unset when `__getattr__` runs.
+
+    `copy` probes the new instance for `__setstate__`; forwarding that to an unset `wrapped` recursed
+    until `RecursionError`. No request is involved, so this is not a VCR test.
+    """
+    model = WrapperModel(TestModel(custom_output_text='wrapped'))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.model_name == 'test'
+    assert copied.custom_output_text == 'wrapped'
