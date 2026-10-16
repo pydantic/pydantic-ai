@@ -1153,7 +1153,8 @@ async def model_request(  # noqa: C901
     Loops over any suspended → complete continuation segments (Anthropic `pause_turn`,
     OpenAI background mode), echoing each suspended response back and merging the segments
     into one response. Only the final merged response is returned, so `wrap_model_request`
-    spans the whole chain and `after_model_request` sees just the final response.
+    spans the whole chain and `after_model_request` sees just the final response. With
+    `return_pending`, that can be a response the provider is still working on.
     Continuations are not separate request steps, so usage is committed exactly once when
     the merged response is appended to history. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.

@@ -532,7 +532,7 @@ When the response comes back still pending (`'queued'` or `'in_progress'`), Pyda
 
 Because the request is queued server-side, the time to the first token is higher than for a synchronous request. While a background response is still pending, Pydantic AI polls for completion at a fixed interval.
 
-To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued, and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
+To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
 
 !!! note
     A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.

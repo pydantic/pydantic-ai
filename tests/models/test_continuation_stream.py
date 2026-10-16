@@ -1462,3 +1462,70 @@ async def test_a_streamed_run_without_pending_output_waits_for_the_job() -> None
         async with Agent(model).run_stream('Hello') as result:
             assert await result.get_output() == 'done'
     assert (model.segments, delays) == ([], [0.5])
+
+
+@dataclass
+class _TextStream(StreamedResponse):
+    """Streams text through the parts manager, so the stream emits a `FinalResultEvent` as a provider stream does."""
+
+    _text: str
+    _response: ModelResponse
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for event in self._parts_manager.handle_text_delta(vendor_part_id='text', content=self._text):
+            yield event
+        self.state = self._response.state
+
+    @property
+    def model_name(self) -> str:
+        return 'fake'
+
+    @property
+    def provider_name(self) -> str | None:
+        return 'fake'
+
+    @property
+    def provider_url(self) -> str | None:
+        return None
+
+    @property
+    def timestamp(self) -> datetime:
+        return _TIMESTAMP
+
+
+class _TextStreamModel(_FakeModel):
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: object | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        segment = self.segments.pop(0)
+        stream = _TextStream(model_request_parameters, segment.response.text or '', segment.response)
+        stream.provider_response_id = segment.response.provider_response_id
+        stream.provider_details = segment.response.provider_details
+        yield stream
+
+
+async def test_run_stream_ends_with_pending_output_after_streaming_partial_text() -> None:
+    """`run_stream` ends with `PendingModelResponse`, not the partial text a pending background job streamed.
+
+    The partial text triggers the stream's final result, so the run ends from `run_stream` itself rather than from the
+    graph's tool-handling node.
+    """
+    model = _TextStreamModel(_background_segments())
+    agent = Agent(model, output_type=[str, PendingModelResponse])
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+    assert isinstance(output, PendingModelResponse)
+    assert output.response.text == 'partial'
+    last = result.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    assert (last.state, last.provider_response_id) == ('suspended', 'job1')
+
+    async with agent.run_stream(message_history=result.all_messages()) as resumed:
+        assert await resumed.get_output() == 'done'
+    assert (model.segments, model.cancelled) == ([], [])
