@@ -9,6 +9,7 @@ import type {
   StatusInfo,
   TaskEntry,
   ThemeInfo,
+  UpdateInfo,
   Usage,
 } from './protocol'
 
@@ -52,6 +53,10 @@ export interface State {
   tasks: TaskEntry[]
   /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
   taskItems: Record<string, Entry[]>
+  /** The CLAI this page talks to, by version; `null` until it connects. */
+  version: string | null
+  /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
+  update: UpdateInfo | null
 }
 
 export const initial: State = {
@@ -68,6 +73,8 @@ export const initial: State = {
   followsWorkspace: false,
   tasks: [],
   taskItems: {},
+  version: null,
+  update: null,
 }
 
 let counter = 0
@@ -134,11 +141,20 @@ function taskChanged(state: State, task: TaskEntry): State {
 /** Apply one server message; every change makes new objects, so memoized rows re-render only when theirs changed. */
 export function reduce(state: State, message: ServerMessage): State {
   switch (message.type) {
-    case 'snapshot':
+    case 'snapshot': {
+      // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
+      const updated = state.version !== null && message.version !== state.version
+      const notice: NoticeEntry = {
+        id: nextId('notice'),
+        kind: 'notice',
+        text: `Updated CLAI to ${message.version}.`,
+        level: 'info',
+        command: null,
+      }
       return {
         ...state,
         session: message.session,
-        entries: message.items,
+        entries: updated ? [...message.items, notice] : message.items,
         running: message.running,
         status: message.status,
         questions: message.questions,
@@ -148,7 +164,12 @@ export function reduce(state: State, message: ServerMessage): State {
         followsWorkspace: message.follows_workspace,
         tasks: message.tasks,
         taskItems: message.task_items,
+        version: message.version,
+        update: message.update,
       }
+    }
+    case 'update':
+      return { ...state, update: message.update }
     case 'item':
     case 'delta':
     case 'tool_output':

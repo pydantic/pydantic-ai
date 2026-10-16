@@ -243,6 +243,13 @@ resuming the current conversation. Switching back to `stable` offers the latest 
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
+`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+typed in the page or in the terminal: the page shows uv's progress and the result. After
+an install, CLAI restarts with the web UI on the same port and token, so the page
+reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
+Like any command, `/update` entered while a turn runs waits for the turn to end.
+
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
@@ -1967,6 +1974,13 @@ unavailable Git fall back to directory labels. Separate repositories with the
 same name remain separate and use paths to distinguish them. Transcript previews
 keep the original saved path; resuming does not change directories or migrate
 saved data.
+
+In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
+the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
+marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
+session and one running in another CLAI cannot be archived. Resuming an archived
+session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
+and continues in the copy.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
