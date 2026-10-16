@@ -5666,7 +5666,11 @@ def test_google_thought_signature_on_thinking_part():
 
 
 async def test_google_foreign_thinking_part_not_sent_as_thought(google_provider: GoogleProvider):
-    """Another provider's reasoning is replayed as tagged text, not as Gemini's own `thought` part."""
+    """Another provider's reasoning is replayed as tagged text, not as Gemini's own `thought` part.
+
+    Pinned as a unit test because the cross-provider cassette tests don't match on request body,
+    so their stale recordings wouldn't catch a regression.
+    """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hi')]),
