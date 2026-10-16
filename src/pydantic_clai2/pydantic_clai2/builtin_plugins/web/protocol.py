@@ -16,6 +16,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
 )
 from pydantic_ai.messages import (
@@ -95,6 +96,8 @@ class Item:
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
+    streaming: bool = False
+    """An answer or thinking block the model is still writing; live runs only."""
 
 
 @dataclass(kw_only=True)
@@ -297,6 +300,14 @@ class TextDelta:
     type: Literal['delta'] = 'delta'
     id: str
     text: str
+
+
+@dataclass(kw_only=True)
+class TextDone:
+    """An answer or thinking block the model finished writing, though its turn may go on."""
+
+    type: Literal['text_done'] = 'text_done'
+    id: str
 
 
 @dataclass(kw_only=True)
@@ -517,6 +528,7 @@ class SettingsChanged:
 ItemMessage = (
     ItemAdded
     | TextDelta
+    | TextDone
     | ArgsDelta
     | ToolArgs
     | ToolOutput
@@ -892,6 +904,11 @@ class EventTranslator:
             return self._start(event)
         if isinstance(event, PartDeltaEvent):
             return self._delta(event)
+        if isinstance(event, PartEndEvent):
+            item_id = self._parts.get(event.index)
+            if item_id is None or not isinstance(event.part, TextPart | ThinkingPart):
+                return []
+            return [TextDone(id=item_id)]
         if isinstance(event, SandboxCallStartedEvent):
             call = event.call
             parent = _parent(call.tool_call_id)
@@ -931,7 +948,7 @@ class EventTranslator:
         item_id = f'live{self._count}'
         self._parts[event.index] = item_id
         kind: ItemKind = 'assistant' if isinstance(part, TextPart) else 'thinking'
-        return [ItemAdded(item=Item(id=item_id, kind=kind, text=part.content))]
+        return [ItemAdded(item=Item(id=item_id, kind=kind, text=part.content, streaming=True))]
 
     def _delta(self, event: PartDeltaEvent) -> list[ItemMessage]:
         delta = event.delta
@@ -993,6 +1010,8 @@ class ItemLog:
             return
         if isinstance(message, TextDelta):
             item.text += message.text
+        elif isinstance(message, TextDone):
+            item.streaming = False
         elif isinstance(message, ArgsDelta):
             item.args += message.text
         elif isinstance(message, ToolArgs):

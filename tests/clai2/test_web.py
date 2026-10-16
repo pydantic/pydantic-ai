@@ -30,7 +30,7 @@ from websockets.typing import Origin
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
@@ -62,6 +62,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     StatusChanged,
     TextDelta,
+    TextDone,
     ThemeChanged,
     TitleChanged,
     ToolDone,
@@ -245,6 +246,65 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         assert running.result(timeout=10) == 'exit'
 
 
+def test_answers_say_when_they_finish_streaming(make_web: 'MakeWeb') -> None:
+    """An answer is done once its part ends, before the tool call the model writes next has an item to show."""
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    def lookup(*, query: str) -> str:
+        """Look something up."""
+        return f'found {query}'
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) > 1:
+            yield 'Found '
+            yield 'it.'
+            return
+        yield 'Let me '
+        yield 'look.'
+        args = '{"query": "' + 'x' * 50 + '"}'
+        yield {1: DeltaToolCall(name='lookup', json_args=args[:10], tool_call_id='call1')}
+        for start in range(10, len(args), 10):
+            yield {1: DeltaToolCall(json_args=args[start : start + 10])}
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream), deps_type=type(None), capabilities=[tools]))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'look it up'})
+        messages, _ = receive_until(socket, TurnEnded)
+        shown = [
+            (message.item.kind, message.item.streaming)
+            if isinstance(message, ItemAdded)
+            else (message.type, message.id)
+            for message in messages
+            if isinstance(message, ItemAdded | TextDone | ToolDone)
+        ]
+        [first, second] = [
+            message.item.id
+            for message in messages
+            if isinstance(message, ItemAdded) and message.item.kind == 'assistant'
+        ]
+        assert shown == [
+            ('assistant', True),
+            ('text_done', first),
+            ('tool', False),
+            ('tool_done', 'call1'),
+            ('assistant', True),
+            ('text_done', second),
+        ]
+        # Saved history streams no more.
+        items = web_.get('/api/state').json()['items']
+        assert [(item['kind'], item['streaming']) for item in items] == [
+            ('user', False),
+            ('assistant', False),
+            ('tool', False),
+            ('assistant', False),
+        ]
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
 def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
     """`/fork` fires the turn moments for its background run; the browser shows only the held conversation's turns."""
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
@@ -356,7 +416,7 @@ def test_a_monty_cell_from_the_browser(make_web: 'MakeWeb') -> None:
         assert (notice.command, notice.text) == ('/monty x = 6 * 7\nprint(x)', '42')
         [cell] = [message.item for message in messages if isinstance(message, ItemAdded)]
         assert (cell.name, cell.by_user) == ('run_code', True)
-        assert not any(isinstance(message, TurnStarted | TurnEnded) for message in messages)
+        assert not any(isinstance(message, TurnStarted | TurnEnded | TextDelta | TextDone) for message in messages)
         assert all(message.status.run is None for message in messages if isinstance(message, StatusChanged))
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
