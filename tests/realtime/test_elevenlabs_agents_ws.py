@@ -6,25 +6,15 @@ conversation end-to-end through [`Agent.realtime`][pydantic_ai.agent.Agent.realt
 real protocol: the override initiation, the tool round-trip against a real workspace client tool,
 the streamed audio and transcripts, the `agent_response` turn boundary, and the run-level usage.
 
-Unlike the sibling providers, ElevenLabs wraps a *hosted agent*, so recording needs two purpose-built
-dev agents (all override toggles enabled, `context_usage` added to `conversation.client_events`,
-16 kHz PCM in and out, `turn.turn_timeout` raised to 30 s so the silence a microphone streams after
-a short reply does not prompt an "are you still there" turn): one with a `get_weather` client tool
-attached for the tool rounds, and one with no tools for the plain turns (the default
-`elevenlabs_agents_tool_sync='error'` would otherwise report the attached tool as undefined by the run).
-Their ids are baked in below; point `ELEVENLABS_TEST_AGENT_ID` and `ELEVENLABS_TEST_TOOLLESS_AGENT_ID`
-at your own agents to re-record. The REST preflight records through ordinary HTTP VCR alongside the
-WebSocket cassette:
-
-    uv run --env-file .env pytest --record-mode=rewrite --inline-snapshot=create tests/realtime/test_elevenlabs_agents_ws.py
-
-The `'sync'` mode tests each need a specific agent state at record time, and the mode lists every
-workspace tool over REST, so record them one at a time (`-k`) on an otherwise empty workspace, in
-this order: `creates` on a fresh toolless agent; delete that agent so its created tool becomes an
-unattached orphan; `adopts` on another toolless agent (which attaches the orphan); `updates` on an
-agent whose attached `get_weather` carries a stale description; `detaches` on an agent holding the
-matching `get_weather`, an extra client tool and a webhook tool. Point the
-`ELEVENLABS_TEST_SYNC_*_AGENT_ID` variables at your agents.
+Unlike the sibling providers, ElevenLabs Agents wraps a *hosted agent*, so recording needs purpose-built agents
+(all override toggles enabled, `context_usage` added to `conversation.client_events`, 16 kHz PCM in and out, a TTS
+model without expressive tags, and `turn.turn_timeout` raised to 30 s so the silence a microphone streams after a
+short reply does not prompt an "are you still there" turn): one with a `get_weather` client tool attached for the tool
+rounds, one with no tools for the plain turns (the default `elevenlabs_agents_tool_sync='error'` would otherwise report
+the attached tool as undefined by the run), and one per `'sync'` mode test. Their ids are baked in below.
+`scripts/setup_elevenlabs_agents_test_workspace.py` creates them and prints the environment that points the tests at
+them; its docstring has the recording commands, and the order the `'sync'` mode tests are recorded in. The REST
+preflight records through ordinary HTTP VCR alongside the WebSocket cassette.
 """
 
 from __future__ import annotations as _annotations
@@ -38,6 +28,7 @@ from typing import Any
 import anyio
 import pytest
 from cassetter import Cassette
+from cassetter.introspection import RecordedRequest, recorded_request
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -76,14 +67,14 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='websockets not installed'),
 ]
 
-# The dev agents the cassettes were recorded against (deleted after recording); the ids are not
+# The agents `scripts/setup_elevenlabs_agents_test_workspace.py` created to record the cassettes; the ids are not
 # secrets and pin the recorded REST paths for replay.
-AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_2001m3hcjcrkfs1awbmpqytnqvew')
-TOOLLESS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_TOOLLESS_AGENT_ID', 'agent_1401m3hcjf30eqxtp3g5mczn16sr')
-SYNC_CREATE_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_CREATE_AGENT_ID', 'agent_3801m2dhe625eh8skp0kpebf0e5s')
-SYNC_ADOPT_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_ADOPT_AGENT_ID', 'agent_4901m2dhfaqnfcqrpbs2e1sk8xn6')
-SYNC_UPDATE_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_UPDATE_AGENT_ID', 'agent_0101m2dhhjp2e9h8001eznp7q483')
-SYNC_DETACH_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_DETACH_AGENT_ID', 'agent_1801m2dhhmqwezwaym92h2sp2ya0')
+AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_7901m52mec0veknvz7vfnm56aaym')
+TOOLLESS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_TOOLLESS_AGENT_ID', 'agent_2401m52medn1e61r3f86pkac45kw')
+SYNC_CREATE_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_CREATE_AGENT_ID', 'agent_9901m52meewqf9k9cv3eemj0g3wy')
+SYNC_ADOPT_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_ADOPT_AGENT_ID', 'agent_0601m52meg6fesp9wwavq2he1n28')
+SYNC_UPDATE_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_UPDATE_AGENT_ID', 'agent_8101m52mehgnf9dt90jzyqh4557n')
+SYNC_DETACH_AGENT_ID = os.environ.get('ELEVENLABS_TEST_SYNC_DETACH_AGENT_ID', 'agent_9601m52mejrkeb18cg98xync82vx')
 
 INSTRUCTIONS = 'Answer in one short sentence. Use the get_weather tool for any weather question.'
 
@@ -91,8 +82,8 @@ INSTRUCTIONS = 'Answer in one short sentence. Use the get_weather tool for any w
 # The `context_tokens` of the two `context_usage` reports in the recording: the context the pipeline
 # LLM held on each turn. Turn 2's is turn 1's plus the follow-up exchange, not a running total, so
 # summing the reports into `input_tokens` counts what the LLM actually consumed.
-_TURN_ONE_CONTEXT_TOKENS = 451
-_TURN_TWO_CONTEXT_TOKENS = 459
+_TURN_ONE_CONTEXT_TOKENS = 429
+_TURN_TWO_CONTEXT_TOKENS = 436
 _CONTEXT_LIMIT_TOKENS = 1_048_576
 
 
@@ -137,7 +128,8 @@ async def test_tool_round_and_followup_turn(
                         break
             if realtime_recording:  # pragma: no cover  # only while recording
                 await anyio.sleep(5)  # let the second report reach the recording
-            while session.usage.input_tokens < _TURN_ONE_CONTEXT_TOKENS + _TURN_TWO_CONTEXT_TOKENS:
+            # The session counts a report into `usage` as it arrives, and into the window fraction just after.
+            while session.context_window_used != _TURN_TWO_CONTEXT_TOKENS / _CONTEXT_LIMIT_TOKENS:
                 await anyio.sleep(0.05)
 
     # No server-side rejection (a bad override or tool mismatch closes the socket with 1008 and
@@ -362,7 +354,7 @@ async def test_audio_in_server_vad_turn(
         if isinstance(part, SpeechPart)
     ]
     assert spoken == snapshot(
-        [('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hello Marcelo, [happy] nice to meet you.')]
+        [('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hi Marcelo! How can I assist you today?')]
     )
 
 
@@ -423,13 +415,11 @@ async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply
     assert story_response.provider_details == {'conversation_id': IsStr()}
     story_part = story_response.parts[-1]
     assert isinstance(story_part, SpeechPart)
-    assert story_part.transcript == snapshot('...')
+    assert story_part.transcript == snapshot('Far...')
     assert goodbye_response.state != 'interrupted'
     assert goodbye_response.provider_details == {'conversation_id': IsStr()}
     goodbye_part = goodbye_response.parts[-1]
-    assert isinstance(goodbye_part, SpeechPart) and goodbye_part.transcript == snapshot(
-        'Alright, I understand. Goodbye then! I hope you have a wonderful day.'
-    )
+    assert isinstance(goodbye_part, SpeechPart) and goodbye_part.transcript == snapshot('Goodbye.')
     spoken = [
         (part.speaker, part.transcript)
         for message in messages
@@ -534,7 +524,7 @@ async def test_settings_overrides_reach_the_initiation_frame(
         for part in message.parts
         if isinstance(part, SpeechPart)
     ]
-    assert spoken == snapshot([('assistant', 'Welcome to the demo.'), ('assistant', '[happy] Hi there.')])
+    assert spoken == snapshot([('assistant', 'Welcome to the demo.'), ('assistant', 'Hello there.')])
 
 
 def _weather_agent() -> Agent:
@@ -579,17 +569,22 @@ def _assert_weather_round(events: list[Any], messages: list[Any], cassette: Real
     assert answer_part.transcript is not None and 'sunny' in answer_part.transcript.lower()
 
 
+def _rest_requests(vcr: Cassette) -> list[RecordedRequest]:
+    """The recorded REST requests in the order they were made (a cassette file lists them by method and URI)."""
+    return [recorded_request(interaction) for interaction in sorted(vcr.interactions, key=lambda i: i.recorded_at)]
+
+
 def _rest_calls(vcr: Cassette) -> list[str]:
     """The REST preflight as recorded: method and path, ids replaced so the order is the assertion."""
     calls: list[str] = []
-    for request in vcr.requests:
+    for request in _rest_requests(vcr):
         path = re.sub(r'/(agent|tool)_[0-9a-z]+', r'/<\1_id>', request.path)
         calls.append(f'{request.method} {path}')
     return calls
 
 
 def _rest_body(vcr: Cassette, index: int) -> dict[str, Any]:
-    body = vcr.requests[index].body
+    body = _rest_requests(vcr)[index].body
     assert body is not None
     return json.loads(body)
 
@@ -597,7 +592,10 @@ def _rest_body(vcr: Cassette, index: int) -> dict[str, Any]:
 async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
     elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
-    """`'sync'` on an agent with no tools: the run's tool is created, the agent re-pointed, the round works."""
+    """`'sync'` on an agent with no tools: the run's tool is created, the agent re-pointed, the round works.
+
+    The workspace's matching `get_weather` belongs to other agents (its dependents are checked), so it isn't adopted.
+    """
     provider, cassette = elevenlabs_agents_ws_cassette
     model = ElevenLabsAgentsRealtimeModel(
         SYNC_CREATE_AGENT_ID,
@@ -610,12 +608,13 @@ async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
         [
             'GET /v1/convai/agents/<agent_id>',
             'GET /v1/convai/tools',
+            'GET /v1/convai/tools/<tool_id>/dependent-agents',
             'POST /v1/convai/tools',
             'PATCH /v1/convai/agents/<agent_id>',
             'GET /v1/convai/conversation/get-signed-url',
         ]
     )
-    created = _rest_body(vcr, 2)
+    created = _rest_body(vcr, 3)
     assert created == snapshot(
         {
             'tool_config': {
@@ -631,7 +630,7 @@ async def test_tool_sync_creates_and_attaches_on_a_toolless_agent(
             }
         }
     )
-    repointed = _rest_body(vcr, 3)
+    repointed = _rest_body(vcr, 4)
     assert repointed == {'conversation_config': {'agent': {'prompt': {'tool_ids': [IsStr(regex=r'tool_[0-9a-z]+')]}}}}
     _assert_weather_round(events, messages, cassette)
 
@@ -663,10 +662,6 @@ async def test_tool_sync_adopts_a_matching_unattached_tool(
     _assert_weather_round(events, messages, cassette)
 
 
-@pytest.mark.skip(
-    reason='re-record: sync now checks whether another agent uses a tool before updating it in place, a request '
-    'this recording (against a deleted dev agent) predates'
-)
 async def test_tool_sync_updates_a_stale_tool_in_place(
     elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], vcr: Cassette
 ) -> None:
@@ -683,12 +678,26 @@ async def test_tool_sync_updates_a_stale_tool_in_place(
         [
             'GET /v1/convai/agents/<agent_id>',
             'GET /v1/convai/tools',
+            'GET /v1/convai/tools/<tool_id>/dependent-agents',
             'PATCH /v1/convai/tools/<tool_id>',
             'GET /v1/convai/conversation/get-signed-url',
         ]
     )
-    patched = _rest_body(vcr, 2)
-    assert patched['tool_config']['description'] == 'Look up the current weather for a city.'
+    assert _rest_body(vcr, 3) == snapshot(
+        {
+            'tool_config': {
+                'type': 'client',
+                'name': 'get_weather',
+                'description': 'Look up the current weather for a city.',
+                'expects_response': True,
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'city': {'type': 'string', 'description': 'City name'}},
+                    'required': ['city'],
+                },
+            }
+        }
+    )
     _assert_weather_round(events, messages, cassette)
 
 

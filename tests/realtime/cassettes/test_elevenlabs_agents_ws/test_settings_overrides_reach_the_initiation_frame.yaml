@@ -28,7 +28,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000
       content-length:
-      - "13288"
+      - "13289"
       content-type:
       - application/json
       strict-transport-security:
@@ -70,10 +70,10 @@ interactions:
               llm_generated_message_prompt_override: null
               disable_until_first_user_message: false
           tts:
-            model_id: eleven_v4_turbo
+            model_id: eleven_flash_v2
             voice_id: cjVigY5qzO86Huf0OWal
             supported_voices: []
-            expressive_mode: true
+            expressive_mode: false
             suggested_audio_tags: []
             agent_output_audio_format: pcm_16000
             optimize_streaming_latency: 3
@@ -193,7 +193,7 @@ interactions:
               tools: []
         metadata:
           created_at_unix_secs: 1792163658
-          updated_at_unix_secs: 1792163658
+          updated_at_unix_secs: 1792165104
         platform_settings:
           evaluation:
             criteria: []
@@ -562,14 +562,14 @@ interactions:
         - resource_delete
         - resource_manage_access
         tags: []
-        version_id: agtvrsn_7401m52meen4egfvr3m6pwnbjzgx
+        version_id: agtvrsn_8001m52ntjrne14s4vjf1jn5c04p
         branch_id: agtbrch_7001m52meejteambfc5a3wvxz4w0
         main_branch_id: agtbrch_7001m52meejteambfc5a3wvxz4w0
         procedures: {}
         trust_context: unknown
         default_hold_audio_url: >-
           https://eleven-public-cdn-common.elevenlabs.io/convai/ambient-audio-assets/elevator1.mp3
-  recorded_at: 2026-10-16T15:15:10.684984+00:00
+  recorded_at: 2026-10-16T15:40:42.484370+00:00
 - request:
     method: GET
     uri: >-
@@ -611,4 +611,4 @@ interactions:
       content:
         signed_url: >-
           wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_2401m52medn1e61r3f86pkac45kw&conversation_signature=scrubbed
-  recorded_at: 2026-10-16T15:15:10.756832+00:00
+  recorded_at: 2026-10-16T15:40:42.549300+00:00

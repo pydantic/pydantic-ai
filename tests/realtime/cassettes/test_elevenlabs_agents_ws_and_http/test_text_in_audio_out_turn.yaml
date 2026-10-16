@@ -17,7 +17,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_0601m52mfb8wevkanxax7w68basj
+      conversation_id: conv_2501m52nxwvzftkvyktbfxbdk6pg
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -30,59 +30,33 @@ interactions:
     text: Say hi.
 - kind: message
   direction: received
-  at: 0.927
+  at: 0.777
   data:
     audio_event:
-      audio_base_64: AAD+/wAAAQABAAEAAAABAAEAAQABAAEAAQACAAEAAQAB
+      audio_base_64: AwAFAAEAAAD+//3//v/+//7//f/9//3////+//3//P/9
       event_id: 1
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 0.963
-  data:
-    audio_event:
-      audio_base_64: NQDM/TP+LwGmA6MAoP7I/5sBcwG3AVADdgI8/wkA7QF5
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 0.965
-  data:
-    audio_event:
-      audio_base_64: zf59+fr3ZvpNAF0Duv9++8v50fen9/f3Z/ae9oYDFBRK
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 0.996
-  data:
-    audio_event:
-      audio_base_64: Ag6xDYET+RLZEIoN9ApOBxsCs//eAhUG1gbDAwf8VvaO
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 1.051
-  data:
-    audio_event:
-      audio_base_64: G/9v/YT9zv4jAUsD1wPiAuYA3P57/RP+eQDmAu4EzgUO
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 1.051
+  at: 0.782
   data:
     agent_response_event:
-      agent_response: '[happy] Hi there.'
+      agent_response: Hello there.
       event_id: 1
-      response_id: 760143c5-86e3-42d1-84c3-81a8be6cba3b
+      response_id: 217c2d96-596b-4fe6-8afc-ac21f9cc90b1
       in_response_to_ids:
-      - a26fcbc4-f6f4-4974-a8e5-6bf51dd7523d
+      - 5abca95b-7c56-40c1-8c22-0ba77330b854
       response_type: text
       attachments: []
     type: agent_response
+- kind: message
+  direction: received
+  at: 0.784
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 383
+      context_limit_tokens: 1048576
+    type: context_usage

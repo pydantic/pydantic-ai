@@ -18,7 +18,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_2301m52mff70fgwbtedqydgb1n39
+      conversation_id: conv_9001m52ny76vfjk813pm9ssngz44
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -115,7 +115,7 @@ interactions:
     user_audio_chunk: dBOKE/YT7hOCEyITnxJQEhMSOxExEGQOIAwQCfcEcwBm
 - kind: message
   direction: received
-  at: 1.751
+  at: 1.75
   data:
     ping_event:
       event_id: 2
@@ -123,7 +123,7 @@ interactions:
     type: ping
 - kind: message
   direction: sent
-  at: 1.751
+  at: 1.75
   data:
     type: pong
     event_id: 2
@@ -144,7 +144,7 @@ interactions:
     user_audio_chunk: vv2k/v7+uf90AHkBzgLXA54ETgUqBr4GFweGBrcFHAWs
 - kind: message
   direction: sent
-  at: 2.111
+  at: 2.112
   data:
     user_audio_chunk: Uf2d/BP82Pt4+yn7+PqI+hD6bPkZ+eb4zfhg+L/3cfdo
 - kind: message
@@ -154,220 +154,210 @@ interactions:
     user_audio_chunk: YO2l7ODrmOtu67nqROqy6SjoR+cS5xbmauWx5HPkweYC
 - kind: message
   direction: sent
-  at: 2.312
+  at: 2.313
   data:
     user_audio_chunk: U/Es8MHuoO2z7Dfs5Oui60vr6+pI6uvpc+m86P/ngufn
 - kind: message
   direction: sent
-  at: 2.412
+  at: 2.413
   data:
     user_audio_chunk: MgIkAhgCBQLhAbcBkgFUASEB2ACNAE0ABwDU/6D/dP9M
 - kind: message
   direction: sent
-  at: 2.513
+  at: 2.514
   data:
     user_audio_chunk: ov3m+lb4i/fb+Bn8+wAdB3ENZhQQG5geQh6GGrIVYBDn
 - kind: message
   direction: sent
-  at: 2.613
+  at: 2.614
   data:
     user_audio_chunk: CwGUACwAlACtAL8AlQBPABgALgDBAGsBvAFUAQMBJwGj
 - kind: message
   direction: sent
-  at: 2.714
+  at: 2.715
   data:
     user_audio_chunk: 0fdN+rH9WAFDBSsHlAfNBNr/avt/+R75qveT9x74zfm+
 - kind: message
   direction: sent
-  at: 2.814
+  at: 2.815
   data:
     user_audio_chunk: xgC6AEUAhP++/sb94fyg/EL9S/8+AqQF2widC7wNkA6J
 - kind: message
   direction: sent
-  at: 2.915
+  at: 2.916
   data:
     user_audio_chunk: 6Q8e+hf9SwPI8mYHkeX2D+r9uvHQHQLw6AGZCHUGzPYf
 - kind: message
   direction: sent
-  at: 3.015
+  at: 3.016
   data:
     user_audio_chunk: LP3cAFD+mf56/xMAFvyaAAb/JP5N/q0Apv4f/lT/JACo
 - kind: message
   direction: sent
-  at: 3.116
+  at: 3.117
   data:
     user_audio_chunk: RAYQBukF1wW/BXYFEwWRBBgEsANQA/YCcwLVAUMBwQBE
 - kind: message
   direction: sent
-  at: 3.216
+  at: 3.217
   data:
     user_audio_chunk: SwFmAWsBTwEOAbIAZQAEAJr/Kv/m/vD+JP9p/6f/4f/C
 - kind: message
   direction: sent
-  at: 3.317
+  at: 3.318
   data:
     user_audio_chunk: qP6l/o3+Yf4g/uH9tf2y/db9I/5+/tb+I/9n/6r/9P9E
 - kind: message
   direction: sent
-  at: 3.417
+  at: 3.418
   data:
     user_audio_chunk: CAABAPP/8P/p//b/BgAfADgARwBTAE8ARQA1AB8AEgAD
 - kind: message
   direction: received
-  at: 3.451
+  at: 3.45
   data:
     ping_event:
       event_id: 3
-      ping_ms: 47
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
-  at: 3.451
+  at: 3.45
   data:
     type: pong
     event_id: 3
 - kind: message
   direction: sent
-  at: 3.518
+  at: 3.519
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 3.618
+  at: 3.619
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 3.719
+  at: 3.72
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 3.819
+  at: 3.82
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 3.92
+  at: 3.921
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.02
+  at: 4.021
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.121
+  at: 4.122
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.221
+  at: 4.223
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.322
+  at: 4.323
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.422
+  at: 4.424
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.523
+  at: 4.524
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.623
+  at: 4.625
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.724
+  at: 4.725
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.824
+  at: 4.826
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 4.925
+  at: 4.926
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 5.025
+  at: 5.027
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 5.126
+  at: 5.127
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 5.152
+  at: 5.151
   data:
     ping_event:
       event_id: 4
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
-  at: 5.152
+  at: 5.151
   data:
     type: pong
     event_id: 4
 - kind: message
   direction: sent
-  at: 5.227
+  at: 5.228
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 5.327
+  at: 5.328
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 5.428
+  at: 5.429
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 5.528
+  at: 5.53
   data:
     user_audio_chunk: GgAaABcAGgAbABoAHAAbABsAGgAbABsAGgAcABgAHQAZ
 - kind: message
   direction: sent
-  at: 5.629
+  at: 5.63
   data:
     user_audio_chunk: FgAXABMAFgAXABUAFgAWABQAFQAWABUAFQAWAA8AFgAR
 - kind: message
   direction: sent
-  at: 5.729
+  at: 5.731
   data:
     user_audio_chunk: GgAaABQAGQAYABYAFwAWABQAFQAVABUAFAAUAAwAEwAO
 - kind: message
-  direction: sent
-  at: 5.83
-  data:
-    user_audio_chunk: swA7AJv/PQA6AM7/xgCC/xUBsv82AFYAiP8oAI8Ao/8J
-- kind: message
-  direction: sent
-  at: 5.93
-  data:
-    user_audio_chunk: pwnv/9786wLb/d8BSf6F/JQIB/tJBZP+J/t7A6n9GwHc
-- kind: message
   direction: received
-  at: 6.0
+  at: 5.826
   data:
     user_transcription_event:
       user_transcript: Please tell me a long story about a lighthouse keeper.
@@ -375,211 +365,221 @@ interactions:
     type: user_transcript
 - kind: message
   direction: received
-  at: 6.0
+  at: 5.829
   data:
     audio_event:
-      audio_base_64: AAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAABAAEAAQAB
-      event_id: 23
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 6.019
-  data:
-    audio_event:
-      audio_base_64: a/8JAOj+VABlAdX+j/8ZARQB5P0gAM4Amv9v/8oA8/+Z
+      audio_base_64: 9/8CAA0A9v/q//P/FgAHAAUA9P///xYAAAD//wEA6v/1
       event_id: 23
       is_final: false
     type: audio
 - kind: message
   direction: sent
-  at: 6.031
+  at: 5.832
+  data:
+    user_audio_chunk: swA7AJv/PQA6AM7/xgCC/xUBsv82AFYAiP8oAI8Ao/8J
+- kind: message
+  direction: sent
+  at: 5.932
+  data:
+    user_audio_chunk: pwnv/9786wLb/d8BSf6F/JQIB/tJBZP+J/t7A6n9GwHc
+- kind: message
+  direction: received
+  at: 5.968
+  data:
+    audio_event:
+      audio_base_64: pvTj9KbzbvPu9lj+BgRYA6ICTQTFAj793fYf84by/vG1
+      event_id: 23
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 5.973
+  data:
+    audio_event:
+      audio_base_64: JgADAO//0v+j/2f/IP/Z/p3+c/5U/j3+If7//dX9qP2E
+      event_id: 23
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 5.974
+  data:
+    audio_event:
+      audio_base_64: TwXMBT0GnwbbBg0HLQdMB3QHmwfCB94H3gfcB8cHogeM
+      event_id: 23
+      is_final: false
+    type: audio
+- kind: message
+  direction: sent
+  at: 6.034
   data:
     user_audio_chunk: gP47/XoA0/0D/bb96P3E/l792/4z/Jb98PzA/y79G/56
 - kind: message
-  direction: received
-  at: 6.036
-  data:
-    audio_event:
-      audio_base_64: NwcGCDkIwwmTDoMVsRrfHkIhtSAbHl0aURSBCwgB+Peg
-      event_id: 23
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 6.081
-  data:
-    audio_event:
-      audio_base_64: zQkxFj4hiSSFIpwZsw2sAqL4W/Rf82/3XvzyAFcEEAUH
-      event_id: 23
-      is_final: false
-    type: audio
-- kind: message
   direction: sent
-  at: 6.132
+  at: 6.135
   data:
     user_audio_chunk: ov93ApAFEgmeDDMQWhOkFKcTbBAxDNwIoQbvBNICDAE+
 - kind: message
   direction: received
-  at: 6.204
+  at: 6.174
   data:
     audio_event:
-      audio_base_64: iwYXB1IHvQdtCEkJCAraCrkLXwzLDK8MEAzoCpEJnAj6
+      audio_base_64: 5vt1+ZT4Mvk0+QT60/vC+wT53/jz+ST7Q/t7+wX7/Pd3
       event_id: 23
       is_final: false
     type: audio
 - kind: message
   direction: sent
-  at: 6.233
+  at: 6.235
   data:
     user_audio_chunk: AwAGAAYACQAJAAoAEAASABcAEwAUABAAEwAQABAAEgAW
 - kind: message
   direction: received
-  at: 6.289
+  at: 6.288
   data:
     interruption_event:
       event_id: 39
     type: interruption
 - kind: message
   direction: received
-  at: 6.29
+  at: 6.288
   data:
     agent_response_event:
-      agent_response: '...'
+      agent_response: Far...
       event_id: 23
-      response_id: d08afc5e-342b-402f-a58c-57dcfe93c170
+      response_id: 2e329b14-a94f-4661-89c0-4063f4cbf333
       in_response_to_ids:
-      - b568d1d8-5699-45e0-aefb-0c99ed9871b3
+      - 47d19ea7-9f40-4dbd-9562-2dfb39baba66
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: sent
-  at: 6.334
+  at: 6.337
   data:
     user_audio_chunk: G+1n7BHs5esJ7Gvr/ukt6Q7o5ues5zrnHua749nhaeBa
 - kind: message
   direction: sent
-  at: 6.435
+  at: 6.437
   data:
     user_audio_chunk: VPcM9kz1N/XU9Bj0cfNk8pzxXPGj8UfyXPIQ8U3vxe7l
 - kind: message
   direction: sent
-  at: 6.535
+  at: 6.538
   data:
     user_audio_chunk: VgIMA4AGWgoZDb8MuAlOBQwB3f5///cC9AdVDNwOYw7w
 - kind: message
   direction: sent
-  at: 6.636
+  at: 6.638
   data:
     user_audio_chunk: 9v7m/tL+zf7J/tX+4P7m/uL+1/7I/rj+tP62/sf+4v7v
 - kind: message
   direction: sent
-  at: 6.736
+  at: 6.739
   data:
     user_audio_chunk: HwAgABwAIAAfAB4AIAAgAB0AHwAhAB8AHgAgABkAIAAb
 - kind: message
   direction: sent
-  at: 6.837
+  at: 6.839
   data:
     user_audio_chunk: CQAGAAIABAAHAAIAAwABAAAAAAAAAAAA/v/+//X//v/3
 - kind: message
   direction: received
-  at: 6.853
+  at: 6.852
   data:
     ping_event:
       event_id: 5
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
-  at: 6.853
+  at: 6.852
   data:
     type: pong
     event_id: 5
 - kind: message
   direction: sent
-  at: 6.938
+  at: 6.94
   data:
     user_audio_chunk: IfD176Lv1u5Y7tXtK+3V7ALs7OsP7L3sy+yc7CrsUOvg
 - kind: message
   direction: sent
-  at: 7.038
+  at: 7.041
   data:
     user_audio_chunk: rwpCCswJTQnNCEgIvwc1B6oGHwaWBQkFfwTxA2sD5AJg
 - kind: message
   direction: sent
-  at: 7.139
+  at: 7.141
   data:
     user_audio_chunk: 6u5KATcRDPr7/c8LUvSD+wD8zv4WBekG0v7u+WD0cAI3
 - kind: message
   direction: sent
-  at: 7.239
+  at: 7.242
   data:
     user_audio_chunk: 7u9N7XfqSumC6RToTuXP4QDgjN8/3w/frN4b3f/ZmdeB
 - kind: message
   direction: sent
-  at: 7.34
+  at: 7.342
   data:
     user_audio_chunk: cQoo/mj5fwpR7UwJqeroCHLyXQFsA8v71/9qASkND/b5
 - kind: message
   direction: sent
-  at: 7.44
+  at: 7.443
   data:
     user_audio_chunk: avbe+2QIyffR/rwQOOa3C0n8KfogBMv8uPiaCNHvhQNr
 - kind: message
   direction: sent
-  at: 7.541
+  at: 7.543
   data:
     user_audio_chunk: Sv8F/X/67fk6/O0AWwXcB8wICghjB6UIPgvFDSEPGA/Y
 - kind: message
   direction: sent
-  at: 7.641
+  at: 7.644
   data:
     user_audio_chunk: Fwb7BH4DOQJGAZ4ANABG/27+vv1K/e78cfy++zr7G/sK
 - kind: message
   direction: sent
-  at: 7.742
+  at: 7.744
   data:
     user_audio_chunk: W/+W/7n/8P/2/+n/9//5//7/c/9e/x3/NP+D/8X/HwAl
 - kind: message
   direction: sent
-  at: 7.842
+  at: 7.845
   data:
     user_audio_chunk: nvpr+j36Gvr6+eD5x/mz+ab5n/mi+af5sfm9+cz54Pnz
 - kind: message
   direction: sent
-  at: 7.943
+  at: 7.945
   data:
     user_audio_chunk: OgQk/5/6evgO+Hb47fhw+VP6vvuo/Tb/7P+H/8r+fP7a
 - kind: message
   direction: sent
-  at: 8.043
+  at: 8.046
   data:
     user_audio_chunk: /guPC5EKFQl5B8UFMATAApsBJgFUAfkBoALqAvwCCwNV
 - kind: message
   direction: sent
-  at: 8.144
+  at: 8.146
   data:
     user_audio_chunk: 5wO8BFICv/1XDZkB9wMEBMH+df2LBkr9Rv+MBPQLFvQB
 - kind: message
   direction: sent
-  at: 8.244
+  at: 8.247
   data:
     user_audio_chunk: A//r/s7+of5t/i3+9P28/Yf9T/0Q/cn8h/xE/AP8xvuL
 - kind: message
   direction: sent
-  at: 8.345
+  at: 8.347
   data:
     user_audio_chunk: i/uW+0X7Cvsd+177wvvw++X7m/tn+0z7b/vJ+9/7r/tF
 - kind: message
   direction: sent
-  at: 8.445
+  at: 8.448
   data:
     user_audio_chunk: Jf9P/1D/O/8H/wL/Kv9a/2X/Xv9j/2n/iv+n/7L/yP/C
 - kind: message
   direction: sent
-  at: 8.546
+  at: 8.548
   data:
     user_audio_chunk: 6v/m/+H/4f/e/9v/2f/V/9L/0P/P/8v/yP/I/8H/xf+9
 - kind: message
@@ -588,7 +588,7 @@ interactions:
   data:
     ping_event:
       event_id: 6
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
@@ -598,62 +598,57 @@ interactions:
     event_id: 6
 - kind: message
   direction: sent
-  at: 8.647
+  at: 8.65
   data:
     user_audio_chunk: zP/K/8X/x//D/8P/wP+//7z/u/+5/7j/tf+2/7D/tP+t
 - kind: message
   direction: sent
-  at: 8.747
+  at: 8.75
   data:
     user_audio_chunk: 6//q/+b/5//k/+X/4//h/+D/3//e/9z/2v/b/9b/2f/V
 - kind: message
   direction: sent
-  at: 8.848
+  at: 8.851
   data:
     user_audio_chunk: 7v/u/+r/7P/p/+n/6P/m/+T/5P/i/+H/3//g/9z/3//a
 - kind: message
   direction: sent
-  at: 8.948
+  at: 8.951
   data:
     user_audio_chunk: FwAWABYAFwAWABcAFgAXABYAFwAXABcAFwAWABYAFwAW
 - kind: message
   direction: sent
-  at: 9.048
+  at: 9.052
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 9.149
+  at: 9.152
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 9.249
+  at: 9.253
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 9.35
+  at: 9.353
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 9.45
+  at: 9.454
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 9.551
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 9.652
+  at: 9.554
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 9.738
+  at: 9.646
   data:
     user_transcription_event:
       user_transcript: Stop there and just say goodbye to me.
@@ -661,90 +656,64 @@ interactions:
     type: user_transcript
 - kind: message
   direction: received
-  at: 9.739
+  at: 9.647
   data:
     audio_event:
-      audio_base_64: GP/C/tH+sP71/sP+wv6m/sL+lf6m/rr+Zv6u/rX+sv6A
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 9.75
-  data:
-    audio_event:
-      audio_base_64: zvln/30FcwukD2ISaBRNFhIXbBRKDkoGAQCW+z34CfU4
+      audio_base_64: AQADAAAAAAABAAAA/////////v////7//v//////AAAA
       event_id: 54
       is_final: false
     type: audio
 - kind: message
   direction: sent
-  at: 9.753
+  at: 9.655
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 9.758
+  at: 9.658
   data:
-    audio_event:
-      audio_base_64: 8vV+8pfvCPDP82j5Jf6JAJMANv8i/Xf6i/it9/D4Cfxs
+    agent_response_event:
+      agent_response: Goodbye.
       event_id: 54
-      is_final: false
-    type: audio
+      response_id: 93804273-05e8-468a-8f97-a2c1261311ef
+      in_response_to_ids:
+      - ef199d16-4350-48b6-9bf2-2989c9c843cb
+      response_type: text
+      attachments: []
+    type: agent_response
 - kind: message
   direction: received
-  at: 9.803
+  at: 9.658
   data:
-    audio_event:
-      audio_base_64: 2+Pp9J0aoEAZQsIYVfDZ7UIONik8IMEJeQlzIOwpzA+W
+    context_usage_event:
       event_id: 54
-      is_final: false
-    type: audio
+      model: gemini-2.5-flash
+      context_tokens: 416
+      context_limit_tokens: 1048576
+    type: context_usage
 - kind: message
   direction: sent
-  at: 9.853
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 9.913
-  data:
-    audio_event:
-      audio_base_64: QgILABD9dPpQ+vD9HAIjBVcEYQI7/1H8AP21/mIAwwCu
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: sent
-  at: 9.954
+  at: 9.756
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 10.054
+  at: 9.856
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
-  direction: received
-  at: 10.109
+  direction: sent
+  at: 9.957
   data:
-    audio_event:
-      audio_base_64: yP/h/zQApP87APf/a//7ALX/Xv/K/3IAYgBR/xAALQBZ
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 10.119
-  data:
-    audio_event:
-      audio_base_64: wwxuBav8lPbc+Lb9Ifz/9XTyafd9ApcIOAQp+UHtQuv1
-      event_id: 54
-      is_final: false
-    type: audio
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 10.157
+  at: 10.057
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.158
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
@@ -753,7 +722,7 @@ interactions:
   data:
     ping_event:
       event_id: 7
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
@@ -763,246 +732,186 @@ interactions:
     event_id: 7
 - kind: message
   direction: sent
-  at: 10.257
+  at: 10.259
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.36
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.46
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.561
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.661
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.762
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.862
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 10.963
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.064
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.164
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.265
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.365
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.466
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.567
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.667
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.768
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 11.868
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 10.296
-  data:
-    audio_event:
-      audio_base_64: ff07/fX8wPyp/G78ZPxq/Gf8SPw6/Ff8NPwZ/ED8Pvwt
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: sent
-  at: 10.358
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 10.459
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 10.472
-  data:
-    audio_event:
-      audio_base_64: Of9dAOYAmgCr/4P+8/1v/l3/FwD5/+T+P/7T/qn/2P9g
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 10.553
-  data:
-    audio_event:
-      audio_base_64: Zw51DKQKYQnlBsMESQPtADr/Pf6c/Nj6ovmJ9+L1rvTc
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 10.558
-  data:
-    audio_event:
-      audio_base_64: 7P/M/9f/BwAtAD8AIADe/+H/OQB2ADsA2f+9/+7/MABR
-      event_id: 54
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 10.558
-  data:
-    agent_response_event:
-      agent_response: Alright, I understand. Goodbye then! I hope you have a wonderful
-        day.
-      event_id: 54
-      response_id: 33f09196-7d43-4d05-baa4-330d849aa1e5
-      in_response_to_ids:
-      - 576df5a2-4a20-4e2c-8a1f-5bd246463e0f
-      response_type: text
-      attachments: []
-    type: agent_response
-- kind: message
-  direction: sent
-  at: 10.563
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 10.564
-  data:
-    context_usage_event:
-      event_id: 54
-      model: gemini-2.5-flash
-      context_tokens: 601
-      context_limit_tokens: 1048576
-    type: context_usage
-- kind: message
-  direction: sent
-  at: 10.664
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 10.765
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 10.865
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 10.966
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.066
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.167
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.267
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.368
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.468
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.569
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.669
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.77
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: sent
-  at: 11.87
-  data:
-    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 11.954
+  at: 11.955
   data:
     ping_event:
       event_id: 8
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
-  at: 11.954
+  at: 11.955
   data:
     type: pong
     event_id: 8
 - kind: message
   direction: sent
-  at: 11.972
+  at: 11.969
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.072
+  at: 12.07
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.173
+  at: 12.171
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.273
+  at: 12.271
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.374
+  at: 12.372
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.474
+  at: 12.472
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.575
+  at: 12.573
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.675
+  at: 12.673
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.776
+  at: 12.774
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.876
+  at: 12.874
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 12.977
+  at: 12.975
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.077
+  at: 13.075
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.178
+  at: 13.176
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.278
+  at: 13.276
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.379
+  at: 13.377
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.479
+  at: 13.477
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.58
+  at: 13.578
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
@@ -1011,7 +920,7 @@ interactions:
   data:
     ping_event:
       event_id: 9
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
@@ -1021,199 +930,199 @@ interactions:
     event_id: 9
 - kind: message
   direction: sent
-  at: 13.682
+  at: 13.679
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.783
+  at: 13.779
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.883
+  at: 13.88
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 13.984
+  at: 13.98
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.084
+  at: 14.081
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.185
+  at: 14.181
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.286
+  at: 14.282
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.386
+  at: 14.383
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.487
+  at: 14.483
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.587
+  at: 14.584
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.688
+  at: 14.684
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.788
+  at: 14.785
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.889
+  at: 14.886
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 14.989
+  at: 14.986
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.09
+  at: 15.087
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.19
+  at: 15.187
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.291
+  at: 15.288
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 15.356
+  at: 15.355
   data:
     ping_event:
       event_id: 10
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
-  at: 15.356
+  at: 15.355
   data:
     type: pong
     event_id: 10
 - kind: message
   direction: sent
-  at: 15.393
+  at: 15.389
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.494
+  at: 15.489
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.594
+  at: 15.59
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.695
+  at: 15.69
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.795
+  at: 15.791
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.896
+  at: 15.892
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 15.997
+  at: 15.992
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.097
+  at: 16.093
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.198
+  at: 16.193
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.298
+  at: 16.294
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.399
+  at: 16.395
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.5
+  at: 16.495
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.6
+  at: 16.596
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.701
+  at: 16.696
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.801
+  at: 16.797
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 16.902
+  at: 16.898
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: sent
-  at: 17.002
+  at: 16.998
   data:
     user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 17.057
+  at: 17.058
   data:
     ping_event:
       event_id: 11
-      ping_ms: 46
+      ping_ms: 45
     type: ping
 - kind: message
   direction: sent
-  at: 17.057
+  at: 17.058
   data:
     type: pong
     event_id: 11

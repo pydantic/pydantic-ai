@@ -63,10 +63,10 @@ _Route = Literal[
 ]
 _ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'elevenlabs-agents']
 
-# ElevenLabs wraps a hosted agent, so its "model name" is the id of the dev agent the cassettes were
-# recorded against (deleted after recording; the id is not a secret and pins the recorded REST paths).
-# Point `ELEVENLABS_TEST_AGENT_ID` at an agent with a `get_weather` client tool to re-record.
-_ELEVENLABS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_2001m3hcjcrkfs1awbmpqytnqvew')
+# ElevenLabs Agents wraps a hosted agent, so its "model name" is the id of the agent the cassettes were recorded
+# against (the id is not a secret and pins the recorded REST paths). To re-record, create the agents with
+# `scripts/setup_elevenlabs_agents_test_workspace.py` and pass the environment it prints.
+_ELEVENLABS_AGENT_ID = os.environ.get('ELEVENLABS_TEST_AGENT_ID', 'agent_7901m52mec0veknvz7vfnm56aaym')
 
 
 @dataclass(frozen=True)

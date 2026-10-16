@@ -19,7 +19,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_6701m52mg0dwers8j92fw9wv6942
+      conversation_id: conv_5601m52nyrdsfs5bn4h5ddmckhwx
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -32,44 +32,44 @@ interactions:
     text: Say hi.
 - kind: message
   direction: received
-  at: 0.953
+  at: 0.849
   data:
     text_response_part:
       text: ''
       type: start
       event_id: 1
-      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
+      response_id: c66e3932-daee-4a5f-8cf9-d72fab48a870
     type: agent_chat_response_part
 - kind: message
   direction: received
-  at: 0.953
+  at: 0.85
   data:
     text_response_part:
       text: Hi there.
       type: delta
       event_id: 1
-      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
+      response_id: c66e3932-daee-4a5f-8cf9-d72fab48a870
     type: agent_chat_response_part
 - kind: message
   direction: received
-  at: 0.954
+  at: 0.85
   data:
     text_response_part:
       text: ''
       type: stop
       event_id: 1
-      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
+      response_id: c66e3932-daee-4a5f-8cf9-d72fab48a870
     type: agent_chat_response_part
 - kind: message
   direction: received
-  at: 0.954
+  at: 0.85
   data:
     agent_response_event:
       agent_response: Hi there.
       event_id: 1
-      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
+      response_id: c66e3932-daee-4a5f-8cf9-d72fab48a870
       in_response_to_ids:
-      - 3e25541b-0c4b-4e21-abc7-6d953a811902
+      - b378f9c7-dc0c-4653-9ba7-8d08e6c7c3b3
       response_type: text
       attachments: []
     type: agent_response
