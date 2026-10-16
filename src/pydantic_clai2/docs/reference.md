@@ -1948,8 +1948,11 @@ The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
 `/plugins reload coder`. Choose different folders in `/plugins configure coder`
 under **Skill folders**, as a JSON list of paths; `~/` means your home directory
-and `[]` turns skills off. A folder CLAI cannot read when it starts, such as one
-without read permission, turns skills off, with a notice, until the next
+and `[]` turns skills off. To turn off single skills, choose **Skills** there:
+each pick turns a skill on or off. A skill that is off is hidden from the model
+and has no `/command`, in every project; skills you add later start on. A
+folder CLAI cannot read when it starts, such as one without read permission,
+turns skills off, with a notice, until the next
 `/reload`; the coding tools still load. A folder that becomes a file or a single
 skill mid-session is left out of the next turn's catalog.
 
