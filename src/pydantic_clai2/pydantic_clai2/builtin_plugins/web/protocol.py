@@ -27,12 +27,18 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
+from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+
+REPL_TOOL = 'run_code'
+"""The code mode tool whose cells make up the REPL panel."""
 
 RESULT_CHARS = 20_000
 """The most of a tool result the browser receives; the model's copy is unchanged."""
@@ -48,6 +54,20 @@ class Diff:
     path: str
     diff: str
     truncated: bool = False
+
+
+@dataclass(kw_only=True)
+class SubCall:
+    """A tool `run_code` called from inside its sandbox, as CLAI's code mode reports it."""
+
+    id: str
+    name: str
+    args: str
+    state: ToolState = 'running'
+    text: str = ''
+    """What the tool returned to the script."""
+    output: str = ''
+    """What a shell command printed while it ran."""
 
 
 @dataclass(kw_only=True)
@@ -67,6 +87,8 @@ class Item:
     """What a shell command printed while it ran."""
     exit_code: int | None = None
     diffs: list[Diff] = field(default_factory=list[Diff])
+    calls: list[SubCall] = field(default_factory=list[SubCall])
+    """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
 
 
 @dataclass(kw_only=True)
@@ -185,6 +207,54 @@ class TextDelta:
 
 
 @dataclass(kw_only=True)
+class ArgsDelta:
+    """More of a `run_code` cell's arguments as the model writes them, as raw JSON text."""
+
+    type: Literal['args_delta'] = 'args_delta'
+    id: str
+    text: str
+
+
+@dataclass(kw_only=True)
+class ToolArgs:
+    """A streamed `run_code` cell's complete arguments, replacing what its deltas built."""
+
+    type: Literal['tool_args'] = 'tool_args'
+    id: str
+    args: str
+
+
+@dataclass(kw_only=True)
+class SubCallAdded:
+    """A `run_code` cell called a tool from its sandbox, possibly while the cell was still being written."""
+
+    type: Literal['call'] = 'call'
+    id: str
+    call: SubCall
+
+
+@dataclass(kw_only=True)
+class SubCallOutput:
+    """More of what a shell command called from a `run_code` cell printed."""
+
+    type: Literal['call_output'] = 'call_output'
+    id: str
+    call_id: str
+    text: str
+
+
+@dataclass(kw_only=True)
+class SubCallDone:
+    """A tool called from a `run_code` cell returned or failed."""
+
+    type: Literal['call_done'] = 'call_done'
+    id: str
+    call_id: str
+    text: str
+    state: ToolState
+
+
+@dataclass(kw_only=True)
 class ToolOutput:
     """More of what a running shell command printed."""
 
@@ -296,7 +366,19 @@ class SessionsChanged:
     type: Literal['sessions'] = 'sessions'
 
 
-ItemMessage = ItemAdded | TextDelta | ToolOutput | ToolDone | ShellDone | DiffAdded
+ItemMessage = (
+    ItemAdded
+    | TextDelta
+    | ArgsDelta
+    | ToolArgs
+    | ToolOutput
+    | ToolDone
+    | ShellDone
+    | DiffAdded
+    | SubCallAdded
+    | SubCallOutput
+    | SubCallDone
+)
 ServerMessage = (
     Snapshot
     | ItemMessage
@@ -435,36 +517,58 @@ class EventTranslator:
     """Turn one conversation's stream events into item messages, keeping what a later event needs.
 
     A part's index is only unique within one model response, so each `PartStartEvent` starts a new
-    item and takes the index over. A file write's diff arrives before the write and is shown once it lands.
+    item and takes the index over. A `run_code` cell is shown as soon as the model starts writing it,
+    with its source streaming in, because code mode runs its statements and their tool calls
+    (`SandboxCallStartedEvent`) while it is still being written. A file write's diff arrives before
+    the write and is shown once it lands.
     """
 
     def __init__(self) -> None:
         self._parts: dict[int, str] = {}
         self._count = 0
         self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
+        self._streamed: set[str] = set()
+        """`run_code` cells already shown from their streamed part, so their call event only completes them."""
 
     def translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         """The item messages `event` makes; none for an event the browser does not show."""
         if isinstance(event, PartStartEvent):
             return self._start(event)
         if isinstance(event, PartDeltaEvent):
-            delta = event.delta
-            item_id = self._parts.get(event.index)
-            if isinstance(delta, TextPartDelta | ThinkingPartDelta) and delta.content_delta and item_id is not None:
-                return [TextDelta(id=item_id, text=delta.content_delta)]
-            return []
+            return self._delta(event)
+        if isinstance(event, SandboxCallStartedEvent):
+            call = event.call
+            parent = _parent(call.tool_call_id)
+            sub = SubCall(id=call.tool_call_id, name=call.tool_name, args=call.args_as_json_str())
+            return [] if parent is None else [SubCallAdded(id=parent, call=sub)]
+        if isinstance(event, SandboxCallFinishedEvent):
+            result = event.result
+            parent = _parent(result.tool_call_id)
+            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            done = SubCallDone(id=parent or '', call_id=result.tool_call_id, text=tool_result_text(result), state=state)
+            return [] if parent is None else [done]
         if isinstance(event, FunctionToolCallEvent):
             part = event.part
+            if part.tool_call_id in self._streamed:
+                return [ToolArgs(id=part.tool_call_id, args=part.args_as_json_str())]
             item = Item(id=part.tool_call_id, kind='tool', name=part.tool_name, args=part.args_as_json_str())
             return [ItemAdded(item=replace(item, state='running'))]
         if isinstance(event, FunctionToolResultEvent):
             result = event.part
-            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = 'done' if isinstance(result, ToolReturnPart) else 'error'
             return [ToolDone(id=result.tool_call_id, text=tool_result_text(result), state=state)]
         return self._harness(event)
 
     def _start(self, event: PartStartEvent) -> list[ItemMessage]:
         part = event.part
+        if isinstance(part, ToolCallPart):
+            if part.tool_name != REPL_TOOL:
+                return []
+            self._parts[event.index] = part.tool_call_id
+            self._streamed.add(part.tool_call_id)
+            args = part.args if isinstance(part.args, str) else part.args_as_json_str() if part.args else ''
+            item = Item(id=part.tool_call_id, kind='tool', name=REPL_TOOL, args=args, state='running')
+            return [ItemAdded(item=item)]
         if not isinstance(part, TextPart | ThinkingPart):
             return []
         self._count += 1
@@ -473,9 +577,23 @@ class EventTranslator:
         kind: ItemKind = 'assistant' if isinstance(part, TextPart) else 'thinking'
         return [ItemAdded(item=Item(id=item_id, kind=kind, text=part.content))]
 
+    def _delta(self, event: PartDeltaEvent) -> list[ItemMessage]:
+        delta = event.delta
+        item_id = self._parts.get(event.index)
+        if item_id is None:
+            return []
+        if isinstance(delta, TextPartDelta | ThinkingPartDelta) and delta.content_delta:
+            return [TextDelta(id=item_id, text=delta.content_delta)]
+        if isinstance(delta, ToolCallPartDelta) and isinstance(delta.args_delta, str) and delta.args_delta:
+            # A provider that streams arguments as objects sends them whole with the call event instead.
+            return [ArgsDelta(id=item_id, text=delta.args_delta)]
+        return []
+
     def _harness(self, event: AgentStreamEvent) -> list[ItemMessage]:
         """Shell output and file diffs from harness capability events, tied to their tool call."""
         if isinstance(event, CommandOutputEvent) and event.tool_call_id is not None:
+            if (parent := _parent(event.tool_call_id)) is not None:
+                return [SubCallOutput(id=parent, call_id=event.tool_call_id, text=event.text)]
             return [ToolOutput(id=event.tool_call_id, text=event.text)]
         if isinstance(event, CommandFinishedEvent) and event.tool_call_id is not None:
             return [ShellDone(id=event.tool_call_id, exit_code=event.exit_code)]
@@ -492,6 +610,12 @@ class EventTranslator:
         return []
 
 
+def _parent(tool_call_id: str) -> str | None:
+    """The `run_code` cell a sandbox call belongs to, from its `PARENT__N` id; `None` for a top-level call."""
+    nested = NESTED_CALL.fullmatch(tool_call_id)
+    return None if nested is None else nested['parent']
+
+
 class ItemLog:
     """The current turn's items, kept in step with what browsers were sent, for one that connects mid-turn."""
 
@@ -504,18 +628,33 @@ class ItemLog:
     def apply(self, message: ItemMessage) -> None:
         """Change the logged items as a browser applies `message`."""
         if isinstance(message, ItemAdded):
-            self.items[message.item.id] = replace(message.item, diffs=list(message.item.diffs))
+            self.items[message.item.id] = replace(
+                message.item, diffs=list(message.item.diffs), calls=list(message.item.calls)
+            )
             return
         item = self.items.get(message.id)
         if item is None:
             return
         if isinstance(message, TextDelta):
             item.text += message.text
+        elif isinstance(message, ArgsDelta):
+            item.args += message.text
+        elif isinstance(message, ToolArgs):
+            item.args = message.args
         elif isinstance(message, ToolOutput):
             item.output += message.text
         elif isinstance(message, ToolDone):
             item.text, item.state = message.text, message.state
         elif isinstance(message, ShellDone):
             item.exit_code = message.exit_code
-        else:
+        elif isinstance(message, DiffAdded):
             item.diffs.append(message.diff)
+        elif isinstance(message, SubCallAdded):
+            item.calls.append(replace(message.call))
+        else:
+            for call in item.calls:
+                if call.id == message.call_id:
+                    if isinstance(message, SubCallOutput):
+                        call.output += message.text
+                    else:
+                        call.text, call.state = message.text, message.state

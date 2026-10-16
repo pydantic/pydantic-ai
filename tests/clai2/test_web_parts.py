@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -43,6 +44,7 @@ from pydantic_clai2.builtin_plugins.web.app import Receive, Scope, Send
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
     RESULT_CHARS,
+    ArgsDelta,
     Diff,
     DiffAdded,
     EventTranslator,
@@ -53,7 +55,12 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ServerMessage,
     ShellDone,
     StatusChanged,
+    SubCall,
+    SubCallAdded,
+    SubCallDone,
+    SubCallOutput,
     TextDelta,
+    ToolArgs,
     ToolDone,
     ToolOutput,
     TurnEnded,
@@ -68,6 +75,7 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -101,6 +109,7 @@ def test_streamed_parts_become_items() -> None:
     assert translate(PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta='sig'))) == []
     assert translate(PartDeltaEvent(index=5, delta=TextPartDelta('lost'))) == []
     assert translate(PartStartEvent(index=2, part=ToolCallPart('shell', '{}'))) == []
+    assert translate(PartStartEvent(index=3, part=NativeToolCallPart('web_search', {}))) == []
     assert translate(PartDeltaEvent(index=2, delta=ToolCallPartDelta(args_delta='{'))) == []
 
 
@@ -158,6 +167,62 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
         tool_call_id='e2', path='a.py', root_dir='/w', operation='edit', diff='', truncated=False
     )
     assert translate(edit_request) == []
+
+
+def test_a_run_code_cell_streams_with_its_sandbox_calls() -> None:
+    """Code mode runs a cell's calls while the model still writes it, so the cell shows from its first token."""
+    translate = EventTranslator().translate
+    start = PartStartEvent(index=0, part=ToolCallPart('run_code', '', tool_call_id='cell'))
+    assert translate(start) == [ItemAdded(item=Item(id='cell', kind='tool', name='run_code', args='', state='running'))]
+    assert translate(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"code": "ls'))) == [
+        ArgsDelta(id='cell', text='{"code": "ls')
+    ]
+    assert translate(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': 'x'}))) == []
+    nested = ToolCallPart('shell', {'command': 'ls'}, tool_call_id='cell__1')
+    assert translate(SandboxCallStartedEvent(call=nested)) == [
+        SubCallAdded(id='cell', call=SubCall(id='cell__1', name='shell', args='{"command":"ls"}'))
+    ]
+    assert translate(CommandOutputEvent(tool_call_id='cell__1', text='a.py\n')) == [
+        SubCallOutput(id='cell', call_id='cell__1', text='a.py\n')
+    ]
+    finished = SandboxCallFinishedEvent(result=ToolReturnPart('shell', 'a.py', tool_call_id='cell__1'))
+    assert translate(finished) == [SubCallDone(id='cell', call_id='cell__1', text='a.py', state='done')]
+    failed = SandboxCallFinishedEvent(result=RetryPromptPart('no', tool_name='grep', tool_call_id='cell__spec_2'))
+    [done] = translate(failed)
+    assert isinstance(done, SubCallDone) and (done.call_id, done.state) == ('cell__spec_2', 'error')
+    call = ToolCallPart('run_code', {'code': 'ls'}, tool_call_id='cell')
+    assert translate(FunctionToolCallEvent(part=call)) == [ToolArgs(id='cell', args='{"code":"ls"}')]
+    # Events for top-level calls are not sandbox calls.
+    assert translate(SandboxCallStartedEvent(call=ToolCallPart('shell', {}, tool_call_id='plain'))) == []
+    top = SandboxCallFinishedEvent(result=ToolReturnPart('shell', '', tool_call_id='plain'))
+    assert translate(top) == []
+
+
+@pytest.mark.parametrize(('args', 'shown'), [(None, ''), ({'code': 'x'}, '{"code":"x"}'), ('{"co', '{"co')])
+def test_a_streamed_cell_starts_with_its_arguments_so_far(args: str | dict[str, str] | None, shown: str) -> None:
+    [added] = EventTranslator().translate(
+        PartStartEvent(index=0, part=ToolCallPart('run_code', args, tool_call_id='c'))
+    )
+    assert isinstance(added, ItemAdded) and added.item.args == shown
+
+
+def test_the_item_log_follows_a_cell() -> None:
+    log = ItemLog()
+    log.apply(ItemAdded(item=Item(id='cell', kind='tool', name='run_code', state='running')))
+    for message in (
+        ArgsDelta(id='cell', text='{"code": '),
+        ArgsDelta(id='cell', text='"ls"}'),
+        SubCallAdded(id='cell', call=SubCall(id='cell__1', name='shell', args='{}')),
+        SubCallOutput(id='cell', call_id='cell__1', text='out'),
+        SubCallDone(id='cell', call_id='cell__1', text='done', state='done'),
+        SubCallDone(id='cell', call_id='cell__9', text='unknown call', state='error'),
+    ):
+        log.apply(message)
+    [cell] = log.items.values()
+    assert cell.args == '{"code": "ls"}'
+    assert cell.calls == [SubCall(id='cell__1', name='shell', args='{}', state='done', text='done', output='out')]
+    log.apply(ToolArgs(id='cell', args='{"code":"ls"}'))
+    assert cell.args == '{"code":"ls"}'
 
 
 def test_history_items() -> None:
