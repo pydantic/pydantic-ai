@@ -168,6 +168,8 @@ def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -
         running = web_.get('/api/orchestrator/state').json()
         assert running['running'] and [item['kind'] for item in running['items']] == ['user', 'assistant']
         assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': True}
+        # A second stop, before the turn ended, does not cut its ending short.
+        assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': True}
         assert orchestrator_until(socket, TurnEnded)[1] == TurnEnded(outcome='cancelled')
         stopped = web_.get('/api/orchestrator/state').json()['items']
         assert stopped[0]['text'] == 'Work until I stop you', 'what ran before the stop is kept'

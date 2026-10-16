@@ -1440,7 +1440,8 @@ has the same chat: each turn starts from the file as it is then, which an open p
 and saves it when it ends, unless another CLAI changed the file meanwhile: that turn then fails and
 is not kept, rather than writing over the other CLAI's.
 A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
-it rather than from the file, and that save then replaces the file.
+it rather than from the file. That save replaces the file unless another CLAI changed it meanwhile,
+in which case the turns not saved are dropped in favour of the file.
 `/web stop` stops a running turn, since no page is left to watch it or answer it.
 
 **From another program.** `GET /api/orchestrator/state` returns the chat (`enabled`, `running`,

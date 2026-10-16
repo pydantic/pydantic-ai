@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import anyio
 from anyio import get_cancelled_exc_class, to_thread
 from pydantic import ValidationError
 
@@ -124,6 +123,8 @@ class Orchestrator:
         self._unsaved: list[ModelMessage] | None = None
         """A turn's conversation its file could not take, kept here until a later save succeeds."""
         self._task: asyncio.Task[None] | None = None
+        self._stopping = False
+        """The running turn was told to stop, or is saving: it is not cancelled again, so it always ends."""
         self._tools: WorkspaceTools | None = None
         self._agent: Agent[None, str] | None = None
 
@@ -200,6 +201,7 @@ class Orchestrator:
 
     async def _run(self, prompt: str, saved: Saved) -> None:
         item = Item(id=f'orchestrator{time.monotonic_ns()}', kind='user', text=prompt)
+        self._stopping = False
         self._turn.clear()
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
@@ -231,12 +233,14 @@ class Orchestrator:
         except Exception as exc:  # noqa: BLE001 -- the turn fails in the chat, as a session turn does.
             error = str(exc) or type(exc).__name__
         finally:
+            self._stopping = True
             self._turn.clear()
-            save = functools.partial(write_saved, self.path, messages, revision=saved.revision)
             try:
-                with anyio.CancelScope(shield=True):
-                    self._saved = await to_thread.run_sync(save)
-                self._unsaved = None
+                if messages is not saved.messages:  # Nothing ran, such as without a model: nothing to save.
+                    self._saved = await to_thread.run_sync(
+                        functools.partial(write_saved, self.path, messages, revision=saved.revision)
+                    )
+                    self._unsaved = None
             except ChatChanged:
                 # Not written over: what the other CLAI saved is the chat now.
                 self._unsaved = None
@@ -253,7 +257,9 @@ class Orchestrator:
         """Stop the running turn; `False` when none runs."""
         if self._task is None or self._task.done():
             return False
-        self._task.cancel()
+        if not self._stopping:
+            self._stopping = True
+            self._task.cancel()
         return True
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
