@@ -54,7 +54,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, RequestCapture, try_import
+from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 from .conftest import cache_breakpoints, message_shape
 
 if TYPE_CHECKING:
@@ -1048,13 +1048,17 @@ def test_vercel_ai_dump_leaves_out_turn_scoped_prompts():
     """
     dumped = VercelAIAdapter.dump_messages(ui_history())
 
-    assert 'Answer in French' not in str(dumped)
-    assert 'You are terse.' in str(dumped)
-    assert all(
-        part.scope == 'conversation'
-        for message in VercelAIAdapter.load_messages(dumped)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart)
+    assert [message.model_dump(exclude_none=True) for message in dumped] == snapshot(
+        [
+            {'id': IsStr(), 'role': 'system', 'parts': [{'type': 'text', 'text': 'You are terse.', 'state': 'done'}]},
+            {'id': IsStr(), 'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello', 'state': 'done'}]},
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
+                'parts': [{'type': 'text', 'text': 'Bonjour', 'state': 'done'}],
+            },
+        ]
     )
 
 
@@ -1063,5 +1067,10 @@ def test_ag_ui_dump_leaves_out_turn_scoped_prompts():
     """A turn-scoped prompt is for the model's current request, so it's not sent to the frontend."""
     dumped = AGUIAdapter.dump_messages(ui_history())
 
-    assert 'Answer in French' not in str(dumped)
-    assert 'You are terse.' in str(dumped)
+    assert [message.model_dump(exclude_none=True) for message in dumped] == snapshot(
+        [
+            {'id': IsStr(), 'role': 'system', 'content': 'You are terse.'},
+            {'id': IsStr(), 'role': 'user', 'content': 'Hello'},
+            {'id': IsStr(), 'role': 'assistant', 'content': 'Bonjour'},
+        ]
+    )
