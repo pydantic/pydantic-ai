@@ -325,6 +325,8 @@ agent = Agent(
 
 Set `clear_tool_inputs=True` to also blank the arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never cleared.
 
+With `max_messages`, the count starts after the last cleared result, because clearing blanks content but removes no messages. Clearing then happens in batches: after a clear, the next one waits until more than `max_messages` messages follow the last cleared result, so the requests in between extend the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear, about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
+
 ## `DeduplicateFileReads`: drop superseded reads
 
 When the same file is read more than once, only the latest read keeps its content; earlier reads are blanked with a placeholder, with pairing preserved.
