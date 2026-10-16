@@ -9,6 +9,7 @@ import wave
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from decimal import Decimal
 from threading import Event as ThreadEvent
 from typing import Any, Literal, TypeVar, cast
@@ -1655,8 +1656,9 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
     """Generation outruns playback, so the user usually cuts off a reply that has finished generating.
 
     The provider's copy is still truncated where playback stopped, so the model doesn't take the whole
-    reply as heard. History is append-only: the recorded reply stays `complete`, and the position isn't
-    left behind for the next response that happens to be interrupted.
+    reply as heard, and history records the reply as cut off there: an interrupted copy in its place, leaving
+    a snapshot already taken as it was. The position isn't left behind for the next response that happens to
+    be interrupted.
     """
     conn = _GatedRealtimeConnection(
         [*_speech('item-a', 2), ResponseDone()],
@@ -1669,14 +1671,78 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
         events = aiter(session)
         await _consume_until(events, _is_turn_complete)
         await anext(stream)  # the second chunk stays buffered and unheard
+        before = session.all_messages()
+        recorded = [message for message in before if isinstance(message, ModelResponse)]
+        assert [message.state for message in recorded] == ['complete']
 
         assert await session.interrupt(played_bytes=_CHUNK) is True
         assert conn.sent == [TruncateOutput(audio_end_ms=100, item_id='item-a'), CancelResponse()]
+        after = session.all_messages()
+        assert len(after) == len(before)
+        cut = after[before.index(recorded[0])]
+        assert cut is not recorded[0]
+        assert cut.parts[0] == replace(recorded[0].parts[0], interrupted_at_ms=100)
+        assert recorded[0].state == 'complete'  # the snapshot taken before is untouched
 
         conn.release.set()
         _ = [event async for event in events]
 
-    assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [None])]
+    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+
+
+async def test_a_tool_after_a_barge_in_on_a_finished_reply_sees_it_cut_off() -> None:
+    """A tool's `ctx.messages` (and a chat span's input) record the cut-off reply as `all_messages()` does."""
+    seen: list[ModelMessage] = []
+    agent: Agent[None, str] = Agent(deps_type=type(None))
+
+    @agent.tool
+    def recall(ctx: RunContext[None]) -> str:
+        seen.extend(ctx.messages)
+        return 'ok'
+
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone(provider_response_id='resp-a')],
+        [ToolCall(tool_call_id='t1', tool_name='recall', args='{}'), ResponseDone(provider_response_id='resp-b')],
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        conn.release.set()
+        _ = [event async for event in events]
+
+    def cuts(messages: list[ModelMessage]) -> list[tuple[str, list[int | None]]]:
+        return [
+            (message.state, [part.interrupted_at_ms for part in message.parts if isinstance(part, SpeechPart)])
+            for message in messages
+            if isinstance(message, ModelResponse) and message.provider_response_id == 'resp-a'
+        ]
+
+    assert cuts(seen) == cuts(session.all_messages()) == [('interrupted', [100])]
+
+
+async def test_interrupt_played_bytes_leaves_a_reply_from_before_a_reconnect_as_recorded() -> None:
+    """The fresh conversation holds a reply from before a reconnect only as replayed text, which can't be truncated.
+
+    The connection drops a truncation of an item it no longer has, so history doesn't record that reply as cut
+    off either.
+    """
+    conn = BlockingRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone(), RealtimeSessionReconnectEvent(state_restored=False)]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, lambda event: isinstance(event, RealtimeSessionReconnectEvent))
+        await anext(stream)
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+
+    assert _speech_cuts(session) == [('complete', [None])]
 
 
 async def test_interrupt_played_ms_after_the_reply_finished_generating_leaves_no_position_behind() -> None:
@@ -1700,7 +1766,8 @@ async def test_interrupt_played_ms_after_the_reply_finished_generating_leaves_no
 async def test_interrupt_played_bytes_truncates_every_reply_generated_ahead_of_playback() -> None:
     """Two replies can finish generating before the first has finished playing — after a tool round, say.
 
-    The one playing is truncated where playback stopped, and the one after it, never heard, at 0.
+    The one playing is truncated where playback stopped, and the one after it, never heard, at 0, and
+    history records both as cut off there.
     """
     conn = BlockingRealtimeConnection([*_speech('item-a', 2), ResponseDone(), *_speech('item-b', 2), ResponseDone()])
     session = RealtimeSession(conn, _noop_runner)
@@ -1719,7 +1786,7 @@ async def test_interrupt_played_bytes_truncates_every_reply_generated_ahead_of_p
             CancelResponse(),
         ]
 
-    assert _speech_cuts(session) == [('complete', [None]), ('complete', [None])]
+    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [0])]
 
 
 async def test_interrupt_played_bytes_without_item_ids_truncates_the_current_item() -> None:

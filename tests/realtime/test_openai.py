@@ -86,6 +86,7 @@ from pydantic_ai.realtime._openai_protocol import (
     expect_event,
     realtime_websocket_url,
     replay_items,
+    seed_items,
     server_vad_from_turn_detection,
 )
 from pydantic_ai.realtime.codec import (
@@ -1974,6 +1975,46 @@ async def test_replay_items_marks_a_spoken_turn_without_a_transcript() -> None:
         ]
     )
     assert history[0].parts == [SpeechPart(speaker='user', audio=audio)]
+
+
+async def test_seeding_and_replay_mark_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Book me a flight.')]),
+        # Cut off where the listener stopped hearing it.
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        # Interrupted with no offset reported: the last speech part is marked.
+        ModelResponse(
+            parts=[
+                SpeechPart(speaker='assistant', transcript='Let me check.'),
+                SpeechPart(speaker='assistant', transcript='It leaves at'),
+            ],
+            state='interrupted',
+        ),
+        # Nothing was transcribed, so there is still nothing to seed.
+        ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=0)], state='interrupted'),
+    ]
+
+    expected = snapshot(
+        [
+            {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Book me a flight.'}]},
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, the morning flight\n[Interrupted after 640 ms]'}],
+            },
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Let me check.'}]},
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'It leaves at\n[Interrupted]'}],
+            },
+        ]
+    )
+    assert await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai') == expected
+    assert await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai') == expected
 
 
 async def test_replay_items_keeps_failed_multimodal_tool_return_wrapped_once() -> None:
