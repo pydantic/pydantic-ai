@@ -163,6 +163,8 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](durable_execution/overview.md) integrations besides.
 
+    Saving, resuming, and forking a run need no engine: [`StepPersistence`](harness/step-persistence.md) from Pydantic AI Harness snapshots every settled step to memory, files, SQLite, MongoDB, PostgreSQL, or your own store, the way a checkpointer does (see [Persistence](persistence.md)). The engine is for recovering inside a step and for runs that wait hours or days.
+
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
 === "Realtime voice" {#realtime-voice}

@@ -152,6 +152,8 @@ class ResearchWorkflow(PydanticAIWorkflow):
 
 [DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
 
+Saving, resuming, and forking a run need no engine: [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) from Pydantic AI Harness snapshots every settled step to memory, files, SQLite, MongoDB, PostgreSQL, or your own store, the way a checkpointer does (see [Persistence](https://pydantic.dev/docs/ai/core-concepts/persistence/)). The engine is for recovering inside a step and for runs that wait hours or days.
+
 **Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
 
 ### Realtime voice

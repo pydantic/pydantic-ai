@@ -6,6 +6,8 @@ description: "Add durable execution to Pydantic AI agents so runs survive crashe
 
 Pydantic AI allows you to build durable agents that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. Durable agents have full support for [streaming](../agent.md#streaming-all-events) and [MCP](../mcp/client.md), with the added benefit of fault tolerance.
 
+Saving a run, resuming it later, and forking it from an earlier step need no engine: [`StepPersistence`](../harness/step-persistence.md) from Pydantic AI Harness snapshots every settled step to memory, files, SQLite, MongoDB, PostgreSQL, or your own store, the way a checkpointer does, and [Persistence](../persistence.md) shows where it fits. A durable execution engine is for recovering inside a step and for runs that wait hours or days.
+
 !!! note "Durability is not storage"
     A durable engine keeps one run alive across crashes and restarts. It does not store your chat threads: saving a conversation and picking it up later is a different problem with a much lighter answer, laid out in [Persistence](../persistence.md).
 
