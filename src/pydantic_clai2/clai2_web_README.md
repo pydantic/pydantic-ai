@@ -68,3 +68,32 @@ terminal.
 +plugins panel shows it too): the `/keys` entry to use (`GOOGLE_ACCESS_TOKEN` by
 +default), products, and read-only tools; see
 ```
+
+<!-- From #10333 -->
+
+```diff
+@@ -2515,2 +2515,2 @@
+-its settings menu. Each option below is a row there; each edit saves at once and
+-applies from the next run. The last command replaces the built-in configuration
++its settings menu; the web UI's plugins panel shows the same menu. Each option below
++is a row there; each edit saves at once and applies from the next run. The last command replaces the built-in configuration
+```
+
+```diff
+@@ -2551,2 +2551,3 @@
+-Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
+-`c` on `observability` in `/plugins`):
++Choose **Logfire project** in the settings menu (`/plugins configure observability`,
++`c` on `observability` in `/plugins`, or **Change…** on the row in the web UI's plugins
++panel, where each step below is a dialog in the page):
+```
+
+```diff
+@@ -2559,2 +2560,4 @@
+-2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
+-3. Pick one of the projects you can write to (`/` to search, Enter to use it).
++2. Sign in, or sign up, in the browser. A waiting screen shows the link too, so it
++   works over SSH; Esc there cancels the sign-in and changes nothing.
++3. Pick one of the projects you can write to (typing filters a list of more than
++   eight; Enter uses it).
+```

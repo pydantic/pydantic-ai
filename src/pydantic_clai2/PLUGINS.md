@@ -443,10 +443,10 @@ declaration takes precedence; edits and removal apply to that one shared entry.
 
 Manage it with `/plugins disable observability`, `/plugins enable observability`, or
 `/plugins reload observability`. `/plugins configure observability` (or `c` on
-`observability` in `/plugins`) opens its settings menu: **Logfire project** runs the
-setup described below, and the other rows edit the options listed here. Each edit
-saves at once, and the plugin is loaded again when you close the menu, so the next
-run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
+`observability` in `/plugins`) opens its settings menu, which the web UI's plugins
+panel also shows: **Logfire project** runs the setup described below, and the other
+rows edit the options listed here. Each edit saves at once, and the plugin is loaded
+again when you close the menu (in the web UI, after each edit), so the next run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
 credentials file was found. Scripts can replace the declaration instead:
 
 ```text
@@ -486,7 +486,9 @@ clears `token`, `base_url`, and `account` again): it asks which Logfire, runs
 Logfire's own device sign-in there (the one behind `logfire auth`, not
 the Logfire plugin's MCP OAuth, whose tokens only the MCP server accepts), reads your
 account's email, lists the projects you can write to, and saves a new write
-token for the one you pick in `/keys`. The sign-in token is used only during
+token for the one you pick in `/keys`. The sign-in waits behind a screen that shows
+its link, where Esc cancels it. From the web UI's plugins panel, **Change…** on the
+row asks each step as a dialog in the page. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
 Agent runs and UI records nest under a `CLAI session` root whose
