@@ -12384,3 +12384,29 @@ async def test_own_record_keeps_a_commit_anchored_to_a_response_whose_retained_a
         (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
         for message in _own_record(session)
     ] == snapshot([('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])])
+
+
+async def test_context_window_used_moves_with_the_usage_counted_in_the_same_frame() -> None:
+    """A frame's usage is counted as the frame is applied: its `context_window_used` is taken then too.
+
+    Before, the session took it only when it handled the usage report itself, after the frame's earlier events:
+    a reply waiter woken by the frame read the new usage with the old fraction.
+    """
+
+    class _AnswersWithUsage(FakeRealtimeConnection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            await self._input_sent.wait()
+            yield [
+                ResponseStarted(response_id='r1', answers=(0,)),
+                OutputTranscript(text='Hi.', is_final=True),
+                ResponseDone(),
+                ResponseEnded(response_id='r1', status='completed'),
+                SessionUsage(RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.42),
+            ]
+            await asyncio.Event().wait()
+
+    session = RealtimeSession(_AnswersWithUsage([]))
+    async with session:
+        await session.send('Hello')
+        await session.wait_for_reply()
+        assert (session.usage.input_tokens, session.context_window_used) == (10, 0.42)
