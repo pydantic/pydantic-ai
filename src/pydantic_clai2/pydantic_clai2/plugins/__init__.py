@@ -337,7 +337,10 @@ class LiveSessions(Protocol):
         ...
 
     def current(self) -> LiveSession | None:
-        """The session whose moment, command, or run is being handled now; `None` outside one."""
+        """The session whose moment, command, or run is being handled now; `None` outside one.
+
+        A task started while a session is handled, such as a server started from a command, inherits it.
+        """
         ...
 
 
@@ -799,9 +802,10 @@ class PluginHost(Generic[DepsT]):
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
         Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`,
-        `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the session
-        whose moment, command, or run is being handled, else the session that loaded it, which its
-        other attributes, such as `conversation` and `status`, always name.
+        `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the
+        session whose moment, command, or run is being handled, else the session that loaded it (once
+        that one has closed, the oldest live session). Its other attributes, such as `conversation` and
+        `status`, always name the session that loaded it.
         """
 
     @property

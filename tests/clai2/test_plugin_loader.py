@@ -1200,6 +1200,22 @@ async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined
     assert 'late' not in a.commands and 'late' not in b.commands
     assert [entry.loaded for entry in b.loader.entries()] == [None]
 
+    # Loaded for one launch while off, as `--web` loads `web`: a session starting meanwhile waits too.
+    starting, fail = anyio.Event(), anyio.Event()
+    a.store.save_plugin(PluginSettings(id='late', factory=module.__name__, enabled=False))
+
+    async def load_late() -> None:
+        with pytest.raises(PluginError, match='no start'):
+            await a.loader.load('late')
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(load_late)
+        await starting.wait()
+        tasks.start_soon(b.loader.load_all)
+        await anyio.wait_all_tasks_blocked()
+        fail.set()
+    assert [entry.loaded for entry in b.loader.entries()] == [None] and 'late' not in b.commands
+
 
 async def test_a_process_plugin_manages_the_plugins_of_the_session_being_handled(tmp_path: Path) -> None:
     a, b = two_sessions(tmp_path)

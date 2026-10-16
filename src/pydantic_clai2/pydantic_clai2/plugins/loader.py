@@ -424,7 +424,10 @@ class SessionPlugins(Generic[DepsT]):
                     _LOGGER.debug('%s', ignored)
         # A process-scoped plugin loaded for this launch alone, as `--web` loads `web`, joins every session.
         for name, loaded in self._process.shared_plugins():
-            await self.attach(name, loaded)
+            # After it has started: one that fails to start is not joined.
+            async with self._process.loading(name):
+                if self._process.shared(name) is loaded:
+                    await self.attach(name, loaded)
         # Observers can load after a failing plugin, so report only once startup loading finishes.
         for failure in failures:
             await self.fire(failure)
@@ -613,7 +616,8 @@ class SessionPlugins(Generic[DepsT]):
                 # Its own task keeps the handler's `CancelledError` apart from ours: the former is
                 # reported, the latter propagates. The shield defers scope cancellation until cleanup
                 # finishes; the `checkpoint()` below delivers it.
-                cleanup = asyncio.create_task(_end_failed_session(plugin))
+                with handling(self.live_session):  # The task copies the context: this session's end.
+                    cleanup = asyncio.create_task(_end_failed_session(plugin))
                 try:
                     with CancelScope(shield=True):
                         await asyncio.wait({cleanup})
