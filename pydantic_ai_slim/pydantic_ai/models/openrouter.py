@@ -997,6 +997,17 @@ class OpenRouterModel(OpenAIChatModel):
         return frozenset({WebSearchTool, AdvisorTool})
 
     @override
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that OpenRouter's web search server tool doesn't take.
+
+        That is `external_web_access=False`. The domain filters and `max_uses` are forwarded, though whether they
+        take effect depends on the search engine OpenRouter selects.
+        """
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'max_uses'}
+        return frozenset()
+
+    @override
     def prepare_request(
         self,
         model_settings: ModelSettings | None,

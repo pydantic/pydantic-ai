@@ -1140,6 +1140,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return resolve_request_tools(
             params,
             self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS),
+            unsupported_settings=self.unsupported_native_tool_settings,
             can_withhold_tool_schemas=self._can_withhold_tool_schemas,
             tool_addition_mode=self.tool_addition_mode,
         )
@@ -1164,6 +1165,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
+        """
+        return frozenset()
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return the names of the settings set on `native_tool` that this model can't apply.
+
+        Only [`restricting_settings`][pydantic_ai.native_tools.AbstractNativeTool.restricting_settings] count:
+        a native tool with any of them is treated as unsupported for the request, so its local fallback is used
+        when one is provided, it is left out when it is `optional`, and
+        [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+
+        Subclasses that send a native tool without one of its restricting settings should override this.
+        The default is an empty set, meaning every restricting setting is applied.
         """
         return frozenset()
 
@@ -2200,14 +2214,84 @@ def _customize_output_object(
     )
 
 
+def _supported_native_tools(
+    params: ModelRequestParameters,
+    supported_types: frozenset[type[AbstractNativeTool]],
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None,
+) -> list[AbstractNativeTool]:
+    """Return the native tools this model supports, raising for an unsupported one with no local fallback.
+
+    An unsupported tool that has a local fallback or is `optional` is left out without raising.
+    """
+    supported_natives: list[AbstractNativeTool] = []
+    unsupported_natives: list[AbstractNativeTool] = []
+    unapplied_settings: dict[str, frozenset[str]] = {}
+    for native_tool in params.native_tools:
+        if not isinstance(native_tool, tuple(supported_types)):
+            unsupported_natives.append(native_tool)
+        elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
+            unsupported_natives.append(native_tool)
+            unapplied_settings[native_tool.unique_id] = settings
+        else:
+            supported_natives.append(native_tool)
+
+    unsupported_ids = {t.unique_id for t in unsupported_natives}
+    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+    without_fallback = unsupported_ids - fallback_ids - optional_ids
+    if without_fallback - unapplied_settings.keys():
+        unsupported_names = [
+            type(t).__name__
+            for t in unsupported_natives
+            if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
+        ]
+        supported_names = [t.__name__ for t in supported_types]
+        raise UserError(
+            f'Native tool(s) {unsupported_names} not supported by this model. '
+            f'Supported: {supported_names}. '
+            f'To use these tools with this model, provide a local fallback via '
+            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+            f'MCP(local=True), ImageGeneration(local=my_func)). '
+            f'Some capabilities require an optional install group for the local fallback '
+            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+        )
+    if without_fallback:
+        unapplied = ', '.join(
+            f'`{type(t).__name__}.{name}`'
+            for t in unsupported_natives
+            if t.unique_id in without_fallback
+            for name in sorted(unapplied_settings[t.unique_id])
+        )
+        raise UserError(
+            f'Native tool setting(s) {unapplied} not supported by this model. '
+            f'Sending the tool without them would drop the restriction they set. '
+            f'Remove the settings, use a model that supports them, or provide a local fallback that applies them '
+            "itself (e.g. `WebFetch(allowed_domains=[...], local=True)`). `WebSearch`'s own constraint fields "
+            'disable its `local` fallback, '
+            'so for a search fallback put them on the native tool: '
+            '`WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`.'
+        )
+
+    return supported_natives
+
+
 def resolve_request_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
     *,
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None = None,
     can_withhold_tool_schemas: Callable[[Sequence[AbstractNativeTool]], bool] | None = None,
     tool_addition_mode: ToolAdditionMode | None = None,
 ) -> ModelRequestParameters:
     """Resolve native tools, their local fallbacks, and deferred-tool visibility for the given supported-native-tool set.
+
+    A native tool is supported when it is an instance of one of `supported_types` and
+    `unsupported_settings` (the model's `unsupported_native_tool_settings`) returns no setting
+    for it. A tool whose restricting settings the model can't apply is handled like a tool of an
+    unsupported type: its local fallback runs instead, or the request is rejected naming the
+    settings, rather than sending the tool with a domain filter or usage limit the provider would ignore.
 
     Three rules drive the per-tool filter:
 
@@ -2237,28 +2321,7 @@ def resolve_request_tools(
     `_can_withhold_tool_schemas` and `tool_addition_mode`) and the realtime session path can
     share it — `RealtimeModel` is not a `Model` subclass.
     """
-    supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-    unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
-
-    supported_ids = {t.unique_id for t in supported_natives}
-    unsupported_ids = {t.unique_id for t in unsupported_natives}
-    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
-    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
-
-    without_fallback = unsupported_ids - fallback_ids - optional_ids
-    if without_fallback:
-        unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
-        supported_names = [t.__name__ for t in supported_types]
-        raise UserError(
-            f'Native tool(s) {unsupported_names} not supported by this model. '
-            f'Supported: {supported_names}. '
-            f'To use these tools with this model, provide a local fallback via '
-            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
-            f'MCP(local=True), ImageGeneration(local=my_func)). '
-            f'Some capabilities require an optional install group for the local fallback '
-            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
-        )
+    supported_natives = _supported_native_tools(params, supported_types, unsupported_settings)
 
     # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
     # the searchable deferred tools as corpus members, so a run whose deferred tools are all
@@ -2271,8 +2334,8 @@ def resolve_request_tools(
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
 
-    # Recomputed after the two steps above so it names the native tools this request really
-    # sends: rule 1 must not drop a local fallback for a native tool that just left.
+    # Computed after the drop above so it names the native tools this request really sends:
+    # rule 1 must not drop a local fallback for a native tool that just left.
     supported_ids = {t.unique_id for t in supported_natives}
 
     can_defer = can_withhold_tool_schemas(supported_natives) if can_withhold_tool_schemas is not None else False

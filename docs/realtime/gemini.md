@@ -172,6 +172,9 @@ only native tool it supports — no Live model runs native code execution or URL
 those a [`local=` fallback](tools.md#native-tools) and the session runs the local tool instead:
 `CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
 `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
+Google Search grounding takes no domain filters or usage limit, so a `WebSearch` with
+`allowed_domains`, `blocked_domains`, `max_uses`, or `external_web_access=False` set fails before the session connects (see
+[restricting parameters](../native-tools.md#restricting-parameters)).
 
 ### Specialist streaming models
 
