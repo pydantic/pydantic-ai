@@ -689,6 +689,60 @@ async def test_join_waits_for_async_iterable_map_to_finish_streaming():
     assert result == [1, 2]
 
 
+@pytest.mark.parametrize('empty', [False, True])
+async def test_join_finalizes_when_async_iterable_map_finishes_streaming(empty: bool):
+    """A map's join fires as soon as its async iterable finishes streaming, even while an unrelated step is running."""
+    g = GraphBuilder(output_type=list[str])
+    reduced = Event()
+    collected = Event()
+
+    def reduce_and_signal(current: list[int], inputs: int) -> list[int]:
+        reduced.set()
+        return reduce_list_append(current, inputs)
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        async def items() -> AsyncIterator[int]:
+            if empty:
+                return
+            yield 1
+            # Only finish streaming once the item has reached the join.
+            await reduced.wait()
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    @g.step
+    async def after_collect(ctx: StepContext[None, None, list[int]]) -> str:
+        collected.set()
+        return f'collected {ctx.inputs}'
+
+    @g.step
+    async def unrelated(ctx: StepContext[None, None, None]) -> str:
+        # Only finishes once the join has fired, so the join can't wait for this to complete.
+        await collected.wait()
+        return 'unrelated'
+
+    collect = g.join(reduce_and_signal, initial_factory=list[int], parent_fork_id='items')
+    final = g.join(reduce_list_append, initial_factory=list[str])
+    g.add(
+        g.edge_from(g.start_node).to(generate, unrelated),
+        g.edge_from(generate).map(fork_id='items', downstream_join_id=collect.id).to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(after_collect),
+        g.edge_from(after_collect, unrelated).to(final),
+        g.edge_from(final).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert sorted(result) == ['collected []' if empty else 'collected [1]', 'unrelated']
+
+
 async def test_reduce_first_value_stops_async_iterable_map():
     """A join that cancels its siblings also stops the async-iterable map still streaming into its fork run."""
     g = GraphBuilder(output_type=int)

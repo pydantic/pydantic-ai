@@ -736,12 +736,18 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                             await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
 
+                            source_fork_run_ids = {fsi.node_run_id for fsi in task_result.source.fork_stack}
+                            # A map over an async iterable that finishes streaming may complete its own fork run.
+                            if (
+                                streamed_fork_run_id := self.streaming_fork_runs.get(task_result.source.task_id)
+                            ) is not None:
+                                source_fork_run_ids.add(streamed_fork_run_id)
+
                             if task_result.source_is_finished:
                                 await self._finish_task(task_result.source.task_id)
 
                             # Finalizing a join can dispatch tasks that feed another join, so readiness is
                             # re-checked after each finalized join's tasks have been handed to the caller.
-                            source_fork_run_ids = {fsi.node_run_id for fsi in task_result.source.fork_stack}
                             while (join_tasks := self._pop_ready_join(source_fork_run_ids)) is not None:
                                 maybe_overridden_result = yield join_tasks
                                 if isinstance(maybe_overridden_result, EndMarker):
