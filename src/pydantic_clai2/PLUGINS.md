@@ -215,7 +215,7 @@ in the configured keyring backend, not plugin settings. Plugins that need an API
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
 backend exists, credentials go to a per-account `0600` file under the user's CLAI config
 directory instead. None of this changes plugin APIs. See
-[Codex authentication](README.md#codex-authentication) for storage and security
+[Codex authentication](docs/reference.md#codex-authentication) for storage and security
 details.
 
 ### GitHub Copilot subscriptions
@@ -540,7 +540,7 @@ helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
 wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
-to stock built-ins. See [telemetry](README.md#telemetry-and-references).
+to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 ## Linear: issues and projects
 
@@ -913,7 +913,7 @@ to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use. Plugins do not own worktree cleanup.
-See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
+See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
 
@@ -1018,20 +1018,29 @@ are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 upgrade never loads new definitions without your say. Old
 `pydantic_ai_harness.coder:Coder` declarations load through this module and are
 not rewritten. `/plugins configure coder` edits this list; see
-[Agent folders](README.md#agent-folders).
+[Agent folders](docs/reference.md#agent-folders).
 
-`skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
+`skill_folders` is a JSON list of [Agent Skills](docs/reference.md#agent-skills) folders,
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
 "~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
 declarations that omit it; `~/` means your home directory, a relative path is in
-the project, and `[]` turns skills off. `coder` binds harness `Skills` with
+the project, and `[]` turns skills off. Each relative folder is followed by the
+same folder in each directory above the launch directory, up to the git root,
+nearest first (`CoderSettings.skill_libraries(parents=...)`); outside a git
+repository only the launch directory is used. `coder` binds harness `Skills` with
 `missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
-folder is skipped and the earlier of two skills with one name wins. It reads the
+folder is skipped, a folder that is a file or a single skill package is skipped
+with a notice, and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. A folder setting that fails, such as a path to one skill
-instead of its parent folder, prints `Skills are off: ...` and leaves skills
-out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
+model's catalog. A `/skill-name` command reads them again when it runs, so it
+sends the current `SKILL.md`, and fails with a message when the skill is gone.
+Only skills with `user_invocable` (no `user-invocable: false`) get a command;
+harness leaves skills with `disable-model-invocation: true` out of the model's
+catalog. Since CLAI hides library warnings, `coder` prints the skills whose
+frontmatter fields harness ignores as a startup notice. A folder that cannot be
+read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
+setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
@@ -1043,7 +1052,7 @@ update the task inspector rather than entering the parent's transcript. Core hoo
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 
-See [managed tasks](README.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
+See [managed tasks](docs/reference.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
 Ctrl+B, independent histories, explicit resume, completion-report provenance, and
 workspace restrictions. Supplied agents and headless calls are unchanged. Do not
 hold a parent's `RunContext` or call its event emitter after that run has ended;
@@ -1070,7 +1079,7 @@ A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
 repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
-[Project settings](README.md#project-settings).
+[Project settings](docs/reference.md#project-settings).
 
 Some plugins already include others. `coder` includes task delegation, so while
 `coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
@@ -1093,7 +1102,7 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn. A
+`summarization_model`; see the [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 
 ```text
@@ -1825,7 +1834,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+`/update`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
@@ -2878,7 +2887,7 @@ The connection is saved in the configured Python keyring backend after selection
 
 ## Saved API keys
 
-Startup [`.env` loading](README.md#environment-variables) makes values available to
+Startup [`.env` loading](docs/reference.md#environment-variables) makes values available to
 providers and plugins that read the environment. It does not import credentials
 into `/keys` or replace a plugin's saved-key picker.
 
@@ -3152,7 +3161,7 @@ The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
 saved workspace paths are unchanged. Selecting a session resumes immediately in
 the current directory, without confirmation. See
-[Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
+[Saved sessions](docs/reference.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
@@ -3162,7 +3171,7 @@ case-insensitive and includes text instructions in multimodal prompts.
 
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
 API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
-paths attaches local files. See [Pasting images](README.md#pasting-images) for
+paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
 platform requirements and limits.
 
 `turn_start.text` and `turn_end.text` contain the text caption with attachment
@@ -3193,4 +3202,4 @@ with `plugin_settings` merged over their stock settings. Saved, drop-in, and pro
 plugins never load. Each plugin gets `session_start` when the context opens and
 `session_end` when it closes, with reason `error` if the block raised. No turn hooks
 fire, no `/commands` run, and nothing renders: the host runs the agent. See
-[The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).
+[The stock agent in your own code](docs/reference.md#the-stock-agent-in-your-own-code).

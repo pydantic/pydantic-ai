@@ -733,7 +733,7 @@ builders headlessly, with injected runners instead of a real terminal.
 
 In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
 and focused pytest tests. Check /plugins list for loading errors, reload after
-edits, and verify disable removes your commands and tools. Keep README.md and
+edits, and verify disable removes your commands and tools. Keep README.md, docs/reference.md, and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
 by Plugin or PluginHost, state that limitation and propose a focused source change rather
 than monkeypatching a private global registry.
