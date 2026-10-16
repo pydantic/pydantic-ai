@@ -229,10 +229,10 @@ History follows the order of the provider's own conversation:
   The one exception is a tool's return, which always directly follows the response that called it: a tool
   that finishes after later messages were recorded has its return inserted ahead of them.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
-  at the same position: a reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
-  interrupted copy (on models that support output truncation), and a speech part whose [retained audio](#retaining-audio) is evicted loses its audio. If you
-  persist history as it grows, store the latest snapshot rather than appending only the messages past the
-  ones you stored.
+  at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
+  interrupted copy (on models that support output truncation), and a speech part whose
+  [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
+  the latest snapshot rather than appending only the messages past the ones you stored.
 
 - Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
