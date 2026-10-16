@@ -28,9 +28,11 @@ from pydantic_clai2.cli.self_update import (
     PACKAGES,
     PYPI_URL,
     Installed,
+    Output,
     Relaunch,
     Update,
     Updates,
+    WebHandoff,
     _in_thread,  # pyright: ignore[reportPrivateUsage]
     _run_uv,  # pyright: ignore[reportPrivateUsage]
     after_exit_script,
@@ -46,6 +48,7 @@ from pydantic_clai2.cli.self_update import (
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import UpdateProgress
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from tests.clai2.menu_script import make_context
@@ -257,11 +260,15 @@ def _updates(
     codes: list[int] | None = None,
     uv: str | None = '/bin/uv',
     executable: str | None = '/tools/clai2',
+    lines: Sequence[str] = (),
 ) -> tuple[Updates, list[Sequence[str]]]:
     ran: list[Sequence[str]] = []
 
-    async def run(command: Sequence[str]) -> int:
+    async def run(command: Sequence[str], output: Output | None) -> int:
         ran.append(command)
+        for line in lines:
+            assert output is not None, 'uv prints to the terminal while nobody listens'
+            await output(line)
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
@@ -364,15 +371,84 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
         await current.command(['now'])
 
 
-@pytest.mark.subprocess(reason='runs a Python one-liner in place of `uv` to check the exit status is returned')
-async def test_run_uv_returns_the_exit_status() -> None:
+@pytest.mark.subprocess(
+    reason='runs Python one-liners in place of `uv` to check its exit status and lines are returned'
+)
+async def test_run_uv_returns_the_exit_status(
+    capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert await _run_uv([sys.executable, '-c', 'raise SystemExit(3)']) == 3
+    lines: list[str] = []
+
+    async def output(line: str) -> None:
+        lines.append(line)
+
+    script = "import sys; print('Resolved'); sys.stderr.write('Prepared\\r\\nfailed'); raise SystemExit(2)"
+    assert await _run_uv([sys.executable, '-u', '-c', script], output) == 2
+    assert lines == ['Resolved', 'Prepared', 'failed']
+    assert capfd.readouterr().err == 'Resolved\nPrepared\nfailed\n', 'the terminal still shows them'
+    # While the shell relays standard error, the lines go straight to the terminal, before the editor is back.
+    source, terminal = os.pipe()
+    monkeypatch.setattr(self_update, 'terminal_stderr', lambda: terminal)
+    assert await _run_uv([sys.executable, '-c', "print('Installed')"], output) == 0
+    os.close(terminal)
+    with os.fdopen(source) as relayed:
+        assert relayed.read() == 'Installed\n'
+    assert lines[-1] == 'Installed'
+
+
+async def test_command_reports_its_progress() -> None:
+    """While a plugin listens, it hears the install start, each line uv prints, and how the install ended."""
+    heard: list[UpdateProgress] = []
+
+    async def report(event: UpdateProgress) -> None:
+        heard.append(event)
+
+    restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
+    restarted.report = lambda: report
+    restarted.capture = lambda: True
+    assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
+    assert heard == [
+        UpdateProgress(stage='installing', target='0.53.0'),
+        UpdateProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
+        UpdateProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
+        UpdateProgress(stage='restarting', target='0.53.0'),
+    ]
+    heard.clear()
+    # Without a page to show them, uv's lines stay on the terminal, where uv draws its progress itself.
+    quiet, _ = _updates(['stable'])
+    quiet.report = lambda: report
+    await quiet.command([])
+    assert [event.stage for event in heard] == ['installing', 'restarting']
+    heard.clear()
+    lost, _ = _updates(['stable'], executable=None)
+    failed, _ = _updates(['stable'], codes=[1])
+    vanished, _ = _updates(['main'])
+
+    async def missing(command: Sequence[str], output: Output | None) -> int:
+        raise OSError('uv vanished')
+
+    vanished.run = missing
+    for updates in (lost, failed, vanished):
+        updates.report = lambda: report
+    await lost.command([])
+    await failed.command([])
+    with pytest.raises(OSError):
+        await vanished.command([])
+    assert [event.stage for event in heard] == [
+        'installing',
+        'installed',
+        'installing',
+        'failed',
+        'installing',
+        'failed',
+    ]
 
 
 async def test_failed_install_removes_the_overrides_file() -> None:
     seen: list[Path] = []
 
-    async def run(command: Sequence[str]) -> int:
+    async def run(command: Sequence[str], output: Output | None) -> int:
         seen.append(Path(command[5]))
         raise OSError('uv vanished')
 
@@ -534,8 +610,15 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
     assert saved.messages
 
 
+def _args(**options: object) -> argparse.Namespace:
+    defaults: dict[str, object] = dict(
+        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None
+    )
+    return argparse.Namespace(**(defaults | options))
+
+
 def test_relaunch_argv(tmp_path: Path) -> None:
-    bare = argparse.Namespace(agent=None, model=None, request_limit=None, database=None)
+    bare = _args()
     assert relaunch_argv(bare, executable='/b/clai2', session_id=None) == ['/b/clai2']
     assert relaunch_argv(bare, executable='/b/clai2', session_id=None, new_session_id='u') == [
         '/b/clai2',
@@ -547,7 +630,19 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         '--resume',
         's',
     ]
-    full = argparse.Namespace(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
+    # `--web` stays a web launch; the token stays in its file, off the command line.
+    web = _args(web=True)
+    assert relaunch_argv(web, executable='/b/clai2', session_id='s') == ['/b/clai2', '--web', '--resume', 's']
+    launcher = _args(web=True, port=0, token_file=tmp_path / 'token')
+    assert relaunch_argv(launcher, executable='/b/clai2', session_id=None) == [
+        '/b/clai2',
+        '--web',
+        '--port',
+        '0',
+        '--token-file',
+        str(tmp_path / 'token'),
+    ]
+    full = _args(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
     assert relaunch_argv(full, executable='/b/clai2', session_id='abc') == [
         '/b/clai2',
         '--agent',
@@ -581,6 +676,79 @@ def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert execs == [
         ('/b/clai2', ['/b/clai2', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
     ]
+    assert 'CLAI_RELAUNCH_WEB' not in os.environ, 'no web UI to hand over'
+
+
+WEB_TOKEN = 'k' * 43
+
+
+def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`clai2 --web` restarts as `clai2 --web`, with its port and token in the environment, never in `ps`."""
+    token = tmp_path / 'token'
+    token.write_text(WEB_TOKEN)
+    token.chmod(0o600)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.argv', ['clai2', '--web', '--port', '0', '--token-file', 'token', '--database', 'c.db'])
+    calls: list[dict[str, object]] = []
+
+    async def run_web(**kwargs: object) -> None:
+        calls.append(kwargs)
+        raise Relaunch(executable='/b/clai2', session_id='s', web=WebHandoff(port=4321, token=WEB_TOKEN))
+
+    execs: list[list[str]] = []
+
+    def execv(path: str, argv: list[str]) -> None:
+        execs.append(argv)
+
+    monkeypatch.setattr('pydantic_clai2.cli.web.run_web', run_web)
+    monkeypatch.setattr(os, 'execv', execv)
+    monkeypatch.setenv('CLAI_RELAUNCH_WEB', f'4321 {WEB_TOKEN}')
+    _cli.run()
+    [call] = calls
+    assert (call['port'], call['token'], call['restart']) == (0, WEB_TOKEN, WebHandoff(port=4321, token=WEB_TOKEN))
+    [argv] = execs
+    database = str(tmp_path / 'c.db')
+    assert argv == [
+        '/b/clai2',
+        '--web',
+        '--port',
+        '0',
+        '--token-file',
+        str(token),
+        '--database',
+        database,
+        '--resume',
+        's',
+    ]
+    assert WEB_TOKEN not in ' '.join(argv)
+    assert os.environ['CLAI_RELAUNCH_WEB'] == f'4321 {WEB_TOKEN}'
+
+
+@pytest.mark.parametrize(
+    ('value', 'handoff'),
+    [
+        (f'4321 {WEB_TOKEN}', WebHandoff(port=4321, token=WEB_TOKEN)),
+        (f'99999 {WEB_TOKEN}', None),
+        (f'port {WEB_TOKEN}', None),
+        ('4321 short', None),
+        ('', None),
+    ],
+)
+def test_a_terminal_session_serves_the_handed_over_web_ui(
+    value: str, handoff: WebHandoff | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The handed-over port and token reach the shell, and leave the environment before any tool could read them."""
+    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'c.db'), '-m', 'test'])
+    monkeypatch.setenv('CLAI_RELAUNCH_WEB', value)
+    calls: list[dict[str, object]] = []
+
+    async def chat(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs)
+        assert 'CLAI_RELAUNCH_WEB' not in os.environ
+
+    monkeypatch.setattr(_app, 'chat', chat)
+    _cli.run()
+    assert calls[0]['web'] == handoff
 
 
 async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
