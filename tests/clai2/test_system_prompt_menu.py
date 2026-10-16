@@ -195,7 +195,7 @@ def test_menu_shows_yours_as_editable_and_the_full_prompt_as_read_only(
     monkeypatch.delenv('EDITOR')
     context.project = ProjectSettings(overrides={'run.instructions': 'From the project.'})
     edit = ' '.join(menu.details(items[1]).split())
-    assert 'Opens in the built-in editor: ctrl-s save · esc cancel.' in edit
+    assert 'Opens in the built-in editor: Ctrl+S save - Esc cancel.' in edit
     assert 'The project file sets them again at next start.' in edit
 
 
