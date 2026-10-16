@@ -238,16 +238,16 @@ the sessions it shows over its one WebSocket.
 Sessions are named by their conversation ID, the `id` the sidebar lists.
 
 - **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
-  `status`, `question`, `question_closed`, `dialog`, `dialog_shown`, `dialog_closed`, `notice`,
-  `title`, `task`, `task_event`) carry `"session": "<conversation id>"` and go only to the
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`) carry `"session": "<conversation id>"` and go only to the
   connections watching that session. A `snapshot` names its session in `session.id`.
-- **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`)
-  go to every connection and carry no `session`.
+- **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
+  and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and
+  carry no `session`; every `snapshot` lists the open dialogs.
 - `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
   conversation, or changes state:
   `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
-  `queued` means input waits while that session's turn runs; `asking` means a question or dialog
-  waits for the user.
+  `queued` means input waits while that session's turn runs; `asking` means a question its turn
+  asked waits for the user.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
   watches. The server answers with a `snapshot` for each newly watched live session; IDs that are not
   live are ignored. A connection that never sends `watch` (an older page, `web/client.py`) watches
@@ -265,7 +265,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
 | `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
-| `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer its dialog |
+| `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer a settings menu's dialog, as `/api/dialogs/…` |
 
 `POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
