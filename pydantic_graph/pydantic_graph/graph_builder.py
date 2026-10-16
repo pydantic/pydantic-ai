@@ -718,7 +718,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                 context = ReducerContext(state=self.state, deps=self.deps, join_state=join_state)
                                 join_state.current = join_node.reduce(context, join_state.current, result.inputs)
                                 if join_state.cancelled_sibling_tasks:
-                                    await self._cancel_sibling_tasks(parent_fork_id, fork_run_id)
+                                    await self._cancel_sibling_tasks(result.join_id, parent_fork_id, fork_run_id)
                             else:
                                 assert not isinstance(maybe_overridden_result, ErrorMarker)
                                 for new_task in maybe_overridden_result:
@@ -746,13 +746,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     return
                                 await self._execute_overridden_tasks(join_tasks, maybe_overridden_result)
 
-                            if not self.active_tasks:
+                            if not self.active_tasks:  # pragma: no cover
                                 # if there are no active tasks, we'll be waiting forever for the next result..
                                 break
 
-                        # There are no active tasks, so every join that isn't waiting on an intermediate join
-                        # can be finalized. Joins are normally finalized above when their last input arrives;
-                        # this catches any whose fork run wasn't in the last finished task's fork stack.
+                        # Defensive: a join's last input always comes from a task whose fork stack contains the
+                        # join's fork run, so the loop above finalizes it. If a join was somehow left behind with no
+                        # tasks running, finalize every join that isn't waiting on an intermediate join.
                         while (join_tasks := self._pop_ready_join()) is not None:  # pragma: no cover
                             maybe_overridden_result = yield join_tasks
                             if isinstance(maybe_overridden_result, EndMarker):
@@ -1072,7 +1072,16 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 pass
         return True
 
-    async def _cancel_sibling_tasks(self, parent_fork_id: ForkID, node_run_id: NodeRunID):
+    async def _cancel_sibling_tasks(self, join_id: JoinID, parent_fork_id: ForkID, node_run_id: NodeRunID):
+        # Discard the cancelled siblings' partially reduced intermediate joins, so they aren't finalized into this join.
+        intermediate_joins = self.graph.intermediate_join_nodes.get(join_id, set())
+        for key, join_state in list(self.active_reducers.items()):
+            if key[0] in intermediate_joins and any(
+                item.fork_id == parent_fork_id and item.node_run_id == node_run_id
+                for item in join_state.downstream_fork_stack
+            ):
+                del self.active_reducers[key]
+
         task_ids_to_cancel = set[TaskID]()
         for task_id, t in self.active_tasks.items():
             for item in t.fork_stack:  # pragma: no branch

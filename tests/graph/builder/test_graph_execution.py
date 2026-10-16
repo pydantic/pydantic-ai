@@ -617,6 +617,42 @@ async def test_end_run_from_join_batch(with_running_step: bool):
     assert run.output == ['ended']
 
 
+async def test_reduce_first_value_discards_cancelled_siblings_intermediate_joins():
+    """When a join cancels its siblings, their partially reduced intermediate joins aren't finalized into it."""
+    g = GraphBuilder(output_type=list[int])
+    never = Event()
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def inner(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs * 10, ctx.inputs * 10 + 1]
+
+    @g.step
+    async def proc(ctx: StepContext[None, None, int]) -> int:
+        if ctx.inputs == 21:
+            await never.wait()
+        return ctx.inputs
+
+    inner_join = g.join(reduce_list_append, initial_factory=list[int], parent_fork_id='inner_map')
+    first = g.join(ReduceFirstValue[list[int]](), initial_factory=list[int], parent_fork_id='outer_map')
+    g.add(
+        g.edge_from(g.start_node).to(outer),
+        g.edge_from(outer).map(fork_id='outer_map').to(inner),
+        g.edge_from(inner).map(fork_id='inner_map').to(proc),
+        g.edge_from(proc).to(inner_join),
+        g.edge_from(inner_join).to(first),
+        g.edge_from(first).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert sorted(result) == [10, 11]
+
+
 async def test_independent_joins_finalize_while_other_tails_are_running():
     """Independent join tails can synchronize without blocking each other's finalization."""
     g = GraphBuilder(output_type=list[int])
