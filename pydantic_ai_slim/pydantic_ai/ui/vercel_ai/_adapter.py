@@ -480,13 +480,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             # The event stream emits the delta after the tool result that caused it, so
                             # the AI SDK attaches it to the assistant message. Adding it here lands it on
-                            # the request carrying that tool return, matching the server-side history. While
-                            # the step's tool returns are held back, it waits with them so it follows its return.
-                            delta = tool_availability_delta_from_payload(part.data)
-                            if pending_returns:
-                                pending_returns.append(delta)
-                            else:
-                                builder.add(delta)
+                            # the request carrying that tool return, matching the server-side history. It waits
+                            # with the step's held-back tool returns so it follows the return that caused it.
+                            pending_returns.append(tool_availability_delta_from_payload(part.data))
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
