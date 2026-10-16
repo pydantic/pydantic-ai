@@ -61,8 +61,9 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     _history_parts: list[SystemPromptPart] = field(default_factory=list[SystemPromptPart], init=False, repr=False)
     """With `replace_existing=True`, the system prompt parts in the history this run started with."""
 
-    _injected: list[SystemPromptPart] | None = field(default=None, init=False, repr=False)
-    """The parts this run last put at the head of the history, or `None` before its first model request."""
+    _head: list[SystemPromptPart] | None = field(default=None, init=False, repr=False)
+    """The parts this run last put at the head of the history, or `None` while the head is still the
+    agent's own system prompt, opening the first request of a fresh conversation."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ReinjectSystemPrompt[AgentDepsT]:
         if not self.replace_existing:
@@ -78,6 +79,9 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             for part in message.parts
             if isinstance(part, SystemPromptPart)
         ]
+        # With a history, the agent adds no system prompt, so the head only holds the parts
+        # snapshotted above and any added since (e.g. a compaction summary), which are kept.
+        run_capability._head = [] if ctx.messages else None
         return run_capability
 
     async def before_model_request(
@@ -105,8 +109,8 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         replaceable: list[SystemPromptPart] = []
         if self.replace_existing:
             # Besides the parts the run started with, replace the system prompt at the head: the one
-            # this capability put there on an earlier step or, before the first, the agent's own.
-            head = self._injected if self._injected is not None else _standing_system_prompt(persistent_messages)
+            # this capability put there on an earlier step or, on a fresh conversation, the agent's own.
+            head = self._head if self._head is not None else _standing_system_prompt(persistent_messages)
             replaceable = [*self._history_parts, *head]
         sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
@@ -121,7 +125,15 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             model_settings=cast('ModelSettings | None', ctx.model_settings),
         )
         if self.replace_existing:
-            self._injected = sys_parts
+            # A head part matching the configured prompt is that prompt, e.g. as another
+            # reinjector already prepended it this step, unlike a summary a capability put there.
+            configured = {(part.content, part.dynamic_ref) for part in sys_parts}
+            replaceable += [
+                part
+                for part in _standing_system_prompt(persistent_messages)
+                if (part.content, part.dynamic_ref) in configured
+            ]
+            self._head = sys_parts
             request_messages = _without_parts(request_messages, replaceable)
             persistent_messages = _without_parts(persistent_messages, replaceable)
         request_context.messages = _reinject_system_prompt(

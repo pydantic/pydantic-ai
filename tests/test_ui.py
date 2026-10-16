@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     BinaryImage,
@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -1828,6 +1829,34 @@ async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
     assert len(requests) == 2
     assert _contents(requests[1]) == snapshot(['Server prompt', 'Hi', 'Go', '<system>Mid-run steering</system>'])
     assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Hi', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_keeps_summary_added_to_head_on_first_request():
+    """A summary a compaction capability folds into the head request on the run's first step is kept."""
+
+    @dataclass
+    class SummarizeHistory(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            standing = [p for p in ctx.messages[0].parts if isinstance(p, SystemPromptPart)]
+            compacted: list[ModelMessage] = [
+                ModelRequest(parts=[*standing, SystemPromptPart('Summary of previous conversation')]),
+                ctx.messages[-1],
+            ]
+            ctx.messages[:] = compacted
+            request_context.messages = list(compacted)
+            return request_context
+
+    agent = Agent(TestModel(), system_prompt='Server prompt', capabilities=[SummarizeHistory()])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history, capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Summary of previous conversation', 'Go'])
 
 
 async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplicate():
