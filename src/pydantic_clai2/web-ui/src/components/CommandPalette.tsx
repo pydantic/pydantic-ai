@@ -16,9 +16,12 @@ interface Entry {
   needsArguments: boolean
 }
 
-/** What a description shows after `/NAME `, such as `[VALUE|reset]` in `/effort [VALUE|reset]`; empty when none. */
+/** What a description shows after `/NAME `, such as `[VALUE|reset]` in `/effort [VALUE|reset]`; empty when none.
+ *
+ * Only arguments count, in brackets or capitals: `add [NAME]` in `/model add [NAME]` names a subcommand. */
 export function argumentHint(name: string, description: string): string {
-  return new RegExp(`/${name} ([^,;:()]+)`).exec(description)?.[1]?.trim() ?? ''
+  const hint = new RegExp(`/${name} ([^,;:()]+)`).exec(description)?.[1]?.trim() ?? ''
+  return /^[[A-Z]/.test(hint) ? hint : ''
 }
 
 /** Whether a hint names an argument outside brackets, as `PROMPT` in `[@model] PROMPT` is. */

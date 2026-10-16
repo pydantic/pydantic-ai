@@ -4,6 +4,7 @@ The terminal's bare `/update` still installs at once; the web UI shows this menu
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.cli.self_update import Updates
@@ -37,7 +38,7 @@ class AboutSource:
             default=self.version(),
             button='Update…',
         )
-        return [version, *self._settings.rows()]
+        return [version, *(replace(row, label='Update channel') for row in self._settings.rows())]
 
     def current(self, row: FieldRow) -> str:
         """The version, or the channel."""
