@@ -1173,8 +1173,18 @@ class ToolManager(Generic[AgentDepsT]):
                 raise CallDeferred() if deferred_tool.tool_def.kind == 'external' else ApprovalRequired()
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         except (CallDeferred, ApprovalRequired) as exc:
+            # Approval/defer requests must describe the arguments that will actually
+            # execute. Validation hooks may rewrite validated_args (for example,
+            # clamping a spend amount) before a tool raises ApprovalRequired.
+            # Carry those post-validation arguments into the deferred request so a
+            # human never approves a different action than the one we execute.
+            deferred_call = (
+                replace(call, args=validated.validated_args)
+                if validated.validated_args is not None
+                else call
+            )
             return await self._resolve_single_deferred(
-                call,
+                deferred_call,
                 exc,
                 wrap_validation_errors=wrap_validation_errors,
                 on_deferred_requests=on_deferred_requests,
