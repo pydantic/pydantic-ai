@@ -105,6 +105,11 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
+_RESTARTS = 'Restarts CLAI: enter it in the session CLAI started with'
+
+
+def _refuse_restart(args: list[str]) -> str:
+    raise ValueError('/reload and /update restart CLAI. Enter them in the session CLAI started with.')
 
 
 def create_shell(
@@ -503,9 +508,7 @@ def create_shell(
         await render_history(messages, console=console, renderer=renderer)
 
     sessions.on_resume = show_resumed
-    sessions.held_elsewhere = lambda conversation_id: (
-        process.live.holding(conversation_id) not in (None, shell.live_session)
-    )
+    sessions.claim = lambda conversation_id: process.live.claim(conversation_id, holder=shell.live_session)
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
     process.live.add(shell)
@@ -607,6 +610,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.loader.load_all()
                 if resume is not None:
                     self.session.record_resumed()
+                for name in ('reload', 'update'):
+                    # Both restart CLAI, which only the session CLAI started with can do.
+                    self.commands.unregister([name])
+                    self.commands.register(Command(name=name, description=_RESTARTS, handler=_refuse_restart))
                 ready()
                 reason = await self.run()
         except get_cancelled_exc_class():
@@ -619,6 +626,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
+        self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:
@@ -1056,13 +1064,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             ended = await self.run_turn(start, images=images, automated=automated)
 
         previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
-        self.turning = True
-        self.live_session.changed()
-        try:
-            completed = await self.interrupts.run(run_turn())
-        finally:
-            self.turning = False
-            self.live_session.changed()
+        completed = await self.interrupts.run(run_turn())
         if not completed:
             for record in self.tasks.records():
                 if (
@@ -1088,6 +1090,17 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self, start: TurnStart, *, images: Sequence[BinaryContent] = (), headless: bool = False, automated: bool = False
     ) -> TurnEnd:
         """Apply turn hooks and settings, then run with optional terminal rendering."""
+        self.turning = True
+        self.live_session.changed()
+        try:
+            return await self._run_turn(start, images=images, headless=headless, automated=automated)
+        finally:
+            self.turning = False
+            self.live_session.changed()
+
+    async def _run_turn(
+        self, start: TurnStart, *, images: Sequence[BinaryContent], headless: bool, automated: bool
+    ) -> TurnEnd:
         try:
             await self.loader.fire(start)
         except PluginError as exc:

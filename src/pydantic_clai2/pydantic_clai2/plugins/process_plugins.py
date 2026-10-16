@@ -9,6 +9,7 @@ live session; `on_session_start` and `on_session_end` reach it once. `LiveSessio
 """
 
 import importlib
+import logging
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from pydantic_clai2.plugins.loader import SessionPlugins
 
 T = TypeVar('T')
+_LOGGER = logging.getLogger(__name__)
 
 # Local settings databases from before the package move, or from before plugins were declared as
 # `Plugin` classes, can still name the old factories.
@@ -238,7 +240,7 @@ class JoinedSessions:
     async def open(self, conversation_id: str, /) -> LiveSession:
         raise RuntimeError(_OPENS_NONE)
 
-    async def new(self, workspace: Path | None = None) -> LiveSession:
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
         raise RuntimeError(_OPENS_NONE)
 
     async def close(self, live_id: str, /) -> None:
@@ -254,9 +256,13 @@ class JoinedSessions:
         return unsubscribe
 
     def changed(self, session: LiveRuntime) -> None:
-        """Call every listener: `session`, or the listing, may have changed."""
+        """Call every listener: `session`, or the listing, may have changed. A failing listener is logged."""
         for listener in list(self._listeners):
-            listener()
+            try:
+                listener()
+            except Exception:
+                # Called from a session's own loop, which a plugin's listener must not end.
+                _LOGGER.exception('A live sessions listener failed')
 
 
 _OPENS_NONE = 'This CLAI opens no other live sessions.'

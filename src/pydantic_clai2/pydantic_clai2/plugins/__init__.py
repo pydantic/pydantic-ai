@@ -369,7 +369,7 @@ class LiveSessions(Protocol):
         """
         ...
 
-    async def new(self, workspace: Path | None = None) -> LiveSession:
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
         """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in."""
         ...
 

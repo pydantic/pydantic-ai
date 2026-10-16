@@ -42,6 +42,31 @@ class Recorder(Plugin):
 RECORDER = PluginSettings(id='recorder', factory=f'{__name__}:Recorder')
 
 
+class Gate(Plugin):
+    """Holds the end of the session in a folder named `held` until `release` is set."""
+
+    ending: ClassVar[anyio.Event] = anyio.Event()
+    release: ClassVar[anyio.Event] = anyio.Event()
+
+    async def on_session_end(self, event: SessionEnd) -> None:
+        if self.host.workspace.name == 'held':
+            Gate.ending.set()
+            await Gate.release.wait()
+
+
+class _Output(io.StringIO):
+    """Console output that tells when `clai2 --web` is ready for its user."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready = anyio.Event()
+
+    def write(self, s: str) -> int:
+        if 'Press Ctrl-C to quit.' in s:
+            self.ready.set()
+        return super().write(s)
+
+
 class Fleet:
     """One process whose `live.build` makes a runtime per folder, with that folder's agent, project, and console."""
 
@@ -130,8 +155,8 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
     launched_in = Path.cwd()
     with anyio.fail_after(20):
         async with fleet.live.serving():
-            a = await fleet.live.new(fleet.folder('a'))
-            b = await fleet.live.new(fleet.folder('b'))
+            a = await fleet.live.new(workspace=fleet.folder('a'))
+            b = await fleet.live.new(workspace=fleet.folder('b'))
             assert [session.id for session in fleet.live.listing()] == [a.id, b.id]
             assert fleet.live.get(b.id) is b
             assert (a.workspace, b.workspace) == ((tmp_path / 'a').resolve(), (tmp_path / 'b').resolve())
@@ -171,8 +196,8 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
         async with fleet.live.serving():
             opened: list[LiveSession] = []
 
-            async def open_it() -> None:
-                opened.append(await fleet.live.open(saved.id))
+            async def open_it(conversation_id: str = saved.id) -> None:
+                opened.append(await fleet.live.open(conversation_id))
 
             async with anyio.create_task_group() as group:
                 group.start_soon(open_it)
@@ -190,6 +215,25 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
                 await fleet.runtimes[other.id].sessions.resume(saved.id)
             # The session holding it may restore it again.
             assert 'Resumed Saved' in await fleet.runtimes[first.id].sessions.resume(saved.id)
+            # While one session resumes a conversation, `open` waits for it, and no other session may take it.
+            later = await fleet.process.conversations.save(
+                summary=ConversationSummary(workspace=str(fleet.folder('home').resolve()), title='Later'),
+                messages=history,
+            )
+            async with anyio.create_task_group() as group:
+                with fleet.live.claim(later.id, holder=other):
+                    with pytest.raises(ValueError, match='is open in another live session'):
+                        await fleet.runtimes[first.id].sessions.resume(later.id)
+                    group.start_soon(open_it, later.id)
+                    await anyio.lowlevel.checkpoint()
+                    assert len(opened) == 2
+                    await fleet.runtimes[other.id].session.resume(later.id)
+            assert opened[2] is other and fleet.built == ['a', 'home']
+            # Commands that restart CLAI belong to the session CLAI started with.
+            other.send_input('/reload')
+            other.send_input('/update')
+            await until(fleet.live, lambda: fleet.outputs['home'].getvalue().count('restart CLAI.') == 2)
+            assert other in fleet.live.listing()
             # `/exit` closes only the session it is entered in.
             other.send_input('/exit')
             await until(fleet.live, lambda: other not in fleet.live.listing())
@@ -199,16 +243,35 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
             async with anyio.create_task_group() as group:
                 group.start_soon(fleet.live.close, first.id)
                 await anyio.lowlevel.checkpoint()
-                assert fleet.live.holding(saved.id) is None
-                reopened = await fleet.live.open(saved.id)
+                # Closing, it still holds the conversation: nothing else may resume it yet.
+                assert fleet.live.holding(saved.id) is first
+                opened.append(await fleet.live.open(saved.id))
+                reopened = opened[-1]
                 assert reopened is not first and fleet.built == ['a', 'home', 'a']
                 with pytest.raises(LookupError):
                     fleet.live.get(first.id)
                 assert fleet.runtimes[reopened.id].session.messages == history
-    assert Recorder.ended.count(('a', 'exit')) == 2
+
+            # While a session switches away from a conversation, `open` waits, then opens it anew.
+            reopened = opened[-1]
+            third = await fleet.process.conversations.save(
+                summary=ConversationSummary(workspace=str(fleet.folder('a').resolve()), title='Third'),
+                messages=history,
+            )
+            async with anyio.create_task_group() as group:
+                with fleet.live.claim(third.id, holder=reopened):
+                    with pytest.raises(ValueError, match='already switching'):
+                        fleet.live.claim('x', holder=reopened).__enter__()
+                    group.start_soon(open_it, saved.id)
+                    await anyio.wait_all_tasks_blocked()
+                    assert len(opened) == 4
+                    await fleet.runtimes[reopened.id].session.resume(third.id)
+            assert opened[4] is not reopened and opened[4].conversation.conversation_id == saved.id
+            assert fleet.live.holding(third.id) is reopened
+    assert Recorder.ended.count(('a', 'exit')) == 3
 
 
-async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path) -> None:
+async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     fleet = Fleet(tmp_path)
     gone = await fleet.process.conversations.save(
         summary=ConversationSummary(workspace=str(tmp_path / 'gone'), title='Gone'), messages=[]
@@ -222,7 +285,7 @@ async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path) ->
         with pytest.raises(ValueError, match='does not exist'):
             await fleet.live.open(gone.id)
         with pytest.raises(ValueError, match='does not exist'):
-            await fleet.live.new(tmp_path / 'missing')
+            await fleet.live.new(workspace=tmp_path / 'missing')
         with pytest.raises(LookupError):
             await fleet.live.close('unknown')
         with pytest.raises(ValueError, match='runs under its own driver'):
@@ -239,12 +302,19 @@ async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path) ->
         with pytest.raises(RuntimeError, match='opens no other live sessions'):
             await refused
     heard: list[str] = []
+
+    def failing() -> None:
+        raise RuntimeError('listener broke')
+
+    joined.subscribe(failing)
     unsubscribe = joined.subscribe(lambda: heard.append('changed'))
     joined.changed(held.live_session)
     unsubscribe()
     unsubscribe()
     joined.changed(held.live_session)
+    # A failing listener is logged; the others still hear the change.
     assert heard == ['changed']
+    assert [record.message for record in caplog.records] == ['A live sessions listener failed'] * 2
 
 
 async def test_a_session_that_fails_leaves_the_others_running(
@@ -277,11 +347,11 @@ async def test_a_session_that_fails_leaves_the_others_running(
     with anyio.fail_after(20):
         async with fleet.live.serving():
             with pytest.raises(RuntimeError, match='early broke'):
-                await fleet.live.new(fleet.folder('early'))
-            await fleet.live.new(fleet.folder('late'))
+                await fleet.live.new(workspace=fleet.folder('early'))
+            await fleet.live.new(workspace=fleet.folder('late'))
             await until(fleet.live, lambda: not fleet.live.listing())
             fleet.live.build = build
-            survivor = await fleet.live.new(fleet.folder('survivor'))
+            survivor = await fleet.live.new(workspace=fleet.folder('survivor'))
             survivor.send_input('hello')
             await until(fleet.live, lambda: bool(fleet.runtimes[survivor.id].session.messages))
     assert 'late broke' in caplog.text
@@ -308,7 +378,7 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
     launched_in = Path.cwd()
     with anyio.fail_after(20):
         async with fleet.live.serving():
-            sessions = [await fleet.live.new(fleet.folder(name)) for name in ('alpha', 'beta')]
+            sessions = [await fleet.live.new(workspace=fleet.folder(name)) for name in ('alpha', 'beta')]
             for session in sessions:
                 session.send_input('read the rules')
             await until(fleet.live, lambda: len(seen) == 2 and all(fleet.runtimes[s.id].idle for s in sessions))
@@ -330,7 +400,7 @@ async def test_idle_sessions_close_after_the_timeout(tmp_path: Path) -> None:
     with anyio.fail_after(20):
         async with fleet.live.serving():
             idle, watched, busy, focused = [
-                await fleet.live.new(fleet.folder(name)) for name in ('idle', 'watched', 'busy', 'focused')
+                await fleet.live.new(workspace=fleet.folder(name)) for name in ('idle', 'watched', 'busy', 'focused')
             ]
             idle.send_input('hello')
             await until(
@@ -369,17 +439,56 @@ async def test_idle_sessions_close_after_the_timeout(tmp_path: Path) -> None:
     assert Recorder.ended[:3] == [('idle', 'exit'), ('watched', 'exit'), ('busy', 'exit')]
 
 
+async def test_a_session_that_ends_while_another_closes_is_skipped(tmp_path: Path) -> None:
+    """Idle closing waits on one session's end; another that `/exit`s meanwhile is not closed twice."""
+    Gate.ending, Gate.release = anyio.Event(), anyio.Event()
+    fleet = Fleet(tmp_path, builtin=(RECORDER, PluginSettings(id='gate', factory=f'{__name__}:Gate')))
+    now = [0.0]
+    fleet.live.clock = lambda: now[0]
+    fleet.live.idle_after = 10
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            await fleet.live.new(workspace=fleet.folder('held'))
+            other = await fleet.live.new(workspace=fleet.folder('other'))
+            now[0] = 11
+            async with anyio.create_task_group() as group:
+                group.start_soon(fleet.live.close_idle)
+                await Gate.ending.wait()
+                other.send_input('/exit')
+                await until(fleet.live, lambda: other not in fleet.live.listing())
+                Gate.release.set()
+            assert not fleet.live.listing()
+    assert sorted(Recorder.ended) == [('held', 'exit'), ('other', 'exit')]
+
+
+async def test_the_registry_counts_each_session_once(tmp_path: Path) -> None:
+    """Adding twice keeps one entry; leaving or removing a session no longer counted does nothing."""
+    fleet = Fleet(tmp_path, builtin=())
+    runtime = fleet.build(fleet.folder('once'))
+    heard: list[str] = []
+    fleet.live.subscribe(lambda: heard.append('changed'))
+    fleet.live.add(runtime)
+    assert fleet.live.listing() == [runtime.live_session] and not heard
+    await runtime.close('exit')
+    assert not fleet.live.listing() and heard == ['changed', 'changed']
+    fleet.live.leaving(runtime)
+    fleet.live.remove(runtime)
+    assert heard == ['changed', 'changed']
+
+
 async def test_the_idle_check_runs_on_its_own(tmp_path: Path) -> None:
     fleet = Fleet(tmp_path)
     fleet.live.idle_after = fleet.live.check_every = 0
     with anyio.fail_after(20):
         async with fleet.live.serving():
-            await fleet.live.new(fleet.folder('brief'))
+            await fleet.live.new(workspace=fleet.folder('brief'))
             await until(fleet.live, lambda: not fleet.live.listing())
     assert Recorder.ended == [('brief', 'exit')]
 
 
-async def test_settings_other_than_the_model_and_run_reach_every_live_session(tmp_path: Path) -> None:
+async def test_settings_other_than_the_model_and_run_reach_every_live_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     """`/set` in one session applies `display.*` and the like everywhere, except where a project file sets it."""
     fleet = Fleet(tmp_path, builtin=())
     fleet.projects['pinned'] = ProjectSettings(overrides={'display.thinking': True})
@@ -395,6 +504,15 @@ async def test_settings_other_than_the_model_and_run_reach_every_live_session(tm
     origin.context.reset_setting('display.thinking')
     assert 'thinking' not in other.context.settings.model_fields_set
     assert other.context.settings.thinking == Settings().thinking
+
+    # A session that fails to follow is logged; the setting stays saved, and the others still follow.
+    def broken(key: str, source: Settings) -> None:
+        raise RuntimeError('cannot follow')
+
+    monkeypatch.setattr(other.context, 'adopt', broken)
+    assert origin.context.set_setting(['display.grep_lines', '7']).startswith('Saved display.grep_lines.')
+    assert pinned.context.settings.grep_lines == 7 and 'did not follow display.grep_lines' in caplog.text
+    monkeypatch.undo()
 
     await origin.close('exit')
     assert origin.live_session not in fleet.live.listing()
@@ -420,7 +538,7 @@ async def test_run_web_opens_more_sessions_in_their_own_folders(
         await serve(shell, **kwargs)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(web_module, '_serve_web', recorded)
-    output = io.StringIO()
+    output = _Output()
     with anyio.fail_after(30):
         async with anyio.create_task_group() as group:
             group.start_soon(
@@ -433,11 +551,10 @@ async def test_run_web_opens_more_sessions_in_their_own_folders(
                     port=0,
                 )
             )
-            while 'Press Ctrl-C to quit.' not in output.getvalue():
-                await anyio.lowlevel.checkpoint()
+            await output.ready.wait()
             live = shells[0].process.live
             here = await live.new()
-            there = await live.new(other)
+            there = await live.new(workspace=other)
             assert (here.workspace, there.workspace) == (launch.resolve(), other.resolve())
             assert [session.id for session in live.listing()] == [shells[0].live_session.id, here.id, there.id]
             there.send_input('hello')

@@ -7,8 +7,8 @@ opened with `open` or `new` run here, each as a task of `serving`, and close aft
 
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -66,8 +66,9 @@ class _Live:
     ready: bool = True
     """False while `open` or `new` loads it; until then it is not listed and not closed for being idle."""
     closing: bool = False
+    """Set once it starts closing, so `open` waits for it to close rather than return it."""
     done: Event = field(default_factory=Event)
-    """Set once a session `serving` runs has closed."""
+    """Set once it has closed."""
 
 
 class LiveRuntimes(JoinedSessions):
@@ -94,21 +95,34 @@ class LiveRuntimes(JoinedSessions):
         """The session the terminal shows, never closed for being idle; `None` under `clai2 --web`."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
+        """Conversations being opened or resumed, set once that is done."""
+        self._switching: dict[str, Event] = {}
+        """Sessions resuming another conversation, by ID, set once they have."""
+        self._building = False
 
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
         return [live.runtime.live_session for live in self._live.values() if live.ready]
 
     def add(self, runtime: Served) -> None:
-        """Count `runtime` among the live sessions, following the settings the others save."""
+        """Count `runtime` among the live sessions, following the settings the others save; once is enough."""
+        if runtime.live_session.id in self._live:
+            return
         runtime.context.saved = lambda key: self._saved(runtime, key)
-        self._live[runtime.live_session.id] = _Live(runtime=runtime, active=self.clock())
+        self._live[runtime.live_session.id] = _Live(runtime=runtime, active=self.clock(), ready=not self._building)
         self.changed(runtime.live_session)
+
+    def leaving(self, runtime: Served) -> None:
+        """Mark `runtime` closing: it still holds its conversation, but `open` waits for it to close."""
+        if (live := self._live.get(runtime.live_session.id)) is not None:
+            live.closing = True
+            self.changed(runtime.live_session)
 
     def remove(self, runtime: Served) -> None:
         """Stop counting `runtime`, once it has closed."""
-        self._live.pop(runtime.live_session.id, None)
-        self.changed(runtime.live_session)
+        if (live := self._live.pop(runtime.live_session.id, None)) is not None:
+            live.done.set()
+            self.changed(runtime.live_session)
 
     def changed(self, session: LiveRuntime) -> None:
         if (live := self._live.get(session.id)) is not None:
@@ -116,9 +130,9 @@ class LiveRuntimes(JoinedSessions):
         super().changed(session)
 
     def holding(self, conversation_id: str) -> LiveSession | None:
-        """The live session holding `conversation_id`, even one still opening, unless it is closing."""
+        """The live session holding `conversation_id`, even one still opening or closing."""
         live = self._holder(conversation_id)
-        return live.runtime.live_session if live is not None and not live.closing else None
+        return live.runtime.live_session if live is not None else None
 
     def _holder(self, conversation_id: str) -> _Live | None:
         return next(
@@ -145,9 +159,14 @@ class LiveRuntimes(JoinedSessions):
     async def open(self, conversation_id: str, /) -> LiveSession:
         while True:
             live = self._holder(conversation_id)
-            if live is not None and live.ready and not live.closing:
+            switching = self._switching.get(live.runtime.live_session.id) if live is not None else None
+            if live is not None and live.ready and not live.closing and switching is None:
                 return live.runtime.live_session
-            waiting = self._opening.get(conversation_id) or (live.done if live is not None and live.closing else None)
+            waiting = (
+                self._opening.get(conversation_id)
+                or switching
+                or (live.done if live is not None and live.closing else None)
+            )
             if waiting is None:
                 break
             await waiting.wait()
@@ -159,8 +178,27 @@ class LiveRuntimes(JoinedSessions):
             del self._opening[conversation_id]
             opened.set()
 
-    async def new(self, workspace: Path | None = None) -> LiveSession:
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
         return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+
+    @contextmanager
+    def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:
+        """Reserve `conversation_id` while `holder` resumes it, so `open` waits and no other session resumes it.
+
+        Raises `ValueError` when another live session holds it, or is opening or resuming it, or when
+        `holder` is already resuming one.
+        """
+        if holder.id in self._switching:
+            raise ValueError('This session is already switching to another conversation.')
+        held = self.holding(conversation_id)
+        if (held is not None and held is not holder) or conversation_id in self._opening:
+            raise ValueError(f'Session {conversation_id} is open in another live session of this CLAI.')
+        claimed = self._opening[conversation_id] = self._switching[holder.id] = Event()
+        try:
+            yield
+        finally:
+            del self._opening[conversation_id], self._switching[holder.id]
+            claimed.set()
 
     async def close(self, live_id: str, /) -> None:
         live = self._live.get(live_id)
@@ -178,7 +216,8 @@ class LiveRuntimes(JoinedSessions):
         """Close each session `serving` runs that has been idle and unwatched for `idle_after` seconds."""
         now = self.clock()
         for live_id, live in list(self._live.items()):
-            if live.scope is None or live.closing or not live.ready:
+            # A session may have closed by itself while an earlier one closed.
+            if self._live.get(live_id) is not live or live.scope is None or live.closing or not live.ready:
                 continue
             if live_id == self.focused or live.runtime.live_session.watchers or not live.runtime.idle:
                 live.active = now
@@ -192,9 +231,13 @@ class LiveRuntimes(JoinedSessions):
 
     async def _start(self, workspace: Path | None, *, resume: str | None) -> LiveSession:
         if self._group is None or self.build is None:
-            return await super().new()
-        runtime = self.build(workspace)
-        self._live[runtime.live_session.id].ready = False
+            return await super().new(workspace=workspace)
+        # What `build` adds is not listed until it has loaded.
+        self._building = True
+        try:
+            runtime = self.build(workspace)
+        finally:
+            self._building = False
         return await self._group.start(self._serve, runtime, resume)
 
     async def _serve(self, runtime: Served, resume: str | None, *, task_status: TaskStatus[LiveSession]) -> None:
@@ -213,8 +256,6 @@ class LiveRuntimes(JoinedSessions):
                 raise
             # One session failing must not end the others.
             _LOGGER.exception('Live session %s failed', runtime.live_session.id)
-        finally:
-            live.done.set()
 
     def _saved(self, origin: Served, key: str) -> None:
         """Have every other live session follow a setting `origin` saved; `model` and `run.*` stay per session."""
@@ -222,4 +263,8 @@ class LiveRuntimes(JoinedSessions):
             return
         for live in list(self._live.values()):
             if live.runtime is not origin:
-                live.runtime.context.adopt(key, origin.context.settings)
+                try:
+                    live.runtime.context.adopt(key, origin.context.settings)
+                except Exception:
+                    # Saved and applied where it was set; one session failing to follow must not undo that.
+                    _LOGGER.exception('Live session %s did not follow %s', live.runtime.live_session.id, key)
