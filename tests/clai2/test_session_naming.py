@@ -238,3 +238,43 @@ async def test_one_worker_names_each_conversation_with_the_model_of_the_session_
         ('a', second.id, 'Named by b'),
         ('b', second.id, 'Named by b'),
     ]
+
+
+async def test_a_session_waiting_to_hear_a_title_holds_up_no_other_naming(tmp_path: Path) -> None:
+    """A listener waits for its terminal; meanwhile the next conversation is named, and a failing one is logged."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    first, second = [
+        await store.save(
+            summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart(text)])]
+        )
+        for text in ('fix renderer', 'write docs')
+    ]
+    waiting, release, named_second, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
+    heard: list[str] = []
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Named'))
+
+    async def busy(conversation_id: str, title: str) -> None:
+        if conversation_id == first.id:
+            waiting.set()
+            await release.wait()
+        heard.append(conversation_id)
+        (done if len(heard) == 2 else named_second).set()
+
+    async def broken(conversation_id: str, title: str) -> None:
+        raise RuntimeError('a listener failed')
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    namer.listeners.extend([busy, broken])
+    assert namer.submit(first.id, client=client)
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(namer.run)
+            await waiting.wait()
+            assert namer.submit(second.id, client=client)
+            await named_second.wait()
+            release.set()
+            await done.wait()
+            group.cancel_scope.cancel()
+    assert heard == [second.id, first.id]

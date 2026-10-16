@@ -76,6 +76,13 @@ class NamingClient:
     enabled: Callable[[], bool] = lambda: True
 
 
+async def _announce(listener: Callable[[str, str], Awaitable[None]], conversation_id: str, title: str) -> None:
+    try:
+        await listener(conversation_id, title)
+    except Exception:
+        logging.getLogger(__name__).debug('Telling a session the title of %s failed', conversation_id, exc_info=True)
+
+
 class SessionNamer:
     """A single worker owned by an application's task group, shared by every live session of the process.
 
@@ -119,20 +126,25 @@ class SessionNamer:
 
     async def run(self) -> None:
         """Run until the owning task group cancels; cancellation is not swallowed."""
-        while True:
-            await self._wake.wait()
-            self._wake = anyio.Event()
-            while self._pending:
-                conversation_id, client = self._pending.popitem(last=False)
-                try:
-                    if client.enabled():
-                        with anyio.fail_after(self.timeout):
-                            title = await self._name(conversation_id=conversation_id, client=client)
-                        # Outside the timeout: telling the shell may wait for the terminal, and the name is saved.
-                        if title is not None:
-                            await self._notify(conversation_id, title)
-                except Exception:
-                    logging.getLogger(__name__).debug('Session naming failed for %s', conversation_id, exc_info=True)
+        async with anyio.create_task_group() as notices:
+            while True:
+                await self._wake.wait()
+                self._wake = anyio.Event()
+                while self._pending:
+                    conversation_id, client = self._pending.popitem(last=False)
+                    try:
+                        if client.enabled():
+                            with anyio.fail_after(self.timeout):
+                                title = await self._name(conversation_id=conversation_id, client=client)
+                            # Apart from naming: a session waits for its terminal to tell its plugins, and the
+                            # name is saved, so one busy session holds up no other session's naming.
+                            if title is not None:
+                                for listener in self.listeners:
+                                    notices.start_soon(_announce, listener, conversation_id, title)
+                    except Exception:
+                        logging.getLogger(__name__).debug(
+                            'Session naming failed for %s', conversation_id, exc_info=True
+                        )
 
     async def name(self, *, conversation_id: str, client: NamingClient) -> bool:
         """Name a saved revision. Safe to drive directly in tests without a background loop."""
