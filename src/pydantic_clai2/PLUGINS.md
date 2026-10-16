@@ -1075,10 +1075,10 @@ ignores a saved value instead of failing to load `coder`.
 `disabled_skills` is a JSON list of skill names that are off, `[]` by default.
 Names are saved NFKC-normalized, the form harness compares skill names in.
 A skill that is off is left out of the model's catalog and gets no `/command`.
-The list applies in every project, so a name no folder has is not an error:
-`coder` removes the named skills from what `Skills` offers each turn instead of
-passing them as harness `exclude`, which fails a run on an unknown name. The
-**Skills** row in `/plugins configure coder` lists the skills `coder` found when
+`coder` passes the list as harness `Skills(exclude=...)` with
+`unknown_names='skip'`: the list applies in every project, so a name no folder
+here has is skipped rather than failing the run. The commands and the settings
+menu read every skill, including the ones that are off. The **Skills** row in `/plugins configure coder` lists the skills `coder` found when
 it loaded, plus any name that is off but not found, and each pick turns one on
 or off. The setting is tagged `coder-disabled-skills`, so a build without it
 offers every skill instead of failing to load `coder`.
