@@ -38,6 +38,7 @@ openai_extras = {
     'crusoe',
     'cerebras',
     'openai-realtime',
+    'openai-responses-websocket',
     'xai-realtime',
 }
 openai_requirements = [requirement for requirement in slim if requirement.name == 'openai']
