@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime._core import (
+    MAX_CUTTABLE_OUTPUT_ITEMS,
     AudioCleared,
     AudioSent,
     Closed,
@@ -182,6 +183,97 @@ def test_a_response_ended_by_the_connection_with_nothing_said_is_not_recorded() 
     session_core = feed(core(), started('r1'), ended('r1', 'lost'), started('r2'), said('r2', 'Cut'))
     feed(session_core, Interrupted(played_ms=120), ended('r2', 'cancelled'), Interrupted(played_ms=5))
     assert summary(session_core.all_messages()) == snapshot(['r2 [assistant:Cut@120] interrupted None'])
+
+
+def test_a_barge_in_on_a_response_that_ended_records_it_as_cut_off() -> None:
+    """Generation outruns playback, so the reply the user speaks over has usually ended already.
+
+    Each item the session truncated is recorded as cut off where the listener stopped hearing it, in an
+    interrupted copy of the message at the same position: a snapshot already handed out doesn't change.
+    """
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'First item.', 'item_a'),
+        said('r1', 'Second item.', 'item_b'),
+        ToolCall(tool_name='t', args='{}', tool_call_id='call-1', response_id='r1'),
+        ended('r1'),
+        ToolReturned(tool_call_id='call-1', request=ModelRequest(parts=[ToolReturnPart('t', 'ok', 'call-1')])),
+        started('r2'),
+        said('r2', 'Third item.', 'item_c'),
+        ended('r2'),
+    )
+    before = session_core.all_messages()
+    assert summary(before) == snapshot(
+        [
+            'r1 [assistant:First item., assistant:Second item., call:call-1] complete stop',
+            '{return:call-1}',
+            'r2 [assistant:Third item.] complete stop',
+        ]
+    )
+    feed(session_core, Interrupted(played_ms=None, cuts=(('item_b', 120), ('item_c', 0), ('unknown', 5))))
+    after = session_core.all_messages()
+    assert summary(after) == snapshot(
+        [
+            'r1 [assistant:First item., assistant:Second item.@120, call:call-1] interrupted stop',
+            '{return:call-1}',
+            'r2 [assistant:Third item.@0] interrupted stop',
+        ]
+    )
+    assert after[1] is before[1]
+    assert summary(before)[0] == 'r1 [assistant:First item., assistant:Second item., call:call-1] complete stop'
+    assert session_core.replayable_messages() == after
+
+    # A later cut of the same item can only take it back further.
+    feed(session_core, Interrupted(played_ms=None, cuts=(('item_b', 200),)))
+    assert session_core.all_messages()[0] is after[0]
+    feed(session_core, Interrupted(played_ms=None, cuts=(('item_b', 80),)))
+    assert summary(session_core.all_messages())[0] == snapshot(
+        'r1 [assistant:First item., assistant:Second item.@80, call:call-1] interrupted stop'
+    )
+
+
+def test_a_cut_of_a_response_still_under_way_lands_once_it_is_recorded() -> None:
+    """A truncated item of a response still being generated is recorded as cut off, however the response ends."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'First item.', 'item_a'),
+        said('r1', 'Second item.', 'item_b'),
+        Interrupted(played_ms=None, cuts=(('item_a', 40), ('item_b', 0))),
+        Interrupted(played_ms=None, cuts=(('item_a', 60),)),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(
+        ['r1 [assistant:First item.@40, assistant:Second item.@0] interrupted stop']
+    )
+
+
+def test_only_the_latest_output_items_can_be_cut_off() -> None:
+    session_core = core()
+    for index in range(MAX_CUTTABLE_OUTPUT_ITEMS + 1):
+        feed(session_core, started(f'r{index}'), said(f'r{index}', 'Hi.', f'item_{index}'), ended(f'r{index}'))
+    before = session_core.all_messages()
+    feed(session_core, Interrupted(played_ms=None, cuts=(('item_0', 0), (f'item_{MAX_CUTTABLE_OUTPUT_ITEMS}', 0))))
+    after = session_core.all_messages()
+    assert after[0] is before[0]
+    assert summary(after[-1:]) == snapshot([f'r{MAX_CUTTABLE_OUTPUT_ITEMS} [assistant:Hi.@0] interrupted stop'])
+
+
+def test_a_cut_off_response_keeps_its_retained_audio_in_the_budget() -> None:
+    """The cut copy holds the same audio, so the budget still counts it and eviction still takes it."""
+    session_core = feed(_budget_core(0.2), *_answered_turn(0))
+    feed(session_core, Interrupted(played_ms=None, cuts=(('a0', 50),)))
+    [_, response] = session_core.all_messages()
+    assert isinstance(response, ModelResponse) and response.state == 'interrupted'
+    feed(session_core, *_answered_turn(1))
+    assert _retained(session_core) == [
+        ('user', 'Question 0.', False),
+        ('assistant', 'Answer 0.', False),
+        ('user', 'Question 1.', True),
+        ('assistant', 'Answer 1.', True),
+    ]
+    assert summary(session_core.all_messages()[1:2]) == snapshot(['r0 [assistant:Answer 0.@50] interrupted stop'])
 
 
 def test_usage_goes_to_its_own_response_or_to_the_session() -> None:

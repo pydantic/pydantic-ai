@@ -1532,9 +1532,10 @@ async def test_interrupt_after_the_reply_finished_generating(
     """Generation outruns playback, so the user usually barges in after the reply's `response.done`.
 
     The reply is still being heard, so the barge-in must still truncate its item, and the provider must
-    accept that for a finished response, so the model doesn't believe it was heard in full. History is
-    append-only: the recorded reply keeps its full text and `complete` state, and the next reply is
-    unaffected. The playback position is 0 so it replays deterministically.
+    accept that for a finished response, so the model doesn't believe it was heard in full. History records
+    the reply as cut off where playback stopped, keeping the transcript the provider gave (it doesn't say
+    which words were heard), and the next reply is unaffected. The playback position is 0 so it replays
+    deterministically.
     """
     provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
@@ -1566,7 +1567,11 @@ async def test_interrupt_after_the_reply_finished_generating(
     assert 'error' not in received
 
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    speech = [[part for part in response.parts if isinstance(part, SpeechPart)] for response in responses]
+    assert [[(part.transcript, part.interrupted_at_ms) for part in parts] for parts in speech] == snapshot(
+        [[('Hello! Great to connect with you.', 0)], [('Take care, talk soon!', None)]]
+    )
     assert responses[0].provider_response_id is not None
     # The truncation named the first reply's output item.
     first_item = next(
