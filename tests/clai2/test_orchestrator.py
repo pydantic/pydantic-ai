@@ -420,8 +420,7 @@ async def converse(
     with anyio.fail_after(30):
         while True:
             message = WIRE.validate_json(await queue.get())
-            if not isinstance(message, OrchestratorMessage):
-                continue
+            assert isinstance(message, OrchestratorMessage), 'the session publishes nothing meanwhile'
             event = message.message
             seen.append(event)
             if isinstance(event, QuestionAsked):
