@@ -243,5 +243,6 @@ To bound how long one model can hold up the fallback, set `model_settings={'requ
 `timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by
 Pydantic AI over all attempts at a request to one model, and over reading a streamed response through its last chunk
 (consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `FallbackModel` falls back on
-by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback, and under
-Temporal it runs as a workflow timer that cancels the model activity.
+by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
+Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
+per-model deadlines run inside the activity instead.
