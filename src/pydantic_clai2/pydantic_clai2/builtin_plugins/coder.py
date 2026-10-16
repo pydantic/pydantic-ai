@@ -259,12 +259,11 @@ class CoderSource(Generic[DepsT]):
 
 @dataclass
 class _ProjectSkills(WrapperCapability[DepsT]):
-    """Harness `Skills` that read the project directory while the run's workspace is not chosen yet.
+    """Harness `Skills` that read the project directory when the run has no workspace.
 
-    When a plugin adds a capability function, CLAI attaches the project directory only once the run's
-    capability functions resolve, so a sandbox one supplies wins (see `local_workspace`). `Skills` reads
-    its catalog in `for_run`, before then, and would find no workspace. It reads the project directory
-    instead, where the run works unless a capability function supplies a workspace of its own.
+    Core attaches the run's workspace before `for_run`, even one a capability function supplies, so
+    `Skills` reads its catalog from the workspace the run works in. Only a run with none at all, such as
+    on a platform without a local workspace, reads the project directory instead.
 
     The `Skills` sits in a group, so core still sees it and another `Skills` on the agent combines with it.
     Core keeps the combined one where the last of them was, so one combined outside this wrapper reads

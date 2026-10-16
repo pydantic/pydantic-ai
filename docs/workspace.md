@@ -485,6 +485,9 @@ raises `WorkspaceUnavailableError` until it exists, so create each user's direct
   the backend's first operation.
 - A capability that supplies a workspace can't use `defer_loading=True`: the workspace is chosen when
   the run starts.
+- A [capability function](capabilities/custom.md#dynamically-building-a-capability) can return a
+  workspace capability, say to choose a sandbox from `deps`. When no other capability supplies the
+  workspace, the run calls the function before `for_run`, so `for_run` can use the workspace it supplies.
 
 A capability that needs a workspace can check
 [`ctx.workspace.attached`][pydantic_ai.workspaces.Workspace.attached] in `before_run`. It is `False`
