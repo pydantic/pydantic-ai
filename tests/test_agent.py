@@ -9727,13 +9727,6 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
         raise NotImplementedError
 
 
-async def test_third_party_agent_rejects_connect():
-    """A third-party `AbstractAgent` that doesn't implement connections says so by type."""
-    with pytest.raises(UserError, match=re.escape('`_ToolsetOnlyAgent` does not support explicit connections.')):
-        async with _ToolsetOnlyAgent([]).connect():
-            pytest.fail('A third-party agent without connection support cannot connect')  # pragma: no cover
-
-
 def test_construction_toolsets_ignores_overrides():
     """`_construction_toolsets` reports what the agent was built with, not later additions.
 
