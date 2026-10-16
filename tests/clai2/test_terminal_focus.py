@@ -2,7 +2,7 @@
 
 import io
 import signal
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -16,7 +16,8 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.messages import ModelMessage, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.config import PluginSettings, Settings
@@ -70,6 +71,8 @@ class Desk(Fleet):
             reasons.append(await self.home.run())
 
         await self.home.loader.load_all()
+        # Switching a new database to WAL can fail at once when two first saves race, so make it first.
+        await self.process.conversations.listing()
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(20):
             async with self.live.serving(), anyio.create_task_group() as group:
                 group.start_soon(drive)
@@ -143,6 +146,8 @@ async def test_restarts_wait_for_the_sessions_running_in_the_browser(
         return 'Updated.'
 
     monkeypatch.setattr(home.updates, 'command', update)
+    # Switching a new database to WAL can fail at once when two first saves race, so make it first.
+    await desk.process.conversations.listing()
     with anyio.fail_after(20):
         async with desk.live.serving():
             b = await desk.live.new(workspace=desk.folder('b'))
@@ -383,6 +388,36 @@ async def test_prompts_queued_for_a_session_stay_its_own_when_the_terminal_shows
     await home.close('exit')
 
 
+async def test_a_session_shown_mid_answer_streams_the_rest_in_the_terminal(tmp_path: Path) -> None:
+    streaming, release = anyio.Event(), anyio.Event()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'early words\nhalf a '
+        streaming.set()
+        await release.wait()
+        yield 'line\nlate words\n'
+
+    desk = Desk(tmp_path)
+    desk.agents['b'] = Agent(FunctionModel(stream_function=stream))
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        other = desk.runtimes[b.id]
+        b.send_input('go')
+        await streaming.wait()
+        home.send_input(f'/resume {b.conversation.conversation_id}')
+        await until(desk.live, lambda: terminal.shown is other and home.idle)
+        release.set()
+        await until(desk.live, lambda: other.idle)
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+    assert 'half a line' in desk.shown() and 'late words' in desk.shown()
+    assert 'early words' not in desk.shown(), 'streamed while hidden'
+    await home.close('exit')
+
+
 def prompts(runtime: SessionRuntime[None, str]) -> list[str]:
     return [
         part.content
@@ -468,3 +503,48 @@ async def test_chat_opens_sessions_for_the_browser_beside_the_terminal(tmp_path:
             )
     assert seen == [{'run.instructions': 'Work elsewhere.'}, {}]
     assert 'Showing session' in '\n'.join([*screen.history, *screen.lines()])
+
+
+async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Opener.live.clear()
+    Opener.started = anyio.Event()
+    screen = SurfaceTerminal(width=100, height=30)
+
+    def broken(build: Callable[[], object]) -> object:
+        raise RuntimeError('broken source')
+
+    monkeypatch.setattr('pydantic_clai2._app.reload_clai', broken)
+    conversations: list[str] = []
+
+    async def drive() -> None:
+        await Opener.started.wait()
+        live = Opener.live[0]
+        assert isinstance(live, LiveRuntimes)
+        (home,) = live.listing()
+        b = await live.new()
+        b.send_input('hello')
+        await until(live, lambda: b.session_id is not None and not b.running)
+        conversations.append(b.conversation.conversation_id)
+        home.send_input(f'/resume {conversations[0]}')
+        await until(live, lambda: live.focused == b.id)
+        # CLAI starts again in the session it started with, whose plugins load once its conversation is chosen.
+        Opener.started = anyio.Event()
+        b.send_input('/reload')
+        await Opener.started.wait()
+        (again,) = live.listing()
+        assert again.conversation.conversation_id == conversations[0]
+        again.send_input('/exit')
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(20):
+        async with anyio.create_task_group() as group:
+            group.start_soon(drive)
+            await chat(
+                Agent(TestModel()),
+                deps=None,
+                console=Console(file=screen, force_terminal=True, width=100, height=30),
+                store=SettingsStore(tmp_path / 'config.db'),
+                builtin_plugins=[PluginSettings(id='opener', factory=f'{__name__}:Opener')],
+            )
+    assert 'Reload failed: RuntimeError: broken source' in '\n'.join([*screen.history, *screen.lines()])

@@ -328,21 +328,25 @@ async def chat(
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                     with transcript.capture(console):
-                        console.print(
-                            f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
-                        )
-                        if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
-                            console.print(
-                                'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
-                                '--resume to continue this session. Keep the worktree if asked to remove it.',
-                                style=theme.color(theme.INFO),
-                                markup=False,
-                            )
+                        _report_reload_failure(exc, console=console)
                     fresh = False
+                    # When the session shown asked for the reload, the one CLAI started with continues its conversation.
+                    resume = None if last is shell else last.session.conversation_id
                 else:
                     with transcript.capture(console):
                         console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
                     fresh = True
+
+
+def _report_reload_failure(exc: Exception, *, console: Console) -> None:
+    console.print(f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False)
+    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+        console.print(
+            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+            '--resume to continue this session. Keep the worktree if asked to remove it.',
+            style=theme.color(theme.INFO),
+            markup=False,
+        )
 
 
 async def _serve_again(loader: SessionPlugins[DepsT], web: WebHandoff | None, *, console: Console) -> None:
