@@ -48,3 +48,12 @@ terminal.
 +default, and opens its settings menu (`/plugins configure linear` reopens it, and
 +the web UI's plugins panel shows it too). The
 ```
+
+<!-- From #10328 -->
+
+```diff
+@@ -24 +24,2 @@ otherwise browser sign-in, which also signs new users up and works over SSH:
+-`/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
++`/logfire login`). Reopen it with `/plugins configure logfire_mcp`, or in the web UI's
++plugins panel; see
+```

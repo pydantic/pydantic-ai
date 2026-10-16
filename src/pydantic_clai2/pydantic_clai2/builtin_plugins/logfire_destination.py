@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL
+from pydantic_clai2.plugins.menus import Dialogs, Option
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering._rendering import markdown_style
@@ -146,6 +147,45 @@ def pick_destination(runners: Runners, *, current: Destination | None, then: str
         initial = len(items) - 1  # Esc goes back to the list, on the row it came from.
 
 
+async def choose_destination(dialogs: Dialogs, *, current: Destination | None, then: str) -> Destination | None:
+    """`pick_destination` asked through `dialogs`, wherever a settings menu was opened; `None` when cancelled.
+
+    `current` starts selected; `then` says what happens after the pick, in short lines.
+    """
+    options = [
+        Option(value=name, label=name, description=f'UI and API  {region.base_url}\nMCP server  {region.mcp_url}')
+        for name, region in REGIONS.items()
+    ]
+    options.append(
+        Option(
+            value=OTHER,
+            label='Another Logfire...',
+            description='\n'.join(['Self-hosted or staging: type its address,', 'as any of', *_EXAMPLES]),
+        )
+    )
+    typed_before = urlsplit(current.base_url).netloc if current is not None and current.region is None else ''
+    start = OTHER if typed_before else (current.region if current is not None else None)
+    while True:
+        picked = await dialogs.choose(title='Which Logfire?', options=options, current=start, description=then)
+        if picked is None:
+            return None
+        if picked != OTHER:
+            return REGIONS[picked]
+        typed = await dialogs.text(
+            title='Another Logfire',
+            label='Address',
+            placeholder='logfire.example.com, https://logfire.example.com, or .../mcp',
+            initial=typed_before,
+            check=destination_problem,
+        )
+        if typed:
+            return parse_destination(typed)
+        start = OTHER  # Esc, or nothing typed, goes back to the list, on the row it came from.
+
+
+_EXAMPLES = ('  logfire.example.com', '  https://logfire.example.com', '  https://logfire.example.com/mcp')
+
+
 def _preview(item: MenuItem, then: str) -> str:
     # One short fact per line: the preview panel cuts long lines off.
     if isinstance(item.value, Destination):
@@ -155,9 +195,7 @@ def _preview(item: MenuItem, then: str) -> str:
             'A self-hosted or staging Logfire',
             '',
             'Enter: type its address, as any of',
-            '  logfire.example.com',
-            '  https://logfire.example.com',
-            '  https://logfire.example.com/mcp',
+            *_EXAMPLES,
         ]
     return '\n'.join(lines)
 
