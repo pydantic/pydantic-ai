@@ -72,8 +72,8 @@ def update_menu(
 ) -> SettingsMenu:
     """The menu, whose version row asks before entering `/update` with `run`, as typing it would.
 
-    `refusal` says why `/update` would be refused now, as while other sessions run turns, so the menu says so
-    instead of claiming it runs.
+    `refusal` says why `/update` would be refused now, for example while other sessions run turns, so the menu
+    says so instead of claiming it runs.
     """
 
     async def update(dialogs: Dialogs) -> list[str]:
@@ -91,6 +91,9 @@ def update_menu(
         )
         if not confirmed:
             return []
+        # Another session may have started a turn while the dialog was open.
+        if (refused := refusal()) is not None:
+            return [refused]
         run('/update')
         return [f'Running /update on the {channel} channel.']
 
