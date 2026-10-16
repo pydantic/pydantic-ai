@@ -18,7 +18,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import LiveSession, NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import ProcessPlugins, handling
@@ -1168,10 +1168,11 @@ async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) 
     assert 'shared' not in a.commands and 'shared' not in b.commands
 
 
-async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined_it(
+async def test_a_session_waits_for_a_process_plugin_that_fails_to_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     starting, fail = anyio.Event(), anyio.Event()
+    ended: list[LiveSession | None] = []
     module = ModuleType('fails_late')
 
     class FailsLate(Plugin):
@@ -1185,6 +1186,10 @@ async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined
             await fail.wait()
             raise RuntimeError('no start')
 
+        async def on_session_end(self, event: SessionEnd) -> None:
+            assert self.host.live is not None
+            ended.append(self.host.live.current())
+
     FailsLate.__module__ = module.__name__
     module.__dict__['FailsLate'] = FailsLate
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -1197,6 +1202,7 @@ async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined
         assert 'late' not in b.commands, 'the second session waits for the instance the first is starting'
         fail.set()
     assert 'no start' in a.text and 'no start' in b.text, 'nothing was shared, so each tried its own'
+    assert ended == [a.loader.live_session, b.loader.live_session], 'each ends as the session that built it'
     assert 'late' not in a.commands and 'late' not in b.commands
     assert [entry.loaded for entry in b.loader.entries()] == [None]
 

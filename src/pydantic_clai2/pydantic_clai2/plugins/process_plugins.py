@@ -314,7 +314,7 @@ class ProcessPlugins(Generic[DepsT]):
         current = _CURRENT.get()
         found = next((session for session in self._sessions if session.live_session is current), None)
         if found is not None or origin in self._sessions:
-            return found or origin
+            return found if found is not None else origin
         return self._sessions[0] if self._sessions else origin
 
     async def change(
@@ -353,11 +353,9 @@ class ProcessPlugins(Generic[DepsT]):
         self._shared[name] = loaded
 
     def forget_shared(self, name: str, *, loaded: LoadedPlugin[DepsT] | None) -> None:
-        """Drop a process-scoped plugin that failed to start, also from sessions that joined it meanwhile."""
+        """Drop a process-scoped plugin that failed to start; no other session joined it, as `loading` held them."""
         if loaded is not None and self._shared.get(name) is loaded:
             del self._shared[name]
-            for session in self._sessions:
-                session.detach(name, loaded)
 
     async def share(self, name: str, loaded: LoadedPlugin[DepsT], *, origin: 'SessionPlugins[DepsT]') -> None:
         """Join a process-scoped plugin `origin` just loaded to every other live session."""
