@@ -536,7 +536,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | OpenAI | ✓ | ✓ | Full support |
 | Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
-| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Converse has no `'none'` mode, so `'none'` drops the tools. Once the history has a tool call, Converse requires them, so they stay: Claude gets its native `'none'`, while other models aren't prevented from calling them ([#10435](https://github.com/pydantic/pydantic-ai/issues/10435)). See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
@@ -553,7 +553,7 @@ Whether a model can be forced to call a tool is a property of the model, set on 
 
 Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
 
-- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock when forcing a single tool.
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
 The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
@@ -562,9 +562,9 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing, OR `'none'` while the history has no tool calls |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
-| Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
+| Mistral | `tool_choice` is a list of multiple tools — the API can only force a single named tool |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | OpenAI Responses | Never — `allowed_tools` handles all cases natively |

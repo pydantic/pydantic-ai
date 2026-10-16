@@ -35,7 +35,9 @@ def test_invalid_code(text: str) -> None:
     assert 'secret' not in str(error.value)
 
 
-@pytest.mark.parametrize('mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'eof', 'timeout', 'cancel'])
+@pytest.mark.parametrize(
+    'mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'declined', 'timeout', 'cancel']
+)
 async def test_login(mode: str) -> None:
     output = StringIO()
     console = Console(file=output)
@@ -55,13 +57,13 @@ async def test_login(mode: str) -> None:
 
     lines = iter(['', 'http://127.0.0.1/callback?code=secret-code'])
 
-    async def read_line(message: str) -> str:
+    async def read_line(message: str) -> str | None:
         prompt_started.set()
         try:
             if mode in ('paste', 'manual', 'browser_error'):
                 return next(lines)
-            if mode == 'eof':
-                raise EOFError
+            if mode == 'declined':
+                return None
             await asyncio.Future[None]()
             raise AssertionError('unreachable')  # pragma: no cover
         finally:
@@ -105,8 +107,10 @@ async def test_login(mode: str) -> None:
         login.cancel()
         with pytest.raises(asyncio.CancelledError):
             await login
-    elif mode in ('denied', 'eof', 'timeout'):
-        with pytest.raises(UserError, match={'denied': 'denied', 'eof': 'cancelled', 'timeout': 'timed out'}[mode]):
+    elif mode in ('denied', 'declined', 'timeout'):
+        with pytest.raises(
+            UserError, match={'denied': 'denied', 'declined': 'cancelled', 'timeout': 'timed out'}[mode]
+        ):
             await login
     else:
         assert (await login).get_secret_value() == 'private-api-key'
