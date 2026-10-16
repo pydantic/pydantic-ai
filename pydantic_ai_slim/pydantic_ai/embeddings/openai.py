@@ -174,7 +174,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             raise ValueError(
                 f'The embedding model {self.model_name!r} is not supported by tiktoken',
             ) from e
-        return len(encoding.encode(text))
+        return len(encoding.encode_ordinary(text))
 
 
 def _map_usage(
