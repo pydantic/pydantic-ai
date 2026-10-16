@@ -177,7 +177,7 @@ parameter's description only when the local schema declares one.
 | Interruption | Limited parameter support | Barge-in is detected server-side and reported as `RealtimeResponseInterruptedEvent`; there is no client `interrupt()` verb |
 | Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
 | Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
-| Native tools | Unsupported | Server-side tools live on the agent, outside the session |
+| Native tools | Limited parameter support | Server-side tools live on the agent, outside the session: none can be configured from it, and the agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
 | Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable, and a profile value would not be used: the live limit is `ElevenLabsAgentsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`, and `session.context_window_used` is the ratio from the same reports |
 | Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |

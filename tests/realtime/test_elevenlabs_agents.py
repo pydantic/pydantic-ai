@@ -2719,14 +2719,13 @@ async def test_an_mcp_call_is_recorded_with_its_outcome() -> None:
     assert _native_parts(frames) == snapshot(
         [
             NativeToolCallPart(
-                tool_name='lookup_customer',
-                args={'email': 'ada@example.com'},
+                tool_name='mcp_server:crm',
+                args={'action': 'call_tool', 'tool_name': 'lookup_customer', 'tool_args': {'email': 'ada@example.com'}},
                 tool_call_id='mcp_1',
                 provider_name='elevenlabs',
-                provider_details={'service_id': 'crm'},
             ),
             NativeToolReturnPart(
-                tool_name='lookup_customer',
+                tool_name='mcp_server:crm',
                 content=[{'type': 'text', 'text': 'Ada is a customer.'}],
                 tool_call_id='mcp_1',
                 timestamp=IsDatetime(),
@@ -2755,6 +2754,14 @@ async def test_an_mcp_call_awaiting_approval_is_denied(reported: bool) -> None:
     assert [event.response_id for event in ended] == ['pydantic_ai_response_1']
     # Only the first such call warns.
     await _next_frames(frames, ws, [_mcp_call('awaiting_approval', tool_call_id='mcp_2')])
+
+
+async def test_an_mcp_call_without_a_server_id_is_named_by_kind_alone() -> None:
+    connection, ws = _connection()
+    frames = connection.frames()
+    ws.hold_open = True
+    [frame] = await _next_frames(frames, ws, [_mcp_call('loading', service_id=None)])
+    assert [part.tool_name for part in _native_parts([frame])] == ['mcp_server']
 
 
 async def test_an_mcp_call_denied_before_a_drop_keeps_its_denial() -> None:

@@ -79,6 +79,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..models import ModelRequestParameters, get_user_agent
+from ..native_tools import MCPServerTool
 from ..profiles.elevenlabs import elevenlabs_agents_realtime_model_profile
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -1446,7 +1447,6 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # The MCP calls ElevenLabs runs itself, reported as native tool parts: those whose call part is out, and
         # those denied whose outcome ElevenLabs hasn't reported, which the response they belong to records.
         self._mcp_calls: set[str] = set()
-        self._mcp_tool_names: dict[str, str] = {}
         self._warned_mcp_approval = False
         self._calls_open = False
         """Whether the response under way made tool calls, and ends once no more come."""
@@ -1792,16 +1792,16 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     async def _map_mcp_tool_call(self, call: _McpToolCallPayload) -> list[RealtimeCodecEvent]:
         """A step of an MCP call ElevenLabs runs itself: its call part, a request for approval, or its outcome."""
         events: list[RealtimeCodecEvent] = []
+        # Named as every model names a provider-run MCP call, so a consumer tells it from other native tools.
+        tool_name = ':'.join([MCPServerTool.kind, call.service_id]) if call.service_id else MCPServerTool.kind
         if call.tool_call_id not in self._mcp_calls:
             self._mcp_calls.add(call.tool_call_id)
-            self._mcp_tool_names[call.tool_call_id] = call.tool_name
             events += self._native_part(
                 NativeToolCallPart(
-                    tool_name=call.tool_name,
-                    args=call.parameters,
+                    tool_name=tool_name,
+                    args={'action': 'call_tool', 'tool_name': call.tool_name, 'tool_args': call.parameters or {}},
                     tool_call_id=call.tool_call_id,
                     provider_name='elevenlabs',
-                    provider_details={'service_id': call.service_id} if call.service_id else None,
                 )
             )
         if call.state == 'awaiting_approval':
@@ -1815,7 +1815,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 {'type': 'mcp_tool_approval_result', 'tool_call_id': call.tool_call_id, 'is_approved': False}
             )
             self._mcp_denied[call.tool_call_id] = NativeToolReturnPart(
-                tool_name=call.tool_name,
+                tool_name=tool_name,
                 content=_MCP_APPROVAL_DENIED,
                 tool_call_id=call.tool_call_id,
                 provider_name='elevenlabs',
@@ -1830,7 +1830,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 outcome, content = ('denied', denied.content) if denied is not None else ('failed', call.error_message)
             events += self._native_part(
                 NativeToolReturnPart(
-                    tool_name=call.tool_name,
+                    tool_name=tool_name,
                     content=content,
                     tool_call_id=call.tool_call_id,
                     provider_name='elevenlabs',
