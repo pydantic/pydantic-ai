@@ -64,6 +64,11 @@ they agree in the same PR.
   waits for its tools, so neither may open a browser or wait on a sign-in. Use
   `plugins/sign_in.py`: a `SignInMethod` (`mcp.OAuthSignIn` for MCP OAuth),
   `sign_in_now` from a menu or `/NAME login`, and no tools while signed out.
+- **A built-in's per-run capability is a `WorkspacelessCapability`.** A bare
+  capability function might return a sandbox, so `local_workspace()` attaches the
+  launch directory only after every `for_run`, and harness `Skills` (which reads its
+  libraries in `for_run`) fails the turn. Wrap a function that never returns a
+  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -205,6 +210,12 @@ one that is not.
   from inside another menu's key handler, so `PluginMenu` closes with a
   `Configure` result and `open_plugins_menu` runs the settings menu, then
   reopens the list.
+- Enter performs the highlighted row's primary action (`/plugins` toggles, like
+  Space) and never silently closes a list menu. Termflow's default Enter selects
+  the row and closes, so where that is not the row's action, bind `enter` as a
+  hotkey that does the action, or nothing; Esc closes.
+- Footer hints separate actions with ` - ` and capitalize named keys (`Enter`,
+  `Esc`, `Space`); letter hotkeys stay as typed (`c configure`, `R reset`).
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.

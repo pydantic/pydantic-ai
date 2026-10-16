@@ -189,7 +189,7 @@ def build_pager(title: str, text: str) -> Pager:
         PagerBuilder(title)
         .style(markdown_style())
         .reflow(lambda width: wrap(text, width))
-        .footer_hint('↑↓ scroll · q close')
+        .footer_hint('↑↓ scroll - q close')
         .key_source(menu_key)
         .build()
     )

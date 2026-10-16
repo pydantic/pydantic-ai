@@ -127,6 +127,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import split_cache_setting
+from ._sdk_retries import with_max_retries
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -1457,7 +1458,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
                 max_tokens = model_settings.get('max_tokens', OMIT)
                 supports_max_completion_tokens = profile.get('openai_chat_supports_max_completion_tokens', True)
-                return await self.client.chat.completions.create(
+                return await with_max_retries(self.client, model_settings).chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
                     parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
@@ -2600,7 +2601,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         try:
             with map_decode_errors(self.model_name):
-                return await self.client.responses.compact(
+                return await with_max_retries(self.client, model_settings).responses.compact(
                     input=openai_messages,
                     model=self.model_name,
                     instructions=instructions,
@@ -2700,7 +2701,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         extra_headers, timeout = self._build_request_options(settings)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            response = await self.client.responses.input_tokens.count(
+            response = await with_max_retries(self.client, settings).responses.input_tokens.count(
                 model=request_params.model,
                 input=request_params.input,
                 instructions=request_params.instructions,
@@ -3288,7 +3289,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.create(
+                return await with_max_retries(self.client, model_settings).responses.create(
                     model=request_params.model,
                     input=request_params.input,
                     instructions=request_params.instructions,
@@ -3416,7 +3417,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.retrieve(
+                return await with_max_retries(self.client, model_settings).responses.retrieve(
                     response_id=response_id,
                     include=include or OMIT,
                     starting_after=starting_after if starting_after is not None else OMIT,
