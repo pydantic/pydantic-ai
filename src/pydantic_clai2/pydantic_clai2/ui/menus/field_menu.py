@@ -2,18 +2,20 @@
 
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
-from typing import Protocol
 
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
+from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
@@ -54,63 +56,6 @@ class _Reset:
     """What the `r` key hands back to the loop instead of a row."""
 
     key: str
-
-
-class ChoicePreview(Protocol):
-    """Render a sample of `choice` for the choice picker's right-hand panel, `width` cells wide."""
-
-    def __call__(self, choice: str, /, *, width: int) -> str: ...
-
-
-@dataclass(frozen=True, kw_only=True)
-class FieldRow:
-    """One editable field as the menu sees it."""
-
-    key: str
-    description: str
-    default: str
-    choices: tuple[str, ...] = ()
-    label: str = ''
-    choice_labels: Mapping[str, str] = field(default_factory=dict[str, str])
-    allow_custom: bool = True
-    secret: bool = False
-    note: str = ''
-    """Where the value comes from when not from the user; shown muted after the value."""
-    preview: ChoicePreview | None = None
-    """Renders a sample of each choice in the choice picker."""
-
-    def display(self, value: str) -> str:
-        """Label a choice without changing its stored or validated value."""
-        return self.choice_labels.get(value, value)
-
-
-class FieldSource(Protocol):
-    """Where the rows come from and where edits go. Every method is synchronous."""
-
-    @property
-    def title(self) -> str:
-        """Menu title."""
-        ...
-
-    def rows(self) -> Sequence[FieldRow]:
-        """Every editable field, in display order."""
-        ...
-
-    def current(self, row: FieldRow) -> str:
-        """The active value as the user would type it."""
-        ...
-
-    def problem(self, row: FieldRow, text: str) -> str | None:
-        """Why `text` is not valid for the row, or `None` when it is."""
-        ...
-
-    def apply(self, row: FieldRow, raw: str) -> str:
-        """Save and apply a non-empty value; return the message to show."""
-        ...
-
-    def reset(self, row: FieldRow) -> str:
-        """Forget the override; return the message to show."""
-        ...
 
 
 def shown(value: JsonValue) -> str:
@@ -280,6 +225,11 @@ def run_text(widget: TextInput) -> TextInputResult:  # pragma: no cover -- needs
     return widget.run()
 
 
+def run_pager(pager: Pager) -> object:  # pragma: no cover -- needs a real terminal.
+    """Show a termflow pager on the real terminal."""
+    return pager.run()
+
+
 @dataclass(frozen=True, kw_only=True)
 class Runners:
     """How widgets get shown; tests swap these for scripted results."""
@@ -287,6 +237,9 @@ class Runners:
     run_list: ListRunner = run_menu
     run_choice: ListRunner = run_menu
     run_text: TextRunner = run_text
+    run_pager: Callable[[Pager], object] = run_pager
+    edit: TextEditor = edit_text
+    """Multi-line text: `$VISUAL`, `$EDITOR`, or the built-in editor."""
 
 
 TERMINAL = Runners()
@@ -318,7 +271,7 @@ async def run_flow_async(
     menu: FieldMenu,
     runners: Runners = TERMINAL,
     *,
-    submenus: Mapping[str, Callable[[], Awaitable[list[str]]]] | None = None,
+    submenus: Mapping[str, Callable[[], Awaitable[Sequence[str]]]] | None = None,
 ) -> list[str]:
     """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
 

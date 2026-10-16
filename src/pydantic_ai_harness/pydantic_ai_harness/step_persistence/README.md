@@ -360,7 +360,9 @@ configured retention can delete older snapshots.
 - `SqliteStepStore(database='runs.db')` -- single SQLite file with tables
   `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media`
   table for externalized blobs (see [Persisting media](#persisting-media)
-  below). WAL mode is enabled; `tool_effects` upserts per
+  below), plus `snapshot_messages` and `snapshot_message_refs` (see
+  [Storing each message once](#storing-each-message-once)). WAL mode is
+  enabled; `tool_effects` upserts per
   `(run_id, tool_call_id)` so the latest state wins; snapshots use
   `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`.
   Databases created before the snapshot `state` column existed gain it
@@ -550,6 +552,32 @@ only see what is retained. With a tight bound (for example
 the bound as a hard limit on how far back such recovery can reach. Leave the
 bound at `None`, or set it high enough to cover the history you need to recover,
 when historical reconstruction matters.
+
+### Storing each message once
+
+`max_snapshots_per_run` bounds the snapshots within a run, but every snapshot
+repeats the history before it, so storing each one in full grows with the number
+of snapshots times the history length. `SqliteStepStore` stores each message's
+content once instead: `snapshot_messages` holds each message's JSON keyed by its
+SHA-256, and `snapshot_message_refs` lists each snapshot's messages in order, as
+a short row per message. Reads rebuild the full history, so `latest_snapshot`
+and `list_snapshots` return the same messages either way.
+
+Deleting a snapshot, by pruning or by deleting its conversation with
+`SqliteConversationStore.delete`, also deletes the messages no remaining
+snapshot references.
+
+A database written by an earlier release keeps working: its rows hold the
+history inline and still read, and new snapshots in the same database store
+their messages once. Earlier releases can't read snapshots written this way, so
+don't downgrade a store that a newer release has written to. An existing
+database doesn't shrink right away: its earlier rows keep their history until
+pruning or deleting their conversation removes them, and SQLite keeps the freed
+space in the file until you run `VACUUM`.
+
+`FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's
+directory stays readable and greppable on its own. `MongoStepStore` and
+`PostgresStepStore` also store each snapshot's full history.
 
 ## Persisting media
 
@@ -800,6 +828,9 @@ returns summaries without loading messages; search matches saved user/assistant
 text and metadata using Unicode case folding, including text entries within
 multimodal prompts. Search does not include tool output, reasoning, or discarded
 pre-compaction history. Unknown metadata schema versions are rejected.
+An application may set `ConversationSummary.checkout` to a `GitCheckout` (repository,
+name, checkout root, branch) for the workspace, so a browser can still group the
+conversation by repository after that folder is removed; the store saves it as given.
 
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
@@ -808,6 +839,13 @@ associated run records from the same SQLite database atomically, retaining share
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
 between hosts. PID reuse is conservatively treated as busy.
+
+`set_archived(conversation_id=..., archived=...)` archives or unarchives a
+conversation through `ConversationSummary.archived_at`, a metadata-only change that
+keeps its messages, content revision, and activity timestamp. Saving new content
+unarchives it, since the conversation is in use again. Archiving deletes nothing.
+`listing(archived=False)` leaves archived conversations out, `archived=True` lists
+only those, and the default `None` lists both, as before archiving existed.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
