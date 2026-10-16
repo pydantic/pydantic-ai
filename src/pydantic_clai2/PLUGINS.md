@@ -1407,7 +1407,8 @@ page in the same folder that only you can read. `stop` signals a process only af
 with its token, so a process ID the system gave to another program is left alone. `destroy` removes
 only a checkout named after the workspace directly inside the folder it was made in, through
 `git worktree remove`, which also refuses anything that is not a worktree. The child runs as
-`python -P -m pydantic_clai2`, so a module committed in the checkout cannot stand in for CLAI.
+`python -P -m pydantic_clai2`, so a module committed in the checkout cannot stand in for CLAI, and
+with `PYTHON_DOTENV_DISABLED=1`, so a `.env` committed there cannot point your API keys elsewhere.
 Starting, stopping, and destroying a workspace hold a lock file in its folder, so CLAIs in several
 processes take turns. Workspace sessions run on macOS and Linux.
 
