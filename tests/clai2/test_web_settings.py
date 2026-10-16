@@ -4,6 +4,7 @@ import io
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
 from rich.console import Console
@@ -18,7 +19,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ThemeChanged,
     TurnEnded,
 )
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
@@ -178,6 +182,20 @@ def test_a_command_menu_action_asks_through_the_page(make_web: MakeWeb) -> None:
                 assert done['messages'] == ([] if answer == 'no' else ['Counted 1.'])
     assert done['menu']['fields'][0]['value'] == '1'
     assert 'Counted 1.' in terminal(web_)
+
+
+def test_settings_save_one_at_a_time(tmp_path: Path) -> None:
+    """The page edits `/set` from a worker thread while the terminal may too: each save holds the context's lock."""
+    held: list[bool] = []
+
+    def applied(key: str, settings: Settings) -> None:
+        held.append(context.edits.locked())
+
+    context = CommandContext(settings=Settings(), store=SettingsStore(tmp_path / 'config.db'), apply_setting=applied)
+    context.set_setting(['display.thinking', 'false'])
+    context.reset_setting('display.thinking')
+    assert held == [True, True]
+    assert not context.edits.locked()
 
 
 def test_a_host_finds_only_declared_available_menus() -> None:
