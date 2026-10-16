@@ -257,6 +257,31 @@ async def test_request_simple_success(allow_model_requests: None):
     ]
 
 
+def test_unknown_finish_reason_is_preserved_in_provider_details():
+    choice = chat_completion.Choice.model_construct(
+        finish_reason='some_new_reason',
+        index=0,
+        message=ChatCompletionMessage(content='world', role='assistant'),
+    )
+    response = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[choice],
+        created=1704067200,
+        model='gpt-4o-123',
+        object='chat.completion',
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    result = model._process_response(response)
+
+    assert result.parts == [TextPart(content='world')]
+    assert result.finish_reason is None
+    assert result.provider_details == {
+        'finish_reason': 'some_new_reason',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+    }
+
+
 async def test_request_simple_usage(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
