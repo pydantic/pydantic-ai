@@ -58,7 +58,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         microphone = asyncio.create_task(session.send_audio(microphone_chunks()))
         speaker = asyncio.create_task(play_audio(session.stream_audio()))
 
@@ -190,7 +190,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 realtime = agent.realtime(
-    'openai:gpt-realtime', model_settings=RealtimeModelSettings(output_modality='audio')
+    '{{ openai:realtime }}', model_settings=RealtimeModelSettings(output_modality='audio')
 )
 ```
 
@@ -215,7 +215,7 @@ models, with one deliberate exception:
 
 ```python {test="skip" lint="skip"}
 agent.realtime(
-    model,                # 'openai:gpt-realtime', or a RealtimeModel instance
+    model,                # '{{ openai:realtime }}', or a RealtimeModel instance
     deps=...,             # dependencies, as in run()/iter()
     model_settings=...,   # RealtimeModelSettings
     instructions=...,     # combined with the agent's instructions
