@@ -220,6 +220,7 @@ try:
         BetaRequestDocumentBlockParam,
         BetaRequestMCPServerToolConfigurationParam,
         BetaRequestMCPServerURLDefinitionParam,
+        BetaRequestMCPToolResultBlockParam,
         BetaServerToolCaller,
         BetaServerToolCaller20260120,
         BetaServerToolUseBlock,
@@ -483,9 +484,11 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
 # `tool_addition` accepted and honored verified live on `claude-opus-4-8`: a boundary on the block
 # writes and reads back the full prefix. It can end a mid-conversation `system` entry, where a
-# terminal `CachePoint`'s boundary lands on the entry's final block.
+# terminal `CachePoint`'s boundary lands on the entry's final block. `mcp_tool_result` verified the
+# same way on `claude-opus-4-8` and `claude-sonnet-4-5`: a replayed MCP tool result can end the
+# cached prefix, which is where a `CachePoint` opening the next user message puts its boundary.
 _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
-    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document', 'tool_addition'}
+    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document', 'tool_addition', 'mcp_tool_result'}
 )
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
@@ -2485,7 +2488,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
-                    | BetaMCPToolResultBlock
+                    | BetaRequestMCPToolResultBlockParam
                     | BetaCompactionBlockParam
                 ] = []
                 for response_part in m.parts:
@@ -2725,10 +2728,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                 )
                                 assistant_content_params.append(
-                                    BetaMCPToolResultBlock(
+                                    BetaRequestMCPToolResultBlockParam(
+                                        content=mcp_content['content'],
+                                        is_error=mcp_content['is_error'],
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **mcp_content,
                                     )
                                 )
                     elif isinstance(response_part, CompactionPart):
@@ -4043,7 +4047,7 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
-def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
+def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:
     """Drop native tool calls that Anthropic will reject without a rendered result.
 
     A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
@@ -4056,9 +4060,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
         content = message['content']
         assert isinstance(content, list)
         for block in content:
-            if isinstance(block, BetaMCPToolResultBlock):
-                returned_native_tool_call_ids.add(block.tool_use_id)
-            elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
+            if is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
                 returned_native_tool_call_ids.add(tool_use_id)
 
     suffix_is_tool_result_only = True
@@ -4070,9 +4072,8 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
         for block in content:
             # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
             block_param = block
-            if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
-                kept.append(block_param)
-                continue
+            # Every block `_map_message` emits is a request param TypedDict.
+            assert is_str_dict(block)
 
             unpaired = (
                 block['type'] in ('server_tool_use', 'mcp_tool_use')
