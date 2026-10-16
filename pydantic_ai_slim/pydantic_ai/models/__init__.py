@@ -54,6 +54,7 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryImage,
     CompactionPart,
+    DocumentMediaType,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -531,7 +532,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     `profile` turns the matching file-input flags off after every other layer, the user's included,
     so the profile never claims a file the mapping would refuse.
     """
-    _supported_document_media_types: ClassVar[frozenset[str] | None] = None
+    _supported_document_media_types: ClassVar[frozenset[DocumentMediaType] | None] = None
     """The document media types this adapter's message mapping can send, or `None` for all of them.
 
     Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.

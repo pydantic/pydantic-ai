@@ -2,28 +2,33 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Literal, get_args
+from typing import Literal
 
 from ._utils import is_text_like_media_type
 from .messages import AudioUrl, BinaryContent, DocumentMediaType, DocumentUrl, FileUrl, ImageUrl, VideoUrl
-from .profiles import ModelProfile
+from .profiles import (
+    _DOCUMENT_MEDIA_TYPES,  # pyright: ignore[reportPrivateUsage]
+    ModelProfile,
+)
 
 FileInputKind = Literal['image', 'document', 'audio', 'video']
 """The kinds of file the profile's file-input flags cover."""
 
-KNOWN_DOCUMENT_MEDIA_TYPES: frozenset[str] = frozenset(get_args(DocumentMediaType))
+KNOWN_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = _DOCUMENT_MEDIA_TYPES
 
-TEXT_DOCUMENT_MEDIA_TYPES: frozenset[str] = frozenset(filter(is_text_like_media_type, KNOWN_DOCUMENT_MEDIA_TYPES))
+TEXT_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(
+    media_type for media_type in KNOWN_DOCUMENT_MEDIA_TYPES if is_text_like_media_type(media_type)
+)
 """The known document media types that are text, which some adapters inline into the prompt as text."""
 
 SendableFile = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 """A file the flags judge. An `UploadedFile` is not one: only the provider it was uploaded to can read it."""
 
 
-def unsupported_file_input(item: object, profile: ModelProfile) -> str | None:
+def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | None:
     """What `item` is that the model cannot read, such as `'audio files'`, or `None` when it can be sent.
 
-    Text, provider file references and anything the flags don't cover are left to the model adapter.
+    Binary content that is neither an image, audio, video nor a document is left to the model adapter.
     """
     if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
         return None if profile.get('supports_image_input', True) else 'images'

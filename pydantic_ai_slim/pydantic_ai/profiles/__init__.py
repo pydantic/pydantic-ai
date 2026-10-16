@@ -123,7 +123,7 @@ class ModelProfile(TypedDict, total=False):
     See `supports_image_input` for how the file-input flags are used.
     """
 
-    supported_document_media_types: frozenset[str]
+    supported_document_media_types: frozenset[DocumentMediaType]
     """The document media types the model accepts, when it accepts documents at all. Default: every
     media type in `DocumentMediaType`.
 
@@ -400,6 +400,8 @@ def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | N
     return cast('ModelProfile', translated)
 
 
+_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(get_args(DocumentMediaType))
+
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
     'supports_text_output': True,
@@ -410,7 +412,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_audio_input': False,
     'supports_image_input': True,
     'supports_document_input': True,
-    'supported_document_media_types': frozenset(get_args(DocumentMediaType)),
+    'supported_document_media_types': _DOCUMENT_MEDIA_TYPES,
     'supports_audio_file_input': True,
     'supports_video_input': True,
     'default_structured_output_mode': 'tool',
