@@ -238,9 +238,10 @@ async def test_paste_prompt_shows_under_the_sign_in_url(monkeypatch: pytest.Monk
     assert screen[-3:] == [
         'If the browser cannot reach this machine (for example over SSH), paste the URL it ends up on.',
         'Paste the URL the browser lands on (or finish there):',
-        'the-code',
+        '[8 characters]',
     ]
     assert any(line.startswith('https://auth.openai.com/oauth/authorize?') for line in screen)
+    assert 'the-code' not in terminal.getvalue(), 'the pasted authorization code is not shown'
 
 
 async def port_in_use(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:

@@ -196,7 +196,7 @@ class CodexAuth:
     def __init__(self, console: Console, *, read_line: ReadLine | None = None, login_timeout: float = 300) -> None:
         """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`."""
         self.console = console
-        self.read_line = read_line or partial(line_input.read_line, console=console)
+        self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.login_timeout = login_timeout
         self.source = CodexCredentials()
         self._providers: dict[str, OpenAICodexProvider] = {}

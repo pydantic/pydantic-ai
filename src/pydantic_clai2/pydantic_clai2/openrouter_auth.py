@@ -62,7 +62,7 @@ class OpenRouterAuth:
     ) -> None:
         """Inject terminal and HTTP boundaries without opening a listener yet; `read_line` defaults to `console`'s."""
         self.console = console
-        self.read_line = read_line or partial(line_input.read_line, console=console)
+        self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.open_browser = open_browser
         self.transport = transport
         self.timeout = timeout
