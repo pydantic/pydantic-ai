@@ -614,9 +614,9 @@ navigation:
       - page: "xAI"
         path: "realtime/xai.md"
         slug: "realtime/xai"
-      - page: "ElevenLabs Agents"
+      - page: "ElevenLabs"
         path: "realtime/elevenlabs.md"
-        slug: "realtime/elevenlabs-agents"
+        slug: "realtime/elevenlabs"
   - section: "Durable Execution"
     slug: ""
     contents:

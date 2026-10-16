@@ -74,7 +74,6 @@ from pydantic_ai.realtime.codec import (
     CommitAudio,
     CreateResponse,
     InputTranscript,
-    NativeToolApproval,
     OutputTranscript,
     ResponseDone,
     SessionUsage,
@@ -335,11 +334,6 @@ async def test_turn_control_is_rejected(verb: Any) -> None:
     """
     with pytest.raises(UserError, match='drives turn-taking itself'):
         await _connection().send(verb)
-
-
-async def test_a_provider_tool_approval_is_rejected() -> None:
-    with pytest.raises(UserError, match='never asks to approve'):
-        await _connection().send(NativeToolApproval('mcp_1', approved=True))
 
 
 async def test_an_image_goes_to_the_backend_that_runs_on_it() -> None:

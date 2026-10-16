@@ -88,13 +88,6 @@ async def send_to_worker(task: str) -> str:
 
 If the handler declines to resolve some or all of the calls (by omitting them from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] or returning `None`), the next [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] (or any other capability that overrides the [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] hook) gets a chance, and any still-unresolved calls bubble up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output. To allow that bubble-up, include `DeferredToolRequests` in the agent's `output_type` — so you can combine inline handling with the stop-the-world flow when it makes sense.
 
-In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools), the handler can also be asked
-about calls the model's provider runs itself, such as a tool on an MCP server configured on the provider's
-side to require approval. Those come in
-[`native_approvals`][pydantic_ai.tools.DeferredToolRequests.native_approvals], apart from your own tools in
-`approvals`, so a policy written for your tools never decides one of them by mistake (and `approve_all=True`
-leaves them out). Answer one by its id in `approvals`; one left undecided is denied.
-
 If you're [building a custom capability](capabilities/custom.md) that needs to resolve approvals or external calls itself (e.g. a sandbox that exposes deferred tools), override the [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] hook directly on your capability instead of registering a separate `HandleDeferredToolCalls`. The same hook is also available via the [`Hooks`][pydantic_ai.capabilities.Hooks] capability — see [Hooks](hooks.md#deferred-tool-call-hook).
 
 The sections below describe the two kinds of deferred tools the handler can resolve, as well as the alternative stop-the-world flow for each. See [Capabilities](capabilities/overview.md) for how multiple capabilities compose, including [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] and the `capabilities=[...]` list.

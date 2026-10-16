@@ -1,4 +1,8 @@
-# ElevenLabs Agents
+# ElevenLabs
+
+Pydantic AI connects to [ElevenLabs](https://elevenlabs.io) through ElevenLabs Agents.
+
+## ElevenLabs Agents
 
 [`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] connects an
 agent to the [ElevenLabs Agents platform](https://elevenlabs.io/docs/agents-platform/overview),
@@ -11,7 +15,7 @@ over the agent WebSocket. The model wraps that *hosted agent*, addressed by its 
 Pydantic AI takes ownership of as much of the conversation as ElevenLabs allows per conversation
 (see [Configuration ownership](#configuration-ownership)).
 
-## Setup
+### Setup
 
 To use ElevenLabs Agents, install `pydantic-ai-slim` with the `elevenlabs-agents-realtime` optional group,
 which bundles the realtime WebSocket transport — the REST calls around the WebSocket go through
@@ -29,7 +33,7 @@ The provider's `base_url` doubles as the region switch: pass a
 as `https://api.eu.residency.elevenlabs.io` (the India and Singapore hosts follow the same pattern)
 to keep both the REST calls and the WebSocket inside a region.
 
-## Model names
+### Model names
 
 Use the id of an agent created in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or
 through the ElevenLabs API, for example `agent_0101k2...`, or `elevenlabs-agents:agent_0101k2...` as a
@@ -39,7 +43,7 @@ which per-conversation overrides are permitted. Every
 `model_name`; the LLM the agent runs on is part of the agent configuration and is not reported per
 response.
 
-## Configuration ownership
+### Configuration ownership
 
 Pydantic AI is the source of truth wherever ElevenLabs allows a per-conversation override, and
 fails loudly where it does not:
@@ -60,7 +64,7 @@ fails loudly where it does not:
 - **Stays with the agent**: turn-taking and VAD, ASR configuration, audio formats, and platform
   settings (auth, privacy, guardrails, knowledge bases, workflows).
 
-## Settings
+### Settings
 
 [`ElevenLabsAgentsRealtimeModelSettings`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModelSettings] —
 the realtime counterpart of [model run settings](../agent.md#model-run-settings) — extends the
@@ -116,7 +120,7 @@ Of the shared settings:
 - `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
   surface and are ignored, matching the [shared settings contract](overview.md#shared-settings).
 
-## Tool synchronization
+### Tool synchronization
 
 `elevenlabs_agents_tool_sync` controls how the session's
 [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]s are reconciled with the agent's client tools
@@ -139,10 +143,11 @@ at connect time:
 Server-side webhook, MCP, and system tools on the agent are ElevenLabs-owned and never touched, and
 ElevenLabs runs them itself. Its calls to MCP tools are recorded as a
 [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
-[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], and one on a server that requires
-approval goes to the session's approval handler, as an
-[approval-required function tool](tools.md#deferred-and-approval-required-tools) does: without one, it
-is denied rather than left waiting. The agent's attached
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. MCP tools that require approval on
+the ElevenLabs side aren't supported: the session denies such a call (with a warning) rather than leave
+the conversation waiting. Give the agent those tools through a Pydantic AI
+[MCP toolset](../mcp/client.md) instead, which is the recommended way, or turn approval off for the tool
+in the agent's configuration. The agent's attached
 tools are read from the resolved `prompt.tools` in its configuration; should ElevenLabs stop
 returning them inline (the field is deprecated in favor of `tool_ids`), each attached id is fetched
 from the workspace instead, so the comparison keeps working.
@@ -159,7 +164,7 @@ them in the function docstring) or use a shape the dialect cannot express (a uni
 recursive reference). The `'error'` comparison checks what the dialect can express, comparing a
 parameter's description only when the local schema declares one.
 
-## Feature support and limitations
+### Feature support and limitations
 
 | Feature | Support | Notes |
 | --- | --- | --- |
@@ -179,12 +184,12 @@ parameter's description only when the local schema declares one.
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
 
-## Gateway
+### Gateway
 
 ElevenLabs is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
 through `provider='elevenlabs-agents'` or an `ElevenLabsProvider`.
 
-## Audio formats
+### Audio formats
 
 Audio formats are fixed per agent, not per conversation. The model profile defaults to ElevenLabs'
 16 kHz PCM defaults; the connect handshake echoes the agent's actual formats, and the model raises a
@@ -202,7 +207,7 @@ model = ElevenLabsAgentsRealtimeModel(
 
 Telephony (`ulaw_8000`) agents are not supported.
 
-## Usage and cost
+### Usage and cost
 
 ElevenLabs reports the LLM's context consumption only, as `input_tokens`, and only when
 `context_usage` is in the agent's `conversation.client_events` list (it is not by default). A report
@@ -219,7 +224,7 @@ cost up afterwards through the ElevenLabs conversations API: every
 `provider_details['conversation_id']`, and the live connection has it as
 [`ElevenLabsAgentsRealtimeConnection.conversation_id`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.conversation_id].
 
-## Provider-specific quirks
+### Provider-specific quirks
 
 - In audio mode, a response's transcript arrives whole, after its audio; only text-only mode streams
   it. Synthesis outruns playback, so a spoken response is usually delivered in full while the user

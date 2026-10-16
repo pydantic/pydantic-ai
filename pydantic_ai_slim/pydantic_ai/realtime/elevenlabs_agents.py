@@ -34,6 +34,7 @@ import asyncio
 import base64
 import json
 import time
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -87,8 +88,6 @@ from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_
 from .codec import (
     AudioDelta,
     InputTranscript,
-    NativeToolApproval,
-    NativeToolApprovalRequest,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -126,6 +125,12 @@ with tool rounds and long replies alike). The reply ends with its last audio, wh
 `context_usage` marks (that report arrives with it): otherwise a gap this long, where TTS streams its frames
 a tenth of a second apart, is taken to be the end.
 """
+
+_MCP_APPROVAL_DENIED = (
+    'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot '
+    'do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval '
+    'off for the tool on the ElevenLabs side.'
+)
 
 _TAIL_ENDING_FRAMES = frozenset(
     {
@@ -1414,6 +1419,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # those denied whose outcome ElevenLabs hasn't reported, which the response they belong to records.
         self._mcp_calls: set[str] = set()
         self._mcp_tool_names: dict[str, str] = {}
+        self._warned_mcp_approval = False
         self._mcp_denied: dict[str, NativeToolReturnPart] = {}
         self._native_part_index = 0
         # Whether the conversation is waiting in the workspace's concurrency queue, where the server
@@ -1486,22 +1492,6 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # neither stops speaking nor replies; the optional `context_id` (which lets a later update
             # supersede an earlier one) has no counterpart in `TextContext` and is not sent.
             await self._send_event({'type': 'contextual_update', 'text': content.text})
-        elif isinstance(content, NativeToolApproval):
-            await self._send_event(
-                {
-                    'type': 'mcp_tool_approval_result',
-                    'tool_call_id': content.tool_call_id,
-                    'is_approved': content.approved,
-                }
-            )
-            if not content.approved:
-                self._mcp_denied[content.tool_call_id] = NativeToolReturnPart(
-                    tool_name=self._mcp_tool_names.get(content.tool_call_id, ''),
-                    content=content.reason,
-                    tool_call_id=content.tool_call_id,
-                    provider_name='elevenlabs',
-                    outcome='denied',
-                )
         elif isinstance(content, ToolResult):
             if content.tool_call_id in self._fire_and_forget_tool_call_ids:
                 # The agent asked for fire-and-forget; the server tolerates a result sent anyway
@@ -1686,7 +1676,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 args = to_json(call.parameters or {}).decode()
             return [ToolCall(tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args)]
         if event_type == 'mcp_tool_call':
-            return self._map_mcp_tool_call(_McpToolCallEvent.model_validate(data).mcp_tool_call)
+            return await self._map_mcp_tool_call(_McpToolCallEvent.model_validate(data).mcp_tool_call)
         if event_type == 'context_usage':
             usage = _ContextUsageEvent.model_validate(data).context_usage_event
             if usage.context_limit_tokens is not None:
@@ -1716,7 +1706,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             return [RealtimeSessionErrorEvent(message=f'{_PROVIDER_LABEL} error: {message}', recoverable=True)]
         return self._map_turn_event(event_type, data)
 
-    def _map_mcp_tool_call(self, call: _McpToolCallPayload) -> list[RealtimeCodecEvent]:
+    async def _map_mcp_tool_call(self, call: _McpToolCallPayload) -> list[RealtimeCodecEvent]:
         """A step of an MCP call ElevenLabs runs itself: its call part, a request for approval, or its outcome."""
         events: list[RealtimeCodecEvent] = []
         if call.tool_call_id not in self._mcp_calls:
@@ -1732,22 +1722,27 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 )
             )
         if call.state == 'awaiting_approval':
-            metadata: dict[str, Any] = {}
-            if call.service_id is not None:
-                metadata['service_id'] = call.service_id
-            if call.approval_timeout_secs is not None:
-                metadata['approval_timeout_secs'] = call.approval_timeout_secs
-            events.append(
-                NativeToolApprovalRequest(
-                    call.tool_call_id, tool_name=call.tool_name, args=call.parameters, metadata=metadata or None
-                )
+            # Nothing in a Pydantic AI session can approve a call ElevenLabs runs itself, and the agent waits for an
+            # answer, so it is denied rather than left to stall the conversation until the approval times out.
+            if not self._warned_mcp_approval:
+                self._warned_mcp_approval = True
+                warnings.warn(_MCP_APPROVAL_DENIED, stacklevel=2)
+            await self._send_event(
+                {'type': 'mcp_tool_approval_result', 'tool_call_id': call.tool_call_id, 'is_approved': False}
+            )
+            self._mcp_denied[call.tool_call_id] = NativeToolReturnPart(
+                tool_name=call.tool_name,
+                content=_MCP_APPROVAL_DENIED,
+                tool_call_id=call.tool_call_id,
+                provider_name='elevenlabs',
+                outcome='denied',
             )
         elif call.state in ('success', 'failure'):
             denied = self._mcp_denied.pop(call.tool_call_id, None)
             if call.state == 'success':
                 outcome, content = 'success', call.result
             else:
-                # A call the session denied is reported as failed: it stays the denial it was.
+                # A call denied for want of an approval is reported as failed: it stays the denial it was.
                 outcome, content = ('denied', denied.content) if denied is not None else ('failed', call.error_message)
             events += self._native_part(
                 NativeToolReturnPart(
