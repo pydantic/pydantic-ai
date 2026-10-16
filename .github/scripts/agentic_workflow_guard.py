@@ -39,6 +39,10 @@ budget before anyone noticed, documented in #6766:
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
+- `logfire-import` / `logfire-compiled` / `logfire-network` — three Z.AI
+  workflows reached `main` without the shared Logfire import or compiled OTLP
+  settings, so their runs exported no traces (#19). The compiled firewall must
+  also allow all six Logfire ingest hosts or it can silently block export.
 
 Run over the repo with `python .github/scripts/agentic_workflow_guard.py check`,
 or as policy tests via `test_agentic_workflow_guard.py`.
