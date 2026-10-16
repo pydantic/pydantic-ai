@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -24,6 +24,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     NativeToolReturnPart,
     TextPart,
     ToolCallPart,
@@ -31,6 +32,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._instrumentation import redact_binary_content
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -579,7 +581,7 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
     assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'tools', 'kind'}
-    assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata'}
+    assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata', 'native_approvals'}
 
 
 def test_message_history_round_trip_preserves_binary_content() -> None:
@@ -597,3 +599,15 @@ def test_message_history_round_trip_preserves_binary_content() -> None:
     dumped = ModelMessagesTypeAdapter.dump_json(messages)
     assert IMAGE.base64 in dumped.decode()
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages
+
+
+def test_native_approvals_are_redacted_too() -> None:
+    """A provider's call awaiting approval carries its arguments, which are redacted like a function tool's."""
+    call = NativeToolCallPart('lookup', {'photo': IMAGE}, tool_call_id='mcp_1')
+    redacted = redact_binary_content(
+        DeferredToolRequests(native_approvals=[call]), InstrumentationSettings(include_binary_content=False)
+    )
+    assert isinstance(redacted, dict)
+    shape = cast('dict[str, object]', redacted)
+    assert set(shape) == {'calls', 'approvals', 'metadata', 'native_approvals'}
+    assert IMAGE.base64 not in str(shape)

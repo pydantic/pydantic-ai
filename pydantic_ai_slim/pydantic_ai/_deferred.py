@@ -18,6 +18,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Field, StrictBool, Tag
+from pydantic.json_schema import SkipJsonSchema
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed, UserError
@@ -41,9 +42,10 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
-    # Left out of the serialized form when empty, so what a standard run (which never has these) stores is unchanged.
-    native_approvals: Annotated[list[NativeToolCallPart], Field(exclude_if=lambda calls: not calls)] = field(
-        default_factory=list[NativeToolCallPart]
+    # Left out of the serialized form when empty, and of the JSON schema, so what a standard run (which never has
+    # these) stores and describes is unchanged.
+    native_approvals: Annotated[SkipJsonSchema[list[NativeToolCallPart]], Field(exclude_if=lambda calls: not calls)] = (
+        field(default_factory=list[NativeToolCallPart])
     )
     """Calls the model's provider runs itself that it asked to approve first, like a tool on an MCP server
     configured on the provider's side to require approval.
