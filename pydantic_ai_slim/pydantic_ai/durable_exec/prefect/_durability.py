@@ -31,6 +31,14 @@ from ._toolset import with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
 
 
+def _next_flow_sequence(context: FlowRunContext, key: str) -> int:
+    """Return the next zero-based count of `key` in this flow attempt; a retry rebuilds it in the same order."""
+    sequence = context.task_run_dynamic_keys.get(key, 0)
+    assert isinstance(sequence, int)
+    context.task_run_dynamic_keys[key] = sequence + 1
+    return sequence
+
+
 @dataclass(init=False, kw_only=True)
 class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
@@ -117,11 +125,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         if context is None:
             return None
         assert context.flow_run is not None
-        key = 'pydantic_ai:default_run_id'
-        sequence = context.task_run_dynamic_keys.get(key, 0)
-        assert isinstance(sequence, int)
-        context.task_run_dynamic_keys[key] = sequence + 1
-        return f'{context.flow_run.id}:{sequence}'
+        return f'{context.flow_run.id}:{_next_flow_sequence(context, "pydantic_ai:default_run_id")}'
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
@@ -134,9 +138,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         # first started, even when concurrent runs reach this point in a different order. The counter
         # tells apart runs in one flow that reuse an ID; Prefect rebuilds it in the same order on retry.
         key = f'pydantic_ai:run_start_time:{run_id}'
-        sequence = context.task_run_dynamic_keys.get(key, 0)
-        assert isinstance(sequence, int)
-        context.task_run_dynamic_keys[key] = sequence + 1
+        sequence = _next_flow_sequence(context, key)
 
         @task
         async def run_start_time(sequence_key: str, sequence: int) -> datetime:

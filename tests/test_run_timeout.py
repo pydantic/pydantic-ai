@@ -36,7 +36,8 @@ from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
-# Short enough to keep the suite fast, long enough that a run that should finish does so well before it.
+# For tests where the real timer fires while the run blocks forever on a model, tool or sub-agent. Tests that
+# assert on how far a run got before it timed out instead expire it once it gets there, with `LONG_TIMEOUT`.
 SHORT_TIMEOUT = 0.05
 LONG_TIMEOUT = 60
 
@@ -238,11 +239,16 @@ async def test_already_expired_timeout_stops_before_the_first_request():
 async def test_run_finishing_before_its_deadline_is_unaffected():
     agent = Agent(TestModel())
 
-    result = await agent.run('go', timeout=SHORT_TIMEOUT)
-    assert result.output == 'success (no tool calls)'
+    async with agent.iter('go', timeout=LONG_TIMEOUT) as agent_run:
+        async for _node in agent_run:
+            pass
+    assert agent_run.result is not None
+    assert agent_run.result.output == 'success (no tool calls)'
 
-    # The timer is disarmed with the run: it must not cancel later work on the same task.
-    await asyncio.sleep(SHORT_TIMEOUT * 2)
+    # The run's cancellation is disarmed with the run: its deadline passing must not cancel later work on the same task.
+    cancellation = agent_run.ctx.deps.cancellation
+    cancellation.expire()
+    assert not cancellation.cancel_requested
 
 
 async def test_deadline_and_remaining_time_on_run_context():
@@ -325,10 +331,26 @@ async def test_sub_agent_can_shorten_but_not_extend_inherited_deadline():
 
 
 async def test_sub_agent_times_out_on_inherited_deadline():
-    sub_agent = _slow_tool_agent()
+    parent_contexts: list[RunContext[object]] = []
+    sub_agent = Agent(FunctionModel(_call_slow_tool))
+
+    @sub_agent.tool
+    async def slow_tool(ctx: RunContext[object]) -> str:
+        # The shared deadline passes: both runs' timers fire.
+        _expire(ctx)
+        _expire(parent_contexts[-1])
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    agent = Agent(TestModel())
+
+    @agent.tool
+    async def delegate(ctx: RunContext[object]) -> str:
+        parent_contexts.append(ctx)
+        return (await sub_agent.run('sub')).output
 
     with pytest.raises(RunTimedOut) as exc_info:
-        await _delegating_agent(sub_agent, sub_timeout=None).run('go', timeout=SHORT_TIMEOUT)
+        await agent.run('go', timeout=LONG_TIMEOUT)
 
     # The parent reports its own history, not the sub-agent's.
     [request, response, *_] = exc_info.value.all_messages()
