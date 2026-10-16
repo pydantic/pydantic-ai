@@ -122,6 +122,12 @@ def bound_types(loaded: LoadedPlugin[None]) -> list[type[object]]:
     return types
 
 
+def commands_of(loaded: LoadedPlugin[None]) -> Commands:
+    commands = Commands()
+    commands.register_many(loaded.commands)
+    return commands
+
+
 def has_skills(loaded: LoadedPlugin[None]) -> bool:
     return Skills in bound_types(loaded)
 
@@ -171,6 +177,104 @@ class TestSkillFolders:
 
         assert store.plugin_requirements('coder') == {'skill_folders': ['coder-skill-folders']}
         await loader.close('exit')
+
+
+class TestSkillFoldersAboveTheLaunchDirectory:
+    async def test_launching_in_a_subdirectory_finds_the_repositorys_skills_nearest_first(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'review', description='Root review.')
+        write_skill(project / '.agents' / 'skills', 'release', description='Root release.')
+        package = project / 'packages' / 'app'
+        write_skill(package / '.agents' / 'skills', 'review', description='Package review.')
+        src = package / 'src'
+        src.mkdir()
+        monkeypatch.chdir(src)
+
+        with pytest.warns(UserWarning, match="skill name 'review' is already taken"):
+            loaded, output = await load_coder({'skill_folders': ['.agents/skills']})
+            seen = await run_once(loaded, src)
+
+        assert '- review: Package review.\n- release: Root release.' in seen.instructions
+        assert [command.name for command in loaded.commands] == ['review', 'release']
+        assert 'Root review' not in output.getvalue()
+
+    async def test_the_walk_stops_at_the_git_root(self, tmp_path: Path, project: Path) -> None:
+        write_skill(tmp_path / '.agents' / 'skills', 'outside')
+        (project / '.git').mkdir()
+
+        loaded, _ = await load_coder({'skill_folders': ['.agents/skills']})
+
+        assert list(loaded.commands) == []
+
+    async def test_outside_a_repository_only_the_launch_directory_is_searched(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_skill(project / '.agents' / 'skills', 'review')
+        (project / 'src').mkdir()
+        monkeypatch.chdir(project / 'src')
+
+        loaded, _ = await load_coder({'skill_folders': ['.agents/skills']})
+
+        assert list(loaded.commands) == []
+
+    def test_relative_folders_expand_across_parents_in_place(self) -> None:
+        settings = CoderSettings(skill_folders=['.agents/skills', '~/skills', '/abs', '.claude/skills'])
+
+        assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
+            '.agents/skills',
+            '/repo/pkg/.agents/skills',
+            '/repo/.agents/skills',
+            '/home/tester/skills',
+            '/abs',
+            '.claude/skills',
+            '/repo/pkg/.claude/skills',
+            '/repo/.claude/skills',
+        ]
+
+
+class TestSkillInvocationFrontmatter:
+    async def test_a_model_disabled_skill_is_a_command_only(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        (library / 'deploy').mkdir(parents=True)
+        (library / 'deploy' / 'SKILL.md').write_text(
+            '---\ndescription: Deploy.\ndisable-model-invocation: true\n---\n\nShip it.\n', encoding='utf-8'
+        )
+        loaded, output = await load_coder()
+
+        seen = await run_once(loaded, project)
+
+        assert [command.name for command in loaded.commands] == ['deploy']
+        assert 'load_capability' not in seen.tools
+        assert 'deploy' not in seen.instructions
+        assert output.getvalue() == ''
+
+    async def test_a_skill_that_is_not_user_invocable_is_catalog_only(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        (library / 'background').mkdir(parents=True)
+        (library / 'background' / 'SKILL.md').write_text(
+            '---\ndescription: Background.\nuser-invocable: false\n---\n\nKnow this.\n', encoding='utf-8'
+        )
+        loaded, _ = await load_coder()
+
+        seen = await run_once(loaded, project)
+
+        assert list(loaded.commands) == []
+        assert '- background: Background.' in seen.instructions
+
+    async def test_ignored_frontmatter_is_reported_at_load(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        (library / 'review').mkdir(parents=True)
+        (library / 'review' / 'SKILL.md').write_text(
+            '---\ndescription: Review.\nallowed-tools: Read\ncontext: fork\n---\n', encoding='utf-8'
+        )
+
+        _, output = await load_coder()
+
+        assert output.getvalue() == (
+            'Ignoring unsupported Agent Skill behavioral frontmatter fields: review: allowed-tools, context\n'
+        )
 
 
 class TestSkillCatalog:
@@ -320,13 +424,32 @@ class TestSkillCatalog:
         assert instructions.count('- review: Project review.') == 1
         assert '- deploy: Team deploy.' in instructions
 
-    async def test_a_misconfigured_folder_turns_skills_off_with_a_notice(self, project: Path) -> None:
-        write_skill(project / 'skills', 'review')
-        loaded, output = await load_coder({'skill_folders': ['skills/review']})
+    async def test_a_folder_that_is_one_skill_is_skipped_with_a_notice(self, project: Path, home: Path) -> None:
+        # A stray `.agents/skills/SKILL.md` in a repository must not turn off the user's personal skills.
+        write_skill(project / '.agents', 'skills')
+        (project / '.claude').mkdir()
+        (project / '.claude' / 'skills').write_text('not a folder', encoding='utf-8')
+        write_skill(home / '.agents' / 'skills', 'release')
+        loaded, output = await load_coder()
 
-        assert not has_skills(loaded)
-        assert list(loaded.commands) == []
-        assert output.getvalue().startswith('Skills are off: Skill library path points to a skill package')
+        assert has_skills(loaded)
+        assert [command.name for command in loaded.commands] == ['release']
+        resolved = project.resolve()
+        assert output.getvalue() == (
+            f'Skipping {resolved}/.agents/skills: it is a skill package, not a library.\n'
+            f'Skipping {resolved}/.claude/skills: it is not a directory.\n'
+        )
+
+    async def test_a_skill_package_created_mid_session_does_not_fail_turns(self, project: Path, home: Path) -> None:
+        write_skill(home / '.agents' / 'skills', 'release', description='Personal release.')
+        loaded, _ = await load_coder()
+        # What a model asked to "write a skill" might create.
+        write_skill(project / '.agents', 'skills')
+
+        with pytest.warns(UserWarning, match=r'\.agents/skills: it is a skill package, not a library\.'):
+            seen = await run_once(loaded, project)
+
+        assert '- release: Personal release.' in seen.instructions
 
 
 def _inputs(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> None:
@@ -398,6 +521,46 @@ class TestSkillCommands:
         host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings={})
         with pytest.raises(RuntimeError, match="Plugin 'coder' has no shell to run a prompt in"):
             host.submit_prompt('hello')
+
+    async def test_a_skill_command_sends_the_skill_as_it_is_now(self, project: Path) -> None:
+        skill = write_skill(project / '.agents' / 'skills', 'review', body='Old steps.')
+        submitted: list[str] = []
+        loaded, _ = await load_coder(submitted=submitted)
+        (skill / 'SKILL.md').write_text('---\ndescription: Help.\n---\n\nNew steps.\n', encoding='utf-8')
+
+        assert await commands_of(loaded).execute_async('/review app.py') == ''
+
+        assert submitted == [
+            f'# Skill: review\n\nSkill directory: `{skill.resolve()}`. Relative paths in this skill resolve '
+            'against it.\n\nNew steps.\n\nARGUMENTS: app.py'
+        ]
+
+    async def test_a_skill_command_says_so_when_the_skill_is_gone(self, project: Path) -> None:
+        skill = write_skill(project / '.agents' / 'skills', 'review')
+        write_skill(project / '.agents' / 'skills', 'deploy')
+        background = write_skill(project / '.agents' / 'skills', 'background')
+        submitted: list[str] = []
+        loaded, _ = await load_coder(submitted=submitted)
+        commands = commands_of(loaded)
+        (skill / 'SKILL.md').unlink()
+        (project / '.agents' / 'skills' / 'deploy' / 'SKILL.md').write_text('no frontmatter', encoding='utf-8')
+        (background / 'SKILL.md').write_text('---\ndescription: B.\nuser-invocable: false\n---\n', encoding='utf-8')
+
+        with pytest.raises(ValueError) as gone:
+            await commands.execute_async('/review')
+        with pytest.raises(ValueError) as broken:
+            await commands.execute_async('/deploy')
+        with pytest.raises(ValueError, match=r"Skill 'background' is now `user-invocable: false`\. /reload"):
+            await commands.execute_async('/background')
+
+        assert str(gone.value) == (
+            f"Skill 'review' is gone: no skill folder has it any more; it was in {skill.resolve()}/SKILL.md. "
+            '/reload updates the commands.'
+        )
+        assert str(broken.value).startswith(
+            f"Skill 'deploy' is gone: Skipping {project.resolve()}/.agents/skills/deploy/SKILL.md: "
+        )
+        assert submitted == []
 
     async def test_reload_picks_up_skills_added_mid_session(self, tmp_path: Path, project: Path) -> None:
         store = SettingsStore(tmp_path / 'settings.db')

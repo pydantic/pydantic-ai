@@ -1841,6 +1841,12 @@ The `coder` plugin loads [Agent Skills](https://agentskills.io/specification)
 1. `.agents/skills` and `.claude/skills` in the project
 2. `~/.agents/skills` and `~/.claude/skills` in your home directory
 
+A project folder is looked for in the directory you launch CLAI in, then in
+each directory above it up to the root of its git repository, nearest first.
+Launched in `repo/src`, CLAI reads `repo/src/.agents/skills`, then
+`repo/.agents/skills`, then the same for `.claude/skills`. Outside a git
+repository, only the launch directory is searched.
+
 Folders that do not exist are skipped. Skills need a local workspace, so they
 are off on Windows. The model sees each skill's name and
 description and loads the instructions it needs, which tell it the skill's
@@ -1850,21 +1856,37 @@ any skills, nothing is added to the prompt and the model gets no extra tool.
 Each skill is also a command: `/code-review src/app.py` sends the
 `code-review` skill as your next prompt, with `src/app.py` in place of
 `$ARGUMENTS`, or appended as `ARGUMENTS: src/app.py` when the skill has no
-`$ARGUMENTS`. A skill named like a CLAI or plugin command, such as `model`,
-leaves that command alone and stays available to the model.
+`$ARGUMENTS`. The command reads the skill's `SKILL.md` again each time, so it
+sends your latest edits, and says so if the skill is gone. A skill named like a
+CLAI or plugin command, such as `model`, leaves that command alone and stays
+available to the model.
+
+Two frontmatter fields decide who can use a skill:
+
+- `disable-model-invocation: true` makes it a command only: the model doesn't
+  see it and can't load it. Use it for skills with side effects, such as a
+  deploy.
+- `user-invocable: false` makes it model-only: there is no `/command`.
+
+CLAI ignores the other behavioral fields some clients support, such as
+`allowed-tools` or `model`, and names the skills that use them when it starts.
 
 When two folders have a skill with the same name, the earlier folder wins:
 project skills over personal ones, `.agents` over `.claude`. A skill reached
 twice, such as through a symlinked `.agents/skills`, or a byte-identical copy,
 counts once. CLAI prints one line for each skipped skill when it starts: a
-malformed `SKILL.md`, or a name another skill already has.
+malformed `SKILL.md`, or a name another skill already has. It also prints a line
+for a skill folder it skips because it is a file, or holds a `SKILL.md` itself
+(one skill rather than a folder of them); your other folders still load.
 
 The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
 `/plugins reload coder`. Choose different folders in `/plugins configure coder`
 under **Skill folders**, as a JSON list of paths; `~/` means your home directory
-and `[]` turns skills off. A folder CLAI cannot read turns skills off, with a
-notice, until the next `/reload`; the coding tools still load.
+and `[]` turns skills off. A folder CLAI cannot read when it starts, such as one
+without read permission, turns skills off, with a notice, until the next
+`/reload`; the coding tools still load. A folder that becomes a file or a single
+skill mid-session is left out of the next turn's catalog.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the
