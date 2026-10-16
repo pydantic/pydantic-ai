@@ -4,6 +4,7 @@ import asyncio
 import html
 import io
 import re
+import threading
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
@@ -859,8 +860,10 @@ def web_shell(
 async def test_web_command_serves_on_a_free_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`/web` serves on the shell's loop and opens it through a private page; `stop` ends it, and so does unloading."""
     opened: list[str] = []
+    loop_thread = threading.get_ident()
 
     def open_browser(url: str) -> bool:
+        assert threading.get_ident() != loop_thread, 'a foreground `$BROWSER` command would block the loop'
         opened.append(url)
         return True
 
