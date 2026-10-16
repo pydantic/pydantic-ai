@@ -10,8 +10,8 @@ description: "Fall back to other models when a Pydantic AI model request fails o
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Fallback
 
-# Try GPT-5.6 Sol first, then Claude Opus 5.5.
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Fallback('anthropic:claude-opus-5-5')])
+# Try the OpenAI model first, then the Anthropic one.
+agent = Agent('{{ openai:medium }}', capabilities=[Fallback('{{ anthropic:medium }}')])
 ```
 
 Because the chain starts from the model selected for the step, `Fallback` composes with the agent's model, a model passed to `agent.run(model=...)`, and [`SelectModel`](select-model.md): whichever model they choose is attempted first. When the agent has no model and nothing else selects one, the first of `Fallback`'s models is used for the first attempt:
@@ -20,7 +20,7 @@ Because the chain starts from the model selected for the step, `Fallback` compos
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Fallback
 
-agent = Agent(capabilities=[Fallback('openai:gpt-5.6-sol', 'anthropic:claude-opus-5-5')])
+agent = Agent(capabilities=[Fallback('{{ openai:medium }}', '{{ anthropic:medium }}')])
 ```
 
 A model that was already attempted in the step is skipped, whichever capability attempted it, so listing the agent's own model among the candidates doesn't cause a duplicate request.

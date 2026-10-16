@@ -670,7 +670,7 @@ class RetryOnce(AbstractCapability[Any]):
         raise error
 
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[RetryOnce()])
+agent = Agent('{{ openai:medium }}', capabilities=[RetryOnce()])
 ```
 
 ### Tool hooks
