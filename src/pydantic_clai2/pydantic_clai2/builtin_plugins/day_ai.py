@@ -29,6 +29,7 @@ from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
@@ -75,7 +76,7 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
                     auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=self.settings.include_instructions
                 ),
             )
-        return (self.for_run,)
+        return (WorkspacelessCapability[DepsT](self.for_run),)
 
     def get_commands(self) -> Sequence[Command]:
         return (sign_in_command('day_ai', SIGN_IN),)
