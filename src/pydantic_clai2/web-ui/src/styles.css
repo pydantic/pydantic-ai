@@ -481,6 +481,11 @@ pre {
   right: 4px;
 }
 
+.session-menu.up {
+  top: auto;
+  bottom: 30px;
+}
+
 .sidebar-foot {
   display: flex;
   align-items: center;
@@ -1474,27 +1479,6 @@ pre {
   color: var(--del-text);
 }
 
-@media (max-width: 760px) {
-  .app {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: 280px;
-    z-index: 40;
-    box-shadow: var(--shadow);
-  }
-
-  .column,
-  .bottom,
-  .hero {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-}
-
 /* Empty state: the composer sits under the question, as in a desktop agent's new thread */
 
 .hero {
@@ -1543,6 +1527,27 @@ pre {
 
 .hero .composer textarea {
   min-height: 72px;
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 280px;
+    z-index: 40;
+    box-shadow: var(--shadow);
+  }
+
+  .column,
+  .bottom,
+  .hero {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
 }
 
 /* A group of tool calls */

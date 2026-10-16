@@ -9727,6 +9727,13 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
         raise NotImplementedError
 
 
+async def test_third_party_agent_rejects_connect():
+    """A third-party `AbstractAgent` that doesn't implement connections says so by type."""
+    with pytest.raises(UserError, match=re.escape('`_ToolsetOnlyAgent` does not support explicit connections.')):
+        async with _ToolsetOnlyAgent([]).connect():
+            pytest.fail('A third-party agent without connection support cannot connect')  # pragma: no cover
+
+
 def test_construction_toolsets_ignores_overrides():
     """`_construction_toolsets` reports what the agent was built with, not later additions.
 
@@ -10174,6 +10181,22 @@ def test_set_mcp_sampling_model():
     agent.set_mcp_sampling_model(function_model2)
     assert server1.sampling_model is function_model2
     assert server2.sampling_model is function_model2
+
+    agent.model = 'test'
+    agent.set_mcp_sampling_model()
+    assert isinstance(server1.sampling_model, TestModel)
+    assert server1.sampling_model.model_name == 'test'
+    assert server2.sampling_model is server1.sampling_model
+
+    class StaticModelCapability(AbstractCapability[None]):
+        def get_model(self) -> str:
+            return 'test'
+
+    static_agent = Agent(None, capabilities=[StaticModelCapability()], deps_type=type(None), toolsets=[toolset])
+    static_agent.set_mcp_sampling_model()
+    assert isinstance(server1.sampling_model, TestModel)
+    assert server1.sampling_model.model_name == 'test'
+    assert server2.sampling_model is server1.sampling_model
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')

@@ -37,7 +37,7 @@ from pydantic_ai_harness import FileSystem
 
 Path('./workspace').mkdir(exist_ok=True)
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('./workspace'), FileSystem()],
 )
 
@@ -213,7 +213,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), FileSystem()])
 
 @agent.on_event(FileChangeRequestEvent)
 async def hold_migrations(ctx, event):
@@ -325,7 +325,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('.'),
         FileSystem(
@@ -397,7 +397,7 @@ dropped.
 [agent spec](../agent-spec.md):
 
 ```yaml
-model: anthropic:claude-opus-5-5
+model: {{ anthropic:large }}
 capabilities:
   - FileSystem:
       allowed_patterns: ['*.py', '*.toml']
