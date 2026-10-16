@@ -19,7 +19,6 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
 from ...conftest import try_import
-from ..conftest import cache_breakpoints
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -48,46 +47,52 @@ _MESSAGE_JSON = {
     'usage': {'input_tokens': 5, 'output_tokens': 1},
 }
 
-_Breakpoints = tuple[dict[str, Any] | None, list[str]]
+_CacheControl = dict[str, str]
+_Breakpoints = tuple[_CacheControl | None, list[_CacheControl | None]]
+"""The request-level `cache_control`, and the `cache_control` of each block in the user message."""
 
-_AUTOMATIC: _Breakpoints = ({'type': 'ephemeral', 'ttl': '5m'}, [])
-"""The top-level `cache_control` parameter, with no breakpoint on any block."""
 
-_LAST_BLOCK: _Breakpoints = (None, ['messages[0].content[0]'])
-"""No top-level parameter, with the breakpoint on the last block of the conversation instead."""
+def _automatic(cache_control: _CacheControl) -> _Breakpoints:
+    """The top-level `cache_control` parameter, with no breakpoint on the block."""
+    return cache_control, [None]
+
+
+def _last_block(cache_control: _CacheControl) -> _Breakpoints:
+    """No top-level parameter, with the breakpoint on the last block of the conversation instead."""
+    return None, [cache_control]
 
 
 @dataclass(frozen=True)
 class Case:
     id: str
     client: str
-    expected: _Breakpoints
+    expected: Callable[[_CacheControl], _Breakpoints]
     model_name: str = 'claude-sonnet-4-5'
     profile: dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 CASES = [
-    Case('api', 'api', _AUTOMATIC),
-    Case('mantle', 'mantle', _AUTOMATIC),
-    Case('vertex', 'vertex', _AUTOMATIC),
-    Case('foundry', 'foundry', _AUTOMATIC),
+    Case('api', 'api', _automatic),
+    Case('mantle', 'mantle', _automatic),
+    Case('vertex', 'vertex', _automatic),
+    Case('foundry', 'foundry', _automatic),
     # The legacy Bedrock InvokeModel API rejects the top-level `cache_control` parameter with a 400 on the
     # ARN-versioned models, but takes it on the models it serves from the Messages API infrastructure.
-    Case('bedrock-sonnet-4-5', 'bedrock', _LAST_BLOCK, model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0'),
-    Case('bedrock-opus-4-8', 'bedrock', _AUTOMATIC, model_name='us.anthropic.claude-opus-4-8'),
-    Case('bedrock-opus-5-5', 'bedrock', _AUTOMATIC, model_name='global.anthropic.claude-opus-5-5'),
+    Case('bedrock-sonnet-4-5', 'bedrock', _last_block, model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0'),
+    Case('bedrock-opus-4-8', 'bedrock', _automatic, model_name='us.anthropic.claude-opus-4-8'),
+    Case('bedrock-opus-5-5', 'bedrock', _automatic, model_name='global.anthropic.claude-opus-5-5'),
     # An explicit `supports_auto_cache` in either `profile=` form is the override, both ways.
     Case(
         'bedrock-profile-on',
         'bedrock',
-        _AUTOMATIC,
+        _automatic,
         model_name='us.anthropic.claude-sonnet-4-6',
         profile={'supports_auto_cache': True},
     ),
     Case(
         'bedrock-callable-profile-on',
         'bedrock',
-        _AUTOMATIC,
+        _automatic,
         model_name='us.anthropic.claude-sonnet-4-6',
         profile=lambda default: {**default, 'supports_auto_cache': True},
     ),
@@ -95,30 +100,31 @@ CASES = [
     Case(
         'bedrock-callable-profile-untouched',
         'bedrock',
-        _LAST_BLOCK,
+        _last_block,
         model_name='us.anthropic.claude-sonnet-4-6',
         profile=lambda default: default,
     ),
-    Case('api-profile-off', 'api', _LAST_BLOCK, profile={'supports_auto_cache': False}),
+    Case('api-profile-off', 'api', _last_block, profile={'supports_auto_cache': False}),
     Case(
         'api-callable-profile-off',
         'api',
-        _LAST_BLOCK,
+        _last_block,
         profile=lambda default: {**default, 'supports_auto_cache': False},
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    'settings',
+    'settings,ttl',
     [
         # Plain dicts: parameters are built at collection time, also on installs without `anthropic`.
-        pytest.param({'max_tokens': 256, 'anthropic_cache': True}, id='anthropic_cache'),
-        pytest.param({'max_tokens': 256, 'cache': True}, id='unified-cache'),
+        pytest.param({'max_tokens': 256, 'anthropic_cache': True}, '5m', id='anthropic_cache'),
+        pytest.param({'max_tokens': 256, 'anthropic_cache': '1h'}, '1h', id='anthropic_cache-1h'),
+        pytest.param({'max_tokens': 256, 'cache': True}, '5m', id='unified-cache'),
     ],
 )
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
-async def test_automatic_caching_by_client(allow_model_requests: None, case: Case, settings: ModelSettings):
+async def test_automatic_caching_by_client(allow_model_requests: None, case: Case, settings: ModelSettings, ttl: str):
     """The profile's `supports_auto_cache` decides between automatic caching and a breakpoint on the last block."""
     bodies: list[dict[str, Any]] = []
 
@@ -146,4 +152,6 @@ async def test_automatic_caching_by_client(allow_model_requests: None, case: Cas
         await Agent(model, model_settings=settings).run('Hello')
 
     [body] = bodies
-    assert cache_breakpoints(body) == case.expected
+    [message] = body['messages']
+    breakpoints = (body.get('cache_control'), [block.get('cache_control') for block in message['content']])
+    assert breakpoints == case.expected({'type': 'ephemeral', 'ttl': ttl})
