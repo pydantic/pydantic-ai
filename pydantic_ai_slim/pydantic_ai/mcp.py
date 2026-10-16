@@ -91,7 +91,7 @@ else:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
-from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
+from ._mcp_apps import MCP_APP_METADATA_KEY, MCP_TOOL_METADATA_KEY, MCPAppToolResult, MCPToolInfo
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
 from .settings import ModelSettings
 
@@ -139,6 +139,7 @@ __all__ = (
     'ContentBlock',
     'PromptRole',
     'MCPAppToolResult',
+    'MCPToolInfo',
 )
 
 
@@ -1339,6 +1340,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     parameters_json_schema=input_schema,
                     metadata={
                         'meta': mcp_tool.meta,
+                        'title': mcp_tool.title,
                         # `by_alias` pins the keys to the wire (camelCase) spelling on either SDK
                         # generation; this dict is a public surface tool filters read by key.
                         'annotations': mcp_tool.annotations.model_dump(by_alias=True) if mcp_tool.annotations else None,
@@ -1516,14 +1518,21 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         # `get_tools()` resolves the server's `execution.taskSupport` and the client's
         # `prefer_tasks` preference into the effective task path for this tool.
-        use_task = bool((tool.tool_def.metadata or {}).get('task'))
+        tool_metadata = tool.tool_def.metadata or {}
+        use_task = bool(tool_metadata.get('task'))
+        # Every call carries which server and tool it went to, so a frontend can label it.
+        info = MCPToolInfo(
+            toolset_id=self.id, title=tool_metadata.get('title'), annotations=tool_metadata.get('annotations')
+        )
         resource_uri = _app_resource_uri(tool.tool_def)
         if resource_uri is None:
             if self.process_tool_call is not None:
-                return await self.process_tool_call(
+                return_value = await self.process_tool_call(
                     ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
                 )
-            return await self.direct_call_tool(name, tool_args, use_task=use_task)
+            else:
+                return_value = await self.direct_call_tool(name, tool_args, use_task=use_task)
+            return _with_metadata(return_value, {MCP_TOOL_METADATA_KEY: info})
 
         # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
         # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
@@ -1551,15 +1560,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         # Mapping the kept result again gives what the model would have got, so a `process_tool_call` hook that
         # changed the result keeps the raw one from reaching the app.
-        if sent is None or return_value != _map_mcp_call_tool_result(sent):
-            return return_value
-        app = MCPAppToolResult(
-            resource_uri=resource_uri,
-            tool_input=model_args,
-            result=_call_tool_result_to_wire(sent),
-            toolset_id=self.id,
-        )
-        return messages.ToolReturn(return_value=return_value, metadata={MCP_APP_METADATA_KEY: app})
+        metadata: dict[str, Any] = {MCP_TOOL_METADATA_KEY: info}
+        if sent is not None and return_value == _map_mcp_call_tool_result(sent):
+            metadata[MCP_APP_METADATA_KEY] = MCPAppToolResult(
+                resource_uri=resource_uri,
+                tool_input=model_args,
+                result=_call_tool_result_to_wire(sent),
+                toolset_id=self.id,
+            )
+        return _with_metadata(return_value, metadata)
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve the prompts currently exposed by the server.
@@ -1934,6 +1943,13 @@ def _raise_mcp_tool_error(
         raise ToolError(message) from cause
     else:
         assert_never(behavior)
+
+
+def _with_metadata(return_value: ToolResult, metadata: dict[str, Any]) -> messages.ToolReturn[Any]:
+    """Attach `metadata` to a tool result. A `ToolReturn` a hook or subclass built is returned as is."""
+    if isinstance(return_value, messages.ToolReturn):
+        return cast(messages.ToolReturn[Any], return_value)
+    return messages.ToolReturn(return_value=return_value, metadata=metadata)
 
 
 def _app_resource_uri(tool_def: ToolDefinition) -> str | None:

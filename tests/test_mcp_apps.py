@@ -37,11 +37,11 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
     from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai._utils import mcp_app_model_output
+    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, ToolOutputAvailablePart, UIMessage
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
-
-    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='fastmcp, ag-ui-protocol or starlette not installed')
 
@@ -56,10 +56,20 @@ READ_FIELDS: dict[str, Any] = (
 )
 """The fields FastMCP 4 adds to every `resources/read` result."""
 
+TIME_ANNOTATIONS = {
+    'title': None,
+    'readOnlyHint': True,
+    'destructiveHint': None,
+    'idempotentHint': None,
+    'openWorldHint': None,
+}
+"""`get_time`'s annotations as `MCPToolset` records them: every spec key, unset ones `None`."""
+
 
 def weather_server() -> FastMCP[None]:
     """Tools with an MCP Apps UI (under the current and the deprecated `_meta` key), a tool without one, tools only
-    the app or only the model may call, and the UI resource.
+    the app or only the model may call, and the UI resource. Titles are explicit because FastMCP 4 generates one
+    from the function name and FastMCP 3 doesn't.
     """
     server: FastMCP[None] = FastMCP('weather_server')
 
@@ -71,7 +81,7 @@ def weather_server() -> FastMCP[None]:
     def forecast_view() -> str:
         return '<!doctype html><html><body>forecast</body></html>'
 
-    @server.tool(meta={'ui': {'resourceUri': 'ui://weather/forecast'}})
+    @server.tool(title='Forecast', meta={'ui': {'resourceUri': 'ui://weather/forecast'}})
     def get_forecast(city: str, api_key: str | None = None) -> FastMCPToolResult:
         """Text for the model; structured content and per-call `_meta` for the app. `api_key` is for a hook to add."""
         return FastMCPToolResult(
@@ -80,11 +90,11 @@ def weather_server() -> FastMCP[None]:
             meta={'selectedDay': 'tuesday'},
         )
 
-    @server.tool(meta={'ui/resourceUri': 'ui://weather/forecast'})
+    @server.tool(title='Legacy forecast', meta={'ui/resourceUri': 'ui://weather/forecast'})
     def legacy_forecast(city: str) -> FastMCPToolResult:
         return FastMCPToolResult(content=[TextContent(type='text', text=f'{city}: 14C')])
 
-    @server.tool
+    @server.tool(title='Local time', annotations={'readOnlyHint': True})
     def get_time(city: str) -> str:
         """Has no UI."""
         return f'{city}: 09:00'
@@ -159,8 +169,11 @@ async def test_server_declares_mcp_apps_extension(weather: MCPToolset[Any]):
         assert weather.capabilities.extensions == snapshot({'io.modelcontextprotocol/ui': {}})
 
 
-async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
-    """Calls to UI tools keep the full result for the app, without changing what the model sees."""
+async def test_tool_returns_carry_tool_info_and_app_data(weather: MCPToolset[Any]):
+    """Every call records which server and tool it went to; calls to UI tools also keep the full result for the app.
+
+    Neither changes what the model sees.
+    """
     agent = Agent(TestModel(call_tools=['get_forecast', 'legacy_forecast', 'get_time']), toolsets=[weather])
     result = await agent.run('Forecast?')
     returns = {
@@ -171,17 +184,19 @@ async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
         'get_forecast': (
             {'city': 'a', 'temp_c': 14},
             {
+                'mcp_tool': {'toolset_id': 'weather', 'title': 'Forecast', 'annotations': None},
                 'mcp_app': {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
                     'result': forecast_result('a'),
                     'toolset_id': 'weather',
-                }
+                },
             },
         ),
         'legacy_forecast': (
             'a: 14C',
             {
+                'mcp_tool': {'toolset_id': 'weather', 'title': 'Legacy forecast', 'annotations': None},
                 'mcp_app': {
                     'resource_uri': 'ui://weather/forecast',
                     'tool_input': {'city': 'a'},
@@ -191,10 +206,13 @@ async def test_app_tool_returns_carry_app_data(weather: MCPToolset[Any]):
                         'isError': False,
                     },
                     'toolset_id': 'weather',
-                }
+                },
             },
         ),
-        'get_time': ('a: 09:00', None),
+        'get_time': (
+            'a: 09:00',
+            {'mcp_tool': {'toolset_id': 'weather', 'title': 'Local time', 'annotations': TIME_ANNOTATIONS}},
+        ),
     }
 
 
@@ -207,6 +225,7 @@ HookKind = Literal[
     'other-tool',
     'other-arguments',
     'arguments-in-place',
+    'tool-return',
 ]
 
 
@@ -233,107 +252,48 @@ def hooked_weather(request: pytest.FixtureRequest) -> MCPToolset[Any]:
         if hook_kind == 'rewrite-in-place':
             assert isinstance(result, dict)
             del result['city']
+        if hook_kind == 'tool-return':
+            return cast(Any, ToolReturn(return_value=result, metadata={'own': True}))
         return result
 
     return MCPToolset(weather_server(), process_tool_call=hook)
 
 
 @pytest.mark.parametrize(
-    ('hooked_weather', 'expected'),
+    ('hooked_weather', 'expected', 'app_city'),
     [
-        pytest.param(
-            'passthrough',
-            ToolReturn(
-                return_value={'city': 'a', 'temp_c': 14},
-                metadata={
-                    'mcp_app': {
-                        'resource_uri': 'ui://weather/forecast',
-                        'tool_input': {'city': 'a'},
-                        'result': forecast_result('a'),
-                        'toolset_id': None,
-                    }
-                },
-            ),
-            id='passthrough',
-        ),
-        pytest.param(
-            'metadata',
-            ToolReturn(
-                return_value={'city': 'a', 'temp_c': 14},
-                metadata={
-                    'mcp_app': {
-                        'resource_uri': 'ui://weather/forecast',
-                        'tool_input': {'city': 'a'},
-                        'result': forecast_result('a'),
-                        'toolset_id': None,
-                    }
-                },
-            ),
-            id='metadata',
-        ),
-        pytest.param(
-            'added-key',
-            ToolReturn(
-                return_value={'city': 'a', 'temp_c': 14},
-                metadata={
-                    'mcp_app': {
-                        'resource_uri': 'ui://weather/forecast',
-                        'tool_input': {'city': 'a'},
-                        'result': forecast_result('a'),
-                        'toolset_id': None,
-                    }
-                },
-            ),
-            id='added-key',
-        ),
-        pytest.param('rewrite', {'temp_c': 14}, id='rewritten-result'),
-        pytest.param('rewrite-in-place', {'temp_c': 14}, id='result-rewritten-in-place'),
-        pytest.param('other-tool', 'a: 09:00', id='other-tool'),
-        pytest.param(
-            'other-arguments',
-            ToolReturn(
-                return_value={'city': 'b', 'temp_c': 14},
-                metadata={
-                    'mcp_app': {
-                        'resource_uri': 'ui://weather/forecast',
-                        'tool_input': {'city': 'a'},
-                        'result': forecast_result('b'),
-                        'toolset_id': None,
-                    }
-                },
-            ),
-            id='other-arguments',
-        ),
-        pytest.param(
-            'arguments-in-place',
-            ToolReturn(
-                return_value={'city': 'b', 'temp_c': 14},
-                metadata={
-                    'mcp_app': {
-                        'resource_uri': 'ui://weather/forecast',
-                        'tool_input': {'city': 'a'},
-                        'result': forecast_result('b'),
-                        'toolset_id': None,
-                    }
-                },
-            ),
-            id='arguments-rewritten-in-place',
-        ),
+        pytest.param('passthrough', {'city': 'a', 'temp_c': 14}, 'a', id='passthrough'),
+        pytest.param('metadata', {'city': 'a', 'temp_c': 14}, 'a', id='metadata'),
+        pytest.param('added-key', {'city': 'a', 'temp_c': 14}, 'a', id='added-key'),
+        pytest.param('rewrite', {'temp_c': 14}, None, id='rewritten-result'),
+        pytest.param('rewrite-in-place', {'temp_c': 14}, None, id='result-rewritten-in-place'),
+        pytest.param('other-tool', 'a: 09:00', None, id='other-tool'),
+        pytest.param('other-arguments', {'city': 'b', 'temp_c': 14}, 'b', id='other-arguments'),
+        pytest.param('arguments-in-place', {'city': 'b', 'temp_c': 14}, 'b', id='arguments-rewritten-in-place'),
     ],
     indirect=['hooked_weather'],
 )
-async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], expected: Any):
+async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], expected: Any, app_city: str | None):
     """App data is kept when a `process_tool_call` hook returns the result of its call to the tool unchanged.
 
     The app gets the model's arguments, not ones the hook added, such as a key. A hook that changes the result,
     including by editing it in place, or doesn't call the tool, decides what leaves the toolset, so no raw result
-    is forwarded.
+    is forwarded. The tool record is always attached.
     """
     run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     async with hooked_weather:
         tools = await hooked_weather.get_tools(run_context)
         returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
-    assert returned == expected
+    assert returned.return_value == expected
+    metadata: dict[str, Any] = {'mcp_tool': {'toolset_id': None, 'title': 'Forecast', 'annotations': None}}
+    if app_city is not None:
+        metadata['mcp_app'] = {
+            'resource_uri': 'ui://weather/forecast',
+            'tool_input': {'city': 'a'},
+            'result': forecast_result(app_city),
+            'toolset_id': None,
+        }
+    assert returned.metadata == metadata
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
@@ -447,6 +407,181 @@ async def test_vercel_ai_frontend_receives_app_after_tool_result(agent: Agent[No
         for message in dumped
     ]
     assert model_view(VercelAIAdapter.load_messages(dumped)) == model_view(VercelAIAdapter.load_messages(without_app))
+
+
+async def test_vercel_ai_v7_tool_outputs_carry_tool_metadata(agent: Agent[None, str]):
+    """On AI SDK v7, every MCP tool output carries `toolMetadata` in the shape AI SDK's own MCP client sets.
+
+    A tool without a page gets `clientName`, `toolName`, `title` and `annotations`; `ToolDefinition.metadata` is
+    never sent as is. A tool with a page also gets `app`, and its `output` is the server's full result, which
+    `experimental_MCPAppRenderer` hands the page. What the model saw is kept in the provider metadata, so history the
+    frontend sends back loads as it does on v6.
+    """
+    request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Weather?')])])
+    adapter = VercelAIAdapter(agent, request, sdk_version=7)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+    outputs = {c['toolCallId']: c for c in chunks if c['type'] == 'tool-output-available'}
+    assert outputs['time-1'] == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'time-1',
+            'output': 'Den Haag: 09:00',
+            'toolMetadata': {
+                'clientName': 'weather',
+                'toolName': 'get_time',
+                'title': 'Local time',
+                'annotations': {'readOnlyHint': True},
+            },
+        }
+    )
+    assert outputs['forecast-1'] == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'forecast-1',
+            'output': forecast_result('Den Haag'),
+            'providerMetadata': {'pydantic_ai': {'model_output': {'city': 'Den Haag', 'temp_c': 14}}},
+            'toolMetadata': {
+                'clientName': 'weather',
+                'toolName': 'get_forecast',
+                'title': 'Forecast',
+                'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'},
+            },
+        }
+    )
+
+    async with agent.run_stream('Weather?') as result:
+        await result.get_output()
+    sent_back = [
+        UIMessage.model_validate_json(message.model_dump_json(by_alias=True, exclude_none=True))
+        for message in VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=7)
+    ]
+    v6 = VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=6)
+    assert model_view(VercelAIAdapter.load_messages(sent_back)) == model_view(VercelAIAdapter.load_messages(v6))
+
+
+@pytest.mark.parametrize('hooked_weather', ['tool-return'], indirect=True)
+async def test_process_tool_call_returning_a_tool_return_owns_the_result(hooked_weather: MCPToolset[Any]):
+    """A hook that builds its own `ToolReturn` decides what leaves the toolset; no record is added to it."""
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    async with hooked_weather:
+        tools = await hooked_weather.get_tools(run_context)
+        returned = await hooked_weather.call_tool('get_forecast', {'city': 'a'}, run_context, tools['get_forecast'])
+    assert returned == ToolReturn(return_value={'city': 'a', 'temp_c': 14}, metadata={'own': True})
+
+
+async def test_vercel_ai_v7_tool_metadata_from_hand_built_records():
+    """Records built by hand: an app record alone, a tool record alone, and malformed or missing records.
+
+    `MCPToolset` always attaches both records, so these shapes only come from other code.
+    """
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(name='app_only', json_args='{}', tool_call_id='call_1'),
+                1: DeltaToolCall(name='tool_only', json_args='{}', tool_call_id='call_2'),
+                2: DeltaToolCall(name='malformed', json_args='{}', tool_call_id='call_3'),
+                3: DeltaToolCall(name='other_metadata', json_args='{}', tool_call_id='call_4'),
+            }
+        else:
+            yield 'Done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def app_only() -> ToolReturn:
+        app: dict[str, Any] = {
+            'resource_uri': 'ui://weather/forecast',
+            'tool_input': {},
+            'result': {},
+            'toolset_id': None,
+        }
+        return ToolReturn(return_value='app', metadata={'mcp_app': app})
+
+    @agent.tool_plain
+    async def tool_only() -> ToolReturn:
+        return ToolReturn(
+            return_value='tool', metadata={'mcp_tool': {'toolset_id': 'srv', 'title': None, 'annotations': None}}
+        )
+
+    @agent.tool_plain
+    async def malformed() -> ToolReturn:
+        return ToolReturn(return_value='bad', metadata={'mcp_app': {'resource_uri': 1}, 'mcp_tool': {'toolset_id': 1}})
+
+    @agent.tool_plain
+    async def other_metadata() -> ToolReturn:
+        return ToolReturn(return_value='other', metadata={'theirs': True})
+
+    request = SubmitMessage(id='chat', messages=[UIMessage(id='u1', role='user', parts=[TextUIPart(text='Hi')])])
+    adapter = VercelAIAdapter(agent, request, sdk_version=7)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+    outputs = {c['toolCallId']: c for c in chunks if c['type'] == 'tool-output-available'}
+    assert {call_id: c.get('toolMetadata') for call_id, c in outputs.items()} == snapshot(
+        {
+            'call_1': {
+                'toolName': 'app_only',
+                'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'},
+            },
+            'call_2': {'clientName': 'srv', 'toolName': 'tool_only'},
+            'call_3': None,
+            'call_4': None,
+        }
+    )
+    assert outputs['call_1']['output'] == {}
+    assert outputs['call_2']['output'] == 'tool'
+
+
+@pytest.mark.parametrize(
+    ('output', 'expected'),
+    [
+        pytest.param({'content': [{'type': 'text', 'text': 'a: 14C'}]}, 'a: 14C', id='one-text-block'),
+        pytest.param(
+            {'content': [{'type': 'text', 'text': 'a'}, {'type': 'text', 'text': 'b'}]}, ['a', 'b'], id='text-blocks'
+        ),
+        pytest.param(
+            {'content': [{'type': 'text', 'text': 'a'}, {'type': 'image', 'data': 'AA==', 'mimeType': 'image/png'}]},
+            [{'type': 'text', 'text': 'a'}, {'type': 'image', 'data': 'AA==', 'mimeType': 'image/png'}],
+            id='mixed-blocks',
+        ),
+        pytest.param({'content': 'not a list'}, {'content': 'not a list'}, id='content-not-a-list'),
+        pytest.param('plain', 'plain', id='output-not-a-result'),
+    ],
+)
+def test_mcp_app_model_output_rebuilt_from_result(output: Any, expected: Any):
+    """Without `structuredContent` and without the model's view, the model gets the result's text blocks."""
+    part = ToolOutputAvailablePart(
+        type='tool-get_forecast',
+        tool_call_id='forecast-1',
+        output=output,
+        tool_metadata={'app': {'resourceUri': 'ui://weather/forecast', 'mimeType': 'text/html;profile=mcp-app'}},
+    )
+    assert mcp_app_model_output(part) == expected
+
+
+async def test_vercel_ai_v7_history_without_model_view(agent: Agent[None, str]):
+    """A frontend that sends tool parts back without `resultProviderMetadata` still gives the model its own view.
+
+    The model's view is rebuilt from the result's `structuredContent`; the page's `_meta` never reaches the model.
+    """
+    async with agent.run_stream('Weather?') as result:
+        await result.get_output()
+    sent_back: list[UIMessage] = []
+    for message in VercelAIAdapter.dump_messages(result.all_messages(), sdk_version=7):
+        data = message.model_dump(by_alias=True, exclude_none=True)
+        for part in data['parts']:
+            part.pop('resultProviderMetadata', None)
+        sent_back.append(UIMessage.model_validate(data))
+    loaded = VercelAIAdapter.load_messages(sent_back)
+    [forecast] = [p for p in iter_message_parts(loaded, ModelRequest, ToolReturnPart) if p.tool_call_id == 'forecast-1']
+    assert forecast.content == snapshot({'city': 'Den Haag', 'temp_c': 14})
 
 
 async def test_vercel_ai_app_chunk_without_toolset_id_or_with_malformed_record():

@@ -4917,6 +4917,37 @@ async def test_adapter_load_messages():
     )
 
 
+async def test_adapter_load_messages_tool_part_with_tool_metadata():
+    """AI SDK v7 tool parts carry `toolMetadata` and `resultProviderMetadata`; history with them loads as before."""
+    data = SubmitMessage.model_validate(
+        {
+            'trigger': 'submit-message',
+            'id': 'chat',
+            'messages': [
+                {'id': 'u1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Weather?'}]},
+                {
+                    'id': 'a1',
+                    'role': 'assistant',
+                    'parts': [
+                        {
+                            'type': 'tool-get_forecast',
+                            'toolCallId': 'call-1',
+                            'state': 'output-available',
+                            'input': {'city': 'Den Haag'},
+                            'output': {'temp_c': 14},
+                            'toolMetadata': {'clientName': 'weather', 'toolName': 'get_forecast'},
+                            'resultProviderMetadata': {'openai': {'itemId': 'fc_1'}},
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    messages = VercelAIAdapter.load_messages(data.messages)
+    [tool_return] = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart)]
+    assert tool_return.content == snapshot({'temp_c': 14})
+
+
 async def test_adapter_load_messages_with_data_ui_part_in_user_message():
     data = SubmitMessage(
         trigger='submit-message',
@@ -5168,6 +5199,7 @@ def test_python_mode_dump_keeps_unset_optional_fields():
                     'input': {'path': 'a.txt'},
                     'providerExecuted': None,
                     'callProviderMetadata': None,
+                    'toolMetadata': None,
                     'approval': {'id': 'approval_1', 'approved': True, 'reason': None},
                 },
             ],
@@ -5227,6 +5259,8 @@ async def test_adapter_dump_messages_with_tools():
                         'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -5929,6 +5963,8 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                         'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6003,6 +6039,8 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                         'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6093,6 +6131,8 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6261,6 +6301,8 @@ async def test_adapter_dump_messages_with_builtin_tools():
                                 },
                             }
                         },
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -6310,6 +6352,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'input': {'query': 'orphan query'},
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'tool_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -6511,6 +6554,8 @@ Tool failed with error
 Fix the errors and try again.\
 """,
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -6695,6 +6740,8 @@ async def test_adapter_dump_messages_text_with_interruption():
                                 'return_meta': {'provider_name': 'test'},
                             }
                         },
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -7354,6 +7401,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                         'provider_executed': False,
                         'input': {'INVALID_JSON': '{invalid json'},
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -7428,6 +7476,7 @@ async def test_adapter_dump_messages_tool_call_without_return():
                         'provider_executed': False,
                         'input': {'city': 'New York'},
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -7463,6 +7512,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
             'input': {'target': 'production'},
             'provider_executed': False,
             'call_provider_metadata': None,
+            'tool_metadata': None,
             'approval': {'id': 'deferred_tc1'},
         }
     )
@@ -7576,6 +7626,7 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                         'provider_executed': False,
                         'input': {},
                         'call_provider_metadata': None,
+                        'tool_metadata': None,
                         'approval': None,
                     },
                     {
@@ -8361,6 +8412,8 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                                 'provider_details': {'index': 0, 'type': 'function'},
                             }
                         },
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -8726,6 +8779,8 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -8804,6 +8859,8 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -9066,6 +9123,8 @@ Fix the errors and try again.\
                                 'provider_details': {'attempt': 1},
                             }
                         },
+                        'tool_metadata': None,
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -10034,6 +10093,8 @@ async def test_adapter_dump_messages_tool_return_error():
                 'error_text': 'Something went wrong',
                 'provider_executed': False,
                 'call_provider_metadata': None,
+                'tool_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -10080,6 +10141,8 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
                 'error_text': 'Rate limit exceeded',
                 'provider_executed': True,
                 'call_provider_metadata': None,
+                'tool_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -10168,6 +10231,8 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
                 'output': 'The tool call was interrupted before a result was produced.',
                 'provider_executed': False,
                 'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'tool_metadata': None,
+                'result_provider_metadata': None,
                 'preliminary': None,
                 'approval': None,
             }

@@ -136,7 +136,19 @@
       0,
       {
         "kind": "tool_return",
-        "result": 5
+        "result": {
+          "kind": "tool-return",
+          "return_value": 5,
+          "content": null,
+          "metadata": {
+            "mcp_tool": {
+              "toolset_id": "calc",
+              "title": null,
+              "annotations": null
+            }
+          },
+          "tools": null
+        }
       }
     ],
     [
@@ -340,7 +352,19 @@
       0,
       {
         "kind": "tool_return",
-        "result": 5
+        "result": {
+          "kind": "tool-return",
+          "return_value": 5,
+          "content": null,
+          "metadata": {
+            "mcp_tool": {
+              "toolset_id": "calc",
+              "title": null,
+              "annotations": null
+            }
+          },
+          "tools": null
+        }
       }
     ],
     [

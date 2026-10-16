@@ -69,6 +69,8 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    mcp_app_model_output,
+    mcp_tool_output,
     tool_return_output,
 )
 from .request_types import (
@@ -163,9 +165,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """Vercel AI SDK version to target. Default is 5 for backwards compatibility.
 
     Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
-    `sdk_version=7` emits the same wire as 6 (v7's data-stream protocol equals v6's); it is
-    accepted so the value reflects the client's real SDK major and reserves it for future
-    v7-only chunks.
+    `sdk_version=7` emits the v6 wire plus v7-only fields: the `tool-output-available` chunk of an
+    [MCP Apps](../mcp/client.md#mcp-apps) tool call carries `toolMetadata` and the server's full result
+    as `output`, so AI SDK UI's `experimental_MCPAppRenderer` (AI SDK 7.0.120 or later) shows the page
+    without frontend code.
     """
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
@@ -585,11 +588,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 # error/denied returns it carries no `tool_kind` (typed return subclasses
                                 # signal shape-valid success to their readers).
                                 interrupted = provider_meta.get('outcome') == 'interrupted'
+                                # An MCP Apps tool output from AI SDK v7 holds the server's full result for the
+                                # page; what the model saw is kept in the provider metadata.
+                                output = (
+                                    mcp_app_model_output(part)
+                                    if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
+                                    else part.output
+                                )
                                 builder.add(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
-                                        content=_validate_tool_output(part.output),
+                                        content=_validate_tool_output(output),
                                         outcome='interrupted' if interrupted else 'success',
                                         tool_kind=None if interrupted else tool_kind,
                                     )
@@ -930,14 +940,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # `'success'` and `'interrupted'` both render as neutral tool output; only `'failed'`
                 # is an error, so a synthesized `'interrupted'` return (from message-history repair)
                 # shows its interruption message as the output rather than an error.
+                mcp_output = mcp_tool_output(tool_result) if sdk_version >= 7 else None
                 ui_parts.append(
                     ToolOutputAvailablePart(
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=tool_return_output(tool_result),
+                        output=mcp_output['output'] if mcp_output else tool_return_output(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
+                        tool_metadata=mcp_output['tool_metadata'] if mcp_output else None,
+                        result_provider_metadata=mcp_output['provider_metadata'] if mcp_output else None,
                     )
                 )
             # Check for Vercel AI chunks returned by tool calls via metadata.

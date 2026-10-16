@@ -43,6 +43,7 @@ from ._utils import (
     dump_message_metadata,
     dump_provider_metadata,
     iter_metadata_chunks,
+    mcp_tool_output,
     tool_return_output,
 )
 from .request_types import RequestData
@@ -480,7 +481,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
             # an error; a synthesized `'interrupted'` return (from message-history repair) must never
             # be surfaced as one — its content string carries the interruption message as the output.
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
+            mcp_output = mcp_tool_output(part) if self.sdk_version >= 7 and isinstance(part, ToolReturnPart) else None
+            if mcp_output is not None:
+                # AI SDK UI v7 labels the call from `toolMetadata` and shows an MCP Apps page from its `app`.
+                yield ToolOutputAvailableChunk(
+                    tool_call_id=tool_call_id,
+                    output=mcp_output['output'],
+                    tool_metadata=mcp_output['tool_metadata'],
+                    provider_metadata=mcp_output['provider_metadata'],
+                )
+            else:
+                yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.

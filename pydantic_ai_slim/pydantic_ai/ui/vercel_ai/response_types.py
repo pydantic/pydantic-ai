@@ -118,6 +118,9 @@ class ToolOutputAvailableChunk(BaseChunk):
     provider_executed: bool | None = None
     dynamic: bool | None = None
     preliminary: bool | None = None
+    provider_metadata: ProviderMetadata | None = None
+    tool_metadata: dict[str, Any] | None = None
+    """Applied to the tool part by AI SDK UI 7.0.120 or later; ignored before."""
 
 
 class ToolInputAvailableChunk(BaseChunk):

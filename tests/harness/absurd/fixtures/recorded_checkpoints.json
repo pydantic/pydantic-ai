@@ -105,7 +105,24 @@
         }
       ]
     },
-    "analyst__mcp_server__calc.call_tool": 5,
+    "analyst__mcp_server__calc.call_tool": {
+      "__pydantic_ai_harness_absurd_tool_result__": {
+        "kind": "tool_return",
+        "result": {
+          "kind": "tool-return",
+          "return_value": 5,
+          "content": null,
+          "metadata": {
+            "mcp_tool": {
+              "toolset_id": "calc",
+              "title": null,
+              "annotations": null
+            }
+          },
+          "tools": null
+        }
+      }
+    },
     "analyst__function_toolset__knowledge.call_tool:search_knowledge": {
       "hits": [
         "deploys-1",
@@ -253,7 +270,24 @@
         }
       ]
     },
-    "analyst__mcp_server__calc.call_tool": 5,
+    "analyst__mcp_server__calc.call_tool": {
+      "__pydantic_ai_harness_absurd_tool_result__": {
+        "kind": "tool_return",
+        "result": {
+          "kind": "tool-return",
+          "return_value": 5,
+          "content": null,
+          "metadata": {
+            "mcp_tool": {
+              "toolset_id": "calc",
+              "title": null,
+              "annotations": null
+            }
+          },
+          "tools": null
+        }
+      }
+    },
     "analyst__function_toolset__knowledge.call_tool:search_knowledge": {
       "hits": [
         "deploys-1",
