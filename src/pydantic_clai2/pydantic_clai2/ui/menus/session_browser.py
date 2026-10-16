@@ -19,12 +19,9 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
-
-MISSING = '\0missing'
-"""The project key grouping deleted checkouts; a NUL byte cannot occur in a real path."""
 
 
 def plain(text: str, *, multiline: bool = False) -> str:
@@ -85,6 +82,8 @@ class SessionBrowser:
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
+        self.found: dict[str, ProjectIdentity] = {}
+        """What Git says of each workspace, read once per opening."""
         self.identities: dict[str, ProjectIdentity] = {}
         self._resolve_projects()
         current = self.identity(workspace).key
@@ -107,13 +106,14 @@ class SessionBrowser:
 
     def _resolve_projects(self) -> None:
         for workspace in dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)]):
-            if workspace not in self.identities:
-                self.identities[workspace] = project_identity(workspace)
+            if workspace not in self.found:
+                self.found[workspace] = project_identity(workspace)
+        self.identities = placements(self.entries, identities=self.found)
 
     def place(self, workspace: str) -> tuple[str, str]:
-        """The sidebar project and checkout root a workspace belongs to; deleted folders share one project."""
+        """The sidebar project and checkout root a workspace belongs to; unclaimed deleted folders share one project."""
         identity = self.identity(workspace)
-        return (MISSING if identity.missing else identity.key), identity.root
+        return identity.key, identity.root
 
     def checkout_label(self, project: str, root: str) -> str:
         """A checkout's branch or a deleted folder's name, or its path when that is ambiguous."""
@@ -121,7 +121,8 @@ class SessionBrowser:
         for entry in self.entries:
             identity = self.identity(entry.workspace)
             if self.place(entry.workspace)[0] == project:
-                labels[identity.root] = identity.name if identity.missing else identity.checkout
+                removed = identity.missing and project != MISSING
+                labels[identity.root] = f'{identity.checkout} (removed)' if removed else identity.checkout
         label = labels[root]
         return label if list(labels.values()).count(label) == 1 else root
 
@@ -130,7 +131,7 @@ class SessionBrowser:
         if project == MISSING:
             return 'missing folders'
         identities = [self.identity(e.workspace) for e in self.entries]
-        names = {i.key: i.name for i in identities if not i.missing}
+        names = {i.key: i.name for i in identities}
         name = names[project]
         return name if list(names.values()).count(name) == 1 else project
 

@@ -24,7 +24,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
     ImportCatalog,
@@ -72,9 +72,24 @@ class Sessions(Generic[DepsT, OutputT]):
         )
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
+        self.relocate: Callable[[str], Awaitable[None]] | None = None
+        """Moves CLAI into a directory, so `/resume ID` continues a session where it was saved; set by `clai2 --web` only."""
+
+    @property
+    def follows_workspace(self) -> bool:
+        """Whether `/resume ID` moves CLAI into the session's own directory rather than refusing another one."""
+        return self.relocate is not None
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
-        """Restore a saved session, then show its history."""
+        """Restore a saved session, then show its history.
+
+        With `relocate`, CLAI first moves into the directory the session was saved in, unless the
+        `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
+        """
+        if self.relocate is not None and not allow_other_workspace:
+            workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+            if workspace != self.session.workspace:
+                await self.relocate(workspace)
         notice = await self.session.resume(conversation_id, allow_other_workspace=allow_other_workspace)
         await self.show_resumed()
         return notice
@@ -162,6 +177,53 @@ class Sessions(Generic[DepsT, OutputT]):
         self.session.check_workspace(imported.summary.workspace)
         return await save_import(self.store, imported)
 
+    async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
+        """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
+        entries = await self.store.listing(query=query, limit=limit)
+        self.namer.backfill(entries)
+        return entries
+
+    async def saved(self, conversation_id: str) -> SavedConversation:
+        """A saved conversation and its history, without switching to it."""
+        return await self.store.get(conversation_id=conversation_id)
+
+    async def rename(self, conversation_id: str, title: str) -> None:
+        """Retitle a saved conversation as a rename in `/resume` does, telling plugins when it is the current one."""
+        title = ' '.join(title.split())
+        if not title:
+            raise ValueError('A session title cannot be empty.')
+        await self._rename_saved((await self.store.get(conversation_id=conversation_id)).summary, title)
+        await self.session.renamed(conversation_id=conversation_id, title=title)
+
+    async def _rename_saved(self, source: ConversationSummary, title: str) -> None:
+        """Save `title` as a manual title, keeping one a naming model would otherwise replace."""
+        if not await self.store.name(
+            source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
+        ):
+            raise ValueError('Session changed. Refresh and rename again.')
+
+    async def delete(self, conversation_id: str) -> None:
+        """Delete a saved conversation, not the current one, with its Monty state; one running elsewhere is refused."""
+        if conversation_id == self.session.conversation_id:
+            raise ValueError('The current session cannot be deleted. Switch to another one first.')
+        source = (await self.store.get(conversation_id=conversation_id)).summary
+        await self._delete(source)
+
+    async def fork(self, conversation_id: str) -> ConversationSummary:
+        """Save a copy of a conversation under a new ID, as `--fork-session` does, without switching to it.
+
+        A copy of an interrupted conversation keeps its unanswered tool calls closed, so none is replayed.
+        The copy gets its own copy of the session's Monty state, as `/fork` and `--fork-session` give theirs.
+        """
+        saved = await self.store.get(conversation_id=conversation_id)
+        messages = saved.messages
+        if saved.summary.outcome in ('running', 'failed', 'cancelled'):
+            messages = interrupted_history(messages)
+        copy = await self.store.save(summary=fork_summary(saved.summary), messages=messages)
+        if self.session.repl_states is not None:
+            self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
+        return copy
+
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.
 
@@ -193,10 +255,7 @@ class Sessions(Generic[DepsT, OutputT]):
         retitled: dict[str, str] = {}
 
         async def rename(source: ConversationSummary, title: str) -> None:
-            if not await self.store.name(
-                source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
-            ):
-                raise ValueError('Session changed. Refresh and rename again.')
+            await self._rename_saved(source, title)
             retitled[source.id] = title
 
         def browse() -> str:
