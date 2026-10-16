@@ -22,7 +22,7 @@ import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartEndEvent, PartStartEvent
+from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartEndEvent, PartStartEvent, RequestUsage
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
@@ -110,6 +110,9 @@ class FakeWebSocket:
 
     url: str | None = None
 
+    hold_open = False
+    """Whether running out of scripted frames leaves the connection quiet rather than closing it."""
+
     def __init__(self, incoming: Sequence[dict[str, Any] | str]) -> None:
         self._incoming = [frame if isinstance(frame, str) else json.dumps(frame) for frame in incoming]
         self.sent: list[str] = []
@@ -117,6 +120,8 @@ class FakeWebSocket:
 
     async def recv(self) -> str:
         if not self._incoming:
+            if self.hold_open:
+                await asyncio.Event().wait()
             raise websockets.exceptions.ConnectionClosedOK(Close(1000, ''), None)
         return self._incoming.pop(0)
 
@@ -1793,24 +1798,73 @@ async def test_audio_event_maps_to_audio_delta() -> None:
     assert events == [AudioDelta(data=b'\x00\x01')]
 
 
-async def test_agent_response_is_the_turn_boundary() -> None:
-    # `agent_response` carries the whole response text and closes the turn (verified live: it is the
-    # only end-of-turn signal that arrives in every mode with default `client_events`).
+_VOICED = {'type': 'context_usage', 'context_usage_event': {'context_tokens': 10, 'context_limit_tokens': 100}}
+"""What arrives with a reply's last audio, on an agent sending `context_usage` (verified live)."""
+_VOICED_USAGE = SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1)
+
+
+async def test_a_reply_ends_with_its_last_audio_not_its_text() -> None:
+    # Verified live: `agent_response` carries the whole text once the LLM is done writing, while TTS can still be
+    # voicing it; the reply ends with its last audio, which `context_usage` arrives with.
+    audio = base64.b64encode(b'\x00\x01').decode()
     events, _ = await _events(
-        [{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!', 'response_id': 'resp_1'}}]
+        [
+            {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 1}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': 'Hello!', 'response_id': 'resp_1', 'event_id': 1},
+            },
+            {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 1}},
+            _VOICED,
+        ]
     )
     assert events == [
+        AudioDelta(data=b'\x00\x01'),
         OutputTranscript(text='Hello!', is_final=True),
+        AudioDelta(data=b'\x00\x01'),
         ResponseDone(provider_response_id='resp_1', provider_details=_CONVERSATION),
+        _VOICED_USAGE,
+    ]
+
+
+@pytest.mark.parametrize(
+    'next_turn',
+    [
+        {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Next.'}},
+        {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2}},
+    ],
+    ids=['user-words', 'next-reply-audio'],
+)
+async def test_a_reply_ends_when_the_next_turn_begins(next_turn: dict[str, Any]) -> None:
+    events, _ = await _events(
+        [{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!', 'event_id': 1}}, next_turn]
+    )
+    assert events[:2] == [OutputTranscript(text='Hello!', is_final=True), ResponseDone(provider_details=_CONVERSATION)]
+
+
+async def test_a_reply_ends_after_a_quiet_stretch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without `context_usage`, nothing marks a reply's last audio: a gap where TTS would have sent more is taken
+    # as the end.
+    monkeypatch.setattr(rt_elevenlabs, '_AUDIO_TAIL_GRACE', 0.01)
+    ws = FakeWebSocket([{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}}])
+    ws.hold_open = True
+    connection = ElevenLabsAgentsRealtimeConnection(ws, conversation_id='conv_1')  # type: ignore[arg-type]
+    frames = connection.frames()
+    first = await anext(frames)
+    second = await anext(frames)
+    await frames.aclose()
+    assert [event for event in [*first, *second] if isinstance(event, (OutputTranscript, ResponseDone))] == [
+        OutputTranscript(text='Hello!', is_final=True),
+        ResponseDone(provider_details=_CONVERSATION),
     ]
 
 
 async def test_a_connection_without_a_conversation_id_leaves_provider_details_unset() -> None:
     # The id is only attached when the handshake reported one; nothing is invented otherwise.
-    ws = FakeWebSocket([{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}}])
+    ws = FakeWebSocket([{'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}}, _VOICED])
     connection = ElevenLabsAgentsRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(connection)
-    assert events == [OutputTranscript(text='Hello!', is_final=True), ResponseDone()]
+    assert events == [OutputTranscript(text='Hello!', is_final=True), ResponseDone(), _VOICED_USAGE]
 
 
 async def test_text_output_mode_streams_chat_parts_then_finalizes() -> None:
@@ -1896,10 +1950,8 @@ async def test_interruption_during_generation_closes_the_turn_as_interrupted() -
     ]
 
 
-async def test_interruption_during_playback_does_not_taint_the_next_turn() -> None:
-    # The common audio-mode case (verified live): synthesis outruns playback, so `agent_response`
-    # has already closed the turn when the user barges in. The interruption is surfaced, the
-    # correction has nothing left to finalize, and the *next* turn must not be marked interrupted.
+async def test_interruption_while_the_reply_is_voiced_ends_it_with_what_was_heard() -> None:
+    # The reply's text is complete, but its audio is still coming when the user cuts in: the correction ends it.
     events, _ = await _events(
         [
             {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Long answer...'}},
@@ -1911,15 +1963,43 @@ async def test_interruption_during_playback_does_not_taint_the_next_turn() -> No
                     'corrected_agent_response': 'Long an',
                 },
             },
+        ]
+    )
+    assert events == [
+        OutputTranscript(text='Long answer...', is_final=True),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(interrupted=True, provider_details={'corrected_agent_response': 'Long an', **_CONVERSATION}),
+    ]
+
+
+async def test_interruption_during_playback_does_not_taint_the_next_turn() -> None:
+    # Synthesis outruns playback, so a reply can be voiced in full while the user still hears it. A barge-in
+    # then is surfaced, the correction has nothing left to finalize, and the *next* turn must not be marked
+    # interrupted.
+    events, _ = await _events(
+        [
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Long answer...'}},
+            _VOICED,
+            {'type': 'interruption', 'interruption_event': {'event_id': 3}},
+            {
+                'type': 'agent_response_correction',
+                'agent_response_correction_event': {
+                    'original_agent_response': 'Long answer...',
+                    'corrected_agent_response': 'Long an',
+                },
+            },
             {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Next turn.'}},
+            _VOICED,
         ]
     )
     assert events == [
         OutputTranscript(text='Long answer...', is_final=True),
         ResponseDone(provider_details=_CONVERSATION),
+        _VOICED_USAGE,
         RealtimeResponseInterruptedEvent(),
         OutputTranscript(text='Next turn.', is_final=True),
         ResponseDone(provider_details=_CONVERSATION),
+        _VOICED_USAGE,
     ]
 
 
@@ -2202,7 +2282,7 @@ def _agent_response(text: str) -> dict[str, Any]:
 async def test_a_text_turn_is_answered_by_the_response_it_starts() -> None:
     connection, ws = _connection()
     assert await connection.send('Hi') == snapshot([InputAdded(input_id=0)])
-    assert await _frames(connection, ws, [_AUDIO, _agent_response('Hello!')]) == snapshot(
+    assert await _frames(connection, ws, [_AUDIO, _agent_response('Hello!'), _VOICED]) == snapshot(
         [
             [
                 ResponseStarted(
@@ -2210,14 +2290,15 @@ async def test_a_text_turn_is_answered_by_the_response_it_starts() -> None:
                 ),
                 AudioDelta(data=b'\x00\x01'),
             ],
+            [OutputTranscript(text='Hello!', is_final=True)],
             [
-                OutputTranscript(text='Hello!', is_final=True),
                 ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
                 ResponseEnded(
                     response_id='pydantic_ai_response_1',
                     status='completed',
                     provider_details={'conversation_id': 'conv_1'},
                 ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
             ],
         ]
     )
@@ -2552,6 +2633,7 @@ async def test_an_mcp_call_awaiting_approval_asks_the_session_and_reports_its_ou
             _mcp_call('awaiting_approval', approval_timeout_secs=300),
             _mcp_call('success', result=[{'type': 'text', 'text': 'Ada is a customer.'}]),
             _agent_response('Ada is a customer.'),
+            _VOICED,
         ],
     )
     assert frames == snapshot(
@@ -2609,14 +2691,15 @@ async def test_an_mcp_call_awaiting_approval_asks_the_session_and_reports_its_ou
                     ),
                 ),
             ],
+            [OutputTranscript(text='Ada is a customer.', is_final=True)],
             [
-                OutputTranscript(text='Ada is a customer.', is_final=True),
                 ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
                 ResponseEnded(
                     response_id='pydantic_ai_response_1',
                     status='completed',
                     provider_details={'conversation_id': 'conv_1'},
                 ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
             ],
         ]
     )
@@ -2645,7 +2728,7 @@ async def test_a_denied_mcp_call_is_recorded_as_denied(reported: bool) -> None:
     await _next_frames(frames, ws, [_mcp_call('awaiting_approval')])
     await connection.send(NativeToolApproval('mcp_1', approved=False, reason='Not for this caller.'))
     outcome = [_mcp_call('failure', error_message='Rejected by the user.')] if reported else []
-    rest = await _next_frames(frames, ws, [*outcome, _agent_response('I cannot look that up.')])
+    rest = await _next_frames(frames, ws, [*outcome, _agent_response('I cannot look that up.'), _VOICED])
     returns = [
         event.part
         for frame in rest

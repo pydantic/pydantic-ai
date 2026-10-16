@@ -117,6 +117,38 @@ __all__ = (
 
 _PROVIDER_LABEL = 'ElevenLabs Agents'
 
+_AUDIO_TAIL_GRACE = 1.0
+"""How long a reply whose text is complete can go without audio before it counts as spoken in full.
+
+`agent_response` arrives when the LLM finishes writing, while TTS can still be voicing it for seconds (verified live,
+with tool rounds and long replies alike). The reply ends with its last audio, which only an agent sending
+`context_usage` marks (that report arrives with it): otherwise a gap this long, where TTS streams its frames
+a tenth of a second apart, is taken to be the end.
+"""
+
+_TAIL_ENDING_FRAMES = frozenset(
+    {
+        'context_usage',
+        'user_transcript',
+        'client_tool_call',
+        'agent_response',
+        'agent_chat_response_part',
+        'mcp_tool_call',
+    }
+)
+"""Frames that say a reply whose text is complete has no more audio coming: the next turn has begun, or (`context_usage`)
+the reply was voiced in full."""
+
+
+@dataclass
+class _AudioTail:
+    """A reply whose whole text arrived, while its audio may still be streaming."""
+
+    event_id: int | None
+    response_id: str | None
+    interrupted: bool = False
+    provider_details: dict[str, Any] | None = None
+
 
 class ElevenLabsAgentsTTSSettings(TypedDict, total=False):
     """Per-conversation TTS overrides, each gated by its own override toggle on the agent."""
@@ -363,6 +395,8 @@ class _AudioPayload(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     audio_base_64: str
+    event_id: int | None = None
+    """The agent turn the audio belongs to: the `event_id` of the `agent_response` with its text."""
 
 
 class _AudioEvent(BaseModel):
@@ -374,6 +408,7 @@ class _AgentResponsePayload(BaseModel):
 
     agent_response: str
     response_id: str | None = None
+    event_id: int | None = None
 
 
 class _AgentResponseEvent(BaseModel):
@@ -1368,6 +1403,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # event never finalizes a turn that produced nothing.
         self._response_open = False
         self._turn_interrupted = False
+        self._tail: _AudioTail | None = None
         # The MCP calls ElevenLabs runs itself, reported as native tool parts: those whose call part is out, and
         # those denied whose outcome ElevenLabs hasn't reported, which the response they belong to records.
         self._mcp_calls: set[str] = set()
@@ -1512,32 +1548,47 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         await self._ws.send(to_json(event).decode())
 
     async def frames(self) -> AsyncIterator[RealtimeFrame]:
-        while True:
-            try:
-                raw = await self._ws.recv()
-            except self.transport_errors as e:
-                yield self._connection_lost(e)
-                return
-            if not isinstance(raw, str):
-                continue
-            try:
-                # `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and
-                # a bad base64 audio payload: a malformed frame shouldn't tear down the session
-                # (mirroring the OpenAI provider), so it surfaces as a recoverable error instead.
-                events = await self._map_event(_loads_obj(raw))
-            except ValueError as e:
-                error = RealtimeSessionErrorEvent(
-                    message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True
-                )
-                yield self._lifecycle.frame_for([error])
-                continue
-            except self.transport_errors as e:
-                # Answering a ping can hit an already-dropped socket; that is the same fatal
-                # condition as a failed receive.
-                yield self._connection_lost(e)
-                return
-            if events:
-                yield self._frame(events)
+        read: asyncio.Future[str | bytes] | None = None
+        try:
+            while True:
+                if read is None:
+                    read = asyncio.ensure_future(self._ws.recv())
+                # A reply whose text is complete waits only so long for more of its audio (see `_AUDIO_TAIL_GRACE`).
+                # The read stays in flight across the wait: a cancelled read could drop the frame it holds.
+                done, _ = await asyncio.wait({read}, timeout=_AUDIO_TAIL_GRACE if self._tail is not None else None)
+                if not done:
+                    if events := self._end_tail():
+                        yield self._frame(events)
+                    continue
+                finished, read = read, None
+                try:
+                    raw = finished.result()
+                except self.transport_errors as e:
+                    yield self._connection_lost(e)
+                    return
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    # `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and
+                    # a bad base64 audio payload: a malformed frame shouldn't tear down the session
+                    # (mirroring the OpenAI provider), so it surfaces as a recoverable error instead.
+                    events = await self._map_event(_loads_obj(raw))
+                except ValueError as e:
+                    error = RealtimeSessionErrorEvent(
+                        message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True
+                    )
+                    yield self._lifecycle.frame_for([error])
+                    continue
+                except self.transport_errors as e:
+                    # Answering a ping can hit an already-dropped socket; that is the same fatal
+                    # condition as a failed receive.
+                    yield self._connection_lost(e)
+                    return
+                if events:
+                    yield self._frame(events)
+        finally:
+            if read is not None:
+                read.cancel()
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
@@ -1579,6 +1630,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             )
         else:
             message = f'{_PROVIDER_LABEL} connection closed: {error}'
+        self._tail = None
         return [*self._lifecycle.connection_lost(), RealtimeSessionErrorEvent(message=message, recoverable=False)]
 
     async def _map_event(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
@@ -1587,6 +1639,10 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         if event_type == 'ping':
             await _send_pong(self._ws, data)
             return []
+        ended = self._end_tail() if self._tail is not None and event_type in _TAIL_ENDING_FRAMES else []
+        return [*ended, *await self._map_frame(event_type, data)]
+
+    async def _map_frame(self, event_type: Any, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         if event_type == 'queue_status':
             status = _QueueStatusEvent.model_validate(data).queue_status_event.status
             # A `timed_out` conversation is closed with code 4300 next, which ends the stream.
@@ -1602,8 +1658,10 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             if self._queued:
                 # Hold audio the server plays while the conversation waits for a free slot.
                 return []
+            # Audio of another turn than the reply whose text is complete: that reply was voiced in full.
+            ended = self._end_tail() if self._tail is not None and payload.event_id != self._tail.event_id else []
             self._response_open = True
-            return [AudioDelta(data=audio)]
+            return [*ended, AudioDelta(data=audio)]
         if event_type == 'client_tool_call':
             call = _ClientToolCallEvent.model_validate(data).client_tool_call
             # Every call goes through, including one naming a tool this run does not define (possible
@@ -1716,17 +1774,24 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 return [OutputTranscript(text=part.text, is_final=False, output_text=self._text_output)]
             return []
         if event_type == 'agent_response':
-            # The whole response text, and the reliable end of the agent's turn (verified live):
-            # in audio mode it arrives after all `audio` frames, in text mode after the streamed
-            # parts, and always once per user turn, after any tool loop. (`agent_response_complete`
-            # exists but is off by default and never arrives in audio mode, so it cannot be the
-            # boundary.) The session reconciles the final full text against the streamed deltas.
+            # The whole response text, once per reply, after any tool loop. In text mode it follows the streamed
+            # parts and ends the reply; the session reconciles the full text against them. In audio mode it arrives
+            # when the LLM finishes writing, while TTS can still be voicing the reply (verified live), so the reply
+            # ends with its last audio instead (see `_AudioTail`). A reply already cut off has no more audio coming:
+            # this is its text, cut down to what was heard. (`agent_response_complete` never arrives in audio mode,
+            # and `is_final` is never set on audio, both verified live.)
             payload = _AgentResponseEvent.model_validate(data).agent_response_event
             self._response_open = True
-            return [
-                OutputTranscript(text=payload.agent_response, is_final=True, output_text=self._text_output),
-                *self._finalize_response(interrupted=self._turn_interrupted, provider_response_id=payload.response_id),
-            ]
+            transcript = OutputTranscript(text=payload.agent_response, is_final=True, output_text=self._text_output)
+            if self._text_output or self._turn_interrupted:
+                return [
+                    transcript,
+                    *self._finalize_response(
+                        interrupted=self._turn_interrupted, provider_response_id=payload.response_id
+                    ),
+                ]
+            self._tail = _AudioTail(event_id=payload.event_id, response_id=payload.response_id)
+            return [transcript]
         if event_type == 'agent_response_correction':
             # After an interruption the server truncates the stored transcript to what was actually
             # spoken. The already-emitted transcript cannot be shrunk through the codec (a final
@@ -1736,10 +1801,13 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # audio-mode case: synthesis outruns playback), there is nothing left to finalize and the
             # correction is dropped.
             correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
-            return self._finalize_response(
-                interrupted=True,
-                provider_details={'corrected_agent_response': correction.corrected_agent_response},
-            )
+            details = {'corrected_agent_response': correction.corrected_agent_response}
+            if (tail := self._tail) is not None:
+                # The reply was still being voiced when the user cut in: the correction ends it, with what was heard.
+                tail.interrupted = True
+                tail.provider_details = details
+                return self._end_tail()
+            return self._finalize_response(interrupted=True, provider_details=details)
         if event_type == 'agent_response_complete':
             # Gated behind `client_events` (off by default) and text-mode only, arriving right after
             # `agent_response` has already closed the turn (verified live), so this is normally a
@@ -1760,11 +1828,23 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # been finalized by `agent_response`, and the flag must not leak into the next turn.
             if self._response_open:
                 self._turn_interrupted = True
+            if (tail := self._tail) is not None:
+                # Cut off while its audio was still coming: the correction that follows ends it.
+                tail.interrupted = True
             return [RealtimeResponseInterruptedEvent()]
         # Server-side tool/MCP progress, VAD scores, guardrail notices, response metadata, tentative
         # responses, and anything newer than this adapter are informational; ignore them rather than
         # failing the stream.
         return []
+
+    def _end_tail(self) -> list[RealtimeCodecEvent]:
+        """End the reply whose text is complete: its audio, if any more was coming, won't."""
+        tail, self._tail = self._tail, None
+        if tail is None:
+            return []
+        return self._finalize_response(
+            interrupted=tail.interrupted, provider_response_id=tail.response_id, provider_details=tail.provider_details
+        )
 
     def _finalize_response(
         self,

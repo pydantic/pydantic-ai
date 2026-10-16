@@ -5,6 +5,9 @@ interactions:
   at: 0.0
   data:
     type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
     conversation_config_override:
       agent:
         prompt:
@@ -14,7 +17,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_7301m3hcvkh7eb1t70kc0j827avx
+      conversation_id: conv_0601m52mfb8wevkanxax7w68basj
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -27,23 +30,59 @@ interactions:
     text: Say hi.
 - kind: message
   direction: received
-  at: 0.844
+  at: 0.927
   data:
     audio_event:
-      audio_base_64: AgADAAEAAAD///7//v/9//z//f/9//z//f/9//z/+v/7
+      audio_base_64: AAD+/wAAAQABAAEAAAABAAEAAQABAAEAAQACAAEAAQAB
       event_id: 1
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 0.844
+  at: 0.963
+  data:
+    audio_event:
+      audio_base_64: NQDM/TP+LwGmA6MAoP7I/5sBcwG3AVADdgI8/wkA7QF5
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 0.965
+  data:
+    audio_event:
+      audio_base_64: zf59+fr3ZvpNAF0Duv9++8v50fen9/f3Z/ae9oYDFBRK
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 0.996
+  data:
+    audio_event:
+      audio_base_64: Ag6xDYET+RLZEIoN9ApOBxsCs//eAhUG1gbDAwf8VvaO
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.051
+  data:
+    audio_event:
+      audio_base_64: G/9v/YT9zv4jAUsD1wPiAuYA3P57/RP+eQDmAu4EzgUO
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.051
   data:
     agent_response_event:
-      agent_response: Hello there.
+      agent_response: '[happy] Hi there.'
       event_id: 1
-      response_id: 8b2730f9-4192-44b3-93e2-8eee954afa20
+      response_id: 760143c5-86e3-42d1-84c3-81a8be6cba3b
       in_response_to_ids:
-      - 6f067418-6cfe-4190-9940-d18897273b92
+      - a26fcbc4-f6f4-4974-a8e5-6bf51dd7523d
       response_type: text
       attachments: []
     type: agent_response

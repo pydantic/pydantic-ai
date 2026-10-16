@@ -5,6 +5,9 @@ interactions:
   at: 0.0
   data:
     type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
     conversation_config_override:
       agent:
         prompt:
@@ -15,7 +18,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_9901m3hcv84dfa4ryd5pm87tvxq2
+      conversation_id: conv_3501m52mf2t7e8aa8yvng7ebtzwr
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -28,11 +31,11 @@ interactions:
     text: What is the weather in Berlin?
 - kind: message
   direction: received
-  at: 0.781
+  at: 0.91
   data:
     client_tool_call:
       tool_name: get_weather
-      tool_call_id: get_weather_bfd39a9d66854a11af9e232002d2b5b2
+      tool_call_id: get_weather_5b785c74cc194e5e9ed59794504e05ba
       parameters:
         city: Berlin
       event_id: 1
@@ -40,19 +43,19 @@ interactions:
     type: client_tool_call
 - kind: message
   direction: sent
-  at: 0.781
+  at: 0.912
   data:
     type: client_tool_result
-    tool_call_id: get_weather_bfd39a9d66854a11af9e232002d2b5b2
+    tool_call_id: get_weather_5b785c74cc194e5e9ed59794504e05ba
     result: It is sunny and 21 degrees in Berlin.
     is_error: false
 - kind: message
   direction: received
-  at: 0.906
+  at: 0.961
   data:
     agent_tool_response:
       tool_name: get_weather
-      tool_call_id: get_weather_bfd39a9d66854a11af9e232002d2b5b2
+      tool_call_id: get_weather_5b785c74cc194e5e9ed59794504e05ba
       tool_type: client
       is_error: false
       is_blocked: false
@@ -62,71 +65,43 @@ interactions:
     type: agent_tool_response
 - kind: message
   direction: received
-  at: 1.453
-  data:
-    audio_event:
-      audio_base_64: AwAGAAUAAQAAAAIAAQABAP////8AAP///v/+////AAAB
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 1.516
-  data:
-    audio_event:
-      audio_base_64: a/fP9yn4t/dF9+n2wvbH9u72Afcv9zv3yfZ99tn20fc/
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 1.516
+  at: 1.569
   data:
     agent_response_event:
-      agent_response: It is sunny and twenty one degrees in Berlin.
+      agent_response: It is sunny and twenty-one degrees in Berlin.
       event_id: 1
-      response_id: 73b1537a-354e-4a4c-8478-84accb9897c4
+      response_id: c582301d-0c9f-4cc1-a403-ba0965c191c2
       in_response_to_ids:
-      - 0606e148-6a6e-4c3c-a0f0-4280571cbc0e
+      - bcd96817-3f70-4ce8-9c09-0fcd7e481367
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: sent
-  at: 1.516
+  at: 1.569
   data:
     type: user_message
     text: Thanks, that is all.
 - kind: message
   direction: received
-  at: 1.516
-  data:
-    context_usage_event:
-      event_id: 1
-      model: gemini-2.5-flash
-      context_tokens: 451
-      context_limit_tokens: 1048576
-    type: context_usage
-- kind: message
-  direction: received
-  at: 1.656
+  at: 1.618
   data:
     interruption_event:
       event_id: 2
     type: interruption
 - kind: message
   direction: received
-  at: 1.656
+  at: 1.618
   data:
     agent_response_correction_event:
-      original_agent_response: It is sunny and twenty one degrees in Berlin.
-      corrected_agent_response: It...
+      original_agent_response: It is sunny and twenty-one degrees in Berlin.
+      corrected_agent_response: '...'
       event_id: 1
-      response_id: 73b1537a-354e-4a4c-8478-84accb9897c4
+      response_id: c582301d-0c9f-4cc1-a403-ba0965c191c2
     type: agent_response_correction
 - kind: message
   direction: received
-  at: 1.828
+  at: 1.751
   data:
     ping_event:
       event_id: 2
@@ -134,81 +109,145 @@ interactions:
     type: ping
 - kind: message
   direction: sent
-  at: 1.828
+  at: 1.751
   data:
     type: pong
     event_id: 2
 - kind: message
   direction: received
-  at: 2.188
+  at: 2.176
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 615
+      context_limit_tokens: 1048576
+    type: context_usage
+- kind: message
+  direction: received
+  at: 2.678
   data:
     audio_event:
-      audio_base_64: AQACAAIAAQAAAP//AAAAAAAAAAAAAP////8AAAAAAAAA
+      audio_base_64: GADa/1j/M//f/2kAMgDG/3T/fv/L/xoAHgDB/6T/sv+L
       event_id: 2
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 2.188
+  at: 2.694
+  data:
+    audio_event:
+      audio_base_64: AAC7/LD5kffg9mf5I/tq+aH2V/UR9uz2i/ZH9z77cv1/
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.698
+  data:
+    audio_event:
+      audio_base_64: vR/jEuz/Q/Kj7pTsKefS5Azty/xPC1kVFBuNGyMVNgkD
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.734
+  data:
+    audio_event:
+      audio_base_64: p/sN+1f6Qfqn+vj6Avu4+wD95f3s/gQAwQDsAL4A+QDt
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.859
+  data:
+    audio_event:
+      audio_base_64: Qf7u/QL+BP7I/dj95P3u/c79Bv4Z/s79/f0n/jT+if63
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.88
+  data:
+    audio_event:
+      audio_base_64: HPSX9P70evUg9sD2XPc8+Dn5F/q5+nH7ffyk/df+EwBp
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 3.014
+  data:
+    audio_event:
+      audio_base_64: m/u6+br45fim+cr5//l6+dT3JPdR9sf07vTH9BT0VfR/
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 3.014
   data:
     agent_response_event:
-      agent_response: You're welcome.
+      agent_response: You're welcome, have a great day!
       event_id: 2
-      response_id: 3930839f-0370-4338-8ad8-d708f85c4a9f
+      response_id: b1c6c246-8c36-4242-b065-59b7e7085737
       in_response_to_ids:
-      - 21bd291c-0aef-4e71-9cb0-e622d67226eb
+      - a9111ffd-dfbf-4d78-85b4-8c2f5b524fd1
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: received
-  at: 2.188
+  at: 3.015
   data:
     context_usage_event:
       event_id: 2
       model: gemini-2.5-flash
-      context_tokens: 459
+      context_tokens: 622
       context_limit_tokens: 1048576
     type: context_usage
 - kind: message
   direction: received
-  at: 3.531
+  at: 3.451
   data:
     ping_event:
       event_id: 3
-      ping_ms: 127
+      ping_ms: 47
     type: ping
 - kind: message
   direction: sent
-  at: 3.531
+  at: 3.452
   data:
     type: pong
     event_id: 3
 - kind: message
   direction: received
-  at: 5.235
+  at: 5.153
   data:
     ping_event:
       event_id: 4
-      ping_ms: 127
+      ping_ms: 47
     type: ping
 - kind: message
   direction: sent
-  at: 5.235
+  at: 5.153
   data:
     type: pong
     event_id: 4
 - kind: message
   direction: received
-  at: 6.922
+  at: 6.854
   data:
     ping_event:
       event_id: 5
-      ping_ms: 126
+      ping_ms: 47
     type: ping
 - kind: message
   direction: sent
-  at: 6.922
+  at: 6.854
   data:
     type: pong
     event_id: 5

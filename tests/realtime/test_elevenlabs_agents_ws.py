@@ -148,6 +148,7 @@ async def test_tool_round_and_followup_turn(
     assert sent_frames_containing(cassette, INSTRUCTIONS) == [
         {
             'type': 'conversation_initiation_client_data',
+            'source_info': {'source': 'unknown', 'version': 'pydantic-ai/<version>'},
             'conversation_config_override': {'agent': {'prompt': {'prompt': INSTRUCTIONS}}},
         }
     ]
@@ -284,6 +285,7 @@ async def test_text_in_audio_out_turn(
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == [
         {
             'type': 'conversation_initiation_client_data',
+            'source_info': {'source': 'unknown', 'version': 'pydantic-ai/<version>'},
             'conversation_config_override': {'agent': {'prompt': {'prompt': 'Answer in two or three words.'}}},
         }
     ]
@@ -360,7 +362,7 @@ async def test_audio_in_server_vad_turn(
         if isinstance(part, SpeechPart)
     ]
     assert spoken == snapshot(
-        [('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hello Marcelo. How can I help you?')]
+        [('user', 'Hello, my name is Marcelo.'), ('assistant', 'Hello Marcelo, [happy] nice to meet you.')]
     )
 
 
@@ -421,11 +423,13 @@ async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply
     assert story_response.provider_details == {'conversation_id': IsStr()}
     story_part = story_response.parts[-1]
     assert isinstance(story_part, SpeechPart)
-    assert story_part.transcript == snapshot('Elias...')
+    assert story_part.transcript == snapshot('...')
     assert goodbye_response.state != 'interrupted'
     assert goodbye_response.provider_details == {'conversation_id': IsStr()}
     goodbye_part = goodbye_response.parts[-1]
-    assert isinstance(goodbye_part, SpeechPart) and goodbye_part.transcript == snapshot('Goodbye.')
+    assert isinstance(goodbye_part, SpeechPart) and goodbye_part.transcript == snapshot(
+        'Alright, I understand. Goodbye then! I hope you have a wonderful day.'
+    )
     spoken = [
         (part.speaker, part.transcript)
         for message in messages
@@ -471,7 +475,7 @@ async def test_text_output_modality_returns_text(
     assert isinstance(response, ModelResponse)
     [part] = response.parts
     assert isinstance(part, TextPart)
-    assert part.content == snapshot('Hello there.')
+    assert part.content == snapshot('Hi there.')
     assert not any(isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta) for event in events)
 
 
@@ -530,7 +534,7 @@ async def test_settings_overrides_reach_the_initiation_frame(
         for part in message.parts
         if isinstance(part, SpeechPart)
     ]
-    assert spoken == snapshot([('assistant', 'Welcome to the demo.'), ('assistant', 'Hello there.')])
+    assert spoken == snapshot([('assistant', 'Welcome to the demo.'), ('assistant', '[happy] Hi there.')])
 
 
 def _weather_agent() -> Agent:

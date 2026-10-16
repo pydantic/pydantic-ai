@@ -9,8 +9,10 @@ model encodes what the recorded cassettes show:
 - replies are automatic: a typed turn (`user_message`), the end of the user's speech, and the results of
   the client tool calls the agent made each make it speak, with no request frame;
 - a reply has no start event: its `audio` frames come first, and the whole-text `agent_response` (with the
-  reply's `response_id`) ends it; a reply that calls client tools is only the `client_tool_call`s, and the
-  agent goes on in a reply of its own once their results are in;
+  reply's `response_id`) arrives once the LLM is done writing, while TTS may still be voicing it: more audio can
+  follow, and the reply ends with its last audio, which `context_usage` arrives with, or with the next turn;
+  a reply that calls client tools is only the `client_tool_call`s, and the agent goes on in a reply of its own
+  once their results are in;
 - the user's words come as one final `user_transcript` per utterance, before the reply to them;
 - the user barging in on a reply still being generated gets an `interruption`, then that reply's
   `agent_response` cut down to what was heard; on a reply already delivered (synthesis outruns
@@ -37,7 +39,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
 
 from pydantic_ai.providers.elevenlabs_agents import ElevenLabsAgentsProvider
-from pydantic_ai.realtime import RealtimeModel
+from pydantic_ai.realtime import RealtimeModel, elevenlabs_agents as rt_elevenlabs
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
 from pydantic_ai.realtime.elevenlabs_agents import (
     ElevenLabsAgentsRealtimeConnection,
@@ -92,8 +94,10 @@ class ElevenLabsAgentsServer:
         self.network = Network(self)
         self.speaking: TruthResponse | None = None
         """The reply being generated: its terminal (`agent_response`, or its tool calls) is still to come."""
+        self.voicing: TruthResponse | None = None
+        """The reply whose text is complete, while TTS may still be voicing it."""
         self.delivered: TruthResponse | None = None
-        """The latest reply the server finished, which the user may still be hearing."""
+        """The latest reply the server voiced in full, which the user may still be hearing."""
         self.triggers: list[str] = []
         """Inputs the agent will reply to next."""
         self.pending_calls: dict[str, TruthResponse] = {}
@@ -114,6 +118,8 @@ class ElevenLabsAgentsServer:
 
     def on_disconnect(self, socket: FakeWebSocket) -> None:
         self.truth.connection_losses.append(self.truth.tick())
+        # Nothing under way on a lost conversation is said any more.
+        self.speaking = self.voicing = None
         for response in self.truth.responses.values():
             if response.terminal_read is None:
                 self.truth.lose(response)
@@ -174,6 +180,9 @@ class ElevenLabsAgentsServer:
                 response.content_read = now
             if tags.get('terminal') and response.terminal_read is None:
                 response.terminal_read = now
+        if (voiced := self.truth.responses.get(tags.get('voiced', ''))) is not None and voiced.terminal_read is None:
+            # The frame that tells the connection the reply before it was voiced in full ends that reply.
+            voiced.terminal_read = now
         for call_id in tags.get('calls', ()):
             self.truth.tool_calls[call_id].read = True
         if (usage := tags.get('usage')) is not None:
@@ -194,11 +203,36 @@ class ElevenLabsAgentsServer:
             self.speaking = self.truth.new_response(trigger='auto', answers=triggers)
         return self.speaking
 
+    def voiced(self) -> dict[str, str]:
+        """The reply being voiced is over, as the next turn begins: tags for the frame that says so."""
+        response, self.voicing = self.voicing, None
+        if response is None:
+            return {}
+        response.status = 'completed'
+        response.seq_end = self.truth.tick()
+        self.delivered = response
+        return {'voiced': response.key}
+
     def speak(self, chunks: int = 1) -> None:
+        voiced = self.voiced() if self.speaking is None else {}
         response = self._reply()
         word = f'r{response.number}w{len(response.words) + 1}'
         response.words.append(word)
         self.truth.word_seq[word] = self.truth.tick()
+        for chunk in range(chunks):
+            response.audio_bytes += 3200
+            self._emit(
+                {
+                    'type': 'audio',
+                    'audio_event': {'audio_base_64': SPEECH, 'event_id': response.number},
+                    '_simulation': {'response': response.key, 'content': True, **(voiced if chunk == 0 else {})},
+                }
+            )
+
+    def voice(self, chunks: int = 1) -> None:
+        """More audio of the reply whose text is complete."""
+        response = self.voicing
+        assert response is not None
         for _ in range(chunks):
             response.audio_bytes += 3200
             self._emit(
@@ -210,15 +244,27 @@ class ElevenLabsAgentsServer:
             )
 
     def finish(self) -> None:
-        """The reply is generated: its whole text ends it."""
+        """The LLM is done writing the reply: its whole text, while TTS may still be voicing it."""
         response = self.speaking
         assert response is not None and response.words
-        self._end(response, 'completed')
-        self.delivered = response
-
-    def _end(self, response: TruthResponse, status: str) -> None:
         self.speaking = None
-        response.status = 'completed' if status == 'completed' else 'cancelled'
+        self.voicing = response
+        self._emit(
+            {
+                'type': 'agent_response',
+                'agent_response_event': {
+                    'agent_response': ' '.join(response.words),
+                    'event_id': response.number,
+                    'response_id': response.key,
+                },
+                '_simulation': {'response': response.key, 'content': True},
+            }
+        )
+
+    def _cut(self, response: TruthResponse) -> None:
+        """The reply being written is cut off: its text, cut down to what was heard, ends it."""
+        self.speaking = None
+        response.status = 'cancelled'
         response.seq_end = self.truth.tick()
         self._emit(
             {
@@ -235,6 +281,7 @@ class ElevenLabsAgentsServer:
     def call_tool(self, count: int = 1) -> list[str]:
         """A reply that calls client tools, which is all it does: the agent goes on once their results are in."""
         assert self.speaking is None
+        voiced = self.voiced()
         response = self._reply()
         ids: list[str] = []
         for _ in range(count):
@@ -261,6 +308,7 @@ class ElevenLabsAgentsServer:
                         'calls': [call_id],
                         # The calls end the reply that makes them.
                         'terminal': True,
+                        **voiced,
                     },
                 }
             )
@@ -275,11 +323,12 @@ class ElevenLabsAgentsServer:
         self.truth.add_input(key, 'speech', solicits=True)
         self.truth.speech_committed.add(key)
         self.triggers.append(key)
+        voiced = self.voiced()
         self._emit(
             {
                 'type': 'user_transcript',
                 'user_transcription_event': {'user_transcript': key, 'event_id': self._next_event},
-                '_simulation': {'transcript': key},
+                '_simulation': {'transcript': key, **voiced},
             }
         )
         self._next_event += 1
@@ -289,7 +338,24 @@ class ElevenLabsAgentsServer:
         """The user starts talking over the agent: the reply being generated is cut to what was heard."""
         self._emit({'type': 'interruption', 'interruption_event': {'event_id': self._next_event}})
         if (response := self.speaking) is not None and response.words:
-            self._end(response, 'cancelled')
+            self._cut(response)
+        elif (response := self.voicing) is not None:
+            # Its text is complete, but not yet voiced in full: the correction ends it, with what was heard.
+            self.voicing = None
+            response.status = 'cancelled'
+            response.seq_end = self.truth.tick()
+            self._emit(
+                {
+                    'type': 'agent_response_correction',
+                    'agent_response_correction_event': {
+                        'original_agent_response': ' '.join(response.words),
+                        'corrected_agent_response': response.words[0],
+                        'event_id': response.number,
+                        'response_id': response.key,
+                    },
+                    '_simulation': {'response': response.key, 'terminal': True},
+                }
+            )
         elif (response := self.delivered) is not None:
             # Delivered already, and still playing: the server corrects the transcript it keeps.
             self._emit(
@@ -306,7 +372,7 @@ class ElevenLabsAgentsServer:
         self.delivered = None
 
     def report_usage(self) -> None:
-        """The LLM's context size, for the conversation so far."""
+        """The LLM's context size, for the conversation so far, which arrives with a reply's last audio."""
         self._context_tokens += 37
         key = f'context_{self._next_usage}'
         self._next_usage += 1
@@ -314,7 +380,7 @@ class ElevenLabsAgentsServer:
             {
                 'type': 'context_usage',
                 'context_usage_event': {'context_tokens': self._context_tokens, 'context_limit_tokens': 1_000_000},
-                '_simulation': {'usage': key},
+                '_simulation': {'usage': key, **self.voiced()},
             }
         )
 
@@ -406,6 +472,28 @@ class ElevenLabsAgentsSimulation(Simulation):
         self._after_server(deliver, ticks)
 
     @step
+    def advance_time(self, seconds: float, ticks: int | None = None) -> None:
+        """Let time pass. A reply being voiced that goes quiet this long is over: the connection takes it to be.
+
+        Whatever is in flight is read first, so a quiet stretch is quiet on the client's side too.
+        """
+        server = self.server
+        server.network.deliver()
+        self.loop.run_until_idle()
+        quieted = server.voicing if seconds >= rt_elevenlabs._AUDIO_TAIL_GRACE else None  # pyright: ignore[reportPrivateUsage]
+        if quieted is not None:
+            server.voiced()
+            # The connection's own clock ends it, as the clock moves on below.
+            quieted.terminal_read = self.truth.tick()
+        self.loop.advance_clock(seconds)
+        self._advance(ticks)
+
+    @step
+    def voice(self, chunks: int = 1, deliver: bool = True, ticks: int | None = None) -> None:
+        self.server.voice(chunks)
+        self._after_server(deliver, ticks)
+
+    @step
     def finish(self, deliver: bool = True, ticks: int | None = None) -> None:
         self.server.finish()
         self._after_server(deliver, ticks)
@@ -458,6 +546,8 @@ class ElevenLabsAgentsSimulation(Simulation):
             return True
         if server.speaking is not None:
             server.finish()
+        elif server.voicing is not None:
+            server.report_usage()
         elif server.triggers:
             server.speak()
         else:
@@ -499,6 +589,11 @@ class ElevenLabsAgentsMachine(SessionMachine):  # pragma: lax no cover (driven o
     @rule(chunks=st.integers(min_value=1, max_value=2), deliver=st.booleans(), ticks=TICKS)
     def speak(self, chunks: int, deliver: bool, ticks: int | None) -> None:
         self.run(lambda: self.el_sim.speak(chunks=chunks, deliver=deliver, ticks=ticks))
+
+    @precondition(lambda self: self.alive() and self.el_sim.server.voicing is not None)
+    @rule(chunks=st.integers(min_value=1, max_value=2), deliver=st.booleans(), ticks=TICKS)
+    def voice(self, chunks: int, deliver: bool, ticks: int | None) -> None:
+        self.run(lambda: self.el_sim.voice(chunks=chunks, deliver=deliver, ticks=ticks))
 
     @precondition(lambda self: self.alive() and self.el_sim.server.speaking is not None)
     @rule(deliver=st.booleans(), ticks=TICKS)

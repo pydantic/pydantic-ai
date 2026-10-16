@@ -5,6 +5,9 @@ interactions:
   at: 0.0
   data:
     type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
     conversation_config_override:
       agent:
         prompt:
@@ -21,74 +24,84 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_1301m3hcwcw7eywr94t9t650zh0t
+      conversation_id: conv_2201m52mg1vaebxrzfc8ep0035fh
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
     type: conversation_initiation_metadata
 - kind: message
   direction: received
-  at: 0.282
-  data:
-    audio_event:
-      audio_base_64: AwAIAAgAAwACAAEAAgACAAIAAQABAAEAAgAEAAQABQAF
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  at: 0.282
+  at: 0.057
   data:
     agent_response_event:
       agent_response: Welcome to the demo.
       event_id: 1
-      response_id: 7ced9167-777d-465b-949b-5ec4ccbb4b93
+      response_id: b19000a6-cafd-47bc-bbae-ed889f343e69
       in_response_to_ids: []
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: sent
-  at: 0.282
+  at: 0.057
   data:
     type: user_message
     text: Say hi.
 - kind: message
   direction: received
-  at: 0.407
-  data:
-    interruption_event:
-      event_id: 2
-    type: interruption
-- kind: message
-  direction: received
-  at: 0.407
-  data:
-    agent_response_correction_event:
-      original_agent_response: Welcome to the demo.
-      corrected_agent_response: '...'
-      event_id: 1
-      response_id: 7ced9167-777d-465b-949b-5ec4ccbb4b93
-    type: agent_response_correction
-- kind: message
-  direction: received
-  at: 1.11
+  at: 1.029
   data:
     audio_event:
-      audio_base_64: AgAEAAYAAwD///7//v8AAAAA//////////8AAAAA/v/9
+      audio_base_64: rfrH9r71t/P/8j/x8+8z7nPtFu1l7SHtF+067UXtO+3f
       event_id: 2
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 1.11
+  at: 1.059
+  data:
+    audio_event:
+      audio_base_64: vPk4+WX2TPxJBjQDLwAXANT+sv93/339g/kg/FgHRgqa
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.065
+  data:
+    audio_event:
+      audio_base_64: nPZ79aH4y/vG+SX1HvE987b2+vhB+hP6NP1JAdoGDAq8
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    audio_event:
+      audio_base_64: 2QD+AD8Fpw0SGmMhqSOFHfsV1RBaEVYS/hDUDb8GQv43
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.17
+  data:
+    audio_event:
+      audio_base_64: HRImFDEU6Q8WDFkI2gIUAPf/Wv4W+x32afBw7Q/ur/KY
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.17
   data:
     agent_response_event:
-      agent_response: Hello there.
+      agent_response: '[happy] Hi there.'
       event_id: 2
-      response_id: 93fc33ff-436d-44fe-a4b7-0324d17386e6
+      response_id: 0448657b-abca-4a50-9d09-87b63608a77c
       in_response_to_ids:
-      - 8fe6476e-8607-4578-a41b-f95d3e8444cd
+      - bb5679b8-d80e-42cc-ba4b-51c54eb6ec09
       response_type: text
       attachments: []
     type: agent_response

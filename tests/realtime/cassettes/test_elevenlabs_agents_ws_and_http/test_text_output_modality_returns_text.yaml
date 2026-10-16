@@ -5,6 +5,9 @@ interactions:
   at: 0.0
   data:
     type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
     conversation_config_override:
       agent:
         prompt:
@@ -16,7 +19,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_1201m3hcwawvfmm8p4vranwccf00
+      conversation_id: conv_6701m52mg0dwers8j92fw9wv6942
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -29,44 +32,44 @@ interactions:
     text: Say hi.
 - kind: message
   direction: received
-  at: 0.859
+  at: 0.953
   data:
     text_response_part:
       text: ''
       type: start
       event_id: 1
-      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
+      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
     type: agent_chat_response_part
 - kind: message
   direction: received
-  at: 0.859
+  at: 0.953
   data:
     text_response_part:
-      text: Hello there.
+      text: Hi there.
       type: delta
       event_id: 1
-      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
+      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
     type: agent_chat_response_part
 - kind: message
   direction: received
-  at: 0.859
+  at: 0.954
   data:
     text_response_part:
       text: ''
       type: stop
       event_id: 1
-      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
+      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
     type: agent_chat_response_part
 - kind: message
   direction: received
-  at: 0.859
+  at: 0.954
   data:
     agent_response_event:
-      agent_response: Hello there.
+      agent_response: Hi there.
       event_id: 1
-      response_id: f4ee0a10-e1b3-4846-b5c0-97b9a77236fc
+      response_id: 87ad31ba-3af6-458d-8626-fc9f53737c24
       in_response_to_ids:
-      - 7d6fdeaf-59c1-4762-9867-cc172fb84d3a
+      - 3e25541b-0c4b-4e21-abc7-6d953a811902
       response_type: text
       attachments: []
     type: agent_response

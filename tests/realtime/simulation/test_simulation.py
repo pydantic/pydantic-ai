@@ -2280,3 +2280,25 @@ def test_scenario_elevenlabs_agents_edges() -> None:
         sim.settle()
 
     run_tolerant(ElevenLabsAgentsSimulation(options=SessionOptions(latency=True)), scenario)
+
+
+def test_elevenlabs_agents_reply_voiced_after_its_text() -> None:
+    """Recorded: the whole text arrives once the LLM is done, while TTS voices the rest; the reply ends with its audio."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.voice(chunks=2)
+        sim.report_usage()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.voice()
+        sim.barge_in()
+        sim.user_says()
+        sim.speak()
+        sim.finish()
+        sim.advance_time(2.0)
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
