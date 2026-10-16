@@ -37,7 +37,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.launch import launch_session_id
-from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
+from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from pydantic_clai2.ui.rendering.usage_report import usage_command
@@ -48,7 +48,7 @@ ResultT = TypeVar('ResultT')
 
 
 class Sessions(Generic[DepsT, OutputT]):
-    """One application's services. No worker, registration, or selection is global."""
+    """One session's services, over the naming worker its process shares; nothing is module-global."""
 
     def __init__(
         self,
@@ -57,8 +57,12 @@ class Sessions(Generic[DepsT, OutputT]):
         store: SqliteConversationStore,
         context: CommandContext,
         launched: str | None = None,
+        namer: SessionNamer | None = None,
     ) -> None:
-        """Bind services to the active shell and its validated settings."""
+        """Bind services to the active shell and its validated settings.
+
+        `namer` is the process's naming worker, shared with its other sessions; without one, it gets its own.
+        """
         self.session = session
         self.store = store
         self.context = context
@@ -66,26 +70,26 @@ class Sessions(Generic[DepsT, OutputT]):
         """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
-        self.namer = SessionNamer(
-            store=store,
-            generate=self.generate,
-            enabled=lambda: self.context.settings.session_namer,
-            on_named=self.named,
-        )
+        self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
+        """How this session names the conversations it queues on `namer`."""
+        self.namer = namer or SessionNamer(store=store)
+        self.namer.listeners.append(self.named)
+        self._newest_name: tuple[str, str] | None = None
+        """The conversation and title `named` heard last, which wins over one still waiting for the terminal."""
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
-        """Moves CLAI into a directory, so `/resume ID` continues a session where it was saved; set by `clai2 --web` only."""
+        """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
 
     @property
     def follows_workspace(self) -> bool:
-        """Whether `/resume ID` moves CLAI into the session's own directory rather than refusing another one."""
+        """Whether `/resume ID` moves the session into its own directory rather than refusing another one."""
         return self.relocate is not None
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, unarchive: bool = True) -> str:
         """Restore a saved session, then show its history.
 
-        With `relocate`, CLAI first moves into the directory the session was saved in, unless the
+        With `relocate`, the session first moves into the directory it was saved in, unless the
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         """
@@ -109,10 +113,12 @@ class Sessions(Generic[DepsT, OutputT]):
         if conversation_id != self.session.conversation_id:
             return
         before = self.session.title
+        self._newest_name = (conversation_id, title)
         async with self.quiet():
-            # A rename in `/resume` while this waited wins over the generated name. A save in the
-            # meantime may already have adopted it from the store without telling plugins.
-            if self.session.title in (before, title):
+            # A rename in `/resume` while this waited wins over the generated name, as does a newer name
+            # announced meanwhile. A save in the meantime may already have adopted it from the store
+            # without telling plugins.
+            if self.session.title in (before, title) and self._newest_name == (conversation_id, title):
                 await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:
@@ -190,7 +196,7 @@ class Sessions(Generic[DepsT, OutputT]):
     ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
         entries = await self.store.listing(query=query, limit=limit, archived=archived)
-        self.namer.backfill(entries)
+        self.namer.backfill(entries, client=self.naming)
         return entries
 
     async def saved(self, conversation_id: str) -> SavedConversation:
@@ -268,7 +274,7 @@ class Sessions(Generic[DepsT, OutputT]):
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
-        self.namer.backfill([entry for entry in entries if entry.archived_at is None])
+        self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 

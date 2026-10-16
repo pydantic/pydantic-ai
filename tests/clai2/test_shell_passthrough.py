@@ -164,7 +164,7 @@ class TestShellPassthrough:
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
-            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts, cwd=os.getcwd())
+            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd())
         )
         await spawn_started.wait()
 
@@ -392,7 +392,7 @@ async def test_large_stdout_and_stderr_are_drained_concurrently(
     command = "i=0; while [ $i -lt 20000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
     with anyio.fail_after(10):
         context = await run_shell_command(
-            command, console=Console(file=output), interrupts=Interrupts(), cwd=os.getcwd()
+            command, console=Console(file=output), interrupts=Interrupts(), cwd=Path.cwd()
         )
     stdout = 'stdout\n' * 20000
     stderr = 'stderr\n' * 20000
@@ -422,7 +422,7 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
     tasks_before = asyncio.all_tasks()
     task = asyncio.create_task(
         run_shell_command(
-            'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=os.getcwd()
+            'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd()
         )
     )
     with anyio.fail_after(10):
@@ -489,7 +489,7 @@ async def test_detached_descendant_cannot_hold_output_open(
             f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
             console=Console(file=Output()),
             interrupts=interrupts,
-            cwd=os.getcwd(),
+            cwd=Path.cwd(),
         )
     )
     try:
@@ -570,7 +570,7 @@ async def test_terminal_command_runs_with_the_screen_released(
     command = "printf 'sec''ret'; printf 'oo''ps' >&2; : > ran; exit 4"
     output = io.StringIO()
     with holding_output(hold):
-        context = await run_in_terminal(command, console=Console(file=output), cwd=str(tmp_path))
+        context = await run_in_terminal(command, console=Console(file=output), cwd=tmp_path)
     assert events == ['hold leave_screen=True ran=False', 'release ran=True']
     # The command wrote to CLAI's own standard streams, not to pipes CLAI reads.
     assert capfd.readouterr() == ('secret', 'oops')
@@ -609,7 +609,7 @@ async def test_forced_terminal_command_saves_only_its_status(
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 async def test_cancelled_terminal_command_is_killed(tmp_path: Path) -> None:
     task = asyncio.create_task(
-        run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO()), cwd=str(tmp_path))
+        run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO()), cwd=tmp_path)
     )
     with anyio.fail_after(5):
         while not (tmp_path / 'ready').exists():
@@ -621,7 +621,7 @@ async def test_cancelled_terminal_command_is_killed(tmp_path: Path) -> None:
 
 async def test_terminal_command_spawn_failure_is_reported() -> None:
     output = io.StringIO()
-    context = await run_in_terminal('echo a\x00b', console=Console(file=output), cwd=os.getcwd())
+    context = await run_in_terminal('echo a\x00b', console=Console(file=output), cwd=Path.cwd())
     assert 'Shell error: embedded null byte' in output.getvalue()
     assert context == _interactive_context('echo a\x00b', 'Shell error: embedded null byte')
 

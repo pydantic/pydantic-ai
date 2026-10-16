@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from collections.abc import Generator
+from pathlib import Path
 from types import FrameType
 
 from rich.console import Console
@@ -100,7 +101,7 @@ def shell_command(text: str) -> str | None:
     return command if command.lstrip('!').strip() else None
 
 
-async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts, cwd: str) -> str:
+async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts, cwd: Path) -> str:
     """Run locally in `cwd`, the session's directory, and return context for the next model request.
 
     Output streams to the transcript and is saved. On CLAI's terminal the command runs on a
@@ -205,7 +206,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     )
 
 
-async def run_in_terminal(command: str, *, console: Console, cwd: str) -> str:
+async def run_in_terminal(command: str, *, console: Console, cwd: Path) -> str:
     """Hand the terminal to a command in `cwd` from the start; return context naming it and its exit status.
 
     The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
@@ -254,7 +255,7 @@ def _interactive_context(command: str, status: str) -> str:
     )
 
 
-async def _wait_in_terminal(command: str, *, cwd: str) -> int:
+async def _wait_in_terminal(command: str, *, cwd: Path) -> int:
     """Run `command` with CLAI's standard streams and return its exit status; cancellation kills it."""
     # Spawning is shielded, so a cancellation that arrives meanwhile still finds the process to kill.
     spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr(), cwd=cwd))

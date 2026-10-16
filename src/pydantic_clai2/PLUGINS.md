@@ -2550,7 +2550,8 @@ prompt the keyboard does:
   queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
-  moves CLAI into the directory a session was saved in, as under `clai2 --web`, rather than
+  moves the session into the directory it was saved in (its `host.workspace`; the process's working
+  directory never changes), as under `clai2 --web`, rather than
   refusing a session saved elsewhere.
 - `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
   `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,

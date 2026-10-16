@@ -44,10 +44,11 @@ from pydantic_clai2.runtime._session import (
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
-from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell, print_welcome, web_serving
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell, web_serving
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.welcome import print_welcome
 from pydantic_clai2.ui.stderr_relay import relay_stderr
 from pydantic_clai2.ui.telemetry_log import telemetry_log
 
@@ -220,7 +221,7 @@ async def chat(
                 ):
                     try:
                         async with create_task_group() as workers:
-                            workers.start_soon(shell.sessions.namer.run)
+                            workers.start_soon(shell.process.namer.run)
                             try:
                                 with transcript.capture(console):
                                     # Apply launch options first, so plugins start with the conversation they
