@@ -93,7 +93,10 @@ export function App() {
   const [sidePanel, setSidePanel] = useState(() => localStorage.getItem('clai-side-panel'))
   const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem('clai-side-panel-width')) || 440)
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
-  const [draft, setDraft] = useState('')
+  // Each session's unsent draft, by conversation ID, so switching away and back keeps it.
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const draft = drafts[shown ?? ''] ?? ''
+  const setDraft = useCallback((text: string) => setDrafts((all) => ({ ...all, [shown ?? '']: text })), [shown])
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
   const socket = useRef<Socket | null>(null)
@@ -631,6 +634,6 @@ export function App() {
       <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>
   )
-  // The composer, questions, dialogs, and Monty all talk to the shown session.
+  // The composer, its questions, and Monty talk to the shown session.
   return <SessionContext.Provider value={session}>{page}</SessionContext.Provider>
 }
