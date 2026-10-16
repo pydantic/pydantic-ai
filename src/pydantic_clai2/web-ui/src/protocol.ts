@@ -209,6 +209,7 @@ export type ServerMessage =
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
+  | { type: 'settings' }
   | { type: 'task'; task: TaskEntry }
   | { type: 'task_event'; id: string; messages: ItemMessage[] }
 
@@ -349,6 +350,11 @@ export interface WorkspacesInfo {
 export interface MenuInfo {
   title: string
   fields: MenuField[]
+}
+
+/** What entering input did: `menu` names the bare command whose menu the page shows instead of running it. */
+export interface Entered {
+  menu: string | null
 }
 
 export interface MenuEdited {

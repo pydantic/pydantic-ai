@@ -92,7 +92,7 @@ from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
-from pydantic_clai2.ui.menus.set_menu import set_command
+from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
 from pydantic_clai2.ui.menus.task_menu import open_tasks
@@ -638,6 +638,7 @@ def create_shell(
         handler=lambda args: set_command(context, args),
         complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
         during_turn=True,
+        menu=lambda: settings_menu(context),
     )
     commands.register(set_)
     commands.register(replace(set_, name='settings', description='Alias of /set'))
@@ -648,6 +649,7 @@ def create_shell(
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
             during_turn=True,
+            menu=lambda: settings_menu(context, keys=('display.theme',), title='Theme'),
         )
     )
     commands.register(
@@ -785,6 +787,7 @@ def create_shell(
             handler=lambda args: spinner_command(context, spinners, args),
             complete=lambda args: spinner_completions(spinners, args),
             during_turn=True,
+            menu=lambda: settings_menu(context, keys=('display.spinner',), title='Working animation'),
         )
     )
     commands.register(

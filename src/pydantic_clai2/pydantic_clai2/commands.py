@@ -6,6 +6,7 @@ import shlex
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue, TypeAdapter
 from termflow.tui.completion import (
@@ -30,6 +31,10 @@ from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
+
+if TYPE_CHECKING:
+    # Only for the annotation: `pydantic_clai2.plugins` imports this module.
+    from pydantic_clai2.plugins.menus import SettingsMenu
 
 _COMMAND_NAME = re.compile(r'\w[\w-]*')
 """Letters, digits, underscores, and hyphens, not starting with a hyphen: what a skill such as `code-review` is called."""
@@ -104,6 +109,12 @@ class Command:
     For commands named after something the user names, such as a skill, which may collide with a
     built-in like `/model`. The hidden command is reported, not dropped silently.
     """
+    menu: 'Callable[[], SettingsMenu] | None' = None
+    """The settings menu the bare command opens, declared so another surface can show the same one.
+
+    The terminal still runs `handler`; the web UI shows this menu in the page instead, editing the
+    same values through the same `FieldSource`. Built each time it is shown.
+    """
 
 
 class Commands(Completer):
@@ -159,6 +170,11 @@ class Commands(Completer):
     def __iter__(self) -> Iterator[Command]:
         """Iterate a snapshot, so callers may register or unregister while looping."""
         return iter(list(self._commands.values()))
+
+    def get(self, name: str) -> Command | None:
+        """The command called `name` (without its slash), or `None` when there is none or it is not available now."""
+        command = self._commands.get(name)
+        return command if command is not None and command.available() else None
 
     def execute(self, text: str) -> str | Awaitable[str]:
         """Parse shell-style arguments and dispatch without invoking a shell."""
