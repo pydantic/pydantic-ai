@@ -51,10 +51,12 @@ class MCPSamplingModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        system_prompt, sampling_messages = _mcp.map_from_pai_messages(messages)
-
-        model_settings, _ = self.prepare_request(model_settings, model_request_parameters)
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         model_settings = cast(MCPSamplingModelSettings, model_settings or {})
+
+        system_prompt, sampling_messages = _mcp.map_from_pai_messages(messages)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        system_prompt = '\n\n'.join(p for p in [system_prompt, *(part.content for part in instruction_parts)] if p)
 
         result = await self.session.create_message(
             sampling_messages,

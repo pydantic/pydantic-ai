@@ -4,11 +4,13 @@ from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
+    PromptedOutput,
     SystemPromptPart,
     TextPart,
     UserPromptPart,
@@ -161,6 +163,55 @@ def test_standing_system_prompt_history():
         not isinstance(message.content, TextContent) or message.content.text != 'standing system content'
         for message in sampling_messages
     )
+
+
+def test_system_prompt_and_instructions_history():
+    """Instructions are sent once, from the current request, separated from the system prompts."""
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(
+        model=MCPSamplingModel(fake_session(create_message)),
+        system_prompt=['You are a helper.', 'Be concise.'],
+        instructions='Answer in English.',
+    )
+
+    result = agent.run_sync('1')
+    agent.run_sync('2', message_history=result.all_messages())
+
+    assert [call.kwargs['system_prompt'] for call in create_message.call_args_list] == snapshot(
+        [
+            """\
+You are a helper.
+
+Be concise.
+
+Answer in English.\
+""",
+            """\
+You are a helper.
+
+Be concise.
+
+Answer in English.\
+""",
+        ]
+    )
+
+
+def test_prompted_output_instructions():
+    class City(BaseModel):
+        city: str
+
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='{"city": "Paris"}'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)), output_type=PromptedOutput(City))
+
+    assert agent.run_sync('Hello').output == City(city='Paris')
+    assert 'Always respond with a JSON object' in create_message.call_args.kwargs['system_prompt']
 
 
 def test_assistant_text_history_complex():
