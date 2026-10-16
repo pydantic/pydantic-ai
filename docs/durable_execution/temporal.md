@@ -288,8 +288,9 @@ tool's 270-second foreground wait. A `run_command` given a longer timeout, throu
 ```python
 from datetime import timedelta
 
-from pydantic_ai.capabilities import SetToolMetadata
 from temporalio.workflow import ActivityConfig
+
+from pydantic_ai.capabilities import SetToolMetadata
 
 SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30)))
 ```
