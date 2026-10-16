@@ -27,6 +27,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TitleChanged,
     TurnEnded,
     TurnStarted,
+    dump,
     history_items,
     usage_info,
     user_text,
@@ -187,10 +188,12 @@ class SessionChannel:
         if self.id == self.shown:
             self.publish(TitleChanged(title=title))
             return False
-        self.service.hub.rename(self.shown, self.id)
+        hub = self.service.hub
+        hub.rename(self.shown, self.id)
         self.shown = self.id
         self.workers.reset()
-        self.service.hub.publish_session(self.snapshot(), session=self.id)
+        # To the browsers following it; one that watched the new conversation before gets it from `follow`.
+        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
         return True
 
     def command_ended(self, event: CommandEnd) -> None:

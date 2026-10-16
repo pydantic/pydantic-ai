@@ -407,6 +407,26 @@ def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
     assert fleet.post('/api/sessions/unknown/open').status_code == 404
 
 
+def test_a_conversation_watched_before_a_session_resumes_it_gets_one_snapshot(make_fleet: MakeFleet) -> None:
+    """`/resume` in a live session hands its new conversation to a browser that watched that ID already."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    summary = ConversationSummary(workspace=str(fleet.folder('home')), title='Saved')
+    saved = fleet.portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=[]))
+    with fleet.socket() as socket, fleet.socket() as other:
+        connected(socket)
+        connected(other)
+        watch(socket, saved.id)
+        watch(other, a)
+        messages(other, until=snapshot_of(a))
+        fleet.post(f'/api/sessions/{a}/input', {'text': f'/resume {saved.id}'})
+        messages(other, until=snapshot_of(saved.id))
+        fleet.post(f'/api/sessions/{saved.id}/input', {'text': '/cost'})
+        received = messages(socket, until=kind('notice', session=saved.id))
+    assert len([message for message in received if snapshot_of(saved.id)(message)]) == 1
+    assert fleet.launch.loader.live_session.watchers == 0
+
+
 def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:
     """Not one session's choice: the saved `model` setting, else the agent's own."""
     fleet = make_fleet()
@@ -481,6 +501,8 @@ async def test_a_bare_host_asks_as_its_session_and_has_no_default_once_empty(mon
     monkeypatch.setattr(service.live, 'listing', list)
     with pytest.raises(LookupError, match='No session is open'):
         service.default()
+    with pytest.raises(LookupError, match='No session is open'):
+        await service.new()
     assert service.hub.default() is None
     result = await Agent(TestModel(), deps_type=type(None), capabilities=[Observer(service=service)]).run('hi')
     assert result.output == 'success (no tool calls)', 'a run no live session holds is not shown'

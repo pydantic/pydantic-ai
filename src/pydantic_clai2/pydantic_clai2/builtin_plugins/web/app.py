@@ -484,10 +484,13 @@ def _events(app: FastAPI, service: WebService) -> None:
         with service.hub.subscribe() as client:
             try:
                 try:
-                    await socket.send_text(dump(service.default().snapshot()))
+                    snapshot = dump(service.default().snapshot())
                 except LookupError:
-                    pass  # No session is live, as while CLAI exits; `live` says so.
+                    snapshot = None  # No session is live, as while CLAI exits; `live` says so.
+                # Before the first `await`, so the default it follows is the one in the snapshot.
                 service.follow(client, snapshots=False)
+                if snapshot is not None:
+                    await socket.send_text(snapshot)
                 await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 await socket.send_text(dump(service.live_message()))
                 async with anyio.create_task_group() as connection:

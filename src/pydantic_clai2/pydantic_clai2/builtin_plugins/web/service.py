@@ -273,10 +273,14 @@ class WebService:
 
         A CLAI that opens no other sessions starts it in the default session, as `open` does.
         """
-        directory = self.default().session.workspace if workspace is None else workspace_directory(workspace)
+        if workspace is not None:
+            directory = workspace_directory(workspace)
+        else:
+            directory = None if (shown := self._default()) is None else shown.session.workspace
         try:
             session = await self.live.new(workspace=directory)
         except RuntimeError:
+            # With no session live there is no default to start it in: `LookupError`.
             default = self.default()
             if directory != default.session.workspace:
                 if not self.catalog.follows_workspace:
