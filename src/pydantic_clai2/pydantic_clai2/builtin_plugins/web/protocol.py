@@ -519,7 +519,7 @@ class SettingsChanged:
 
 
 LiveState = Literal['running', 'queued', 'asking', 'idle']
-"""`queued`: input waits while the session's turn runs; `asking`: a question or dialog waits for the user."""
+"""`queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -629,9 +629,6 @@ SessionMessage = (
     | StatusChanged
     | QuestionAsked
     | QuestionClosed
-    | DialogOpened
-    | DialogShown
-    | DialogClosed
     | Notice
     | TitleChanged
     | TaskChanged

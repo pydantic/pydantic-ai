@@ -192,7 +192,7 @@ export interface OrchestratorState {
 
 export type OrchestratorEvent = ChatMessage | OrchestratorState
 
-/** `queued`: input waits while the session's turn runs; `asking`: a question or dialog waits for the user. */
+/** `queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user. */
 export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
 
 /** A session open in this CLAI, named by its conversation ID. */
@@ -207,9 +207,6 @@ export interface LiveEntry {
 export type SessionMessage = (
   | ChatMessage
   | { type: 'status'; status: StatusInfo }
-  | { type: 'dialog'; dialog: Dialog }
-  | { type: 'dialog_shown'; id: string; text: string }
-  | { type: 'dialog_closed'; id: string }
   | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null }
   | { type: 'title'; title: string | null }
   | { type: 'task'; task: TaskEntry }
@@ -254,6 +251,9 @@ export type ServerMessage =
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
+  | { type: 'dialog'; dialog: Dialog }
+  | { type: 'dialog_shown'; id: string; text: string }
+  | { type: 'dialog_closed'; id: string }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
