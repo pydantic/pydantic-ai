@@ -98,7 +98,9 @@ class LocalWorktrees:
         return Checkout(path=path.resolve(), root=root.resolve(), branch=branch)
 
     async def start(self, workspace: Workspace, *, folder: Path) -> SessionProcess:
-        return await self.launcher.start(folder=folder, cwd=workspace.path, model=workspace.model, env=os.environ)
+        # The checkout is not a launch directory the user chose, so its `.env` must not reach their API keys.
+        env = {**os.environ, 'PYTHON_DOTENV_DISABLED': '1'}
+        return await self.launcher.start(folder=folder, cwd=workspace.path, model=workspace.model, env=env)
 
     def alive(self, session: SessionProcess) -> bool:
         return self.launcher.alive(session)
