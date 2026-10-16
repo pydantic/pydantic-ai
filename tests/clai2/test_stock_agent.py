@@ -25,6 +25,7 @@ from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGu
 from pydantic_clai2 import _app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins.loader import PluginSettingsError
 
 
@@ -189,7 +190,7 @@ async def test_model_names_resolve_through_clai(tmp_path: Path, monkeypatch: pyt
 
         return FunctionModel(stream_function=stream, model_name=name)
 
-    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
     # A setting saved for the CLI's runs on this model stays out.
     SettingsStore().save_model_settings('anthropic:claude-sonnet-4-6', {'temperature': 0.5})
     async with open_stock_agent(workspace=tmp_path, model='anthropic:claude-sonnet-4-6') as agent:
@@ -269,7 +270,7 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
     def ask_first(call: ToolCallInfo) -> GuardrailResult:
         return GuardrailResult.approve() if call.name == 'shell' else GuardrailResult.allow()
 
-    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
     async with open_stock_agent(
         workspace=tmp_path,
         model='gateway/anthropic:claude-opus-5-5',

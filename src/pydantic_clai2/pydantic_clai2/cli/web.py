@@ -8,7 +8,7 @@ from rich.console import Console
 
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import STOCK_PLUGINS, create_shell, create_stock_agent
+from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.config import Settings
@@ -17,6 +17,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT, SessionEndReason
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.runtime.imported_sessions import ImportSource
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace, workspace_directory
 
 WEB = 'web'
