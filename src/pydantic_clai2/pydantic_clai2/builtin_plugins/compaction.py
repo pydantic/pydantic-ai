@@ -174,7 +174,7 @@ class _ContextGauge(AbstractCapability[None]):
     @on_event(ContextUsageEvent)
     async def _gauge(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
         self.status.context_tokens = event.used_tokens
-        # Without a response's reported usage, the reading counts characters and leaves out the tool
+        # Without a response's reported usage, the reading counts characters and leaves out most tool
         # definitions, so a session's first request reads well under what the provider then reports.
         self.status.context_estimated = not any(
             isinstance(message, ModelResponse) and message.usage.input_tokens for message in ctx.messages

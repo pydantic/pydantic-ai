@@ -1735,7 +1735,7 @@ a model with no known window. With `compaction` off, the shell reads the window 
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 Until a response in the conversation reports its usage, the used figure is an estimate
-from the text's length that leaves out tool definitions, shown with `~`, such as `~13k/1m`.
+from the text's length that leaves out most tool definitions, shown with `~`, such as `~13k/1m`.
 It usually reads low, so it can rise sharply once the first response arrives.
 
 The context figure turns yellow when a request still exceeds `threshold` after
