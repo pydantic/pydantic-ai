@@ -16,7 +16,7 @@ import anyio
 import anyio.to_thread
 import pytest
 
-from pydantic_ai import Agent, ModelSettings
+from pydantic_ai import Agent, ModelSettings, _utils
 from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
@@ -373,7 +373,7 @@ def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytes
         assert Path(src).exists()
         raise OSError('replace failed')
 
-    monkeypatch.setattr(app_module.os, 'replace', fail_replace)
+    monkeypatch.setattr(_utils.os, 'replace', fail_replace)
 
     with pytest.raises(OSError, match='replace failed'):
         app_module._write_cached_file(cache_file, b'new content')  # pyright: ignore[reportPrivateUsage]
@@ -393,23 +393,23 @@ def test_write_cached_file_closes_temp_handle_before_replace(monkeypatch: pytest
     """
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     temp_files: list[IO[bytes]] = []
-    real_named_temporary_file = app_module.tempfile.NamedTemporaryFile
+    real_named_temporary_file = _utils.tempfile.NamedTemporaryFile
 
     def capturing_named_temporary_file(*, dir: Path, prefix: str, delete: bool) -> IO[bytes]:
         tmp_file = real_named_temporary_file(dir=dir, prefix=prefix, delete=delete)
         temp_files.append(tmp_file)
         return tmp_file
 
-    monkeypatch.setattr(app_module.tempfile, 'NamedTemporaryFile', capturing_named_temporary_file)
+    monkeypatch.setattr(_utils.tempfile, 'NamedTemporaryFile', capturing_named_temporary_file)
 
     closed_at_replace: list[bool] = []
-    real_replace = app_module.os.replace
+    real_replace = _utils.os.replace
 
     def instrumented_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
         closed_at_replace.append(temp_files[0].closed)
         real_replace(src, dst)
 
-    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+    monkeypatch.setattr(_utils.os, 'replace', instrumented_replace)
 
     content = b'<html>UI</html>'
     app_module._write_cached_file(cache_file, content)  # pyright: ignore[reportPrivateUsage]
@@ -432,7 +432,7 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     _stub_cdn_fetch(monkeypatch, full_content)
 
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
-    real_replace = app_module.os.replace
+    real_replace = _utils.os.replace
     replaced_targets: list[Path] = []
 
     def instrumented_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
@@ -441,7 +441,7 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
         replaced_targets.append(Path(dst))
         real_replace(src, dst)
 
-    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+    monkeypatch.setattr(_utils.os, 'replace', instrumented_replace)
 
     result = await _get_ui_html()
 
@@ -458,7 +458,7 @@ async def test_cache_read_and_write_do_not_overlap_on_windows(monkeypatch: pytes
     release_reader = threading.Event()
     writer_attempted = threading.Event()
     real_read_bytes = Path.read_bytes
-    real_replace = app_module.os.replace
+    real_replace = _utils.os.replace
 
     def blocked_read_bytes(path: Path) -> bytes:
         assert path == cache_file
@@ -489,7 +489,7 @@ async def test_cache_read_and_write_do_not_overlap_on_windows(monkeypatch: pytes
         await anyio.to_thread.run_sync(app_module._write_cached_file, cache_file, b'new content')  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setattr(Path, 'read_bytes', blocked_read_bytes)
-    monkeypatch.setattr(app_module.os, 'replace', windows_replace)
+    monkeypatch.setattr(_utils.os, 'replace', windows_replace)
     monkeypatch.setattr(app_module, '_CACHE_FILE_LOCK', InstrumentedLock())
 
     with anyio.fail_after(1):
