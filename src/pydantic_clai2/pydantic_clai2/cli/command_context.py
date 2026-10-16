@@ -1,5 +1,6 @@
 """Conversation-local settings and actions behind `/set`."""
 
+import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -43,6 +44,8 @@ class CommandContext:
 
     Differs for a plugin's `settings_from`, and for a chain, which takes its first model's.
     """
+    edits: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    """Held by each save, so the terminal's `/set` menu, typed commands, and the web UI, each on its own thread, never lose one."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -74,9 +77,10 @@ class CommandContext:
         if len(args) != 2 or args[0] not in SETTING_FIELDS:
             raise ValueError('Usage: /set SETTING VALUE. Press Tab for suggestions.')
         key, raw = args
-        value, settings = self.validate(key, raw)
-        self.store.set(key, value)
-        self._apply(key, settings)
+        with self.edits:
+            value, settings = self.validate(key, raw)
+            self.store.set(key, value)
+            self._apply(key, settings)
         return f'Saved {key}. ' + self._when(key)
 
     def validate(self, key: str, raw: str) -> tuple[JsonValue, Settings]:
@@ -144,10 +148,11 @@ class CommandContext:
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
-        self.store.reset(key)
-        updated = self.settings.model_dump(exclude_unset=True)
-        updated.pop(SETTING_FIELDS[key], None)
-        self._apply(key, Settings.model_validate(updated))
+        with self.edits:
+            self.store.reset(key)
+            updated = self.settings.model_dump(exclude_unset=True)
+            updated.pop(SETTING_FIELDS[key], None)
+            self._apply(key, Settings.model_validate(updated))
         return f'Reset {key}. ' + self._when(key)
 
     def _apply(self, key: str, settings: Settings) -> None:

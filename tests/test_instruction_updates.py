@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import httpx2
@@ -14,7 +14,7 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai.capabilities import Capability, Hooks, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -443,6 +443,72 @@ async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests(
     assert len(serialized) < 2_000
     assert [recorded(baseline.instructions) for baseline in baselines] == [
         [f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}', 'A'] for turn in range(4)
+    ]
+
+
+@pytest.mark.parametrize('inline_system', [True, False])
+async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_system: bool):
+    """An instruction change and a request-scoped reminder enqueued in the same request are both sent, in order.
+
+    The change lasts: it's sent again on later requests, ahead of each request's own reminder. The reminder is
+    sent with its own request only, after the request's other content, where the model doesn't support
+    clearing it.
+    """
+    received: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(
+            [
+                part.content
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, (SystemPromptPart, UserPromptPart))
+                and isinstance(part.content, str)
+                and ('<context' in part.content or 'Reminder' in part.content)
+            ]
+        )
+        return ModelResponse(parts=[TextPart('ok')])
+
+    @dataclass
+    class Reminder(AbstractCapability[State]):
+        requests: int = field(default=0, init=False)
+
+        async def before_model_request(
+            self, ctx: RunContext[State], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            self.requests += 1
+            ctx.enqueue(SystemPromptPart(f'Reminder {self.requests}.', scope='request'))
+            return request_context
+
+    agent = Agent(
+        FunctionModel(
+            model_fn,
+            profile=ModelProfile(
+                supports_inline_system_prompts=inline_system, supports_request_scoped_system_prompts=False
+            ),
+        ),
+        deps_type=State,
+        capabilities=[Reminder()],
+    )
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    history: list[ModelMessage] = []
+    for value in ['A', 'B', 'B']:
+        result = await agent.run('Continue.', deps=State(value), message_history=history)
+        history = result.all_messages()
+
+    def wrapped(text: str) -> str:
+        return text if inline_system else f'<system>{text}</system>'
+
+    change = wrapped('<context id="agent:state">\nB\n</context>')
+    assert received == [
+        [wrapped('Reminder 1.')],
+        [change, wrapped('Reminder 2.')],
+        [change, wrapped('Reminder 3.')],
     ]
 
 

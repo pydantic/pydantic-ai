@@ -190,23 +190,28 @@ def enqueued_messages_for_client(
 ) -> list[ModelMessage]:
     """The enqueued messages to stream to the frontend.
 
-    When the server owns the system prompt, enqueued `SystemPromptPart`s and instruction changes stay on the
-    server: the frontend's copy would be stripped on the way back in anyway, so sending it would only
-    disclose it.
+    When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
+    frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
+    Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
+    current request only, and loaded back they'd become lasting system prompts. So do instruction changes
+    and baselines, which are server-side operator state.
     """
-    if manage_system_prompt == 'client':
-        return list(messages)
     kept: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest):
             parts = [
                 part
                 for part in message.parts
-                if not isinstance(part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart))
+                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
+                and (
+                    not isinstance(part, SystemPromptPart)
+                    or (manage_system_prompt == 'client' and part.scope != 'request')
+                )
             ]
             if not parts:
                 continue
-            message = replace(message, parts=parts)
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
         kept.append(message)
     return kept
 

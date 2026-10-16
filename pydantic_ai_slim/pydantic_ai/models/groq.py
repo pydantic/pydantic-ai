@@ -239,6 +239,11 @@ class GroqModel(Model[AsyncGroq]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters `search_settings` applies."""
+        # `WebSearchTool` is the only native tool Groq supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+
     async def request(
         self,
         messages: list[ModelMessage],

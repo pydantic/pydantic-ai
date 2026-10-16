@@ -1314,6 +1314,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
+        return native_tool.restricting_settings
+
     @cached_property
     def profile(self) -> OpenAIModelProfile:
         """The model profile.
@@ -2511,6 +2515,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return frozenset(
             {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
         )
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
+        return frozenset()
 
     async def compact_messages(
         self,
