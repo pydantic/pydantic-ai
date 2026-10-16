@@ -146,6 +146,15 @@ class MCPStore:
             self.save(data.model_copy(update={'trusted_projects': trusted}))
         return revoked
 
+    def review(self, path: Path) -> str:
+        """A project file's text, to read before trusting it, or why it cannot be read."""
+        if not _regular(path):
+            return 'A symlink, which is never trusted.'
+        try:
+            return _read_regular(path).decode(errors='replace')
+        except OSError as exc:
+            return f'Cannot read it: {exc}'
+
     def project_servers(self) -> dict[Path, Servers]:
         """Each trusted project file's servers, in precedence order; absent and untrusted files are left out."""
         accepted = self.load().trusted_projects

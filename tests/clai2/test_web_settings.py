@@ -1,9 +1,9 @@
-"""Commands' own menus in the web UI: `/set`, `/theme`, and `/spinner` shown in the page instead of the terminal."""
+"""Commands' own menus in the web UI: `/set`, `/theme`, `/spinner`, and `/mcp` shown in the page instead of the terminal."""
 
 import io
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
@@ -17,12 +17,14 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     SettingsChanged,
     StatusChanged,
     ThemeChanged,
+    TurnEnded,
 )
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.mcp import MCPPlugin, MCPSettings, MCPStore
+from pydantic_clai2.plugins import PluginHost, collect
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
@@ -85,6 +87,8 @@ def test_the_set_menu_edits_settings_from_the_page(make_web: MakeWeb) -> None:
         'secret': False,
         'note': '',
         'action': False,
+        'menu': False,
+        'button': '',
     }
     assert fields(web_, 'settings').keys() == rows.keys()
     with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
@@ -196,6 +200,40 @@ def test_settings_save_one_at_a_time(tmp_path: Path) -> None:
     assert not context.edits.locked()
 
 
+def test_mcp_servers_are_managed_from_the_page(make_web: MakeWeb, tmp_path: Path) -> None:
+    """Bare `/mcp` opens its menu in the page, whose actions run `/mcp`'s own form and subcommands there."""
+    web_ = make_web(Agent(TestModel()))
+    store = MCPStore(tmp_path / 'mcp', workspace=tmp_path)
+    host = PluginHost[None](name='mcp', console=Console(file=io.StringIO()), settings={})
+    web_.shell.commands.register_many(collect(MCPPlugin(host, MCPSettings(), store=store)).commands)
+    assert list(fields(web_, 'mcp')) == ['add']
+    with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
+        socket.receive_text()
+        assert web_.post('/api/input', {'text': '/mcp'}).json() == {'menu': 'mcp'}
+        with ThreadPoolExecutor(1) as pool:
+            action = pool.submit(web_.post, '/api/commands/mcp/fields/add/action')
+            answers = ['name', 'files', 'json', '{"command": "uvx", "args": ["files"]}', 'save']
+            for answer in answers:
+                dialog = receive_until(socket, DialogOpened)[1].dialog
+                if dialog.kind == 'text' and dialog.label == 'JSON':
+                    assert '\n' in dialog.initial, 'the page edits the indented JSON'
+                    rejected = web_.post(f'/api/dialogs/{dialog.id}', {'value': '{broken'})
+                    assert rejected.status_code == 400 and rejected.json()['detail'].startswith('Invalid JSON')
+                assert web_.post(f'/api/dialogs/{dialog.id}', {'value': answer}).status_code == 204
+            done = action.result(timeout=10).json()
+        receive_until(socket, SettingsChanged)
+    [message] = done['messages']
+    assert message.startswith('Added files.') and message.splitlines()[0] in terminal(web_)
+    assert store.load().servers['files'].model_dump(exclude_defaults=True) == {
+        'type': 'stdio',
+        'command': 'uvx',
+        'args': ['files'],
+    }
+    shown = {field['key']: field for field in done['menu']['fields']}
+    assert shown['server.files']['value'] == 'ready' and shown['server.files']['action'] is True
+    assert web_.post('/api/commands/mcp/fields/server.files', {'value': 'off'}).status_code == 400
+
+
 def test_a_host_finds_only_declared_available_menus() -> None:
     commands = Commands()
     menu = SettingsMenu(source=Counter(counted=[]))
@@ -211,3 +249,92 @@ def test_a_host_finds_only_declared_available_menus() -> None:
     assert host.command_menu('missing') is None
     assert PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}).command_menu('shown') is None
     assert commands.get('hidden') is None and commands.get('plain') is not None
+
+
+def test_system_prompt_menu_edits_your_instructions_in_the_page(make_web: MakeWeb) -> None:
+    """`/system_prompt` opens its menu here: a multi-line dialog edits yours, and a read-only one shows the prompt."""
+    web_ = make_web(Agent(TestModel()))
+    assert web_.post('/api/input', {'text': '/system_prompt'}).json() == {'menu': 'system_prompt'}
+    rows = fields(web_, 'system_prompt')
+    assert [(key, row['button'], row['action']) for key, row in rows.items()] == [
+        ('instructions', 'Edit…', True),
+        ('append', 'Append…', True),
+        ('prompt', 'View…', True),
+    ]
+    with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
+        socket.receive_text()
+        with ThreadPoolExecutor(1) as pool:
+            action = pool.submit(web_.post, '/api/commands/system_prompt/fields/instructions/action')
+            dialog = receive_until(socket, DialogOpened)[1].dialog
+            assert (dialog.kind, dialog.multiline, dialog.secret) == ('text', True, False)
+            answered = web_.post(f'/api/dialogs/{dialog.id}', {'value': ' Be brief.\n\nUse British spelling. '})
+            assert answered.status_code == 204
+            done = action.result(timeout=10).json()
+            assert done['messages'] == ['Saved your instructions. They apply from your next prompt.']
+            assert done['menu']['fields'][0]['value'] == 'Be brief. (3 lines)'
+            assert web_.shell.context.settings.instructions == 'Be brief.\n\nUse British spelling.'
+            assert 'Saved your instructions.' in terminal(web_)
+
+            viewing = pool.submit(web_.post, '/api/commands/system_prompt/fields/prompt/action')
+            dialog = receive_until(socket, DialogOpened)[1].dialog
+            assert dialog.kind == 'view' and dialog.text.startswith('Nothing was sent in this conversation yet.')
+            assert web_.post(f'/api/dialogs/{dialog.id}', {'value': 'closed'}).status_code == 204
+            assert viewing.result(timeout=10).json()['messages'] == []
+
+
+def test_usage_and_cost_notices_carry_the_figures_they_report(make_web: MakeWeb) -> None:
+    web_ = make_web(Agent(TestModel()))
+    with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'hello'})
+        receive_until(socket, TurnEnded)
+        web_.post('/api/input', {'text': '/usage'})
+        usage = receive_until(socket, Notice)[1]
+        assert usage.command == '/usage' and usage.usage is not None
+        [turn] = usage.usage.turns
+        assert usage.usage.total == turn and turn.requests >= 1
+        assert usage.usage.total.input_tokens > 0 and usage.usage.unpriced == ['test']
+        assert usage.text.startswith('Retained history cost unknown'), 'the terminal text is unchanged'
+        web_.post('/api/input', {'text': '/cost'})
+        cost = receive_until(socket, Notice)[1]
+        assert cost.usage == usage.usage
+        web_.post('/api/input', {'text': '/help'})
+        assert receive_until(socket, Notice)[1].usage is None, 'other commands carry none'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_the_about_menu_shows_the_version_and_asks_before_updating(make_web: MakeWeb) -> None:
+    web_ = make_web(Agent(TestModel()))
+    assert web_.post('/api/input', {'text': '/update'}).json() == {'menu': 'update'}, 'bare, it only opens the menu'
+    rows = fields(web_, 'update')
+    version = rows['version']
+    assert (version['button'], version['action'], version['value'] == version['default']) == ('Update…', True, True)
+    assert rows['updates.channel']['value'] == 'stable'
+    assert web_.post('/api/commands/update/fields/updates.channel', {'value': 'main'}).status_code == 200
+    assert web_.shell.context.settings.update_channel == 'main'
+    # The real `/update` reinstalls CLAI: this one only says it ran.
+    original = web_.shell.commands.get('update')
+    assert original is not None
+    web_.shell.commands.unregister(['update'])
+
+    def pretend(args: list[str]) -> str:
+        return 'Pretended to update.'
+
+    web_.shell.commands.register(replace(original, handler=pretend))
+    with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
+        socket.receive_text()
+        running = web_.run()
+        with ThreadPoolExecutor(1) as pool:
+            for answer, messages in (('no', []), ('yes', ['Running /update on the main channel.'])):
+                action = pool.submit(web_.post, '/api/commands/update/fields/version/action')
+                dialog = receive_until(socket, DialogOpened)[1].dialog
+                assert (dialog.kind, dialog.yes, dialog.no) == ('confirm', 'Update', 'Cancel')
+                assert 'main channel' in dialog.description
+                web_.post(f'/api/dialogs/{dialog.id}', {'value': answer})
+                assert action.result(timeout=10).json()['messages'] == messages
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.command, notice.text) == ('/update', 'Pretended to update.')
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)

@@ -63,12 +63,16 @@ class CheckingDialogs:
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
         description: str = '',
+        multiline: bool = False,
     ) -> str | None:
         assert check is not None
         self.checks.extend(check(text) for text in self.tries)
         return None
 
     async def confirm(self, *, title: str, yes: str, no: str, description: str = '') -> bool:
+        raise AssertionError('not asked')  # pragma: no cover
+
+    async def view(self, *, title: str, text: str) -> None:
         raise AssertionError('not asked')  # pragma: no cover
 
     async def wait(
