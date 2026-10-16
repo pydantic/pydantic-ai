@@ -311,6 +311,23 @@ class LiveSession(Protocol):
         """Whether a turn runs in the session now."""
         ...
 
+    @property
+    def queued(self) -> int:
+        """How many inputs wait for the session's running turn or command to end."""
+        ...
+
+    @property
+    def watchers(self) -> int:
+        """How many `watch` calls have not stopped watching yet."""
+        ...
+
+    def watch(self) -> Callable[[], None]:
+        """Count a watcher, such as a browser showing the session, until the returned function is called.
+
+        A watched session is never closed for being idle. Calling the returned function again does nothing.
+        """
+        ...
+
     def send_input(self, text: str, /) -> None:
         """Enter `text` at the session's prompt, as `PluginHost.send_input` does."""
         ...
@@ -337,6 +354,32 @@ class LiveSessions(Protocol):
 
     def current(self) -> LiveSession | None:
         """The session whose moment, command, or run is being handled now; `None` outside one."""
+        ...
+
+    async def open(self, conversation_id: str, /) -> LiveSession:
+        """The live session holding a saved conversation, resuming it in a new one, in its own directory, if none does.
+
+        Concurrent calls for one conversation return the same session. Raises `LookupError` for an unknown
+        conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        """
+        ...
+
+    async def new(self, workspace: Path | None = None) -> LiveSession:
+        """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in."""
+        ...
+
+    async def close(self, live_id: str, /) -> None:
+        """Close a session CLAI opened with `open` or `new`, cancelling its turn; its plugins end with `'exit'`.
+
+        Raises `LookupError` when none is live and `ValueError` for one its own driver runs, such as the terminal's.
+        """
+        ...
+
+    def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call `listener` whenever a session opens or closes, or its running, queued, or watched state may change.
+
+        It is called synchronously, so it must be quick and not raise. The returned function unsubscribes.
+        """
         ...
 
 

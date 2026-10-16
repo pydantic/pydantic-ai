@@ -216,6 +216,8 @@ async def chat(
         async with agent:
             while True:
                 reason: SessionEndReason = 'error'
+                # The terminal shows this session, the process's only one.
+                shell.process.live.focused = shell.live_session.id
                 with theme.use(
                     lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None
                 ):
@@ -267,7 +269,7 @@ async def chat(
                     finally:
                         served = _serving(shell)  # Before closing the plugins stops the web UI.
                         with transcript.capture(console):
-                            await shell.loader.close(reason)
+                            await shell.close(reason)
                 if not shell.reload_requested:
                     if (relaunch := shell.relaunch(web=served)) is not None:
                         raise relaunch

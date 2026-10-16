@@ -91,11 +91,25 @@ def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> 
 class LiveRuntime:
     """A live session as `PluginHost.live` lists it, read through the host its session plugins get."""
 
-    def __init__(self, *, live_id: str, host: PluginHost[None], running: Callable[[], bool]) -> None:
-        """`host` carries the session's context; `running` says whether a turn runs in it."""
+    def __init__(
+        self,
+        *,
+        live_id: str,
+        host: PluginHost[None],
+        running: Callable[[], bool],
+        queued: Callable[[], int] = lambda: 0,
+        changed: Callable[[], None] = lambda: None,
+    ) -> None:
+        """`host` carries the session's context; `running` says whether a turn runs in it.
+
+        `queued` says how much input waits, and `changed` tells the process's `LiveSessions` that its state may have changed.
+        """
         self._id = live_id
         self._host = host
         self._running = running
+        self._queued = queued
+        self._changed = changed
+        self._watchers = 0
 
     @property
     def id(self) -> str:
@@ -137,6 +151,35 @@ class LiveRuntime:
         """Whether a turn runs in the session now."""
         return self._running()
 
+    @property
+    def queued(self) -> int:
+        """How many inputs wait for the session's running turn or command to end."""
+        return self._queued()
+
+    @property
+    def watchers(self) -> int:
+        """How many `watch` calls have not stopped watching yet."""
+        return self._watchers
+
+    def watch(self) -> Callable[[], None]:
+        """Count a watcher, such as a browser showing the session, until the returned function is called."""
+        self._watchers += 1
+        self.changed()
+        watching = True
+
+        def unwatch() -> None:
+            nonlocal watching
+            if watching:
+                watching = False
+                self._watchers -= 1
+                self.changed()
+
+        return unwatch
+
+    def changed(self) -> None:
+        """Tell the listeners of the process's live sessions that this one's state may have changed."""
+        self._changed()
+
     def send_input(self, text: str, /) -> None:
         """Enter `text` at the session's prompt."""
         self._host.send_input(text)
@@ -164,11 +207,15 @@ def handling(session: LiveRuntime) -> Generator[None]:
         _CURRENT.reset(token)
 
 
-class _Live:
-    """`LiveSessions` over the sessions joined to one `ProcessPlugins`."""
+class JoinedSessions:
+    """`LiveSessions` over a list of sessions, by default those joined to one `ProcessPlugins`.
+
+    It opens and closes none: a `ClaiProcess` replaces it with its `LiveRuntimes`, which do.
+    """
 
     def __init__(self, sessions: Callable[[], list[LiveRuntime]]) -> None:
         self._sessions = sessions
+        self._listeners: list[Callable[[], None]] = []
 
     def listing(self) -> list[LiveSession]:
         return list(self._sessions())
@@ -182,6 +229,32 @@ class _Live:
     def current(self) -> LiveSession | None:
         current = _CURRENT.get()
         return current if any(session is current for session in self._sessions()) else None
+
+    async def open(self, conversation_id: str, /) -> LiveSession:
+        raise RuntimeError(_OPENS_NONE)
+
+    async def new(self, workspace: Path | None = None) -> LiveSession:
+        raise RuntimeError(_OPENS_NONE)
+
+    async def close(self, live_id: str, /) -> None:
+        raise RuntimeError(_OPENS_NONE)
+
+    def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return unsubscribe
+
+    def changed(self, session: LiveRuntime) -> None:
+        """Call every listener: `session`, or the listing, may have changed."""
+        for listener in list(self._listeners):
+            listener()
+
+
+_OPENS_NONE = 'This CLAI opens no other live sessions.'
 
 
 class ProcessPlugins(Generic[DepsT]):
@@ -205,8 +278,8 @@ class ProcessPlugins(Generic[DepsT]):
         self._shared: dict[str, LoadedPlugin[DepsT]] = {}
         # A process-scoped plugin unloaded while turns run ends after the last of them: pending turns, by `id`.
         self._ending: dict[int, int] = {}
-        self.live = _Live(lambda: [session.live_session for session in self._sessions])
-        """The live sessions, as process-scoped plugins see them through `host.live`."""
+        self.live: JoinedSessions = JoinedSessions(lambda: [session.live_session for session in self._sessions])
+        """The live sessions, as process-scoped plugins see them through `host.live`; `ClaiProcess` sets its own."""
 
     @property
     def plugins_dir(self) -> Path:

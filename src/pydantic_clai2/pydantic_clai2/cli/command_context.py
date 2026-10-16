@@ -43,6 +43,8 @@ class CommandContext:
 
     Differs for a plugin's `settings_from`, and for a chain, which takes its first model's.
     """
+    saved: Callable[[str], None] = lambda key: None
+    """Told the key `/set` saved or reset, once applied here, so the process's other live sessions can follow."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -150,10 +152,24 @@ class CommandContext:
         self._apply(key, Settings.model_validate(updated))
         return f'Reset {key}. ' + self._when(key)
 
+    def adopt(self, key: str, source: Settings) -> None:
+        """Apply `key` as `source`, another live session's settings, holds it now, unless the project file sets it here."""
+        if self.from_project(key):
+            return
+        field = SETTING_FIELDS[key]
+        updated = self.settings.model_dump(exclude_unset=True)
+        if field in source.model_fields_set:
+            updated[field] = source.model_dump(include={field})[field]
+        else:
+            updated.pop(field, None)
+        self.settings = Settings.model_validate(updated)
+        self.apply_setting(key, self.settings)
+
     def _apply(self, key: str, settings: Settings) -> None:
         self.settings = settings
         self.apply_setting(key, settings)
         telemetry.record('setting {setting} changed', setting=key, value=_shown(key, settings))
+        self.saved(key)
 
     def _when(self, key: str) -> str:
         when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'
