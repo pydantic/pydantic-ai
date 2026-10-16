@@ -68,6 +68,7 @@ current model and the saved default. Creating, editing, and renaming fallback ch
 terminal's `/model chains`. `/effort` typed in the composer opens a dialog with the active model's
 settings, effort among them, and `/fast` still toggles fast mode.
 
+<!-- From #10457 -->
 **Keys & accounts** (`#settings/keys`, or `/keys`, `/login`, or `/accounts` in the composer) lists
 your saved API keys by name, with what uses each, and your accounts in the order `PROVIDER@*` tries
 them. Each row's button asks what to do as the terminal's menus do: add, replace (masked), rename,
