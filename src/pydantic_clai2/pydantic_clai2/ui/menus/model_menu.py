@@ -27,6 +27,8 @@ from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 _HINT = 'type to filter - Enter add and use model - Ctrl+S settings - Esc close'
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_CONNECTS = ('github-copilot', 'openrouter', 'vllm')
+"""Providers `/model add` connects to first: a sign-in, or an address to discover models at."""
 
 
 @dataclass(frozen=True)
@@ -253,7 +255,7 @@ class ModelMenu:
 
     def providers(self) -> list[str]:
         """Unique provider prefixes from the merged catalog."""
-        return sorted({model.provider for model in self.models} | {'github-copilot', 'openrouter', 'vllm'})
+        return sorted({model.provider for model in self.models} | set(_CONNECTS))
 
     def build_providers(self) -> Menu:
         """Choose a provider before browsing its models."""
@@ -294,7 +296,7 @@ def run_model_flow(menu: ModelMenu, runners: Runners = TERMINAL, *, connect_prov
         selection = runners.run_list(menu.build_providers())
         if selection.cancelled or selection.item is None or not isinstance(selection.item.value, str):
             return messages
-        if selection.item.value in ('github-copilot', 'openrouter', 'vllm') and connect_provider:
+        if selection.item.value in _CONNECTS and connect_provider:
             raise _ConnectProvider(messages, provider=selection.item.value)
         provider_menu = menu.for_provider(selection.item.value)
         if _run_provider(provider_menu, runners, messages):
@@ -426,9 +428,6 @@ async def add_model(context: CommandContext, dialogs: Dialogs) -> list[str]:
         return [await to_thread.run_sync(menu.choose, name)]
 
 
-_CONNECTS = ('github-copilot', 'openrouter', 'vllm')
-
-
 async def model_settings_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
     """Pick a saved model to edit, or open a named one, without switching models."""
     if len(args) > 1:
@@ -482,10 +481,6 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
     )
 
 
-def _show_picker(context: CommandContext, runners: Runners, *, current: str | None) -> MenuResult:
-    return runners.run_list(build_model_settings_picker(context=context, current=current))
-
-
 def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
     values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
@@ -500,7 +495,9 @@ async def _pick_model_settings(context: CommandContext, runners: Runners) -> lis
     current = context.settings.model
     messages: list[str] = []
     while True:
-        result = await run_worker(partial(_show_picker, context, runners, current=current))
+        result = await run_worker(
+            lambda: runners.run_list(build_model_settings_picker(context=context, current=current))
+        )
         if result.cancelled or result.item is None or not isinstance(result.item.value, str):
             return messages
         current = result.item.value

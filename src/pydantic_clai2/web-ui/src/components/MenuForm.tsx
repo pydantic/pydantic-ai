@@ -45,8 +45,8 @@ export function MenuForm({
   group?: (field: MenuField) => string
   /** Show the menu's title above its rows, and label each row by the last part of its key. */
   titled?: boolean
-  /** The row that opens another menu to show open at first, such as the current model's. */
-  opened?: (field: MenuField) => boolean
+  /** The key of the row whose menu shows open at first, such as the current model's. */
+  opened?: (menu: MenuInfo) => string | undefined
   onError: (message: string) => void
   onNotice: (text: string) => void
 }) {
@@ -54,7 +54,7 @@ export function MenuForm({
   const [busy, setBusy] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
-  // `null` until the rows first load, when `opened` picks the first open row.
+  // `null` until the rows first load, when `opened` picks the row to show open.
   const [open, setOpen] = useState<string | null>(null)
   const request = useRef(0)
   const path = target.path?.join('\u0000')
@@ -65,7 +65,7 @@ export function MenuForm({
       const found = await api.menu(target)
       if (id !== request.current) return
       setMenu(found)
-      setOpen((current) => current ?? found.fields.find((field) => field.menu && opened?.(field))?.key ?? '')
+      setOpen((current) => current ?? opened?.(found) ?? '')
     } catch (error) {
       onError(message(error))
     }

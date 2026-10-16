@@ -728,7 +728,7 @@ def _submenu(menu: SettingsMenu, path: Sequence[str]) -> SettingsMenu:
     for key in path:
         build = menu.menus.get(key)
         if build is None:
-            raise LookupError(f'{menu.source.title} has no menu {key}.')
+            raise LookupError(f'{menu.source.title} has no menu {key!r}.')
         menu = build()
     return menu
 
@@ -769,7 +769,7 @@ async def _set_row(menu: SettingsMenu, *, path: Sequence[str], key: str, value: 
     """Set a row as its menu does: empty text resets it, and a value the row rejects raises `ValueError`."""
     menu = await to_thread.run_sync(_submenu, menu, path)
     if key in menu.menus:
-        raise LookupError(f'{menu.source.title}: {key} opens a menu; it takes no value.')
+        raise LookupError(f'{menu.source.title}: {key!r} opens a menu; it takes no value.')
     row = await to_thread.run_sync(_row, menu, key)
     text = (value or '').strip()
     if not text:
