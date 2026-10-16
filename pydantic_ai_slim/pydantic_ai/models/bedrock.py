@@ -1096,7 +1096,7 @@ class BedrockConverseModel(Model[BaseClient]):
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
-        bedrock_messages: Sequence[MessageUnionTypeDef] = (),
+        bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> dict[str, Any] | None:
         """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k`, `thinking` and `'none'`."""
         existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
@@ -1280,8 +1280,7 @@ class BedrockConverseModel(Model[BaseClient]):
             # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
             # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
             # a tool call the tools stay: Anthropic models then get a native `none` via `additionalModelRequestFields`
-            # (see `_build_additional_model_request_fields`), while other models can still call them until core enforces
-            # `tool_choice` when executing tool calls.
+            # (see `_build_additional_model_request_fields`), while other models aren't prevented from calling them.
             if not _has_tool_blocks(bedrock_messages):
                 return None
             tool_choice = None

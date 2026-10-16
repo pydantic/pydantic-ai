@@ -3683,7 +3683,7 @@ class _NoToolsAfterFirstStep(AbstractCapability[Any]):
 
 @pytest.mark.vcr()
 async def test_bedrock_tool_choice_none_after_tool_call_claude(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+    allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
     """`tool_choice='none'` after a tool call must keep `toolConfig`, which Converse requires alongside `toolUse` blocks.
 
@@ -3698,24 +3698,46 @@ async def test_bedrock_tool_choice_none_after_tool_call_claude(
         """Look something up. Must be called twice."""
         return 'partial; call lookup again with q="y" to get the answer'
 
-    result = await agent.run('Use lookup with q="x" and follow its instructions, then answer.')
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('Use lookup with q="x" and follow its instructions, then answer.')
 
     assert [
         part.tool_name for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
     ] == ['lookup']
-    first, second = (request_json(request) for request in vcr.requests)
-    assert 'toolChoice' not in second['toolConfig']
+    first, second = sent_requests
     assert second['toolConfig']['tools'] == first['toolConfig']['tools']
-    assert second['additionalModelRequestFields'] == {'tool_choice': {'type': 'none'}}
+    assert {k: second.get(k) for k in ('toolConfig', 'additionalModelRequestFields')} == snapshot(
+        {
+            'toolConfig': {
+                'tools': [
+                    {
+                        'toolSpec': {
+                            'name': 'lookup',
+                            'description': 'Look something up. Must be called twice.',
+                            'inputSchema': {
+                                'json': {
+                                    'additionalProperties': False,
+                                    'properties': {'q': {'type': 'string'}},
+                                    'required': ['q'],
+                                    'type': 'object',
+                                }
+                            },
+                        }
+                    }
+                ]
+            },
+            'additionalModelRequestFields': {'tool_choice': {'type': 'none'}},
+        }
+    )
 
 
 @pytest.mark.vcr()
 async def test_bedrock_tool_choice_none_after_tool_call_nova(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+    allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Without a native `none`, the tools are kept (unenforced) once history has a tool call, so Converse accepts it.
+    """Without a native `none`, the tools are kept once history has a tool call, so Converse accepts it.
 
-    The model can still call them until core enforces `tool_choice` when executing tool calls.
+    `'none'` isn't enforced then: the model isn't prevented from calling the tools.
     """
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(model, capabilities=[_NoToolsAfterFirstStep()])
@@ -3725,23 +3747,47 @@ async def test_bedrock_tool_choice_none_after_tool_call_nova(
         """Look something up."""
         return 'the answer is 42'
 
-    result = await agent.run('Use lookup with q="x", then tell me the answer.')
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('Use lookup with q="x", then tell me the answer.')
 
     assert '42' in result.output
-    first, second = (request_json(request) for request in vcr.requests)
-    assert second['toolConfig'] == {'tools': first['toolConfig']['tools']}
-    assert 'additionalModelRequestFields' not in second
+    first, second = sent_requests
+    assert second['toolConfig']['tools'] == first['toolConfig']['tools']
+    assert {k: second.get(k) for k in ('toolConfig', 'additionalModelRequestFields')} == snapshot(
+        {
+            'toolConfig': {
+                'tools': [
+                    {
+                        'toolSpec': {
+                            'name': 'lookup',
+                            'inputSchema': {
+                                'json': {
+                                    'additionalProperties': False,
+                                    'properties': {'q': {'type': 'string'}},
+                                    'required': ['q'],
+                                    'type': 'object',
+                                }
+                            },
+                            'description': 'Look something up.',
+                        }
+                    }
+                ]
+            },
+            'additionalModelRequestFields': None,
+        }
+    )
 
 
-@pytest.mark.parametrize('model_name', ['us.amazon.nova-pro-v1:0', 'us.anthropic.claude-haiku-4-5-20251001-v1:0'])
-async def test_bedrock_tool_choice_none_drops_tools_without_tool_history(
-    bedrock_provider: BedrockProvider, model_name: str
-):
-    """While history has no tool blocks, `'none'` still drops the tools, which Converse then accepts."""
+async def test_bedrock_tool_choice_none_drops_tools_without_tool_history(bedrock_provider: BedrockProvider):
+    """While history has no tool blocks, `'none'` still drops the tools, which Converse then accepts.
+
+    Calls the mapping helpers directly because Bedrock cassettes don't match on the body, so a recording couldn't pin
+    the payload. Claude's no-history case is recorded in `test_tool_choice_matrix[none-bedrock]`.
+    """
     tool_def = ToolDefinition(name='my_tool', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
     settings = BedrockModelSettings(tool_choice='none')
-    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     user_turn: MessageUnionTypeDef = {'role': 'user', 'content': [{'text': 'hi'}]}
 
     assert model._map_tool_config(params, settings, [user_turn]) is None  # pyright: ignore[reportPrivateUsage]
@@ -3749,7 +3795,10 @@ async def test_bedrock_tool_choice_none_drops_tools_without_tool_history(
 
 
 async def test_bedrock_tool_choice_none_claude_respects_user_tool_choice_field(bedrock_provider: BedrockProvider):
-    """A `tool_choice` the user put in `bedrock_additional_model_requests_fields` wins over the native `none`."""
+    """A `tool_choice` the user put in `bedrock_additional_model_requests_fields` wins over the native `none`.
+
+    Calls the helper directly: it's a pure precedence rule over settings, so a recording would add nothing.
+    """
     tool_def = ToolDefinition(name='my_tool', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
     settings = BedrockModelSettings(
