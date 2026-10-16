@@ -534,6 +534,8 @@ class GoogleModel(Model[Client]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
 

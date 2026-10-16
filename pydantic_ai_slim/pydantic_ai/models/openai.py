@@ -1228,6 +1228,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'top_k'})
+
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1344,6 +1346,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        # The profile adds what a particular model or provider rejects, like `max_tokens` on the Codex backend.
+        return self.unsupported_settings | frozenset(self.profile.get('openai_unsupported_model_settings', ()))
 
     async def request(
         self,
@@ -2368,6 +2374,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'stop_sequences', 'top_k'}
+    )
+
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
@@ -2457,6 +2467,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        # The profile adds what a particular model or provider rejects, like `max_tokens` on the Codex backend.
+        return self.unsupported_settings | frozenset(self.profile.get('openai_unsupported_model_settings', ()))
 
     @property
     def system(self) -> str:

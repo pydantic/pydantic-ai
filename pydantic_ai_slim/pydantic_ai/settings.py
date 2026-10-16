@@ -144,6 +144,13 @@ class ModelSettings(TypedDict, total=False):
     `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
     parentheses after the name.
 
+    A model ignores a setting it doesn't support, so the same settings work across models. For the settings
+    whose absence changes what the request guarantees (`timeout`, `max_retries`, `stop_sequences`,
+    `parallel_tool_calls=False`, `extra_headers` and `extra_body`), it emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the others, like `temperature`,
+    are ignored silently. A model class declares what it ignores in
+    [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings].
+
     Being listed means Pydantic AI sends the setting, not that the service honors it: the
     OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
     provider behind one of them may ignore a field its own API doesn't define, or reject it. Where we
