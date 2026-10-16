@@ -701,7 +701,8 @@ _(This example is complete, it can be run "as is")_
 
 As with [web search](#restricting-parameters), `max_uses`, `allowed_domains`, and `blocked_domains` restrict what the
 tool may do: on a model that can't apply one that is set, the tool is treated as unsupported, so a local fallback runs
-in its place if one is provided, and a [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+in its place if one is provided, an `optional=True` tool is left out, and a
+[`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
