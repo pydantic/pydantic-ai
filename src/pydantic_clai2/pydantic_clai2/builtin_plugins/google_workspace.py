@@ -27,6 +27,7 @@ from pydantic_clai2.config.api_keys import (
 )
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -272,7 +273,7 @@ class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
                 include_instructions=settings.include_instructions,
             )
 
-        return (workspace,)
+        return (WorkspacelessCapability[DepsT](workspace),)
 
     def get_commands(self) -> Sequence[Command]:
         return (

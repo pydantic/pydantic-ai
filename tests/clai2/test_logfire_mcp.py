@@ -21,8 +21,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
-from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_ai_harness.skills import Skills
+from pydantic_clai2 import DEFAULT_PLUGINS, Session
 from pydantic_clai2.builtin_plugins.logfire_destination import OTHER, REGIONS, Destination, remember, remembered
 from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPPlugin, LogfireMCPSource
 from pydantic_clai2.commands import Commands
@@ -35,6 +37,7 @@ from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners, is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
+from tests.clai2.test_workspace_defaults import per_run
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire_mcp')
 CLOSE = MenuResult(cancelled=True)
@@ -63,7 +66,8 @@ class Shell:
 
     def capability(self) -> LogfireMCP[None]:
         """The connection chosen at session start, before a run resolves its saved key."""
-        [factory] = self.loader.capabilities()
+        [capability] = self.loader.capabilities()
+        factory = per_run(capability)
         assert inspect.ismethod(factory)
         plugin = factory.__self__
         assert isinstance(plugin, LogfireMCPPlugin) and plugin.capability is not None
@@ -71,7 +75,8 @@ class Shell:
 
     async def run_capability(self) -> LogfireMCP[None] | None:
         """What a run gets."""
-        [factory] = self.loader.capabilities()
+        [capability] = self.loader.capabilities()
+        factory = per_run(capability)
         assert inspect.ismethod(factory)
         plugin = factory.__self__
         assert isinstance(plugin, LogfireMCPPlugin)
@@ -354,6 +359,27 @@ async def test_an_environment_key_gives_an_agent_run_the_logfire_tools(
     assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
     # `None` lets `LogfireMCP` read the environment itself.
     assert connected == [None]
+
+
+async def test_a_session_with_logfire_and_skills_reads_the_skills_from_the_launch_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: `logfire_mcp`'s per-run capability left `Skills` without a workspace in `for_run`.
+    stub_connections(monkeypatch)
+    monkeypatch.setenv('LOGFIRE_API_KEY', 'env-key')
+    monkeypatch.chdir(tmp_path)
+    skill = tmp_path / '.agents' / 'skills' / 'review'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\ndescription: Review the change.\n---\n\nReview it.\n', encoding='utf-8')
+    shell = Shell(tmp_path, {'read_only': False})
+    await shell.loader.enable('logfire_mcp')
+    model = TestModel(call_tools=['logfire_query_run'])
+    plugins = [Coder[None](repo_context=False, sub_agents=False), Skills[None]('.agents/skills')]
+    session = Session(Agent(model, deps_type=type(None)), deps=None, plugins=[*plugins, *shell.loader.capabilities()])
+    result = await session.prompt('Query Logfire.')
+    assert result.output == '{"logfire_query_run":"rows"}'
+    assert model.last_model_request_parameters is not None
+    assert 'load_capability' in [tool.name for tool in model.last_model_request_parameters.function_tools]
 
 
 async def test_browser_sign_in_is_the_default_and_runs_get_no_tools_until_signed_in(

@@ -43,6 +43,7 @@ from pydantic_clai2.logfire_oauth import DeviceAuth, LogfireSignIn, forget, stat
 from pydantic_clai2.mcp import http_client
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, warn_if_signed_out
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
@@ -95,7 +96,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
         """Built by `on_session_start`; runs that start earlier get no Logfire tools."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (self._for_run,)
+        return (WorkspacelessCapability[None](self._for_run),)
 
     def get_commands(self) -> Sequence[Command]:
         async def command(args: list[str]) -> str:

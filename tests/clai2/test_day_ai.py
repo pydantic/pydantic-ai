@@ -31,6 +31,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick
 
@@ -90,7 +91,7 @@ class Shell:
         assert entry.loaded is not None
         plugin = entry.loaded.plugin
         assert isinstance(plugin, day_ai.DayAIPlugin)
-        assert self.loader.capabilities() == [plugin.for_run]
+        assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
         return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
 
     async def client(self) -> object:

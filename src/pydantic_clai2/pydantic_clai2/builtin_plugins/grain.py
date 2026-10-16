@@ -28,6 +28,7 @@ from pydantic_clai2.config.credential_store import delete_credentials, load_code
 from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, warn_if_signed_out
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -141,7 +142,7 @@ class GrainPlugin(Plugin[GrainSettings]):
         self.connection = GrainConnection(host)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (self.connection.capability,)
+        return (WorkspacelessCapability[None](self.connection.capability),)
 
     def get_commands(self) -> Sequence[Command]:
         return (

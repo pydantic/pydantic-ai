@@ -37,6 +37,7 @@ from pydantic_clai2.plugins.sign_in import (
     sign_out_now,
     warn_if_signed_out,
 )
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.key_picker import pick_key
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -98,7 +99,7 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
     """Choose the connection per run, so a new key, a sign-in, or a logout applies without a reload."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (self._connect,)
+        return (WorkspacelessCapability[DepsT](self._connect),)
 
     def get_commands(self) -> Sequence[Command]:
         return (

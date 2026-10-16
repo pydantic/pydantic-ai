@@ -42,6 +42,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick
 
@@ -104,7 +105,7 @@ async def for_run(plugin: LoadedPlugin[None]) -> Grain[None] | None:
     """What the plugin gives the next run, from its per-run factory."""
     grain_plugin = plugin.plugin
     assert isinstance(grain_plugin, GrainPlugin)
-    assert list(plugin.capabilities) == [grain_plugin.connection.capability]
+    assert list(plugin.capabilities) == [WorkspacelessCapability(grain_plugin.connection.capability)]
     return await grain_plugin.connection.capability(run_context())
 
 
