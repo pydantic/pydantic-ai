@@ -65,7 +65,8 @@ export function MenuForm({
       const found = await api.menu(target)
       if (id !== request.current) return
       setMenu(found)
-      setOpen((current) => current ?? opened?.(found) ?? '')
+      const first = opened?.(found)
+      setOpen((current) => current ?? found.fields.find((field) => field.menu && field.key === first)?.key ?? '')
     } catch (error) {
       onError(message(error))
     }

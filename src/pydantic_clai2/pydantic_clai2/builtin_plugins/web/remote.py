@@ -784,7 +784,7 @@ async def _run_action(menu: SettingsMenu, *, path: Sequence[str], key: str, dial
     menu = await to_thread.run_sync(_submenu, menu, path)
     action = menu.actions.get(key)
     if action is None:
-        raise LookupError(f'{owner} has no action {key}.')
+        raise LookupError(f'{owner} has no action {key!r}.')
     return list(await action(dialogs))
 
 
