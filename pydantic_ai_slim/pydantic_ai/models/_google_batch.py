@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NotRequired, cast
 
@@ -40,9 +39,10 @@ from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict, now_utc
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests
+from ._batch_codec import batch_priced, prepare_decode, require_ended, shared_group, unrun_error
 from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 
 if TYPE_CHECKING:
@@ -127,13 +127,7 @@ async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatc
 
 async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
-    if not requests:
-        raise UserError('A batch must contain at least one request.')
-    group = requests[0].group
-    if any(request.group != group for request in requests):
-        raise UserError(
-            'Requests in one Gemini batch must share a `group`; these came from different client configurations or models.'
-        )
+    group = shared_group(requests, 'Gemini')
     _validate_batch_group(model, group)
     client = _batch_client(model)
     lines = (
@@ -165,8 +159,7 @@ async def batch_status(model: GoogleModel, batch: Batch) -> Batch:
 
 async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
-    if batch.status != 'ended':
-        raise UserError(f'Batch {batch.id!r} has not ended yet; check its status with `batch_status()` first.')
+    require_ended(batch)
     _validate_batch_group(model, batch.group)
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
@@ -203,16 +196,9 @@ def batch_decode(model: GoogleModel, result: BatchResult, request: BatchRequest)
         response = GenerateContentResponse._from_response(  # pyright: ignore[reportPrivateUsage]
             response=_GenerateContentResponse_from_mldev(json.loads(result.body)), kwargs={}
         )
-        with warnings.catch_warnings():
-            # `batch_encode` already warned about any setting the request dropped.
-            warnings.simplefilter('ignore')
-            _, model_request_parameters = model.prepare_request(
-                request.model_settings, request.model_request_parameters
-            )
+        _, model_request_parameters = prepare_decode(model, request)
         model_response = model._process_response(response, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-        # Selects batch prices when `genai-prices` calculates the response's cost.
-        model_response.provider_details = {**(model_response.provider_details or {}), 'processing': 'batch'}
-        return model_response
+        return batch_priced(model_response)
     if result.status == 'errored':
         assert result.body is not None
         error = json.loads(result.body)
@@ -222,7 +208,7 @@ def batch_decode(model: GoogleModel, result: BatchResult, request: BatchRequest)
             model_name=model.model_name,
             body={'error': error},
         )
-    raise ModelAPIError(model.model_name, f'The batch request was {result.status} before the model ran it.')
+    raise unrun_error(model.model_name, result)
 
 
 def _to_batch(

@@ -180,7 +180,7 @@ def _resolve_settings(
 ) -> _ResolvedBatchSettings:
     """Fill in the defaults of `settings` and validate them, defaulting to `max_requests` or else the provider limit."""
     if (provider_limit := model.batch_max_requests) is None:
-        raise UserError(f'{type(model).__name__} {model.model_name!r} has no batch API.')
+        raise UserError(f'`{type(model).__name__}` {model.model_name!r} has no batch API.')
     settings = settings or {}
     resolved = _ResolvedBatchSettings(
         max_requests=settings.get('max_requests', max_requests or provider_limit),

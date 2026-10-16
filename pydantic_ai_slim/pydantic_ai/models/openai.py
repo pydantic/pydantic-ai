@@ -214,8 +214,6 @@ try:
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     OMIT = omit
-
-    from . import _openai_batch
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -2397,6 +2395,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
+def _batch_module():
+    """The batch module, imported on first use, so an error importing it doesn't surface as a missing `openai` SDK."""
+    from . import _openai_batch
+
+    return _openai_batch
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -2561,26 +2566,26 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return 50_000
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
-        return await _openai_batch.batch_encode(self, request)
+        return await _batch_module().batch_encode(self, request)
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _openai_batch.batch_create(self, requests)
+            return await _batch_module().batch_create(self, requests)
 
     async def batch_status(self, batch: Batch) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _openai_batch.batch_status(self, batch)
+            return await _batch_module().batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _openai_batch.batch_results(self, batch)
+            return await _batch_module().batch_results(self, batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _openai_batch.batch_cancel(self, batch)
+            return await _batch_module().batch_cancel(self, batch)
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
-        return _openai_batch.batch_decode(self, result, request)
+        return _batch_module().batch_decode(self, result, request)
 
     @property
     def model_name(self) -> OpenAIModelName:

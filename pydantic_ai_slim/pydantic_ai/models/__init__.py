@@ -562,7 +562,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Raises a [`UserError`][pydantic_ai.exceptions.UserError] for a setting the batch API can't honor.
         """
-        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         """Submit encoded requests that share a `group` as one batch job.
@@ -570,11 +570,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         A failed submission is not retried, because the provider may have created the job before the connection
         failed: check the provider's jobs before submitting the requests again.
         """
-        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     async def batch_status(self, batch: Batch) -> Batch:
         """Retrieve the current state of a batch job, without its results."""
-        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         """Retrieve the results of a batch job that has ended.
@@ -585,14 +585,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Raises a [`UserError`][pydantic_ai.exceptions.UserError] if `batch` hasn't ended; check with
         [`batch_status`][pydantic_ai.models.Model.batch_status] first.
         """
-        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         """Ask the provider to cancel a batch job, and return its updated state.
 
         Requests the provider already completed may still be billed.
         """
-        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
         """Turn a batch result into the response the request would have produced on its own.
@@ -601,7 +601,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         saying the request expired or was canceled before the model ran it. `request` must be the request the result
         belongs to, as its settings and parameters determine how the result is read; its messages aren't used.
         """
-        raise NotImplementedError(f'{self.__class__.__name__} does not support batch requests.')
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""

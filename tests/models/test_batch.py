@@ -52,7 +52,7 @@ def test_batch_model_needs_a_model_with_a_batch_api() -> None:
         def batch_max_requests(self) -> int | None:
             return None
 
-    with pytest.raises(UserError, match=r"NoBatchModel 'test' has no batch API."):
+    with pytest.raises(UserError, match=r"`NoBatchModel` 'test' has no batch API\."):
         BatchModel(NoBatchModel())
 
 
@@ -377,7 +377,7 @@ async def test_model_request_batch_validates_its_input() -> None:
             return None
 
     request = BatchRequest(custom_id='same', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])
-    with pytest.raises(UserError, match=r"NoBatchModel 'test' has no batch API\."):
+    with pytest.raises(UserError, match=r"`NoBatchModel` 'test' has no batch API\."):
         await model_request_batch(NoBatchModel(), [request])
     with pytest.raises(UserError, match='unique `custom_id`'):
         await model_request_batch(TestModel(), [request, request])

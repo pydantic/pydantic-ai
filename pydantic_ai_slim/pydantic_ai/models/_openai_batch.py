@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import warnings
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Required, cast
@@ -20,9 +19,10 @@ from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
+from ._batch_codec import batch_priced, credential_hash, prepare_decode, require_ended, shared_group, unrun_error
 from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 
 if TYPE_CHECKING:
@@ -114,13 +114,7 @@ async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> En
 
 async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
-    if not requests:
-        raise UserError('A batch must contain at least one request.')
-    group = requests[0].group
-    if any(request.group != group for request in requests):
-        raise UserError(
-            'Requests in one OpenAI batch must share a `group`; these came from different client configurations or models.'
-        )
+    group = shared_group(requests, 'OpenAI')
     _validate_batch_group(model, group)
     client = _batch_client(model).with_options(max_retries=0)
     lines = (
@@ -145,8 +139,7 @@ async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
 
 async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
-    if batch.status != 'ended':
-        raise UserError(f'Batch {batch.id!r} has not ended yet; check its status with `batch_status()` first.')
+    require_ended(batch)
     _validate_batch_group(model, batch.group)
     client = _batch_client(model)
     # The handle of an ended batch already names its final files, so they aren't looked up again.
@@ -177,23 +170,16 @@ def batch_decode(model: OpenAIResponsesModel, result: BatchResult, request: Batc
         assert result.body is not None
         # Built without validation, as the SDK builds the responses it receives.
         response = responses.Response.model_construct(**json.loads(result.body))
-        with warnings.catch_warnings():
-            # `batch_encode` already warned about any setting the request dropped.
-            warnings.simplefilter('ignore')
-            prepared_settings, model_request_parameters = model.prepare_request(
-                request.model_settings, request.model_request_parameters
-            )
+        prepared_settings, model_request_parameters = prepare_decode(model, request)
         model_response = model._process_response(  # pyright: ignore[reportPrivateUsage]
             response, cast('OpenAIResponsesModelSettings', prepared_settings or {}), model_request_parameters
         )
-        # Selects batch prices when `genai-prices` calculates the response's cost.
-        model_response.provider_details = {**(model_response.provider_details or {}), 'processing': 'batch'}
-        return model_response
+        return batch_priced(model_response)
     if result.status == 'errored':
         assert result.body is not None
         error = _LineResponse.model_validate_json(result.body)
         raise ModelHTTPError(status_code=error.status_code, model_name=model.model_name, body=error.body)
-    raise ModelAPIError(model.model_name, f'The batch request was {result.status} before the model ran it.')
+    raise unrun_error(model.model_name, result)
 
 
 def _to_result(line: _OutputLine) -> BatchResult:
@@ -241,21 +227,8 @@ def _batch_group(model: OpenAIResponsesModel) -> str:
     client = _batch_client(model)
     group: _Group = {
         'endpoint': hashlib.sha256(str(client.base_url).encode()).hexdigest(),
-        'credential': hashlib.sha256(
-            to_json(
-                {
-                    'headers': {
-                        name: value
-                        # The client sends its API key apart from its default headers.
-                        for name, value in {**client.default_headers, **client.auth_headers}.items()
-                        if isinstance(value, str)
-                        and name.lower() != 'user-agent'
-                        and not name.lower().startswith('x-stainless-')
-                    },
-                    'query': client.default_query,
-                }
-            )
-        ).hexdigest(),
+        # The client sends its API key apart from its default headers.
+        'credential': credential_hash({**client.default_headers, **client.auth_headers}, client.default_query),
         # An OpenAI batch runs one model.
         'model': model.model_name,
     }

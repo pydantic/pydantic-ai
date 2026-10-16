@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import warnings
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, cast
 
@@ -26,9 +25,10 @@ from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
+from ._batch_codec import batch_priced, credential_hash, prepare_decode, require_ended, shared_group, unrun_error
 from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 if TYPE_CHECKING:
@@ -94,13 +94,7 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
 
 async def batch_create(model: AnthropicModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
-    if not requests:
-        raise UserError('A batch must contain at least one request.')
-    group = requests[0].group
-    if any(request.group != group for request in requests):
-        raise UserError(
-            'Requests in one Anthropic batch must share a `group`; these came from different client configurations or beta flags.'
-        )
+    group = shared_group(requests, 'Anthropic')
     _validate_batch_group(model, group)
     batch = (
         await _batch_client(model)
@@ -130,8 +124,7 @@ async def batch_status(model: AnthropicModel, batch: Batch) -> Batch:
 
 async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
-    if batch.status != 'ended':
-        raise UserError(f'Batch {batch.id!r} has not ended yet; check its status with `batch_status()` first.')
+    require_ended(batch)
     _validate_batch_group(model, batch.group)
     results: list[BatchResult] = []
     async for item in await _batch_client(model).beta.messages.batches.results(batch.id):
@@ -152,18 +145,11 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
     if result.status == 'succeeded':
         assert result.body is not None
         message = BetaMessageBatchSucceededResult.model_validate_json(result.body).message
-        with warnings.catch_warnings():
-            # `batch_encode` already warned about any setting the request dropped.
-            warnings.simplefilter('ignore')
-            prepared_settings, model_request_parameters = model.prepare_request(
-                request.model_settings, request.model_request_parameters
-            )
+        prepared_settings, model_request_parameters = prepare_decode(model, request)
         response = model._process_response(  # pyright: ignore[reportPrivateUsage]
             message, model_request_parameters, cast('AnthropicModelSettings', prepared_settings or {})
         )
-        # Selects batch prices when `genai-prices` calculates the response's cost.
-        response.provider_details = {**(response.provider_details or {}), 'processing': 'batch'}
-        return response
+        return batch_priced(response)
     if result.status == 'errored':
         assert result.body is not None
         error = BetaMessageBatchErroredResult.model_validate_json(result.body).error
@@ -172,7 +158,7 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
             model_name=model.model_name,
             body=error.model_dump(mode='json'),
         )
-    raise ModelAPIError(model.model_name, f'The batch request was {result.status} before the model ran it.')
+    raise unrun_error(model.model_name, result)
 
 
 def _to_batch(model: AnthropicModel, batch: BetaMessageBatch, group: str) -> Batch:
@@ -191,20 +177,7 @@ def _to_batch(model: AnthropicModel, batch: BetaMessageBatch, group: str) -> Bat
 def _batch_group(model: AnthropicModel, betas: Iterable[str]) -> str:
     group: _Group = {
         'endpoint': hashlib.sha256(str(_batch_client(model).base_url).encode()).hexdigest(),
-        'credential': hashlib.sha256(
-            to_json(
-                {
-                    'headers': {
-                        name: value
-                        for name, value in _batch_client(model).default_headers.items()
-                        if isinstance(value, str)
-                        and name.lower() != 'user-agent'
-                        and not name.lower().startswith('x-stainless-')
-                    },
-                    'query': _batch_client(model).default_query,
-                }
-            )
-        ).hexdigest(),
+        'credential': credential_hash(_batch_client(model).default_headers, _batch_client(model).default_query),
         'betas': sorted(betas),
     }
     return json.dumps(group, sort_keys=True)

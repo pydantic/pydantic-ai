@@ -11,9 +11,10 @@ from pydantic import TypeAdapter
 from pydantic_core import to_json
 
 from .._utils import now_utc
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import Model
+from ._batch_codec import unrun_error
 from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 _RESPONSE_ADAPTER = TypeAdapter(ModelResponse)
@@ -92,7 +93,7 @@ class InMemoryBatchModel(Model):
             status_code = error['status_code']
             assert isinstance(status_code, int)
             raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=error['body'])
-        raise ModelAPIError(self.model_name, f'The batch request was {result.status} before the model ran it.')
+        raise unrun_error(self.model_name, result)
 
     def _stored_batch(self, batch: Batch) -> tuple[Batch, list[BatchResult]]:
         if (stored := self._batch_state.batches.get(batch.id)) is None:
