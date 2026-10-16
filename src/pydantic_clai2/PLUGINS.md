@@ -1487,8 +1487,11 @@ meeting context, and draft emails. It needs a paid Day AI Agent tier.
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
 Type to filter the rows, press Enter to change one, `R` to reset it to its
 default, and Esc to close. Each change is saved as soon as you make it, and the
-plugin loads again with the new settings when the menu closes. The menu has
-one row for each option harness `DayAI` takes:
+plugin loads again with the new settings when the menu closes. The same menu
+shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
+the Sign-in row's **Change…** button asks for a key or runs the browser sign-in
+as dialogs in the page. The menu has one row for each option harness `DayAI`
+takes:
 
 | Row | Setting | Choices |
 | --- | --- | --- |
