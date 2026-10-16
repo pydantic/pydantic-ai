@@ -1715,16 +1715,13 @@ class BaseToolReturnPart:
     _: KW_ONLY
 
     tool_kind: ToolPartKind | None = None
-    """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
+    """What the tool is, independent of its name (e.g. `'tool-search'`), or `None` if the tool declares no kind.
 
-    `None` for any part without a typed subclass — including all user-defined tools and all
-    native tools without a dedicated typed call/return shape. Subclasses that pin this to a
-    [`ToolPartKind`][pydantic_ai.messages.ToolPartKind] literal:
-
-    * [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
-      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] — `'tool-search'`
-    * [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] /
-      [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart] — `'tool-search'`
+    Set from the tool's [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. A part
+    whose data fits the typed subclass registered for its kind is promoted to that subclass; otherwise
+    it stays a base part that keeps the kind, as does a return whose `outcome` isn't `'success'`. Only
+    core's own kinds, which deserialization routes straight to their subclass, are stripped from a base
+    part whose data doesn't fit them. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
     """
 
     metadata: Any = None
@@ -2756,7 +2753,7 @@ class BaseToolCallPart:
     _: KW_ONLY
 
     tool_kind: ToolPartKind | None = None
-    """Discriminator for the typed subclass of this part (e.g. `'tool-search'`).
+    """What the tool is, independent of its name (e.g. `'tool-search'`), or `None` if the tool declares no kind.
 
     See [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] for
     the full semantics.
@@ -2967,7 +2964,6 @@ class NativeToolCallPart(BaseToolCallPart):
 
 _CallPartT = TypeVar('_CallPartT', bound='ToolCallPart | NativeToolCallPart')
 _ReturnPartT = TypeVar('_ReturnPartT', bound='ToolReturnPart | NativeToolReturnPart')
-_AnyPartT = TypeVar('_AnyPartT')
 
 
 def _unsubstantiated(part: _ToolPartT, kind: str) -> _ToolPartT:
