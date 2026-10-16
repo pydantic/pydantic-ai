@@ -35,6 +35,12 @@ from .._http import (
     create_async_httpx2_client as create_async_httpx2_client,
     legacy_httpx,
 )
+from .._instructions import (
+    InstructionValues,
+    advance_instruction_window,
+    instruction_window_start,
+    window_prefix,
+)
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -2619,49 +2625,27 @@ def _project_instruction_state(messages: Sequence[ModelMessage], *, inline_syste
     `instructions` rendered with that window's append-mode blocks tagged, for the adapters that read a
     request's instructions from history rather than from the request parameters.
     """
-    current_start = max(
-        (
-            index
-            for index, message in enumerate(messages)
-            if (
-                isinstance(message, ModelRequest)
-                and any(isinstance(part, InstructionBaselinePart) for part in message.parts)
-            )
-            or (isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts))
-        ),
-        default=0,
-    )
+    current_start = instruction_window_start(messages)
     window: InstructionBaselinePart | None = None
-    sent: dict[str, str] = {}
+    values = InstructionValues.at(None)
     projected: list[ModelMessage] = []
     for index, message in enumerate(messages):
+        if (next_window := advance_instruction_window(window, message)) is not window:
+            window = next_window
+            values = InstructionValues.at(window)
         if isinstance(message, ModelResponse):
-            if any(isinstance(part, CompactionPart) for part in message.parts):
-                window = None
             projected.append(message)
             continue
         parts: list[ModelRequestPart] = []
         for part in message.parts:
-            if isinstance(part, InstructionBaselinePart):
-                window = part
-                sent = {
-                    str(block.id): block.content
-                    for block in part.instructions
-                    if block.on_change == 'append' and block.id is not None and block.content
-                }
-            elif isinstance(part, InstructionDeltaPart):
+            if isinstance(part, InstructionDeltaPart):
                 if index >= current_start:
-                    text = part.render(inline_system=inline_system, previous=sent.get(part.id))
+                    text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-                    if part.content is None:
-                        sent.pop(part.id, None)
-                    else:
-                        sent[part.id] = part.content
-            else:
+            elif not isinstance(part, InstructionBaselinePart):
                 parts.append(part)
         instructions = message.instructions
-        # The parts every request in the window was sent, as `update_instruction_history` builds them.
-        prefix = [block for block in window.instructions if block.content] if window is not None else []
+        prefix = window_prefix(window) if window is not None else []
         if prefix and instructions == InstructionPart.join(prefix):
             instructions = InstructionPart.join(_render_append_parts(prefix, inline_system=inline_system))
         if parts != list(message.parts) or instructions != message.instructions:

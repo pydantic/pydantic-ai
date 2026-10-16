@@ -13,6 +13,7 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
+from pydantic_ai._instructions import instruction_window_start
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionBaselinePart,
@@ -88,16 +89,8 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     `FilePart` is deliberately absent: its payload is binary, and counting its length as
     characters would be a number with no relation to what the provider bills.
     """
-    # Core omits earlier updates after an instruction baseline is replaced.
-    baseline_index = max(
-        (
-            index
-            for index, message in enumerate(messages)
-            if isinstance(message, ModelRequest)
-            and any(isinstance(part, InstructionBaselinePart) for part in message.parts)
-        ),
-        default=0,
-    )
+    # Core omits the changes from before the current instruction window.
+    baseline_index = instruction_window_start(messages)
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
         segments: list[str] = []

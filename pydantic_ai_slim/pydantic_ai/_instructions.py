@@ -11,6 +11,7 @@ from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
+    CompactionPart,
     InstructionBaselinePart,
     InstructionChangePolicy,
     InstructionDeltaPart,
@@ -19,8 +20,8 @@ from pydantic_ai.messages import (
     InstructionSource,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
-    post_compaction_window,
 )
 from pydantic_ai.template import TemplateStr
 
@@ -241,20 +242,45 @@ def _normalize_append_parts(current: list[InstructionPart]) -> list[InstructionP
     return normalized
 
 
-def instruction_window(messages: Sequence[ModelMessage]) -> InstructionBaselinePart | None:
-    """The baseline of the instruction window `messages` end in, or `None` if they aren't in one.
+def _opens_instruction_window(message: ModelMessage) -> bool:
+    """Whether the instruction window changes at `message`: a request recording a baseline, or a compaction."""
+    if isinstance(message, ModelResponse):
+        return any(isinstance(part, CompactionPart) for part in message.parts)
+    return any(isinstance(part, InstructionBaselinePart) for part in message.parts)
 
-    The window starts at the latest [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]
-    after the latest compaction. An empty one ends the previous window and opens one with no blocks, whose
-    append-mode blocks are then delivered as changes rather than in the prefix.
+
+def advance_instruction_window(
+    window: InstructionBaselinePart | None, message: ModelMessage
+) -> InstructionBaselinePart | None:
+    """The baseline of the instruction window in force after `message`, given the one in force before it.
+
+    A request recording an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] opens a
+    window; an empty one ends the previous window and opens one with no blocks, whose append-mode blocks are
+    then delivered as changes rather than in the prefix. A compaction ends the window, as it does for all
+    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]).
     """
-    baseline: InstructionBaselinePart | None = None
-    for message in post_compaction_window(messages):
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, InstructionBaselinePart):
-                    baseline = part
-    return baseline
+    if isinstance(message, ModelResponse):
+        return None if _opens_instruction_window(message) else window
+    for part in message.parts:
+        if isinstance(part, InstructionBaselinePart):
+            window = part
+    return window
+
+
+def instruction_window(messages: Sequence[ModelMessage]) -> InstructionBaselinePart | None:
+    """The baseline of the instruction window `messages` end in, or `None` if they aren't in one."""
+    window: InstructionBaselinePart | None = None
+    for message in messages:
+        window = advance_instruction_window(window, message)
+    return window
+
+
+def instruction_window_start(messages: Sequence[ModelMessage]) -> int:
+    """The index of the message the current instruction window began at, or 0 if none has.
+
+    Changes recorded before it belong to an earlier window, which the prefix moved away from.
+    """
+    return max((index for index, message in enumerate(messages) if _opens_instruction_window(message)), default=0)
 
 
 def window_prefix(baseline: InstructionBaselinePart) -> list[InstructionPart]:
@@ -262,15 +288,35 @@ def window_prefix(baseline: InstructionBaselinePart) -> list[InstructionPart]:
     return [part for part in baseline.instructions if part.content]
 
 
+@dataclass
+class InstructionValues:
+    """Each append-mode block's value as the model last received it, folded forward through a window's changes."""
+
+    values: dict[str, str | None]
+
+    @classmethod
+    def at(cls, baseline: InstructionBaselinePart | None) -> InstructionValues:
+        """The values at the start of `baseline`'s window."""
+        return cls(
+            {
+                str(part.id): part.content or None
+                for part in (baseline.instructions if baseline is not None else [])
+                if part.on_change == 'append' and part.id is not None
+            }
+        )
+
+    def apply(self, change: InstructionDeltaPart) -> str | None:
+        """Fold in `change`, returning the value it replaces."""
+        previous = self.values.get(change.id)
+        self.values[change.id] = change.content
+        return previous
+
+
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
 ) -> dict[str, str | None]:
     """Each append-mode block's value as the model last received it in `baseline`'s window."""
-    values: dict[str, str | None] = {
-        str(part.id): part.content or None
-        for part in baseline.instructions
-        if part.on_change == 'append' and part.id is not None
-    }
+    values = InstructionValues.at(baseline)
     in_window = False
     for message in messages:
         if isinstance(message, ModelRequest):
@@ -278,8 +324,8 @@ def _recorded_instruction_values(
                 if part is baseline:
                     in_window = True
                 elif in_window and isinstance(part, InstructionDeltaPart):
-                    values[part.id] = part.content
-    return values
+                    values.apply(part)
+    return values.values
 
 
 def _continues_window(baseline: InstructionBaselinePart, current: list[InstructionPart]) -> bool:

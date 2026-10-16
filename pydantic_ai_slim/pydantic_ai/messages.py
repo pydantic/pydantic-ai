@@ -2110,7 +2110,11 @@ class InstructionDeltaPart:
     """
 
     id: Annotated[str, pydantic.Field(min_length=1)]
-    """The serialized instruction address being replaced, preserved even for unknown source namespaces."""
+    """The serialized instruction address being replaced, preserved even for unknown source namespaces.
+
+    It's the string an [`InstructionId`][pydantic_ai.messages.InstructionId] renders to, so compare it with
+    an [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] as `str(part.id) == change.id`.
+    """
 
     content: str | None
     """The complete replacement text, or `None` to withdraw the block."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
@@ -13,7 +14,6 @@ from inline_snapshot import snapshot
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai.capabilities import Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     UserPromptPart,
-    _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -444,11 +443,27 @@ async def test_instruction_updates_whitespace_means_absence(toolset: bool):
     assert [part.content for part in baseline_of(request) or []] == ['']
 
 
-def test_instruction_updates_enqueue_preserves_request_part():
+async def test_instruction_updates_enqueue_preserves_request_part():
+    """`enqueue` takes an `InstructionDeltaPart` as a request part, recorded in history as given."""
     part = InstructionDeltaPart(id='agent:state', content='A')
-    pending = PendingMessage.from_content(part)
-    assert pending is not None
-    assert pending.messages == [ModelRequest(parts=[part])]
+    calls = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='note')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), deps_type=type(None))
+
+    @agent.tool
+    def note(ctx: RunContext[None]) -> str:
+        ctx.enqueue(part)
+        return 'noted'
+
+    result = await agent.run('Continue.')
+    assert [p for m in result.all_messages() if isinstance(m, ModelRequest) for p in m.parts if p == part] == [part]
 
 
 @pytest.mark.parametrize('address', [None, ''])
@@ -788,6 +803,11 @@ async def test_instruction_updates_suspended_resume_merges_projected_tool_search
     ],
 )
 async def test_instruction_updates_realtime_history_uses_session_instructions(provider: str):
+    """Instruction changes in seed history are left out of a realtime session, which uses its own instructions.
+
+    This calls the providers' seeding functions directly: a realtime session does take `message_history`, but
+    only a real provider connection seeds it, and the fake one `agent.realtime()` tests use records it as given.
+    """
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -927,13 +947,18 @@ def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     )
 
 
+def _sha256(text: str) -> str:
+    """`InstructionDeltaPart.base_hash` as documented and persisted: the replaced text's SHA-256 hex digest."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 MEMORY = '\n'.join(f'- Fact {index}: value {index}.' for index in range(1, 21))
 """A block long enough that a one-line edit is shorter as a diff than as the full text."""
 
 
 def test_instruction_updates_render_diff_against_the_replaced_text():
     edited = MEMORY.replace('Fact 7: value 7.', 'Fact 7: value seven.')
-    part = InstructionDeltaPart(id='agent:memory', content=edited, base_hash=_instruction_text_hash(MEMORY))
+    part = InstructionDeltaPart(id='agent:memory', content=edited, base_hash=_sha256(MEMORY))
     assert part.render(previous=MEMORY) == snapshot(
         """\
 <context-diff id="agent:memory">
@@ -954,7 +979,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     assert part.render() == full
     assert part.render(previous=f'{MEMORY}\n- Fact 21: value 21.') == full
     # So it does when the diff would be longer.
-    short = InstructionDeltaPart(id='agent:state', content='B', base_hash=_instruction_text_hash('A'))
+    short = InstructionDeltaPart(id='agent:state', content='B', base_hash=_sha256('A'))
     assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
 
 
@@ -982,8 +1007,8 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
     deltas = [part for message in history if isinstance(message, ModelRequest) for part in message.parts]
     deltas = [part for part in deltas if isinstance(part, InstructionDeltaPart)]
     assert [(part.content, part.base_hash) for part in deltas] == [
-        (first_edit, _instruction_text_hash(MEMORY)),
-        (second_edit, _instruction_text_hash(first_edit)),
+        (first_edit, _sha256(MEMORY)),
+        (second_edit, _sha256(first_edit)),
     ]
     assert received[1] == [deltas[0].render(previous=MEMORY)]
     # Each request renders the earlier changes exactly as before, so the cached prefix holds.
