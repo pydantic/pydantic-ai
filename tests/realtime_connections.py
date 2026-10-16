@@ -24,12 +24,8 @@ class InferredConnection(RealtimeConnection):
         return InferredLifecycle(transcribes=self.input_transcription_enabled)
 
     async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
-        input_id = self.lifecycle.input_sent(content)
-        try:
+        with self.lifecycle.sending(content):
             await self.send_input(content)
-        except BaseException:
-            self.lifecycle.input_failed(input_id)
-            raise
         return self.lifecycle.take_pending()
 
     @abstractmethod

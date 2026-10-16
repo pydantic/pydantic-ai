@@ -2,9 +2,10 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from ..messages import (
     BinaryContent,
@@ -76,12 +77,12 @@ class InferredLifecycle:
     """Works out a connection's lifecycle events from the order of what it sends and receives.
 
     For a protocol that identifies no responses, spoken turns, or inputs, as Gemini Live and OpenAI GPT-Live
-    don't. The connection, in its [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send], reports each input
-    first thing ([`input_sent`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_sent]), reports it failed if
-    sending it raises ([`input_failed`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_failed]), and returns
-    what the send settled ([`take_pending`][pydantic_ai.realtime.lifecycle.InferredLifecycle.take_pending]). It
+    don't. The connection, in its [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send], sends each input
+    inside [`sending`][pydantic_ai.realtime.lifecycle.InferredLifecycle.sending] (which reports it, and reports it
+    failed if sending it raises) and returns what the send settled
+    ([`take_pending`][pydantic_ai.realtime.lifecycle.InferredLifecycle.take_pending]). It
     passes the codec events each provider message makes through
-    [`message`][pydantic_ai.realtime.lifecycle.InferredLifecycle.message] to get the frame to yield, and reports a
+    [`frame_for`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frame_for] to get the frame to yield, and reports a
     dropped connection ([`connection_lost`][pydantic_ai.realtime.lifecycle.InferredLifecycle.connection_lost]). A
     connection whose codec events are an async iterable of their own can have
     [`frames`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frames] do the last two.
@@ -102,26 +103,49 @@ class InferredLifecycle:
     - An input joins the conversation when it is sent, unless a reply is under way or owed: it then reached the
       provider while the model was working on that reply, and follows it.
     - A dropped connection loses the response under way and every reply still owed.
+
+    A provider that departs from these defaults gets a subclass that overrides these hooks:
+
+    - `_transcripts_lag_replies` (`True`): whether the provider transcribes the user's words after the model
+      started answering them.
+    - `_audio_starts_response` (`True`): whether output audio is the model speaking, so a response starts with it.
+    - `_untranscribed_audio_is_a_turn` (`True`): whether audio the model replies to before any transcript of it
+      came is a spoken turn of its own.
+    - `_takes_turn(codec)` (`False`): whether a provider message has the model take the turn, whatever its output
+      shows.
     """
 
-    def __init__(
-        self, *, transcribes: bool = True, transcripts_lag_replies: bool = True, audio_starts_response: bool = True
-    ) -> None:
+    _transcripts_lag_replies: ClassVar[bool] = True
+    """Whether the provider can transcribe the user's words after the model started answering them, as most do.
+
+    A transcript that starts while a reply nobody asked for is under way is then the speech that reply answers,
+    rather than speech over it. A subclass for a provider that transcribes as the user speaks (and so reports
+    speech over a reply while the reply is still going) sets it to `False`.
+    """
+
+    _audio_starts_response: ClassVar[bool] = True
+    """Whether output audio is the model speaking, so a response starts with it.
+
+    A subclass for a provider whose output is a continuous track, silent between replies, sets it to `False`, and
+    says where the model takes the turn with `_takes_turn` instead.
+    """
+
+    _untranscribed_audio_is_a_turn: ClassVar[bool] = True
+    """Whether audio the model replies to before any transcript of it came is a spoken turn of its own.
+
+    A subclass for a provider that replies to speech only once it has transcribed it (a cascaded pipeline, say) sets
+    it to `False`, so audio no transcript names, like a microphone streaming before a greeting, makes no turn.
+    Without input transcription (`transcribes=False`), audio is the only sign of speech, and always makes a turn.
+    """
+
+    def __init__(self, *, transcribes: bool = True) -> None:
         """Track a connection's lifecycle.
 
         Args:
-            transcribes: Whether the user's speech is transcribed: if not, audio alone makes a spoken turn.
-            transcripts_lag_replies: Whether the provider can transcribe the user's words after the model started
-                answering them, as most do: a transcript that starts while a reply nobody asked for is under way is
-                then the speech that reply answers, rather than speech over it (which a provider that transcribes
-                as the user speaks, like GPT-Live, reports while the reply is still going).
-            audio_starts_response: Whether output audio is the model speaking. GPT-Live's output is a continuous
-                track, silent between replies: its connection says where the model takes the turn instead
-                (`message(takes_turn=True)`), and audio outside a reply is no response.
+            transcribes: Whether the session has the user's speech transcribed: if not, audio alone makes a spoken
+                turn. A setting of the session's (input transcription), not of the provider.
         """
-        self._audio_starts_response = audio_starts_response
         self._transcribes = transcribes
-        self._transcripts_lag_replies = transcripts_lag_replies
         self._inputs = 0
         self._pending: list[LifecycleEvent] = []
         """Events that come outside any message (an input sent), yielded ahead of the next one."""
@@ -262,12 +286,28 @@ class InferredLifecycle:
             self._held = [held for held in self._held if held != input_id]
             self._pending.append(InputLost(input_ids=(input_id,)))
 
+    @contextmanager
+    def sending(self, content: RealtimeInput) -> Iterator[InputId]:
+        """Report an input a connection's `send()` is sending, around the sending itself: yields the input's id.
+
+        It is [`input_sent`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_sent] going in, and
+        [`input_failed`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_failed] if the block raises. The
+        connection then returns [`take_pending()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.take_pending]
+        (see the example in [Implementing a connection](../realtime.md)).
+        """
+        input_id = self.input_sent(content)
+        try:
+            yield input_id
+        except BaseException:
+            self.input_failed(input_id)
+            raise
+
     def take_pending(self) -> list[LifecycleEvent]:
         """The events the inputs sent since the last frame settled.
 
         Where each joined the conversation, or that it will go unanswered. A connection returns them from [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send], so the session
         applies them before anything it reads next, and puts them at the head of a frame of its own (like the one it
-        reports a reconnect in). [`message()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.message] takes any
+        reports a reconnect in). [`frame_for()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frame_for] takes any
         still waiting into the frame it makes.
         """
         pending, self._pending = self._pending, []
@@ -281,13 +321,9 @@ class InferredLifecycle:
 
     # --- what the server says ---------------------------------------------------------------------
 
-    def message(self, codec: Sequence[RealtimeCodecEvent], *, takes_turn: bool = False) -> RealtimeFrame:
-        """The frame to yield for the codec events one provider message makes: them, with the lifecycle events around.
-
-        `takes_turn` says the message has the model take the turn, for a connection that knows where it does better
-        than its output shows (GPT-Live's audio track runs on between replies): a response starts with its audio,
-        or after its events if it has none, if none is under way.
-        """
+    def frame_for(self, codec: Sequence[RealtimeCodecEvent]) -> RealtimeFrame:
+        """The frame to yield for the codec events one provider message makes: them, with the lifecycle events around."""
+        takes_turn = self._takes_turn(codec)
         frame: RealtimeFrame = [*self.take_pending()]
         if any(isinstance(event, RealtimeResponseInterruptedEvent) for event in codec):
             # The user cut in, and the message reports what they said ahead of the cut: that is new speech, not
@@ -307,6 +343,15 @@ class InferredLifecycle:
             frame.extend(started)
         return frame
 
+    def _takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
+        """Whether the provider message `codec` makes has the model take the turn, whatever its output shows.
+
+        A hook for a subclass whose connection knows where the model takes the turn better than its output shows
+        (see `_audio_starts_response`): a response then starts with the message's audio, or after its events if it
+        has none, if none is under way. `False` by default.
+        """
+        return False
+
     async def frames(self, events: AsyncIterable[RealtimeCodecEvent]) -> AsyncIterator[RealtimeFrame]:
         """Frames for a connection's codec events, one event to a frame, ending with what the end of `events` loses.
 
@@ -315,7 +360,7 @@ class InferredLifecycle:
         iterator = aiter(events)
         try:
             async for event in iterator:
-                yield self.message([event])
+                yield self.frame_for([event])
             lost: RealtimeFrame = [*self.connection_lost()]
             yield lost
         finally:
@@ -629,7 +674,11 @@ class InferredLifecycle:
                 events.append(UserTurnEnded(turn_id=turn.id))
             # (A turn that joined already, at its speech end or commit, is the one this replies to all the same.)
             return turn.id
-        if not (audio and replying) or (self._transcribes and self._identified) or self._spoken_unanswered:
+        if (
+            not (audio and replying)
+            or (self._transcribes and (self._identified or not self._untranscribed_audio_is_a_turn))
+            or self._spoken_unanswered
+        ):
             # Nothing was said for the model to reply to (or the provider names its turns, and named none here), or
             # what was said joined the conversation already, at its last transcript, say.
             return None

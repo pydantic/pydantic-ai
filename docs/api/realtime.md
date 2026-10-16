@@ -173,13 +173,11 @@ class EchoConnection(RealtimeConnection):
         self._said: asyncio.Queue[str] = asyncio.Queue()
 
     async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
-        input_id = self._lifecycle.input_sent(content)
-        try:
+        # Reports the input, and that it failed if writing it raises.
+        with self._lifecycle.sending(content):
             if isinstance(content, str):
                 self._said.put_nowait(content)  # (where a real connection writes to its transport)
-        except BaseException:
-            self._lifecycle.input_failed(input_id)
-            raise
+        # Where it joined the conversation, which the protocol doesn't acknowledge.
         return self._lifecycle.take_pending()
 
     def frames(self) -> AsyncIterator[RealtimeFrame]:
@@ -205,7 +203,13 @@ async def main():
 
 `frames()` ends once the connection is gone: an `InferredLifecycle` ends what was under way on it then, as
 [`connection_lost()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.connection_lost] does for a connection
-that re-dials.
+that re-dials. A connection that reads each provider message itself passes its codec events to
+[`frame_for()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frame_for] to get the frame to yield.
+
+The inference assumes what most providers do: the user's words can be transcribed after the model started
+answering them, output audio is the model speaking, and audio the model answers before any transcript of it came
+is a spoken turn. A provider that departs from that gets a subclass overriding the hooks listed on
+[`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle].
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from
