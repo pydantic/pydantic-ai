@@ -68,11 +68,15 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
     TurnStarted,
 )
-from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.rendering import theme as terminal_theme
+from tests.clai2.test_session_browser import git, repository
+from tests.clai2.test_tasks import task
 
 TOKEN = 'secret-token'
 HOSTS = frozenset({'testserver'})
@@ -465,11 +469,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
 
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
-        assert [(entry['title'], entry['state'], entry['current']) for entry in projects[0]['sessions']] == [
+        [here] = projects[0]['worktrees']
+        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
             ('first', 'completed', True)
         ]
-        assert [project['name'] for project in projects[1:]] == ['else']
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['sessions'][0]['id'] == elsewhere.id
+        assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
+            ('Removed folders', ['else'])
+        ]
+        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -522,12 +529,101 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
                 messages=[],
             )
         )
-    sessions = {entry['title']: entry['state'] for entry in web_.get('/api/sessions').json()[-1]['sessions']}
-    assert sessions == {'Live': 'busy', 'Dead': 'cancelled'}
+    [removed] = web_.get('/api/sessions').json()[-1]['worktrees']
+    assert {entry['title']: entry['state'] for entry in removed['sessions']} == {'Live': 'busy', 'Dead': 'cancelled'}
     web_.plugin.remote.running = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
-    current = web_.get('/api/sessions').json()[0]['sessions'][0]
+    current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Each repository is one project, its checkouts nested in it, removed worktrees included.
+
+    A removed worktree keeps the checkout saved with its sessions; an older one without it is placed by
+    where it was. Folders outside Git are their own project, and removed ones no project claims are last.
+    """
+    web_ = make_web(Agent(TestModel()))
+    worktrees = tmp_path / 'worktrees' / 'alpha'
+    repo, feature, gone = tmp_path / 'code' / 'alpha', worktrees / 'feature', worktrees / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'fix/gone', str(gone))
+    saved = git_checkout(project_identity(str(gone.resolve())))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    workspaces = {
+        'Removed here': (tmp_path / 'one' / 'x', None),
+        'Removed elsewhere': (tmp_path / 'two' / 'x', None),
+        'Plain': (plain, None),
+        'Before recording': (worktrees / 'old' / 'src', None),
+        'Recorded': (gone / 'src', saved),
+        'Deleted subfolder': (repo / 'deleted', None),
+        'Main': (repo, None),
+        'Feature': (feature, None),
+    }
+    for title, (workspace, checkout) in workspaces.items():
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title, checkout=checkout)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.plugin.host.status.workspace = str(feature.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    shown = [
+        (
+            project['name'],
+            project['current'],
+            [
+                (w['label'], w['current'], w['missing'], [entry['title'] for entry in w['sessions']])
+                for w in project['worktrees']
+            ],
+        )
+        for project in projects
+    ]
+    one, two = (str((tmp_path / name / 'x').resolve()) for name in ('one', 'two'))
+    assert shown == [
+        (
+            'alpha',
+            True,
+            [
+                ('feature', True, False, ['Feature']),
+                ('main', False, False, ['Main', 'Deleted subfolder']),
+                ('fix/gone', False, True, ['Recorded']),
+                ('old', False, True, ['Before recording']),
+            ],
+        ),
+        ('plain', False, [('plain', False, False, ['Plain'])]),
+        (
+            'Removed folders',
+            False,
+            [(two, False, True, ['Removed elsewhere']), (one, False, True, ['Removed here'])],
+        ),
+    ]
+    # A search lists only matching sessions, in the same places.
+    [found] = web_.get('/api/sessions?q=Before').json()
+    assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
+
+
+def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Each listing resolves again a folder removed or recreated since the last one, as `/resume` does."""
+    web_ = make_web(Agent(TestModel()))
+    folder = (tmp_path / 'folder').resolve()
+    folder.mkdir()
+    summary = ConversationSummary(workspace=str(folder), title='Folder')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def shown() -> list[tuple[str, bool]]:
+        return [
+            (worktree['label'], worktree['missing'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            if [entry['title'] for entry in worktree['sessions']] == ['Folder']
+        ]
+
+    assert shown() == [('folder', False)]
+    folder.rmdir()
+    assert shown() == [('folder', True)]
+    folder.mkdir()
+    assert shown() == [('folder', False)]
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
@@ -1252,3 +1348,168 @@ def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_
         web_.portal.call(web_.plugin.stop)
         assert action.result(timeout=10).json()['messages'] == []
     assert web_.plugin.remote.dialogs.dialogs == []
+
+
+def follow_workspaces(
+    web_: Web, settings: Callable[[ProjectSettings], Settings] = lambda project: resolve_settings(project.overrides)
+) -> SessionWorkspace:
+    """Wire the shell as `clai2 --web` does, so each session runs in its own directory."""
+    shell = web_.shell
+    workspace = SessionWorkspace(
+        session=shell.session,
+        context=shell.context,
+        loader=shell.loader,
+        status=shell.status,
+        settings=settings,
+        keep='web',
+    )
+    workspace.attach(sessions=shell.sessions, commands=shell.commands)
+    return workspace
+
+
+def saved_in(web_: Web, workspace: Path, title: str) -> str:
+    summary = ConversationSummary(workspace=str(workspace), title=title)
+    return web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[])).id
+
+
+REPO_CONTEXT = PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context')
+
+
+def test_sessions_continue_in_their_own_directories(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under `clai2 --web`, opening a session moves CLAI into its directory, and a new one asks where it runs."""
+    launch, other, gone = tmp_path / 'launch', tmp_path / 'other', tmp_path / 'gone'
+    launch.mkdir()
+    (other / '.clai').mkdir(parents=True)
+    (other / '.clai' / 'settings.json').write_text('{"instructions": "Work in other.", "model": "test"}')
+    monkeypatch.chdir(launch)
+    web_ = make_web(
+        Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)), extra=[REPO_CONTEXT]
+    )
+    follow_workspaces(web_)
+    shell = web_.shell
+    here = saved_in(web_, launch.resolve(), 'Here')
+    there = saved_in(web_, other.resolve(), 'There')
+    lost = saved_in(web_, gone, 'Lost')
+    plugin = web_.plugin
+    repo_context = shell.loader._loaded['repo_context']  # pyright: ignore[reportPrivateUsage]
+    assert web_.get('/api/state').json()['follows_workspace'] is True
+    assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
+    assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+
+        assert web_.post(f'/api/sessions/{there}/open').status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id, snapshot.session.workspace) == (there, str(other.resolve()))
+        assert Path.cwd() == other.resolve()
+        assert (shell.context.settings.instructions, shell.session.instructions) == ('Work in other.',) * 2
+        assert (shell.session.model, 'test' in shell.context.store.models()) == ('test', True)
+        loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
+        assert list(loaded) == ['repo_context', 'web'], 'the page keeps its plugin, still after the others'
+        assert (loaded['web'].plugin, loaded['repo_context'] is repo_context) == (plugin, False)
+
+        assert web_.post('/api/sessions/new', {'workspace': str(launch)}).status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.items, snapshot.session.workspace) == ([], str(launch.resolve()))
+        assert snapshot.session.id not in (here, there) and Path.cwd() == launch.resolve()
+        assert (shell.context.settings.instructions, shell.session.model) == ('', resolve_settings({}).model), (
+            "the other project's settings are gone"
+        )
+        assert receive_until(socket, Notice)[1].text == f'New session in {launch.resolve()}.'
+
+        (tmp_path / 'file').touch()
+        for workspace, problem in (
+            ('relative', 'absolute path'),
+            (str(gone), 'does not exist'),
+            (str(tmp_path / 'file'), 'is not a directory'),
+        ):
+            refused = web_.post('/api/sessions/new', {'workspace': workspace})
+            assert (refused.status_code, problem in refused.json()['detail']) == (400, True)
+        assert web_.post(f'/api/sessions/{lost}/open').status_code == 204
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.level, notice.text) == ('error', f'{gone} does not exist.')
+
+        assert web_.post(f'/api/sessions/{here}/open').status_code == 204
+        assert receive_until(socket, Snapshot)[1].session.id == here
+        copy = web_.post(f'/api/sessions/{there}/fork').json()['id']
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id, snapshot.session.workspace) == (copy, str(other.resolve()))
+
+        assert receive_until(socket, Notice)[1].text.startswith('Resumed There (fork)')
+        web_.post('/api/input', {'text': '/workspace'})
+        assert receive_until(socket, Notice)[1].text == f'This session works in {other.resolve()}.'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_session_moves_only_between_turns(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A move waits for whatever runs; a project file that does not load, or the current directory, changes nothing."""
+    broken = tmp_path / 'broken'
+    (broken / '.clai').mkdir(parents=True)
+    (broken / '.clai' / 'settings.json').write_text('{"model": 1}')
+    monkeypatch.chdir(tmp_path)
+    web_ = make_web(Agent(TestModel()))
+    workspace = follow_workspaces(web_, lambda project: Settings(model=None))
+    shell = web_.shell
+    shell.session._running = True  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='Switch directories once it ends'):
+        web_.portal.call(workspace.move, str(broken))
+    shell.session._running = False  # pyright: ignore[reportPrivateUsage]
+    workspace.busy = shell.background_running
+    record = task(conversation_id=shell.session.conversation_id)
+    shell.tasks.owner.records[record.id] = record
+    with pytest.raises(RuntimeError, match='Switch directories once it ends'):
+        web_.portal.call(workspace.move, str(broken))
+    del shell.tasks.owner.records[record.id]
+    with pytest.raises(ValueError, match=r'settings\.json'):
+        web_.portal.call(workspace.move, str(broken))
+    plugin = web_.plugin
+    web_.portal.call(workspace.move, str(tmp_path))
+    assert (Path.cwd(), shell.session.workspace) == (tmp_path, str(tmp_path.resolve()))
+    (tmp_path / 'next').mkdir()
+    web_.portal.call(workspace.move, str(tmp_path / 'next'))
+    assert (Path.cwd(), shell.session.model) == ((tmp_path / 'next').resolve(), None)
+    loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
+    assert loaded['web'].plugin is plugin
+    web_.portal.call(lambda: shell.loader.restart(project=(), keep='absent'))
+    assert loaded['web'].plugin is not plugin, 'a plugin not named to keep loads again too'
+
+
+def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Without `clai2 --web`, CLAI works where it started: no `/workspace`, and a session saved elsewhere is read-only."""
+    web_ = make_web(Agent(TestModel()))
+    shell = web_.shell
+    elsewhere = saved_in(web_, tmp_path, 'Elsewhere')
+    assert not shell.sessions.follows_workspace and 'workspace' not in shell.commands
+    assert web_.get('/api/state').json()['follows_workspace'] is False
+    assert web_.get(f'/api/sessions/{elsewhere}').json() | {'items': []} == {
+        'id': elsewhere,
+        'title': 'Elsewhere',
+        'workspace': str(tmp_path),
+        'items': [],
+        'openable': False,
+        'missing': False,
+    }
+    with pytest.raises(ValueError, match='Select it in /resume to confirm'):
+        web_.portal.call(shell.sessions.resume, elsewhere)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        first = shell.session.conversation_id
+        web_.post('/api/input', {'text': '/workspace'})
+        assert receive_until(socket, Notice)[1].text == 'Unknown command /workspace. Use /help.'
+        refused = web_.post('/api/sessions/new', {'workspace': str(tmp_path)})
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            f'This CLAI works in {shell.session.workspace}. Start CLAI in {tmp_path.resolve()}.',
+        )
+        assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id != first, snapshot.session.workspace) == (True, shell.session.workspace)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)

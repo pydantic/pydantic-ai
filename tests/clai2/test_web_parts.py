@@ -2,12 +2,14 @@
 
 import asyncio
 import io
+import re
 import socket
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
 import anyio
+import httpx
 import pytest
 from rich.console import Console
 
@@ -41,7 +43,7 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEve
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2.builtin_plugins.web import WebPlugin, remote as remote_module, server as server_module
-from pydantic_clai2.builtin_plugins.web.app import Receive, Scope, Send
+from pydantic_clai2.builtin_plugins.web.app import HEADER, Receive, Scope, Send
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
@@ -453,7 +455,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
         async with anyio.create_task_group() as group:
             group.start_soon(
                 lambda: run_web(
-                    settings=Settings(model='test'),
+                    settings_for=lambda project: Settings(model='test'),
                     store=store,
                     project=ProjectSettings(),
                     console=console,
@@ -471,10 +473,76 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
     )
 
 
+async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere."""
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
+    launch, other = tmp_path / 'launch', tmp_path / 'other'
+    launch.mkdir()
+    other.mkdir()
+    monkeypatch.chdir(launch)
+    store = SettingsStore(tmp_path / 'config.db')
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+        summary=ConversationSummary(workspace=str(other.resolve()), title='Elsewhere'), messages=[]
+    )
+    output = _Output()
+    with anyio.fail_after(30):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=lambda project: Settings(model='test'),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    resume=saved.id,
+                )
+            )
+            await output.ready.wait()
+            assert Path.cwd() == other.resolve()
+            found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
+            assert found is not None
+            async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
+                sent = await client.post('/api/input', json={'text': f'/workspace {launch}'})
+                assert sent.status_code == 204
+                while 'New session in' not in output.getvalue():
+                    await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
+    assert 'Resumed Elsewhere' in output.getvalue()
+    assert f'New session in {launch.resolve()}.' in output.getvalue()
+    assert Path.cwd() == launch.resolve()
+
+
+async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+        summary=ConversationSummary(workspace=str(tmp_path / 'gone'), title='Gone'), messages=[]
+    )
+    with pytest.raises(ValueError, match=re.escape(f'does not exist. Session {saved.id} was saved there;')):
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=store,
+            project=ProjectSettings(),
+            console=Console(file=io.StringIO()),
+            resume=saved.id,
+        )
+
+
+async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
+    with pytest.raises(BaseExceptionGroup) as raised:
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=SettingsStore(tmp_path / 'c.db'),
+            project=ProjectSettings(),
+            console=Console(file=io.StringIO()),
+            resume='00000000-0000-0000-0000-000000000000',
+        )
+    assert raised.group_contains(LookupError, match='No saved session')
+
+
 async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='explicit --resume'):
         await run_web(
-            settings=Settings(),
+            settings_for=lambda project: Settings(),
             store=SettingsStore(tmp_path / 'c.db'),
             project=ProjectSettings(),
             console=Console(),
@@ -507,12 +575,21 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise KeyboardInterrupt
 
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
-    monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test'])
+    monkeypatch.setattr(
+        sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test', '--request-limit', '7']
+    )
     with pytest.raises(SystemExit) as exited:
         _cli.run()
     assert exited.value.code == 130
     [call] = calls
     assert (call['resume'], call['session_id'], call['fork_session']) == (None, None, False)
+    settings_for = call['settings_for']
+    assert callable(settings_for)
+    settings = settings_for(ProjectSettings(overrides={'model': 'openai:gpt-5', 'run.instructions': 'Be brief.'}))
+    assert isinstance(settings, Settings)
+    assert (settings.model, settings.instructions, settings.request_limit) == ('test', 'Be brief.', 7), (
+        'launch flags still win over a project file'
+    )
 
 
 def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

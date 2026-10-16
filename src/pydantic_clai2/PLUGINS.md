@@ -925,7 +925,8 @@ shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulti
 to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
-and `/reload` keep the checkout in use. Plugins do not own worktree cleanup.
+and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
+elsewhere, or `/workspace`, moves CLAI to that session's directory. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
@@ -1203,9 +1204,20 @@ terminal enters, and both show them. A capability the plugin binds gives the bro
 conversation's runs as turns, with their stream events (text, thinking, tool calls and results,
 shell output, diffs), but not a background `/fork`'s, though it fires the turn moments too.
 Command results come from `on_command_end` and history from `host.conversation`. The
-sidebar lists `host.sessions`, the store `/resume` uses: clicking a session sends
-`/resume ID`, so a session saved in another directory, which `/resume ID` refuses, opens
-read-only. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
+sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
+repository, then by checkout, with a session from a removed worktree under its repository by the
+checkout saved with it (`ConversationSummary.checkout`). Clicking a session sends `/resume ID`.
+Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
+directory (`host.sessions.follows_workspace`): `/resume ID` first changes CLAI's working directory
+to the one the session was saved in, reads that directory's `.clai/settings.json`, and loads every
+plugin but `web` again, so the coding tools, `repo_context`, skills, MCP project files, and a
+plugin's relative paths refer to it, as after `--worktree`. Each of those plugins gets
+`on_session_end` and then `on_session_start`, as on `/plugins reload`. `clai2 --web --resume ID`
+starts in that session's directory. A new session from the browser runs where the user picks,
+sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
+moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
+gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
+directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
@@ -2284,7 +2296,9 @@ prompt the keyboard does:
   its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
-  while a turn runs, unlike background naming.
+  while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
+  moves CLAI into the directory a session was saved in, as under `clai2 --web`, rather than
+  refusing a session saved elsewhere.
 - `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
   `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
   what it provides, whether it has its own settings menu, and, while it is on, its settings model and
