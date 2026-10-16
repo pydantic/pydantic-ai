@@ -55,6 +55,7 @@ saved; a change made in the terminal shows here too. `/set` or `/settings` typed
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
 in the terminal.
 
+<!-- From #10456 -->
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
 the next prompt, exactly as `/model NAME` does: the session switches, the terminal's status row and
 the composer show it, and it is saved as the default. Each saved model and fallback chain has a row
