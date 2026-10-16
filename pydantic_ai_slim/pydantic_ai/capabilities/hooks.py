@@ -261,15 +261,13 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
     """Call a hook entry's function, with optional timeout and sync auto-wrapping."""
     func = entry.func
     if entry.timeout is not None:
-        try:
-            with anyio.fail_after(entry.timeout), _utils.abandon_threads_on_cancel():
-                return await _call_func(func, *args, **kwargs)
-        except TimeoutError:
-            raise HookTimeoutError(
-                hook_name=hook_name,
-                func_name=getattr(func, '__name__', repr(func)),
-                timeout=entry.timeout,
-            ) from None
+        with anyio.move_on_after(entry.timeout), _utils.abandon_threads_on_cancel():
+            return await _call_func(func, *args, **kwargs)
+        raise HookTimeoutError(
+            hook_name=hook_name,
+            func_name=getattr(func, '__name__', repr(func)),
+            timeout=entry.timeout,
+        ) from None
     return await _call_func(func, *args, **kwargs)
 
 
