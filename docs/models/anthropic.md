@@ -31,7 +31,7 @@ You can then use `AnthropicModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 ...
 ```
 
@@ -41,7 +41,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 
-model = AnthropicModel('claude-sonnet-4-5')
+model = AnthropicModel('{{ anthropic:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -61,7 +61,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 model = AnthropicModel(
-    'claude-sonnet-4-5', provider=AnthropicProvider(api_key='your-api-key')
+    '{{ anthropic:medium.name }}', provider=AnthropicProvider(api_key='your-api-key')
 )
 agent = Agent(model)
 ...
@@ -80,7 +80,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = AnthropicModel(
-    'claude-sonnet-4-5',
+    '{{ anthropic:medium.name }}',
     provider=AnthropicProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
@@ -90,7 +90,7 @@ agent = Agent(model)
 A legacy `httpx.AsyncClient` is not accepted: `anthropic` 1.0 is built on `httpx2` and rejects one at
 client construction.
 
-The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
+The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client, including for an `AsyncAnthropicBedrock` or `AsyncAnthropicVertex` client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
 
 ## Model settings
 
@@ -100,10 +100,9 @@ You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.mo
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-sonnet-4-5')
+model = AnthropicModel('{{ anthropic:medium.name }}')
 settings = AnthropicModelSettings(
-    temperature=0.2,
-    top_k=40,
+    anthropic_effort='low',
     service_tier='auto',
 )
 agent = Agent(model, model_settings=settings)
@@ -170,7 +169,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 vertex_client = AsyncAnthropicVertex(region='us-east5', project_id='your-project-id')
 provider = AnthropicProvider(anthropic_client=vertex_client)
-model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -191,7 +190,7 @@ foundry_client = AsyncAnthropicFoundry(
     resource='your-resource-name',
 )
 provider = AnthropicProvider(anthropic_client=foundry_client)
-model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -242,7 +241,7 @@ The provider-agnostic way to enable prompt caching is the unified [`ModelSetting
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions='You are a helpful assistant.',
     model_settings={'cache': True},
 )
@@ -261,7 +260,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 handbook = '...'  # a long document, above the model's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
@@ -298,7 +297,7 @@ client = AsyncAnthropic(
 )
 
 model = AnthropicModel(
-    'claude-sonnet-4-6',
+    '{{ anthropic:medium.name }}',
     provider=AnthropicProvider(anthropic_client=client),
 )
 agent = Agent(
@@ -334,7 +333,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,                   # Server auto-caches last block
@@ -366,7 +365,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     deps_type=str,
     instructions='You are a helpful customer service agent. Follow company policy.',  # (1)!
     model_settings=AnthropicModelSettings(
@@ -396,7 +395,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
 )
 
@@ -418,7 +417,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
@@ -442,7 +441,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(anthropic_cache=True, anthropic_cache_diagnostics=True),
 )
@@ -483,7 +482,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,                   # 1 cache point (server-applied)
@@ -520,7 +519,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point
@@ -552,6 +551,10 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Carried-over thinking
+
+A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
 
 ## Mid-conversation system messages
 
@@ -615,6 +618,8 @@ On a model that doesn't support forcing, or while extended thinking is enabled:
 While adaptive thinking is on, an explicit forcing `tool_choice` is still sent, and that request comes back without thinking. A forced choice that Pydantic AI resolved on your behalf falls back to `'auto'` instead, as above, so the model keeps thinking.
 
 [Tool Output](../output.md#tool-output) forces a call to the output tool on every request that can't end with text, so a bare structured `output_type` uses [Native Output](../output.md#native-output), where the model supports it, whenever the request thinks: with a thinking setting, or with none on a model that [thinks by default](../capabilities/thinking.md#adaptive-thinking-effort), like Claude Opus 5 and later, Claude Sonnet 5, Claude Haiku 5.5, and the Claude Fable and Mythos models. On a model without JSON schema support, extended thinking falls back to [Prompted Output](../output.md#prompted-output), and adaptive thinking keeps Tool Output with the output tool offered under `tool_choice='auto'`. To keep Tool Output, turn thinking off with `thinking=False` where the model allows it. An explicit `ToolOutput(...)` keeps Tool Output, with the output tool offered under `tool_choice='auto'`.
+
+The output mode is chosen on the run's first request and kept for the rest of the run (except behind a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking setting that changes from step to step (through a [`model_settings`][pydantic_ai.agent.Agent.__init__] callable or a capability) doesn't add or remove the output tool between requests and [invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A run that starts with Tool Output keeps it once thinking turns on, with the output tool offered under `tool_choice='auto'`.
 
 ## Thinking block binding
 
@@ -691,7 +696,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicCompaction
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[AnthropicCompaction(token_threshold=100_000)],
 )
 ```
@@ -708,7 +713,7 @@ Alternatively, you can configure compaction directly via model settings using [`
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 result = agent.run_sync(
     'Hello!',
     model_settings=AnthropicModelSettings(
@@ -732,7 +737,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[NativeTool(CodeExecutionTool())],
     model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
 )

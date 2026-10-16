@@ -80,7 +80,7 @@ agent = Agent(model)
 
 ## SDK retries {#sdk-retries}
 
-Unlike the OpenAI, Anthropic and Groq clients, the Cohere client exposes no `max_retries` knob: its built-in client retries server errors and rate limits twice above whatever transport you pass here, and that cannot be turned off. Keep it in mind when sizing the transport — see [Provider SDK retries](../retries.md#provider-sdk-retries).
+The Cohere client retries server errors, rate limits and status 408 and 409 twice by default, above whatever transport you pass here. It takes its retry count per request rather than per client, so set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change it, for example to `0` to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Model settings
 

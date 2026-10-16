@@ -111,7 +111,7 @@ from pydantic_ai.durable_exec.temporal import (
 )
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     instructions="You're an expert in geography.",
     name='geography',  # (1)!
     capabilities=[TemporalDurability()],  # (2)!
@@ -184,7 +184,7 @@ Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.tempora
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalAgent
 
-agent = Agent('openai:gpt-5.6-sol', name='geography')
+agent = Agent('{{ openai:medium }}', name='geography')
 temporal_agent = TemporalAgent(agent)
 # Use `temporal_agent` from inside a workflow, list it in `__pydantic_ai_agents__`,
 # and connect with `PydanticAIPlugin()` exactly like the capability example above.
@@ -356,7 +356,7 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai.durable_exec.temporal import AgentEventStream, TemporalDurability
 
 durability = TemporalDurability(event_stream_topic='agent-events')
-agent = Agent('openai:gpt-5.6-sol', name='assistant', capabilities=[durability])
+agent = Agent('{{ openai:medium }}', name='assistant', capabilities=[durability])
 
 
 @workflow.defn
@@ -541,13 +541,21 @@ Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) fo
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflow. Its deadline is computed from `workflow.now()` and enforced with a workflow timer, so a replayed workflow computes the same deadline and fires the same timer. When it fires, the in-flight activity is cancelled according to its `cancellation_type`, and the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in workflow code. Like `RunCancelled`, an uncaught `RunTimedOut` fails the workflow as a typed application error, so catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+
+[`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] is serialized into activities, so an agent run by a tool inside an activity inherits the deadline too. The deprecated `TemporalAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the workflow: a workflow's `execution_timeout` would end it without recording the run's history, so keep using it only as a backstop.
+
 ### Suspended Turns and Background Mode
 
 Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes. Each segment runs in a separate model request activity, while the workflow checkpoints the suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and its background job ID between segments. The final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response resumes with that response passed to the first activity.
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. A [`request_timeout`](../timeouts.md#model-request-deadlines) model setting covers all segments of the turn: it runs as a workflow timer, and cancels the in-flight activity when it fires. With a [`FallbackModel`](../models/overview.md#fallback-model), the deadlines run inside the activities instead, and the picked model's deadline carries over from one segment's activity to the next. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
 - **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's [payload size limit](#large-payloads) (2MB by default). A segment that overflows raises the same `UserError` as any other oversized model response.
@@ -557,7 +565,7 @@ This has a few operational implications:
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'{{ openai:medium }}'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:
 
 - pre-register it by passing a `models` dict to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then reference it by name or by passing the registered instance directly to `agent.run(model=...)`;
 - pass a model-name string and build the instance on the worker with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials.
@@ -583,9 +591,9 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 # Create models from different providers
-default_model = OpenAIResponsesModel('gpt-5.6-sol')
-fast_model = AnthropicModel('claude-haiku-4-5')
-reasoning_model = GoogleModel('gemini-3-pro-preview')
+default_model = OpenAIResponsesModel('{{ openai:medium.name }}')
+fast_model = AnthropicModel('{{ anthropic:small.name }}')
+reasoning_model = GoogleModel('{{ google:large.name }}')
 
 
 # Optional: customize how model-name strings are built.
@@ -623,7 +631,7 @@ class MultiModelWorkflow:
             result = await agent.run(prompt, model=fast_model)
         else:
             # Or pass a model string (resolved by `ResolveModelId` if it matches)
-            result = await agent.run(prompt, model='openai:gpt-5.6-luna')
+            result = await agent.run(prompt, model='{{ openai:small }}')
         return result.output
 ```
 
@@ -681,7 +689,7 @@ async def now() -> str:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     name='research',
     toolsets=[toolset],
     capabilities=[
