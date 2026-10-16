@@ -137,7 +137,7 @@ async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(
     await home.close('exit')
 
 
-async def test_restarts_wait_for_the_sessions_running_in_the_browser(
+async def test_restarts_are_refused_while_other_sessions_run_turns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     started = {name: anyio.Event() for name in 'bc'}
