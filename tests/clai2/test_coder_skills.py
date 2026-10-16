@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from pydantic import JsonValue, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
@@ -259,10 +259,11 @@ class TestDisabledSkills:
         plugin = loaded.plugin
         assert isinstance(plugin, CoderPlugin)
 
-        def refuse(self: CoderSource[None], names: list[str]) -> None:
+        def refuse(settings: BaseModel, /) -> None:
             raise ValueError('disk full')
 
-        monkeypatch.setattr(CoderSource, 'save_disabled_skills', refuse)
+        # On the host: an earlier `loader.reload('coder')` in this process may have replaced the module's classes.
+        monkeypatch.setattr(plugin.host, 'save_settings', refuse)
         script = ScriptedDialogs([Pick(value='review'), Back()])
 
         assert await plugin.settings_menu().actions['disabled_skills'](script) == []
