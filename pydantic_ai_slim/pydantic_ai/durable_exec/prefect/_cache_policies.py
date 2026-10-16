@@ -118,10 +118,6 @@ def _replace_run_context(
                 'retry': value.retry,
                 'max_retries': value.max_retries,
                 'run_step': value.run_step,
-                # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
-                # a different time budget. A flow retry records the run's start time, so a retried run with
-                # the same `timeout=` has the same deadline and still hits.
-                'deadline': value.deadline,
                 # Deferred-load state must be part of the key: two runs identical except for which
                 # capabilities/tools have been loaded see different tools and must not share a cache
                 # entry. Sorted for a deterministic key (sets have no stable iteration order).
@@ -152,6 +148,11 @@ def _replace_run_context(
                     if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
                     else {}
                 ),
+                # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
+                # a different time budget. A flow retry records the run's start time, so a retried run with
+                # the same `timeout=` has the same deadline and still hits. Projected only when set, so the
+                # keys of runs without a deadline are unchanged.
+                **({'deadline': value.deadline} if value.deadline is not None else {}),
             }
 
     return inputs

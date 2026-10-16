@@ -17,7 +17,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Self, cast
 from unittest.mock import MagicMock, patch
@@ -2517,6 +2517,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     }
     projected_only_when_set = {
         '_tool_name_path',  # so keys of toolsets listed outside a name-changing wrapper don't change
+        'deadline',  # so keys of runs without a `timeout=` don't change
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -2530,6 +2531,10 @@ def test_cache_key_run_context_projection_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
+    # A context that doesn't set them hashes as it did before they were projected.
+    assert projected.isdisjoint(projected_only_when_set)
+    deadline = datetime(2030, 1, 1, tzinfo=UTC)
+    assert _replace_run_context({'ctx': replace(ctx, deadline=deadline)})['ctx']['deadline'] == deadline
 
 
 async def test_repeated_run_hits_cache():
