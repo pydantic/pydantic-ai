@@ -93,7 +93,7 @@ from .models._continuation import (
     merge_responses,
     report_continuation_segment,
 )
-from .output import OutputDataT, OutputSpec
+from .output import OutputDataT, OutputSpec, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
@@ -390,6 +390,10 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    default_output_mode: tuple[str, StructuredOutputMode] | None = None
+    """Internal: the ID of the model whose first request this run resolved the default output mode, and that mode.
+
+    See `_keep_default_output_mode`."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
@@ -1052,6 +1056,39 @@ async def _prepare_request_parameters(
         allow_image_output=output_schema.allows_image,
         instruction_parts=instruction_parts,
     )
+
+
+def _keep_default_output_mode(
+    state: GraphAgentState,
+    model: models.Model,
+    model_settings: ModelSettings | None,
+    params: models.ModelRequestParameters,
+) -> models.ModelRequestParameters:
+    """Resolve the output mode for a structured `output_type` that doesn't pick one once per run, not per request.
+
+    Where Tool Output's forced tool choice would stop a request from thinking, the model resolves the default to
+    Native or Prompted Output instead, so the mode follows whether each request thinks. Thinking can change from
+    one step to the next (through a `model_settings` callable or a capability), and the output tool would then
+    come and go from the tools sent to the model, invalidating the prompt cache. So later requests to the same
+    model keep the mode its first request resolved to: Tool Output on a request that thinks then offers the output
+    tool without forcing it. A request the kept mode isn't valid for resolves its own.
+    """
+    if params.output_mode != 'auto':
+        return params
+    model_id = model.model_id
+    if state.default_output_mode is not None and state.default_output_mode[0] == model_id:
+        kept = params.with_default_output_mode(state.default_output_mode[1])
+        try:
+            model.prepare_request(model_settings, kept)
+        except exceptions.UserError:
+            # Bedrock rejects output tools alongside thinking on models other than Claude.
+            return params
+        return kept
+    _, prepared = model.prepare_request(model_settings, params)
+    # `FallbackModel` leaves it to whichever model ends up answering.
+    if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
+        state.default_output_mode = (model_id, mode)
+    return params
 
 
 # --- Innermost model-call helpers ---
@@ -1940,6 +1977,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = request_context.model_request_parameters
 
         run_context.model_settings = model_settings
+
+        model_request_parameters = _keep_default_output_mode(ctx.state, model, model_settings, model_request_parameters)
+        request_context.model_request_parameters = model_request_parameters
 
         if self._resume_suspended is None:
             if not messages:
