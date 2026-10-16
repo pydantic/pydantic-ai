@@ -137,7 +137,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   drop-in folder, project, built-in. CLAI never writes the project file.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
-  approval. [Environment variables](README.md#environment-variables) documents the
+  approval. [Environment variables](docs/reference.md#environment-variables) documents the
   scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
@@ -366,7 +366,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder` and `Skills`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), skill folders read in `prepare` with a `/skill-name` command each (`overridable`, submitted with `host.submit_prompt`), and its settings menu (file access, sub-agents, agent folders, skill folders), which hands **Agent folders** to `coder_folders.py` |
+| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder` and `Skills`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), skill folders (relative ones walked up to the git root) read in `prepare` with a `/skill-name` command per user-invocable skill (`overridable`, re-read when run, submitted with `host.submit_prompt`), and its settings menu (file access, sub-agents, agent folders, skill folders), which hands **Agent folders** to `coder_folders.py` |
 | `builtin_plugins/coder_folders.py` | the Coder agent-folder list (add, edit, remove, validation, duplicate detection) and its local directory browser, reading and saving through `CoderSource` |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
@@ -450,8 +450,12 @@ uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pyd
 
 ## Docs parity
 
-`README.md` is the tour, `PLUGINS.md` is the plugin contract, this file is for
-agents. A user-facing change updates the first two in the same PR. Plain
+`README.md` is the product tour, `docs/reference.md` is the user reference,
+`PLUGINS.md` is the plugin contract, and this file is for agents. A user-facing
+change updates the reference (and the README when it changes what the tour shows)
+and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
+images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
+the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:

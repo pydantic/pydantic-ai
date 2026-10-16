@@ -28,6 +28,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import SkillDefinition, Skills
 from pydantic_clai2.builtin_plugins.coder_folders import is_folder_name, run_coder_flow
 from pydantic_clai2.commands import Command
+from pydantic_clai2.config.project_settings import repository_directories
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.runtime._session import supports_local_workspace
 from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
@@ -106,9 +107,20 @@ class CoderSettings(BaseModel):
                 project.append(_expand_home(value, home=home))
         return list(dict.fromkeys([*project, *personal]))
 
-    def skill_libraries(self, *, home: Path) -> list[str]:
-        """`skill_folders` with `~/` expanded, each once, in precedence order."""
-        return list(dict.fromkeys(_expand_home(value, home=home) for value in self.skill_folders))
+    def skill_libraries(self, *, home: Path, parents: Sequence[Path] = ()) -> list[str]:
+        """`skill_folders` with `~/` expanded, each once, in precedence order.
+
+        Each relative folder is followed by the same folder in each of `parents`: the launch directory's
+        parents up to the git root, nearest first, so launching in a subdirectory still finds the
+        repository's skills.
+        """
+        libraries: list[str] = []
+        for value in self.skill_folders:
+            library = _expand_home(value, home=home)
+            libraries.append(library)
+            if not Path(library).is_absolute():
+                libraries.extend((parent / library).as_posix() for parent in parents)
+        return list(dict.fromkeys(libraries))
 
 
 class CoderSource(Generic[DepsT]):
@@ -217,6 +229,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     def __init__(self, host: PluginHost[DepsT], settings: CoderSettings) -> None:
         super().__init__(host, settings)
         self._skills: Skills[DepsT] | None = None
+        self._skill_workspace: LocalWorkspaceBackend | None = None
         self._skill_definitions: tuple[SkillDefinition, ...] = ()
         self._skill_notices: tuple[str, ...] = ()
 
@@ -226,21 +239,35 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         The model's catalog is read again at the start of every run, so it lists a skill added since;
         its command arrives when the plugin loads again.
         """
-        libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()))
+        cwd = Path(await anyio.Path.cwd())
+        # The launch directory itself stays relative, resolved by the workspace as before.
+        _, *parents = await anyio.to_thread.run_sync(repository_directories, cwd)
+        libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()), parents=parents)
         # Without a local workspace (Windows), the folders cannot be read here or by the run.
         if not libraries or not supports_local_workspace():
             return
         skills = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
+        workspace = LocalWorkspaceBackend(cwd)
         try:
-            catalog = await skills.load(LocalWorkspaceBackend(Path(await anyio.Path.cwd())))
+            catalog = await skills.load(workspace)
         except (UserError, ValueError, OSError) as exc:
             # A misconfigured or unreadable folder would otherwise fail every turn, or the whole plugin, so
             # skills are left out and the file and shell tools still load.
             self._skill_notices = (f'Skills are off: {exc}',)
             return
         self._skills = skills
+        self._skill_workspace = workspace
         self._skill_definitions = catalog.skills
-        self._skill_notices = catalog.skipped
+        notices = [skipped.message for skipped in catalog.skipped]
+        # CLAI hides library warnings from the prompt, so the run's advice about ignored fields is shown here.
+        ignored = [
+            f'{skill.name}: {", ".join(skill.ignored_behavioral_fields)}'
+            for skill in catalog.skills
+            if skill.ignored_behavioral_fields
+        ]
+        if ignored:
+            notices.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
+        self._skill_notices = tuple(notices)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
@@ -267,9 +294,21 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
                 overridable=True,
             )
             for skill in self._skill_definitions
+            if skill.user_invocable
         )
 
-    def _invoke(self, skill: SkillDefinition, args: list[str]) -> str:
+    async def _invoke(self, loaded: SkillDefinition, args: list[str]) -> str:
+        """Send the skill as the folders hold it now, as the model would load it, not as it was at load."""
+        assert self._skills is not None and self._skill_workspace is not None, 'skill commands need loaded skills'
+        catalog = await self._skills.load(self._skill_workspace)
+        skill = next((skill for skill in catalog.skills if skill.name == loaded.name), None)
+        if skill is None:
+            problem = next((skipped.message for skipped in catalog.skipped if skipped.path == loaded.path), None)
+            detail = problem or f'no skill folder has it any more; it was in {loaded.path}.'
+            # Skill files come from the repository, so control characters must not reach the terminal.
+            raise ValueError(terminal_text(f'Skill {loaded.name!r} is gone: {detail} /reload updates the commands.'))
+        if not skill.user_invocable:
+            raise ValueError(f'Skill {loaded.name!r} is now `user-invocable: false`. /reload updates the commands.')
         self.host.submit_prompt(skill.render(args[0] if args else ''))
         return ''
 
