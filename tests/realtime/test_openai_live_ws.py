@@ -483,10 +483,23 @@ async def test_the_backend_summarizes_its_reasoning(
 
     reply = session.all_messages()[-1]
     assert isinstance(reply, ModelResponse)
+    # The summary is requested next to the backend's other settings.
+    assert _session_starts(cassette)[0]['delegation']['responses']['reasoning'] == snapshot({'summary': 'auto'})
     # Only reasoning the backend did summarize carries text: here, the reasoning before the first search.
-    thinking = [part.content for part in reply.parts if isinstance(part, ThinkingPart)]
-    assert thinking[0].startswith('**Searching for Amsterdam population**')
-    assert thinking[1:] == snapshot(['', '', ''])
+    # Curly apostrophes are straightened, since pre-commit would rewrite them in the snapshot below.
+    thinking = [part.content.replace('\u2019', "'") for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking == snapshot(
+        [
+            """\
+**Searching for Amsterdam population**
+
+I need to check Wikipedia specifically for the current population of Amsterdam. There's a bit of ambiguity about whether I'm looking for the city or the municipality, which makes it a little tricky. I'm thinking the population is likely around 933,680 as of January 2025, but I need to confirm that by searching. Let's go ahead and get that information to be sure!\
+""",
+            '',
+            '',
+            '',
+        ]
+    )
 
 
 async def test_an_image_a_tool_returns_reaches_the_backend(
