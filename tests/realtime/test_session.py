@@ -12354,6 +12354,7 @@ async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str
     async with agent.realtime(
         model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
     ).session() as session:
+        consumer: asyncio.Task[None] | None = None
         if waiting_since == 'before the request':
             await session.send('Look up Ada.')
             waiter = asyncio.create_task(session.wait_for_reply())
@@ -12366,7 +12367,7 @@ async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str
         assert not waiter.done()
         decide_now.set()
         await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
-        if waiting_since != 'before the request':
+        if consumer is not None:
             consumer.cancel()
     assert conn.sent[-1] == NativeToolApproval('mcp_1', approved=True)
 
