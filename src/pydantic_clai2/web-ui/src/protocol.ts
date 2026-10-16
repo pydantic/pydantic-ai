@@ -30,7 +30,7 @@ export interface Item {
   diffs: Diff[]
   /** Tools a `run_code` cell called from its sandbox; live runs only. */
   calls: SubCall[]
-  /** A cell the user ran with `/repl`, rather than one the model wrote. */
+  /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
 }
 
