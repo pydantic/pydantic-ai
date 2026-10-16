@@ -77,6 +77,12 @@ with try_import() as openai_available:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+with try_import() as vercel_ai_available:
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+with try_import() as ag_ui_available:
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -989,3 +995,38 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
     marked = [message for message in openai_messages if 'cache_control' in str(message)]
     assert marked == [openai_messages[-2]]
     assert openai_messages[-1] == {'role': 'user', 'content': '<system>Reminder.</system>'}
+
+
+def ui_history() -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[SystemPromptPart('You are terse.'), UserPromptPart('Hello')]),
+        ModelRequest(parts=[SystemPromptPart('Answer in French this turn.', scope='turn')]),
+        ModelResponse(parts=[TextPart('Bonjour')]),
+    ]
+
+
+@pytest.mark.skipif(not vercel_ai_available(), reason='vercel ai adapter not installed')
+def test_vercel_ai_dump_leaves_out_turn_scoped_prompts():
+    """A turn-scoped prompt is for the model's current request, so it's not sent to the frontend.
+
+    Loaded back from the frontend, it would come back as a lasting system prompt.
+    """
+    dumped = VercelAIAdapter.dump_messages(ui_history())
+
+    assert 'Answer in French' not in str(dumped)
+    assert 'You are terse.' in str(dumped)
+    assert all(
+        part.scope == 'conversation'
+        for message in VercelAIAdapter.load_messages(dumped)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+    )
+
+
+@pytest.mark.skipif(not ag_ui_available(), reason='ag-ui not installed')
+def test_ag_ui_dump_leaves_out_turn_scoped_prompts():
+    """A turn-scoped prompt is for the model's current request, so it's not sent to the frontend."""
+    dumped = AGUIAdapter.dump_messages(ui_history())
+
+    assert 'Answer in French' not in str(dumped)
+    assert 'You are terse.' in str(dumped)

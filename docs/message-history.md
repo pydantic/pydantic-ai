@@ -304,7 +304,7 @@ Either way, the cache breakpoints Pydantic AI places for you, through settings l
 Use a turn-scoped prompt for something about the current moment. Something that stays true belongs in the agent's [instructions](agent.md#instructions) or a regular mid-conversation system prompt, and the same rule about untrusted content applies to both.
 
 !!! note "Histories sent back from a frontend"
-    The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) strip `SystemPromptPart`s from client-submitted messages by default, turn-scoped ones included, so a history that round-trips through a frontend loses its turn-scoped prompts. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
+    The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) leave turn-scoped prompts out of the messages they dump for the frontend, since they're only for the model's current request: sent back, one would come back as a lasting system prompt. So a history that round-trips through a frontend loses its turn-scoped prompts, whatever `manage_system_prompt` is set to. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
 
 ### Making histories provider-valid
 

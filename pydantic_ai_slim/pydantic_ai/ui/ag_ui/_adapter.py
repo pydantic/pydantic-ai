@@ -704,7 +704,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
-                system_content.append(part.content)
+                # A turn-scoped prompt is for the model's current request only; loaded back, it would
+                # come back as a lasting system prompt.
+                if part.scope != 'turn':
+                    system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):
                     user_content.append(TextInputContent(type='text', text=part.content))
