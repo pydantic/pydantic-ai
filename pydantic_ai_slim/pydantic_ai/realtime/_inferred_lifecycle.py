@@ -76,12 +76,14 @@ class InferredLifecycle:
     """Works out a connection's lifecycle events from the order of what it sends and receives.
 
     For a protocol that identifies no responses, spoken turns, or inputs, as Gemini Live and OpenAI GPT-Live
-    don't. The connection reports every input it sends ([`input_sent`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_sent],
-    first thing in its [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send]), passes the codec events each
-    provider message makes through [`message`][pydantic_ai.realtime.lifecycle.InferredLifecycle.message] to get the
-    frame to yield, and reports a dropped connection
-    ([`connection_lost`][pydantic_ai.realtime.lifecycle.InferredLifecycle.connection_lost]). A connection whose
-    codec events are an async iterable of their own can have
+    don't. The connection, in its [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send], reports each input
+    first thing ([`input_sent`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_sent]), reports it failed if
+    sending it raises ([`input_failed`][pydantic_ai.realtime.lifecycle.InferredLifecycle.input_failed]), and returns
+    what the send settled ([`take_pending`][pydantic_ai.realtime.lifecycle.InferredLifecycle.take_pending]). It
+    passes the codec events each provider message makes through
+    [`message`][pydantic_ai.realtime.lifecycle.InferredLifecycle.message] to get the frame to yield, and reports a
+    dropped connection ([`connection_lost`][pydantic_ai.realtime.lifecycle.InferredLifecycle.connection_lost]). A
+    connection whose codec events are an async iterable of their own can have
     [`frames`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frames] do the last two.
 
     What it works out:
@@ -261,9 +263,12 @@ class InferredLifecycle:
             self._pending.append(InputLost(input_ids=(input_id,)))
 
     def take_pending(self) -> list[LifecycleEvent]:
-        """The events waiting for the next frame (where inputs sent since the last one joined the conversation).
+        """The events the inputs sent since the last frame settled.
 
-        For a frame of the connection's own, like the one it reports a reconnect in.
+        Where each joined the conversation, or that it will go unanswered. A connection returns them from [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send], so the session
+        applies them before anything it reads next, and puts them at the head of a frame of its own (like the one it
+        reports a reconnect in). [`message()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.message] takes any
+        still waiting into the frame it makes.
         """
         pending, self._pending = self._pending, []
         # (A commit whose events are out can't be taken back any more.)
@@ -406,6 +411,7 @@ class InferredLifecycle:
         input_id = event.input_index
         if event.refused == 'content':
             self._held = [held for held in self._held if held != input_id]
+            self._pending = [pending for pending in self._pending if pending != InputAdded(input_id=input_id)]
         if input_id in self._unanswered:
             self._unanswered.remove(input_id)
             if event.refused == 'response':

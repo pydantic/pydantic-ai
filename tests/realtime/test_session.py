@@ -12310,3 +12310,81 @@ async def test_a_response_over_the_request_limit_within_one_frame_is_neither_rec
                 pass
     assert session.usage.requests == 0
     assert session.all_messages() == []
+
+
+@pytest.mark.parametrize(
+    'turn',
+    [
+        pytest.param(
+            [RealtimeInputSpeechStartEvent(item_id='u1')],
+            id='named-turn-started',
+        ),
+        pytest.param(
+            [RealtimeInputSpeechStartEvent(item_id='u1'), RealtimeInputSpeechEndEvent(item_id='u1')],
+            id='named-turn-ended',
+        ),
+        pytest.param([RealtimeInputSpeechStartEvent()], id='unnamed-turn-started'),
+    ],
+)
+async def test_own_record_keeps_a_turn_anchored_to_a_response_whose_retained_audio_it_drops(
+    turn: list[RealtimeCodecEvent],
+) -> None:
+    """A turn started while a response was spoken is anchored to it, and stays so once its audio leaves the record."""
+    item_id = getattr(turn[0], 'item_id', None)
+    conn = FakeRealtimeConnection(
+        [
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Hello.', is_final=True),
+            *turn,
+            ResponseDone(),
+            *([] if len(turn) > 1 else [RealtimeInputSpeechEndEvent(item_id=item_id)]),
+            InputTranscript(text='Hi.', is_final=True, item_id=item_id),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all')
+    await collect_events(session)
+    assert [
+        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
+        for message in _own_record(session)
+    ] == [('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])]
+
+
+class _DeferredCommitConnection(_ContinuousMicrophoneConnection):
+    """Sends a commit as it gets it, but reports it through the listener, as a connection that holds it would."""
+
+    _listener: Callable[[], None] | None = None
+
+    @property
+    def _defers_audio_commit(self) -> bool:
+        return True
+
+    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+        self._listener = listener
+
+    async def send_input(self, content: RealtimeInput) -> None:
+        if isinstance(content, CommitAudio):
+            assert self._listener is not None
+            self._listener()
+        await super().send_input(content)
+
+
+async def test_own_record_keeps_a_commit_anchored_to_a_response_whose_retained_audio_it_drops() -> None:
+    """A turn committed while a response was spoken follows it in the record, once its audio leaves the record too."""
+    conn = _DeferredCommitConnection(
+        [
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Hello.', is_final=True),
+            _MIC,
+            _RELEASE,
+            ResponseDone(),
+            InputTranscript(text='Hi.', is_final=True),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all')
+    conn.session = session
+    async with session:
+        await drain_events(session)
+    assert [
+        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
+        for message in _own_record(session)
+    ] == snapshot([('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])])
