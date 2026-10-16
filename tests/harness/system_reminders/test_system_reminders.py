@@ -66,7 +66,13 @@ def _ctx(
     async def emit(event: Any) -> Any:
         return event
 
+    def enqueue(*content: Any) -> None:
+        # What the agent graph does with content enqueued from `before_model_request`.
+        ctx.enqueued.append(ModelRequest(parts=list(content)))
+
     ctx.emit = emit
+    ctx.enqueue = enqueue
+    ctx.enqueued = []
     return ctx
 
 
@@ -86,20 +92,21 @@ async def _run_before(
     ctx: Any | None = None,
 ) -> list[ModelMessage]:
     """Invoke `before_model_request`; return the messages the request goes out with."""
+    run_ctx = ctx or _ctx(messages=list(messages))
     request_context = _make_request_context(messages)
-    request_context = await cap.before_model_request(ctx or _ctx(messages=list(messages)), request_context)
-    return request_context.messages
+    request_context = await cap.before_model_request(run_ctx, request_context)
+    return [*request_context.messages, *run_ctx.enqueued]
 
 
-def _turn_scoped(message: ModelMessage) -> SystemPromptPart | None:
-    """The reminder a message carries: a request holding only a turn-scoped system prompt."""
+def _request_scoped(message: ModelMessage) -> SystemPromptPart | None:
+    """The reminder a message carries: a request holding only a request-scoped system prompt."""
     part = message.parts[0] if isinstance(message, ModelRequest) and len(message.parts) == 1 else None
-    return part if isinstance(part, SystemPromptPart) and part.scope == 'turn' else None
+    return part if isinstance(part, SystemPromptPart) and part.scope == 'request' else None
 
 
 def _fired_text(messages: list[ModelMessage]) -> str | None:
     """The reminder text added this turn, or None if nothing fired."""
-    reminder = _turn_scoped(messages[-1]) if messages else None
+    reminder = _request_scoped(messages[-1]) if messages else None
     return reminder.content if reminder else None
 
 
@@ -121,13 +128,13 @@ def _all_text(messages: list[ModelMessage]) -> str:
     return '\n'.join(out)
 
 
-def _turn_scoped_texts(messages: list[ModelMessage]) -> list[str]:
+def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
     return [
         part.content
         for msg in messages
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, SystemPromptPart) and part.scope == 'turn'
+        if isinstance(part, SystemPromptPart) and part.scope == 'request'
     ]
 
 
@@ -139,7 +146,7 @@ class TestReminderValidation:
         r = Reminder('text')
         assert r.interval == 1
         assert r.first_after is None
-        assert r.tag == 'system-reminder'
+        assert r.tag is None
 
     def test_zero_interval_raises(self) -> None:
         with pytest.raises(ValueError, match='interval must be >= 1'):
@@ -155,12 +162,10 @@ class TestReminderValidation:
 
 
 class TestRenderContent:
-    async def test_default_tag_wraps(self) -> None:
+    async def test_default_sends_raw_content(self) -> None:
+        # The reminder is a system prompt already, rendered natively or in a `<system>` tag by the model.
         cap = SystemReminders[None](reminders=[Reminder('stay focused')])
-        assert (
-            _fired_text(await _run_before(cap, _fresh_request()))
-            == '<system-reminder>\nstay focused\n</system-reminder>'
-        )
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'stay focused'
 
     async def test_custom_tag(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('x', tag='note')])
@@ -362,21 +367,15 @@ class TestDynamicReminders:
 
 
 class TestInjectionMechanics:
-    async def test_reminder_is_a_turn_scoped_request_in_history_and_request(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        history: list[ModelMessage] = _fresh_request()
-        seen = await _run_before(cap, list(history), ctx=_ctx(messages=history))
-        assert seen[-1] == ModelRequest(parts=[SystemPromptPart('r', scope='turn', timestamp=IsDatetime())])
-        # The same request goes into the run's history, so the turn-scoped prompt is kept there and the
-        # model's provider can clear it rather than see it deleted.
-        assert history[-1] is seen[-1]
-
-    async def test_default_tag_in_injection(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('stay focused')])
-        assert (
-            _fired_text(await _run_before(cap, _fresh_request()))
-            == '<system-reminder>\nstay focused\n</system-reminder>'
-        )
+    async def test_reminder_is_enqueued_as_a_request_scoped_prompt(self) -> None:
+        cap = SystemReminders[None](reminders=[Reminder('r')])
+        messages = _fresh_request()
+        ctx = _ctx(messages=list(messages))
+        request_context = await cap.before_model_request(ctx, _make_request_context(list(messages)))
+        # Enqueued, so the agent delivers it into this request and into the run's history, where the
+        # request-scoped prompt is kept and the model's provider can clear it rather than see it deleted.
+        assert ctx.enqueued == [ModelRequest(parts=[SystemPromptPart('r', scope='request', timestamp=IsDatetime())])]
+        assert request_context.messages == messages
 
     async def test_original_request_not_mutated_in_place(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
@@ -802,22 +801,27 @@ class TestLLMReminder:
             await reminder(no_run_id)
         assert len(caplog.records) == 4  # run-1 once, run-2 once, and each failure without a run id
 
-    async def test_remembers_a_bounded_number_of_runs(self, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_remembers_a_bounded_number_of_runs(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A small bound stands in for `_WARNED_RUNS_KEPT` so the eviction is reached in a few runs.
+        monkeypatch.setattr('pydantic_ai_harness.system_reminders._capability._WARNED_RUNS_KEPT', 4)
+
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model down')
 
         reminder = LLMReminder(model=FunctionModel(boom))
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
         with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
-            for index in range(258):
+            for index in range(6):
                 ctx = _ctx(messages=messages)
                 ctx.run_id = f'run-{index}'
                 await reminder(ctx)
             oldest = _ctx(messages=messages)
             oldest.run_id = 'run-0'
             await reminder(oldest)
-        # 258 distinct runs, then the oldest again: it was evicted, so it warns a second time.
-        assert len(caplog.records) == 259
+        # 6 distinct runs, then the oldest again: it was evicted, so it warns a second time.
+        assert len(caplog.records) == 7
 
     def test_zero_max_context_messages_raises(self) -> None:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):
@@ -898,7 +902,7 @@ class TestEndToEnd:
     async def test_reminder_is_sent_for_its_own_request_and_kept_in_history(self) -> None:
         """Each reminder reaches the request it was added to, and only that one, and stays in history.
 
-        `FunctionModel` can't clear a turn-scoped prompt itself, so it's sent each one while it's
+        `FunctionModel` can't clear a request-scoped prompt itself, so it's sent each one while it's
         current, as `<system>`-tagged text at the end of the request, and never again.
         """
         seen: list[list[ModelMessage]] = []
@@ -926,7 +930,7 @@ class TestEndToEnd:
             ['<system>request 2</system>'],
             ['<system>request 3</system>'],
         ]
-        assert _turn_scoped_texts(result.all_messages()) == ['request 1', 'request 2', 'request 3']
+        assert _request_scoped_texts(result.all_messages()) == ['request 1', 'request 2', 'request 3']
 
     async def test_reminder_survives_compaction_listed_after_it(self) -> None:
         """A compaction capability listed after `SystemReminders` keeps the current reminder.
@@ -988,11 +992,8 @@ class TestEndToEnd:
         assert result.output == 'done'
         sent = _all_text(captured['messages'])
         assert '<plan-reminder>' in sent
-        assert '<system-reminder>' in sent
-        # Planning's reminder is request-only; this one is kept in history as a turn-scoped prompt.
+        assert '<system>stay focused</system>' in sent
+        # Planning's reminder is request-only; this one is kept in history as a request-scoped prompt.
         durable = _all_text(result.all_messages())
         assert '<plan-reminder>' not in durable
-        assert _turn_scoped_texts(result.all_messages()) == [
-            '<system-reminder>\nstay focused\n</system-reminder>',
-            '<system-reminder>\nstay focused\n</system-reminder>',
-        ]
+        assert _request_scoped_texts(result.all_messages()) == ['stay focused', 'stay focused']

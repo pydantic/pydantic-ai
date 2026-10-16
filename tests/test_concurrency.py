@@ -34,7 +34,7 @@ READINESS_WAIT_TIMEOUT = 5
 
 
 class AsyncBarrier:
-    """A simple asyncio.Barrier-like implementation compatible with Python 3.10 using anyio."""
+    """A one-shot barrier for AnyIO's asyncio and Trio backends."""
 
     def __init__(self, parties: int):
         self._parties = parties
@@ -149,9 +149,9 @@ class TestConcurrencyLimiter:
 
             for _ in range(3):
                 tg.start_soon(waiter)
-            with anyio.fail_after(2):
-                while limiter.waiting_count < 3:
-                    await anyio.sleep(0.01)
+            # Each waiter registers, then parks on the limiter: once every task is blocked, all three have. (No clock, so
+            # a runner too loaded to schedule this process for a while can't time the test out.)
+            await anyio.wait_all_tasks_blocked()
             assert limiter.waiting_count == 3
 
             release.set()

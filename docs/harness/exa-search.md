@@ -44,7 +44,7 @@ Then pass `ExaSearch` to an `Agent` via the `capabilities` parameter:
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaSearch()])
 
 result = agent.run_sync('What changed in the latest stable Python release?')
 print(result.output)
@@ -78,8 +78,8 @@ A URL or question that returns no content, a rate limit, or a transient API or
 network failure surfaces to the model as a
 [`ModelRetry`](../tools-advanced.md#tool-retries) rather than a
 hard error: the run continues and the model can correct the URL, rephrase, or
-try again. Authentication failures (401/403) are configuration errors and
-propagate.
+try again. Authentication failures (401/403) and payment-required errors (402)
+are configuration or account errors and propagate.
 
 ## Deep search
 
@@ -191,7 +191,7 @@ deferred call's metadata.
 from pydantic_ai import Agent
 from pydantic_ai_harness import ExaAgent
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaAgent()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaAgent()])
 ```
 
 By default (`execution='inline'`) the capability resolves its own deferred
@@ -210,7 +210,7 @@ from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai_harness import ExaAgent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[ExaAgent(execution='external')],
 )
@@ -268,11 +268,12 @@ to proceed. Each result includes the run ID, which the model can pass back as
 
 ## Multiple instances
 
-Two instances of the same capability register the same tool names, which is an
+Two instances of the same capability register the same tool names, and share
+the default `id` (`exa_search` or `exa_agent`), so two that differ raise an
 error. To run several differently configured instances in one agent (for
-example one open-web `ExaSearch` and one pinned to specific domains), wrap the
-extra instances in core's `PrefixTools` capability, which prefixes their tool
-names:
+example one open-web `ExaSearch` and one pinned to specific domains), give each
+extra instance a distinct `id` and wrap it in core's `PrefixTools` capability,
+which prefixes their tool names:
 
 ```python
 from pydantic_ai import Agent
@@ -281,11 +282,11 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import ExaSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         ExaSearch(),  # web_search, get_page
         PrefixTools(
-            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance=''),
+            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance='', id='crunchbase_search'),
             prefix='cb',
         ),  # cb_web_search, cb_get_page
     ],
@@ -300,6 +301,28 @@ This also works for `ExaAgent`: it identifies its deferred calls by metadata
 it wrote when deferring, not by tool name, so a prefixed `exa_agent` still
 resolves inline, and multiple `ExaAgent` instances never claim each other's
 calls.
+
+## Durable execution
+
+Under [durable execution](../durable_execution/overview.md), each Exa request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+`ExaAgent` records creating the Exa run and, with `execution='inline'`,
+polling it to completion.
+
+On Temporal an activity has 60 seconds by default, which `deep_search` can
+exceed. Give the tool calls longer with
+`TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
+keyed by the capability's `id`,
+as in [Temporal timeouts](../durable_execution/temporal.md#harness-command-timeouts). `ExaAgent` polls its run in a capability
+activity, which takes the base `activity_config`, so set its
+`start_to_close_timeout` above `timeout_ms`.
+
+The records are named after the capability's `id`, which defaults to
+`exa_search` for `ExaSearch` and `exa_agent` for `ExaAgent`, so durable
+execution needs no configuration. Changing an `id` renames the records, which
+in-flight runs then cannot find.
 
 ## Custom client
 
@@ -335,8 +358,10 @@ To use the provider's search where there is one and Exa's elsewhere, either:
   and Exa's `web_search` is only sent to models without one. `get_page` and `deep_search` stay available on every model.
   `include_domains` and `exclude_domains` become the native tool's
   `allowed_domains` and `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  Exa's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means Exa
+  searches.
 - Or pass Exa's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 
@@ -373,7 +398,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 from pydantic_ai_harness import ExaSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch(), MCP('https://mcp.exa.ai/mcp')])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ExaSearch(), MCP('https://mcp.exa.ai/mcp')])
 ```
 
 ## Agent spec (YAML/JSON)
@@ -384,7 +409,7 @@ file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - ExaSearch:
       num_results: 3

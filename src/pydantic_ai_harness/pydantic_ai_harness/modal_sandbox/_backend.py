@@ -305,7 +305,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     async def _acquire(self) -> modal.Sandbox:
         async with self._lock:
             if (sandbox := self._sandbox) is not None:
-                return sandbox
+                # `get_sandbox` returns a stored handle itself and starts this only when no acquisition is pending.
+                return sandbox  # pragma: no cover
             await _import_modal()
             ref = self._ref
             if ref is not None:

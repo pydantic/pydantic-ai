@@ -15,9 +15,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-from typing_extensions import assert_never
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (

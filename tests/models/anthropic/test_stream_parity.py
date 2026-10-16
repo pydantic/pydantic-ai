@@ -8,17 +8,16 @@ complete `BetaMessage`. This replays each recorded stream through both.
 from __future__ import annotations as _annotations
 
 import dataclasses
-from pathlib import Path
 from typing import Any
 
 import httpx2
 import pytest
-import yaml
 
 from pydantic_ai import _utils
 from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart
 from pydantic_ai.models import ModelRequestParameters
 
+from ...cassette_utils import recorded_interactions
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -31,19 +30,13 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
-_TESTS_DIR = Path(__file__).parents[2]
-
 
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        text = path.read_text()
-        if 'event: message_start' not in text:
-            continue
-        for index, interaction in enumerate(yaml.safe_load(text)['interactions']):
-            content = interaction['response']['body'].get('content')
-            if isinstance(content, str) and 'event: message_start' in content:
-                streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
+    for name, interaction in recorded_interactions('event: message_start'):
+        content = interaction['response']['body'].get('content')
+        if isinstance(content, str) and 'event: message_start' in content:
+            streams[name] = interaction
     return streams
 
 

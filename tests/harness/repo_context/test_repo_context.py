@@ -121,13 +121,25 @@ class TestDiscoverInstructionFiles:
         assert [f.content for f in files] == ['claude', 'agents']
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
-    async def test_symlink_deduped_by_content_hash(self, tmp_path: Path, workspace: Workspace) -> None:
-        # Symlink-realpath dedup is dropped with the workspace migration (isolation is
-        # the workspace's job); the content-hash dedup still catches shared bytes.
+    async def test_symlink_loads_once(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'shared')
         (tmp_path / 'AGENTS.md').symlink_to(tmp_path / 'CLAUDE.md')
         files = await discover_instruction_files(workspace, tmp_path, None, ('CLAUDE.md', 'AGENTS.md'))
-        assert len(files) == 1
+        assert [(file.path.name, file.content) for file in files] == [('CLAUDE.md', 'shared')]
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_symlink_is_labeled_by_its_target(self, tmp_path: Path, workspace: Workspace) -> None:
+        # `CLAUDE.md -> AGENTS.md` is tried first but holds `AGENTS.md`, so the model sees that name.
+        _write(tmp_path / 'AGENTS.md', 'shared')
+        (tmp_path / 'CLAUDE.md').symlink_to('AGENTS.md')
+        cap = RepoContext[object]()
+        ctx = _run_context(workspace)
+
+        await cap.before_run(ctx)
+
+        assert _render_capability_instructions(cap, ctx) == '<context-file path="AGENTS.md">\nshared\n</context-file>'
+        found = await find_dir_context_file(workspace, tmp_path, ('CLAUDE.md', 'AGENTS.md'))
+        assert found is not None and found.path == tmp_path / 'AGENTS.md'
 
     async def test_identical_content_deduped_by_hash(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'same')
@@ -210,6 +222,16 @@ class TestInstructions:
         assert isinstance(instructions, str)
         assert 'be nice' in instructions
         assert 'inventory_agent_context' not in instructions
+
+    async def test_directory_named_like_an_instruction_file_is_skipped(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        (tmp_path / 'CLAUDE.md').mkdir()
+        _write(tmp_path / 'AGENTS.md', 'be nice')
+        cap = RepoContext[object](expose_inventory_tool=False)
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == '<context-file path="AGENTS.md">\nbe nice\n</context-file>'
 
     def test_none_when_all_disabled(self, tmp_path: Path) -> None:
         cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=False)

@@ -1,18 +1,21 @@
-"""A full-screen editor for a set of named, validated fields. `/set`, `/add_model`, and plugin settings use it."""
+"""A full-screen editor for a set of named, validated fields. `/set`, `/model add`, and plugin settings use it."""
 
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
-from typing import Protocol
 
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.pager import Pager
+from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
+from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
@@ -21,6 +24,7 @@ KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
 _LIST_HINT = 'type to filter - Enter edit - R reset - Esc close'
+_PREVIEW_LIST_WIDTH = 30
 
 
 class _SaveAndClose:
@@ -52,55 +56,6 @@ class _Reset:
     """What the `r` key hands back to the loop instead of a row."""
 
     key: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class FieldRow:
-    """One editable field as the menu sees it."""
-
-    key: str
-    description: str
-    default: str
-    choices: tuple[str, ...] = ()
-    label: str = ''
-    choice_labels: Mapping[str, str] = field(default_factory=dict[str, str])
-    allow_custom: bool = True
-    secret: bool = False
-    note: str = ''
-    """Where the value comes from when not from the user; shown muted after the value."""
-
-    def display(self, value: str) -> str:
-        """Label a choice without changing its stored or validated value."""
-        return self.choice_labels.get(value, value)
-
-
-class FieldSource(Protocol):
-    """Where the rows come from and where edits go. Every method is synchronous."""
-
-    @property
-    def title(self) -> str:
-        """Menu title."""
-        ...
-
-    def rows(self) -> Sequence[FieldRow]:
-        """Every editable field, in display order."""
-        ...
-
-    def current(self, row: FieldRow) -> str:
-        """The active value as the user would type it."""
-        ...
-
-    def problem(self, row: FieldRow, text: str) -> str | None:
-        """Why `text` is not valid for the row, or `None` when it is."""
-        ...
-
-    def apply(self, row: FieldRow, raw: str) -> str:
-        """Save and apply a non-empty value; return the message to show."""
-        ...
-
-    def reset(self, row: FieldRow) -> str:
-        """Forget the override; return the message to show."""
-        ...
 
 
 def shown(value: JsonValue) -> str:
@@ -195,7 +150,7 @@ class FieldMenu:
         if row.allow_custom:
             items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
         initial = row.choices.index(current) if current in row.choices else 0
-        return (
+        builder = (
             MenuBuilder(f'Choose {row.label or row.key}')
             .style(markdown_style())
             .items(items)
@@ -203,8 +158,17 @@ class FieldMenu:
             .initial_index(initial)
             .footer_hint('Enter select - Esc keep current')
             .key_source(menu_key)
-            .build()
         )
+        if row.preview is not None:
+            builder.list_width(_PREVIEW_LIST_WIDTH).preview(partial(self._preview, row.preview))
+        return builder.build()
+
+    @staticmethod
+    def _preview(render: ChoicePreview, item: MenuItem) -> str:
+        """Size the sample to the panel; the typed-value and keep rows have none."""
+        if not isinstance(item.value, str) or item.value in (CUSTOM, KEEP):
+            return ''
+        return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
     def build_editor(self, row: FieldRow) -> TextInput:
         """A typed input that validates as you go; empty resets."""
@@ -251,7 +215,7 @@ ListRunner = Callable[[Menu], MenuResult]
 TextRunner = Callable[[TextInput], TextInputResult]
 
 
-def run_menu(menu: Menu) -> MenuResult:  # pragma: no cover -- needs a real terminal.
+def run_menu(menu: Menu) -> MenuResult:
     """Show a termflow menu on the real terminal."""
     return menu.run()
 
@@ -261,6 +225,11 @@ def run_text(widget: TextInput) -> TextInputResult:  # pragma: no cover -- needs
     return widget.run()
 
 
+def run_pager(pager: Pager) -> object:  # pragma: no cover -- needs a real terminal.
+    """Show a termflow pager on the real terminal."""
+    return pager.run()
+
+
 @dataclass(frozen=True, kw_only=True)
 class Runners:
     """How widgets get shown; tests swap these for scripted results."""
@@ -268,6 +237,9 @@ class Runners:
     run_list: ListRunner = run_menu
     run_choice: ListRunner = run_menu
     run_text: TextRunner = run_text
+    run_pager: Callable[[Pager], object] = run_pager
+    edit: TextEditor = edit_text
+    """Multi-line text: `$VISUAL`, `$EDITOR`, or the built-in editor."""
 
 
 TERMINAL = Runners()
@@ -299,7 +271,7 @@ async def run_flow_async(
     menu: FieldMenu,
     runners: Runners = TERMINAL,
     *,
-    submenus: Mapping[str, Callable[[], Awaitable[list[str]]]] | None = None,
+    submenus: Mapping[str, Callable[[], Awaitable[Sequence[str]]]] | None = None,
 ) -> list[str]:
     """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
 

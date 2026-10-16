@@ -4,18 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, Tool
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest, retry_as_result
 from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.youdotcom._toolset import (
     DEFAULT_SEARCH_TIMEOUT_MS,
     YOU_MAX_NUM_RESULTS,
     ExtractionModeName,
     YouClient,
+    YouSearchOperations,
     YouSearchToolset,
+    default_client,
     validate_freshness,
 )
 
@@ -49,6 +55,10 @@ class YouSearch(AbstractCapability[AgentDepsT]):
 
     Authentication comes from the `YDC_API_KEY` environment variable by
     default; pass `client` to configure it explicitly.
+
+    Each tool's You.com request runs as a durable operation, so under durable
+    execution a recovered run reuses the recorded result instead of making the
+    request again.
     """
 
     _: KW_ONLY
@@ -103,8 +113,9 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     tool, and You.com's `web_search` is only sent to models that do not support
     it, so the two never share a request. `get_page` stays You.com's on every
     model. `include_domains` and `exclude_domains` are passed to the native tool
-    as `allowed_domains` and `blocked_domains`; the other search options only
-    apply to You.com's search.
+    as `allowed_domains` and `blocked_domains`, and a model whose native search
+    can't apply them (such as Gemini) gets You.com's `web_search` instead. The
+    other search options only apply to You.com's search.
 
     To use You.com as the fallback of a core `WebSearch` instead, with its native
     options and no `get_page`, pass `WebSearch(local=YouSearch().web_search_tool())`.
@@ -116,6 +127,9 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     Any object satisfying the `YouClient` protocol works: use it to pass an API
     key explicitly, point at a different host, or substitute a fake in tests.
     """
+
+    id: str | None = 'you_search'
+    """Stable identity for durable execution, which records each You.com request under it."""
 
     def __post_init__(self) -> None:
         """Validate configuration against the You.com API's documented bounds."""
@@ -139,10 +153,39 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             return self.guidance or None
         return _INSTRUCTIONS
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
+
     def get_toolset(self) -> YouSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search` and `get_page`."""
+        return self._build_toolset(
+            id=self.id, operations=YouSearchOperations(web_search=self._web_search, get_page=self._get_page)
+        )
+
+    @durable_operation('web_search')
+    async def _web_search(self, query: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.web_search(query))
+
+    @durable_operation('get_page')
+    async def _get_page(self, url: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.get_page(url))
+
+    @cached_property
+    def _client(self) -> YouClient:
+        return self.client if self.client is not None else default_client(self.timeout_ms)
+
+    @cached_property
+    def _requests(self) -> YouSearchToolset[AgentDepsT]:
+        """The toolset whose tools make the You.com requests that the durable operations run."""
+        return self._build_toolset()
+
+    def _build_toolset(
+        self, *, id: str | None = None, operations: YouSearchOperations | None = None
+    ) -> YouSearchToolset[AgentDepsT]:
         return YouSearchToolset[AgentDepsT](
-            client=self.client,
+            client=self._client,
             num_results=self.num_results,
             extraction_mode=self.extraction_mode,
             max_text_chars=self.max_text_chars,
@@ -153,6 +196,8 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             country=self.country,
             timeout_ms=self.timeout_ms,
             defer_to_native=self.native,
+            id=id,
+            operations=operations,
         )
 
     def get_native_tools(self) -> Sequence[AbstractNativeTool]:
@@ -178,6 +223,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         guidance: str | None = None,
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
         native: bool = False,
+        id: str | None = 'you_search',
     ) -> YouSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -196,4 +242,5 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             guidance=guidance,
             timeout_ms=timeout_ms,
             native=native,
+            id=id,
         )

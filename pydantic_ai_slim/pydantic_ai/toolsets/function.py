@@ -629,11 +629,21 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
             if max_retries is None:
                 max_retries = ctx.max_retries
+            # `retries` is keyed by the name the model calls the tool by, computed here by applying
+            # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
+            # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
+            # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
+            # nested inside or around them, whether or not it calls `super().get_tools()`. If it
+            # then names an unrelated tool, `prepare` reads that tool's count.
+            exposed = original_name
+            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
+                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
             run_context = replace(
                 ctx,
                 tool_name=original_name,
-                retry=ctx.retries.get(original_name, 0),
+                retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
+                _tool_name_path=(),
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

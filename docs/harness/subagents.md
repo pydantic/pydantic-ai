@@ -23,11 +23,11 @@ A single agent that does everything accumulates a large tool set and a long cont
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent, SubAgents
 
-researcher = Agent('anthropic:claude-opus-5-5', name='researcher', description='Researches a topic and reports findings')
-writer = Agent('anthropic:claude-opus-5-5', name='writer', description='Turns notes into polished prose')
+researcher = Agent('{{ anthropic:large }}', name='researcher', description='Researches a topic and reports findings')
+writer = Agent('{{ anthropic:large }}', name='writer', description='Turns notes into polished prose')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agents=[SubAgent(researcher), SubAgent(writer)])],
 )
 
@@ -68,7 +68,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 agent = Agent(
-    'anthropic:claude-opus-4-7',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(include_self=True)],
 )
 ```
@@ -77,6 +77,7 @@ agent = Agent(
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()`.
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
+- **On Temporal, delegate to `self` only.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `SubAgents(include_self=True, agent_folders=None)`; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -87,11 +88,11 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents
 
-reproducer = Agent('anthropic:claude-opus-5-5', instructions='Reproduce the reported bug from a minimal script.')
-librarian = Agent('anthropic:claude-opus-5-5', instructions='Find relevant docs, issues, and prior art.')
+reproducer = Agent('{{ anthropic:large }}', instructions='Reproduce the reported bug from a minimal script.')
+librarian = Agent('{{ anthropic:large }}', instructions='Find relevant docs, issues, and prior art.')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SubAgents(
             agents=[
@@ -122,19 +123,19 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import SubAgent, SubAgents
 from pydantic_ai_harness.subagents import ModelOption
 
-reviewer = Agent('anthropic:claude-opus-5-5', name='reviewer', description='Reviews a diff')
-linter = Agent('anthropic:claude-opus-5-5', name='linter', description='Runs the linter and reports failures')
+reviewer = Agent('{{ anthropic:large }}', name='reviewer', description='Reviews a diff')
+linter = Agent('{{ anthropic:large }}', name='linter', description='Runs the linter and reports failures')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SubAgents(
             agents=[SubAgent(reviewer), SubAgent(linter, models=['fast'])],
             models={
-                'fast': 'anthropic:claude-haiku-4-5',
-                'standard': 'anthropic:claude-sonnet-5',
+                'fast': '{{ anthropic:small }}',
+                'standard': '{{ anthropic:medium }}',
                 'deep': ModelOption(
-                    'anthropic:claude-opus-5-5',
+                    '{{ anthropic:large }}',
                     description='hard reasoning, multi-file changes',
                     settings=ModelSettings(thinking='xhigh'),
                 ),
@@ -190,9 +191,9 @@ class ReportDelegations(AbstractCapability):
         print(f'{event.agent_name}: {event.outcome} in {event.duration_seconds:.1f}s')
 
 
-researcher = Agent('anthropic:claude-opus-5-5', name='researcher')
+researcher = Agent('{{ anthropic:large }}', name='researcher')
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agents=[SubAgent(researcher)]), ReportDelegations()],
 )
 ```
@@ -216,7 +217,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agent_folders='agents')],  # loads .agents/agents/ from the run's workspace
 )
 ```
@@ -267,7 +268,7 @@ tools = ["Read", "Grep"]
 - `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
 - `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
 - Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
-- TOML is parsed with the standard library `tomllib`, so it needs Python 3.11 or newer; on 3.10 TOML files are skipped with a warning.
+- TOML files are parsed with the standard-library `tomllib` module.
 
 Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
 
@@ -281,7 +282,7 @@ from pydantic_ai_harness.subagents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
-    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-opus-5-5', effort='high')},
+    agent_overrides={'researcher': AgentOverride(model='{{ anthropic:large }}', effort='high')},
 )
 ```
 
@@ -340,7 +341,7 @@ SubAgents(
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent
 
-agent = Agent('anthropic:claude-opus-5-5')
+agent = Agent('{{ anthropic:large }}')
 
 SubAgent(
     agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
@@ -401,7 +402,7 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[SubAgents(include_self=True)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
 tasks = DelegationTasks(directory=Path('.task-history'))
 
 async def converse():
@@ -432,6 +433,12 @@ output settles. Reports are routed to the direct parent; an idle parent receives
 pending reports on its next explicitly started run. Enqueue delivery is acknowledged
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
 
+`steer(task_id, text)` sends a running child a user message on its own run's queue
+with `priority='asap'`: the child reads it at its next model request, and one about to
+finish goes on with it instead. It returns `False` when the child is not running, so an
+application can offer to resume it. A message sent before the child's run starts waits
+for it; one sent as the child's final response settles may arrive too late for it to read.
+
 An observer receives `DelegationTaskEvent`, with the task identity and an optional
 correlated child stream event. Managed start/end events carry `task_id` and
 `parent_id`. Managed cancellation and uncontained exceptions produce terminal
@@ -439,7 +446,9 @@ outcomes; unmanaged events and exception propagation keep their original contrac
 Metadata and final/interrupted histories are atomically saved under `directory`.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
-Inspect possible partial effects before an explicit resume.
+Inspect possible partial effects before an explicit resume. A resume closes out tool
+calls the interruption left unanswered with an `interrupted` tool return, so the child
+sees they did not complete.
 
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;

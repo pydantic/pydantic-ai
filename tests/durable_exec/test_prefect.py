@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import uuid
@@ -15,7 +16,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
@@ -49,6 +50,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     RunContext,
+    RunTimedOut,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -111,8 +113,8 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -131,8 +133,6 @@ from pydantic_ai.workspaces import (
 try:
     from prefect import flow, task
     from prefect.context import FlowRunContext, TaskRunContext
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -177,7 +177,9 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsSameStr, IsStr
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
+from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 
@@ -386,6 +388,7 @@ warnings.filterwarnings('ignore', message='`PrefectAgent` is deprecated', catego
 pytestmark = [
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.usefixtures('prefect_test_server'),
     pytest.mark.filterwarnings(
         'ignore:`PrefectAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
@@ -411,18 +414,6 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     logfire.configure(metrics=False, distributed_tracing=False)
 
     yield
-
-
-@pytest.fixture(autouse=True, scope='session')
-def setup_prefect_test_harness() -> Iterator[None]:
-    """Set up Prefect test harness for all tests."""
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
 
 
 @pytest.fixture(autouse=True)
@@ -595,6 +586,7 @@ runtime_handler_stream_agent = Agent(
 runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
     """Test a complex agent with tools, MCP servers, and event stream handler."""
 
@@ -1112,6 +1104,7 @@ async def test_prefect_toolset_legacy_constructors() -> None:
     assert wrapped_mcp.id is None
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
@@ -1354,12 +1347,14 @@ async def test_realtime_signaling_in_flow() -> None:
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -2512,6 +2507,10 @@ def test_cache_key_run_context_projection_is_exhaustive():
     projected_via_derived_key = {
         'workspace',  # projected as `workspace_id`, known without connecting a deferred workspace
     }
+    projected_only_when_set = {
+        '_tool_name_path',  # so keys of toolsets listed outside a name-changing wrapper don't change
+        'deadline',  # so keys of runs without a `timeout=` don't change
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
     all_fields = set(RunContext.__dataclass_fields__)
@@ -2519,11 +2518,15 @@ def test_cache_key_run_context_projection_is_exhaustive():
     overlap = projected & cache_irrelevant
     assert not overlap, f'Fields both projected and marked irrelevant: {overlap}'
 
-    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key)
+    uncategorized = all_fields - (projected | cache_irrelevant | projected_via_derived_key | projected_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
+    # A context that doesn't set them hashes as it did before they were projected.
+    assert projected.isdisjoint(projected_only_when_set)
+    deadline = datetime(2030, 1, 1, tzinfo=UTC)
+    assert _replace_run_context({'ctx': replace(ctx, deadline=deadline)})['ctx']['deadline'] == deadline
 
 
 async def test_repeated_run_hits_cache():
@@ -2692,6 +2695,148 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert attempts == 2
     assert tool_runs == ['record_side_effect']
     assert model_runs == 2
+
+
+async def test_flow_retry_keeps_run_deadline() -> None:
+    """The run's start time is a cached task, so a flow retry counts `timeout=` from the first attempt."""
+    agent = Agent(TestModel(), name='retry_deadline_agent', capabilities=[PrefectDurability[object]()])
+    deadlines: list[datetime | None] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        async with agent.iter('go', timeout=3600) as agent_run:
+            async for _node in agent_run:
+                pass
+        deadlines.append(agent_run.ctx.deps.deadline)
+        # Fail after the agent run, so the retry replays its recorded start time.
+        if len(deadlines) == 1:
+            raise RuntimeError('boom')
+        assert agent_run.result is not None
+        return agent_run.result.output
+
+    assert await flaky() == 'success (no tool calls)'
+    first, retried = deadlines
+    assert first is not None
+    assert retried == first
+
+
+async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:
+    """Concurrent runs that reach their start time in a different order on a retry each keep their own deadline."""
+    agent = Agent(TestModel(), name='concurrent_deadline_agent', capabilities=[PrefectDurability[object]()])
+    attempts: list[dict[str, datetime | None]] = []
+
+    async def run_branch(run_id: str, deadlines: dict[str, datetime | None], after: asyncio.Event | None) -> None:
+        if after is not None:
+            await after.wait()
+        async with agent.iter('go', timeout=3600, run_id=run_id) as agent_run:
+            async for _node in agent_run:
+                pass
+        deadlines[run_id] = agent_run.ctx.deps.deadline
+
+    @flow(retries=1)
+    async def branches() -> None:
+        deadlines: dict[str, datetime | None] = {}
+        attempts.append(deadlines)
+        # The retry starts the runs in the opposite order.
+        first, second = ('left', 'right') if len(attempts) == 1 else ('right', 'left')
+        first_done = asyncio.Event()
+
+        async def run_first() -> None:
+            await run_branch(first, deadlines, None)
+            first_done.set()
+
+        await asyncio.gather(run_first(), run_branch(second, deadlines, first_done))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+
+    await branches()
+    original, retried = attempts
+    assert original['left'] != original['right']
+    assert retried == original
+
+
+@pytest.mark.parametrize('retry_timeout', [3600, 1800])
+async def test_flow_retry_replays_tool_result_only_under_the_same_deadline(retry_timeout: int) -> None:
+    """A tool that can read the run's deadline replays its result on a flow retry only if the retry has the same deadline."""
+    tool_runs: list[datetime | None] = []
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('budgeted_work')])
+
+    toolset = FunctionToolset[object](id='deadline_replay_toolset')
+
+    @toolset.tool
+    async def budgeted_work(ctx: RunContext[object]) -> str:
+        tool_runs.append(ctx.deadline)
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'deadline_replay_agent_{retry_timeout}',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability[object]()],
+    )
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go', run_id='budgeted-run', timeout=3600 if attempts == 1 else retry_timeout)
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'done'
+    if retry_timeout == 3600:
+        # Same recorded start time and timeout: the retry replays the tool's result.
+        assert len(tool_runs) == 1
+    else:
+        # A shorter budget is a different deadline, so the tool runs again under it.
+        first, retried = tool_runs
+        assert first is not None and retried is not None
+        assert retried == first - timedelta(seconds=3600 - retry_timeout)
+
+
+async def test_timeout_in_flow() -> None:
+    def call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('slow_tool')])
+
+    agent = Agent(
+        FunctionModel(call_slow_tool), name='timed_out_flow_agent', capabilities=[PrefectDurability[object]()]
+    )
+
+    run_contexts: list[RunContext[object]] = []
+
+    @agent.instructions
+    def capture_run_context(ctx: RunContext[object]) -> str:
+        run_contexts.append(ctx)
+        return 'Call the tool.'
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        # The deadline passes once the tool is running: expire the run as its timer would, without racing one.
+        cancellation = run_contexts[-1]._cancellation  # pyright: ignore[reportPrivateUsage]
+        assert cancellation is not None
+        cancellation.expire()
+        await asyncio.Event().wait()
+        return 'never reached'  # pragma: no cover
+
+    @flow
+    async def timed_out() -> list[str]:
+        try:
+            await agent.run('go', timeout=3600)
+        except RunTimedOut as exc:
+            return [type(message).__name__ for message in exc.all_messages()]
+        return []  # pragma: no cover
+
+    assert await timed_out() == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+
+    # Outside a flow the capability is transparent: the run's own clock starts the deadline.
+    with pytest.raises(RunTimedOut):
+        await agent.run('go', timeout=0)
 
 
 async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
@@ -3264,6 +3409,7 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4025,6 +4171,50 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
     assert calls == 2
 
 
+# Each lists a toolset's `fail` tool as `<prefix>_fail`: a prefix as a string layer, a rename as a mapping one.
+WRAPPERS_EXPOSING_FAIL: dict[str, Callable[[DynamicToolset[object], str], AbstractToolset[object]]] = {
+    'prefixed': lambda toolset, prefix: toolset.prefixed(prefix),
+    'renamed': lambda toolset, prefix: toolset.renamed({f'{prefix}_fail': 'fail'}),
+}
+
+
+@pytest.mark.parametrize('wrapper', WRAPPERS_EXPOSING_FAIL)
+async def test_prefect_dynamic_toolset_under_two_wrappers_replays_each_listing(wrapper: str) -> None:
+    """One dynamic toolset listed under two prefixes, or two renames, keeps a discovery result per wrapper.
+
+    `a_fail` fails once and its `prepare` hides it, while `b_fail` keeps its own count and stays listed. The flow
+    retry replays the cached discovery results, and must not serve the listing made under one wrapper to the other.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+
+    def call_a_fail_while_listed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        names = sorted(tool.name for tool in info.function_tools)
+        if 'a_fail' in names:
+            return ModelResponse(parts=[ToolCallPart('a_fail', {})])
+        return ModelResponse(parts=[TextPart(f'final tools={names}')])
+
+    dynamic = DynamicToolset[object](lambda ctx: failing_toolset('inner', retries=3), id='shared')
+    wrap = WRAPPERS_EXPOSING_FAIL[wrapper]
+    agent = Agent(
+        FunctionModel(call_a_fail_while_listed),
+        deps_type=object,
+        name=f'two_{wrapper}',
+        toolsets=[wrap(dynamic, 'a'), wrap(dynamic, 'b')],
+        capabilities=[PrefectDurability()],
+    )
+    outputs: list[str] = []
+
+    @flow(retries=1)
+    async def run_twice() -> None:
+        outputs.append((await agent.run('go')).output)
+        if len(outputs) == 1:
+            raise RuntimeError('retry after the run, replaying its cached tasks')
+
+    await run_twice()
+    assert outputs == ["final tools=['b_fail']"] * 2
+
+
 async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     async def enqueue(ctx: RunContext[object]) -> str:
         ctx.enqueue('later')
@@ -4283,6 +4473,7 @@ async def test_prefect_mcp_tool_metadata_false_is_rejected() -> None:
         await run_tool()
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_mcp_tool_metadata_false_is_rejected(
     monkeypatch: pytest.MonkeyPatch, blockbuster_enabled: bool
@@ -4809,9 +5000,11 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The suspended response's 5 + 2 tokens were counted by the run that produced it, so this run counts only
+    # the continuation it requested; the completed response in history still reports the whole turn.
     assert result.usage.requests == 1
-    assert result.usage.input_tokens == 8
-    assert result.usage.output_tokens == 6
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (3, 4)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
 

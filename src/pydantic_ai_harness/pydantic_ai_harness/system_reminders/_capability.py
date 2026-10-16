@@ -56,9 +56,12 @@ class Reminder(Generic[AgentDepsT]):
     max_fires: int | None = None
     """Maximum number of times this reminder may fire within a run. `None` means no limit."""
 
-    tag: str | None = 'system-reminder'
-    r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`. Defaults to
-    `'system-reminder'` (Claude Code's convention); set `None` to emit the raw content."""
+    tag: str | None = None
+    r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`.
+
+    `None` (the default) sends the raw content. The reminder is already a system prompt, which the model
+    is shown as one: natively where the model supports it, and in a `<system>` tag otherwise.
+    """
 
     def __post_init__(self) -> None:
         if self.interval < 1:
@@ -89,12 +92,12 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     guidance mid-run, either on a fixed cadence (`Reminder`) or reactively from a callable
     (`dynamic_reminders`).
 
-    Each firing adds a [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt at
-    the end of the request: the model sees it for that request only, and it stays in the message
-    history, so the cached prefix and the model's earlier reasoning stay valid. On Anthropic models
-    that support it, it's sent as a `clear_at` system message that costs nothing once its turn is
-    over; elsewhere it's sent with its own request only. The cache breakpoints the model's caching
-    settings place go before it.
+    Each firing enqueues a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system
+    prompt at the end of the request: the model sees it for that request only, and it stays in the
+    message history, so the cached prefix and the model's earlier reasoning stay valid. On Anthropic
+    models that support it, it's sent as a turn-scoped `clear_at` system message that costs nothing
+    once its request has been answered; elsewhere it's sent with its own request only. The cache
+    breakpoints the model's caching settings place go before it.
 
     ```python
     from pydantic_ai import Agent
@@ -120,7 +123,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     cache_ttl: Literal['5m', '1h'] | None = None
     """Deprecated, and has no effect.
 
-    Reminders used to bring a cache breakpoint of their own. They're turn-scoped system prompts now,
+    Reminders used to bring a cache breakpoint of their own. They're request-scoped system prompts now,
     and the breakpoints the model's caching settings place (such as `anthropic_cache`) land before
     them, so configure caching on the model instead.
     """
@@ -176,11 +179,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Add the reminders that fire on this request as a turn-scoped system prompt at its end.
+        """Enqueue the reminders that fire on this request as a request-scoped system prompt.
 
-        The reminder goes into the run's history through `ctx.messages` and into this request through
-        a new `request_context.messages` list, as a `ModelRequest` of its own that's sent merged into
-        the request it follows.
+        Enqueued from `before_model_request`, the prompt goes into this request and into the run's
+        history, as a `ModelRequest` of its own that's sent merged into the request it follows.
         """
         messages = request_context.messages
         # A provider-resume turn (`_prepare_resume_request`) hands back a message list whose
@@ -199,9 +201,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             dynamic_texts = await self._collect_dynamic(ctx)
             texts = [text for _, text in fired] + dynamic_texts
             if texts:
-                reminder = ModelRequest(parts=[SystemPromptPart('\n\n'.join(texts), scope='turn')])
-                ctx.messages.append(reminder)
-                request_context.messages = [*messages, reminder]
+                ctx.enqueue(SystemPromptPart('\n\n'.join(texts), scope='request'))
                 for key, _text in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
                 for text in texts:

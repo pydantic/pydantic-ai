@@ -15,9 +15,9 @@ enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
 `stream-json` so gh-aw's log parser and token accounting keep working.
 
 Like Claude Code itself, the shim only talks to Anthropic-shape APIs
-(`ANTHROPIC_BASE_URL` → real Anthropic, MiniMax's Anthropic-compatible
-endpoint, etc.). No OpenAI path — the workflow's `engine.id: claude`
-contract is Anthropic-shape end to end.
+(`ANTHROPIC_BASE_URL` → Anthropic or another Anthropic-compatible endpoint).
+No OpenAI path — the workflow's `engine.id: claude` contract is
+Anthropic-shape end to end.
 
 Credentials note: under gh-aw the real API key is *excluded* from the
 agent container (`awf --exclude-env ANTHROPIC_API_KEY`). The AWF
@@ -37,12 +37,14 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
 import os
 import pathlib
 import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
@@ -51,7 +53,8 @@ import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
 from pydantic import TypeAdapter, ValidationError
-from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_random_exponential
+from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
+from tenacity.asyncio.retry import retry_if_result
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
@@ -109,11 +112,9 @@ PROXY_BEARER_PLACEHOLDER = 'gh-aw-proxy-injected'
 def _anthropic_native_capabilities() -> list[NativeTool]:
     """`NativeTool(WebFetchTool())` for real Anthropic only.
 
-    Anthropic-compatible endpoints (MiniMax, etc.) reject the
-    `web_fetch_20250910` server-side tool with `invalid_request_error
-    (2013)` because they don't implement Anthropic's server-side tool
-    types. Detect via `ANTHROPIC_BASE_URL` — empty/unset means the
-    Anthropic SDK default (real Anthropic).
+    Anthropic-compatible endpoints may not implement Anthropic's
+    `web_fetch_20250910` server-side tool. Detect via `ANTHROPIC_BASE_URL` —
+    empty/unset means the Anthropic SDK default (real Anthropic).
     """
     base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
     if not base_url or 'api.anthropic.com' in base_url:
@@ -198,11 +199,11 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
     return REQUEST_BUDGET_NOTICE
 
 
-# `output_type=str` ends the run on any text-only response, and MiniMax regularly
-# ends a turn narrating its next step ("Now let me analyze…") with no tool call.
-# gh-aw then reports the run as "produced no safe outputs". The safe-outputs MCP
-# server appends every safe output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty
-# file means the task is not done. The retry budget is cumulative over the run.
+# `output_type=str` ends the run on any text-only response, even when the model
+# narrates its next step without calling a tool. gh-aw then reports the run as
+# "produced no safe outputs". The safe-outputs MCP server appends every safe
+# output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty file means the task is
+# not done. The retry budget is cumulative over the run.
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
@@ -227,20 +228,16 @@ def require_safe_output(output: str) -> str:
     )
 
 
-# Per-request HTTP timeout for every LLM call. The read timeout is the
-# critical one: MiniMax's proxy can hold a streaming connection open without
-# sending data. Two minutes is generous enough for large generations but
-# prevents indefinite hangs. SDK-level retries cover transient 429/5xx before
-# raising.
+# Per-request HTTP timeout for every LLM call. The read timeout prevents a
+# streaming connection that stops sending data from hanging indefinitely. Two
+# minutes is generous enough for large generations. SDK-level retries cover
+# transient 429/5xx before raising.
 _LLM_TIMEOUT = httpx2.Timeout(timeout=120.0, connect=10.0)
 _LLM_MAX_RETRIES = 4
 
-# MiniMax answers bursts with 429 `rate_limit_error` (2062) and no `Retry-After`.
-# In CI Review logs those bursts cleared within 25s of the first 429, while the
-# SDK's own backoff (0.5s doubling, 4 retries) gives up after about 8s — which
-# killed runs mid-review. Below the SDK, a 429 is therefore retried with jittered
-# exponential backoff for up to this long. Parallel sub-agents hit the limit
-# together, so the jitter keeps them from retrying in lockstep.
+# Transient rate limits can outlast the SDK's retry window. Retry 429 responses
+# below the SDK with jittered exponential backoff for up to this long. Jitter
+# spreads retries when parallel sub-agents hit the limit together.
 RATE_LIMIT_RETRY_SECS = 60
 
 
@@ -265,14 +262,35 @@ async def _close_rate_limited_response(state: RetryCallState) -> None:
 
 
 def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None) -> AsyncHTTPX2TenacityTransport:
-    """Transport that retries 429 responses, then hands the last one to the SDK as-is.
+    """Transport that retries retryable 429 responses and preserves the final response for the SDK.
 
     Handing back the response rather than raising keeps the SDK's `RateLimitError`,
-    with MiniMax's error body, as what a run that stays rate-limited fails with.
+    with the provider's error body, as what a run that stays rate-limited fails with.
     """
+    # Z.ai account and plan-quota errors cannot recover inside this retry window.
+    # Keep these codes aligned with https://docs.z.ai/api-reference/api-code.
+    non_retryable_codes: set[str] = {'1308', '1309', '1310', '1316', '1317', '1318', '1319', '1320', '1321'}
+    error_body_adapter = TypeAdapter(dict[str, object])
+
+    async def should_retry(response: httpx2.Response) -> bool:
+        if response.status_code != 429:
+            return False
+        try:
+            # `aread()` buffers the body, so the SDK can still consume the
+            # original response when this 429 is returned without retrying.
+            body = error_body_adapter.validate_json(await response.aread())
+            error = error_body_adapter.validate_python(body.get('error'))
+        except ValidationError:
+            return True
+        code = error.get('code')
+        if isinstance(code, (str, int)) and not isinstance(code, bool) and str(code) in non_retryable_codes:
+            response.headers['x-should-retry'] = 'false'
+            return False
+        return True
+
     return AsyncHTTPX2TenacityTransport(
         RetryConfig(
-            retry=retry_if_result(lambda response: response.status_code == 429),
+            retry=retry_if_result(should_retry),
             wait=wait_random_exponential(multiplier=1, max=16),
             stop=stop_after_delay(RATE_LIMIT_RETRY_SECS),
             before_sleep=_close_rate_limited_response,
@@ -316,6 +334,38 @@ def _run_timeout_secs() -> int:
 
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
+
+# The run's last minutes belong to the parent: sub-agents are cut off before they start,
+# and the parent is then told to emit its safe output. Successful `CI Review` runs need
+# up to about 4 min between their last sub-agent returning and their posted review.
+RUN_TIME_RESERVE_SECS = 5 * 60
+TIME_BUDGET_NOTICE = (
+    '## Time budget nearly spent\n\n'
+    f'This run has under {RUN_TIME_RESERVE_SECS // 60} minutes of wall-clock time left, and reaching '
+    'the limit stops it with nothing posted. Stop investigating. Emit the safe output your '
+    'task ends with now, from what you have already found.'
+)
+
+# Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
+_run_deadline: float | None = None
+
+
+def _run_seconds_left() -> float | None:
+    """Wall-clock seconds before the run is cancelled, or `None` when no run budget applies."""
+    return None if _run_deadline is None else _run_deadline - time.monotonic()
+
+
+def time_budget_notice() -> str | None:
+    """Warn the model once the run's remaining wall-clock time falls inside the parent's reserve."""
+    seconds_left = _run_seconds_left()
+    if seconds_left is None or seconds_left > RUN_TIME_RESERVE_SECS:
+        return None
+    return TIME_BUDGET_NOTICE
+
+
+class RunTimeLimitExceeded(Exception):
+    """The run used its whole wall-clock budget, which is not a provider timeout."""
+
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -701,9 +751,11 @@ def build_model(args: Args) -> tuple[Model, str]:
     container env (`awf --exclude-env ANTHROPIC_API_KEY` — a security
     measure so the real key never reaches the agent). `pydantic-ai`'s
     auto-config requires that env var to be present, so it errors out
-    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path
-    sends a placeholder bearer that the AWF api-proxy swaps for the
-    real key on the wire — the same dance the Claude Code CLI does.
+    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path lets
+    the SDK construct a request with a bearer `Authorization` header
+    (the non-secret placeholder under AWF). The api-proxy sidecar strips
+    client-supplied `Authorization` and `x-api-key` headers, then injects
+    the real `x-api-key` from its isolated `ANTHROPIC_API_KEY`.
     This is a gh-aw constraint, not a pydantic-ai one; upstream gh-aw
     could lift it by allowing the agent to read the key directly, but
     that would break the credential-isolation guarantee.
@@ -908,36 +960,14 @@ def emit_result(
     emit(result)
 
 
-def _is_minimax_insufficient_balance(error: ModelHTTPError) -> bool:
-    """Recognize MiniMax's terminal insufficient-balance response from its typed body."""
-    if 'minimax' not in error.model_name.lower():
-        return False
-    body = error.body
-    if not isinstance(body, Mapping):
-        return False
-    try:
-        typed_body = TypeAdapter(dict[str, object]).validate_python(body)
-    except ValidationError:
-        return False
-    details = typed_body.get('error')
-    if not isinstance(details, Mapping):
-        return False
-    try:
-        typed_details = TypeAdapter(dict[str, object]).validate_python(details)
-    except ValidationError:
-        return False
-    error_type = typed_details.get('type')
-    message = typed_details.get('message')
-    message_matches = isinstance(message, str) and 'insufficient balance' in message.lower()
-    return error_type == 'insufficient_balance_error' or message_matches
-
-
 def _failure_details(error: BaseException | None) -> dict[str, object]:
     """Return a safe, machine-readable classification while preserving the original error text."""
     kind = 'other'
     http_status: int | None = None
     if isinstance(error, UsageLimitExceeded):
         kind = 'request_limit'
+    elif isinstance(error, RunTimeLimitExceeded):
+        kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
@@ -946,8 +976,6 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
             kind = 'authentication'
         elif error.status_code == 429:
             kind = 'rate_limit'
-        elif error.status_code == 402 and _is_minimax_insufficient_balance(error):
-            kind = 'balance'
     failure: dict[str, object] = {'kind': kind}
     if http_status is not None:
         failure['http_status'] = http_status
@@ -1058,6 +1086,15 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     if sub_request_limit <= 0:
         logger.info('Task refused, request budget nearly spent: %s', description[:120])
         return 'error: the request budget is nearly spent; finish the task from what you already have'
+    seconds_left = _run_seconds_left()
+    timeout = (
+        SUBAGENT_TIMEOUT_SECS
+        if seconds_left is None
+        else min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
+    )
+    if timeout <= 0:
+        logger.info('Task refused, time budget nearly spent: %s', description[:120])
+        return 'error: the time budget is nearly spent; finish the task from what you already have'
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
@@ -1084,14 +1121,14 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     try:
         result = await asyncio.wait_for(
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
-            timeout=SUBAGENT_TIMEOUT_SECS,
+            timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
-        logger.error('sub-agent timed out after %.0f min: %s', SUBAGENT_TIMEOUT_SECS / 60, description[:120])
-        return f'error: sub-agent timed out after {SUBAGENT_TIMEOUT_SECS // 60}min'
+        logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
+        return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
@@ -1115,14 +1152,19 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    global _run_deadline
     budget = _run_timeout_secs()
+    _run_deadline = time.monotonic() + budget
     usage = RunUsage()
     try:
-        return await asyncio.wait_for(
-            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
-            timeout=budget,
-        )
-    except asyncio.TimeoutError:
+        async with AsyncExitStack() as stack:
+            if isinstance(model, AnthropicModel):
+                await stack.enter_async_context(model.client)
+            return await asyncio.wait_for(
+                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
+                timeout=budget,
+            )
+    except TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
             f'run timed out after {budget // 60}min',
@@ -1130,7 +1172,7 @@ async def _run_with_timeout(
             session_id=session_id,
             is_error=True,
             num_turns=usage.requests,
-            error=TimeoutError(),
+            error=RunTimeLimitExceeded(),
         )
         return 1
     except Exception as exc:
@@ -1144,6 +1186,8 @@ async def _run_with_timeout(
             error=exc,
         )
         return 1
+    finally:
+        _run_deadline = None
 
 
 async def run(
@@ -1160,7 +1204,7 @@ async def run(
     run_usage = usage or RunUsage()
     agent: Agent[object, str] = Agent(
         model,
-        instructions=[INSTRUCTIONS, prompt, request_budget_notice],
+        instructions=[INSTRUCTIONS, prompt, request_budget_notice, time_budget_notice],
         retries={'output': NO_SAFE_OUTPUT_RETRIES},
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[

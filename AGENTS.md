@@ -55,6 +55,14 @@ Pydantic AI is meant to be a light-weight library that any Python developer who 
 
 As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated. This preference is about shaping designs, new public APIs, and extension points -- it is not a license to widen a bug fix beyond the defect you reproduced (see "Requirements of all contributions").
 
+## Choosing an agent model
+
+Use `Agent.override()` primarily for temporary substitutions, especially in tests. Deliberate temporary substitutions outside tests remain valid.
+
+For application model selection, set a default with `Agent(model=...)`. Pass `model=` to a run method for a per-run choice. Use [`SelectModel`](docs/capabilities/select-model.md) or a [custom selection capability](docs/capabilities/custom.md#selecting-the-model) for reusable dynamic selection.
+
+When designing an agent operation or capability, integrate model selection into its API and lifecycle. Do not use `Agent.override(model=...)` to patch a missing model parameter, capability integration, or lifecycle design. Do not use `Agent.override(model=...)` for application routing. An active `Agent.override(model=...)` supersedes an explicit run model and skips capability selection.
+
 # Requirements of all contributions
 
 All changes need to:
@@ -64,7 +72,7 @@ All changes need to:
 - leave behavior unchanged for users who aren't hitting the problem you are solving. Pydantic AI's surfaces are nested, not peer: everyone using a durable execution engine, a single provider, a UI adapter, or an opt-in capability is also a plain `Agent` user, but not the reverse -- so a fix motivated by a narrow surface must not move observable behavior on a wider one. Documenting it doesn't make it acceptable, only expected; if no scoping leaves the wider surface untouched, that's a design question for maintainers, not a docs note. (Fixing the same *confirmed* defect in sibling providers, fields, or models in the same PR is the previous point, not this one.)
 - be backward compatible as laid out in the [version policy](docs/version-policy.md), so that users can upgrade with confidence. A default doesn't make a new parameter non-breaking: if existing code only keeps its current behavior once the user passes a new argument (`id=None`, `strict=False`), that's a break, and it leaves behind a permanent parameter whose only purpose is to say "keep doing what you did". The default must preserve existing behavior; the new behavior is what users opt into
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
-- have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
+- have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking; "integration" means real in-process code paths with recorded requests, not process spawns or real waits (see "Test cost" in [tests/AGENTS.md](tests/AGENTS.md))
 - update/add all relevant documentation, following the existing voice and patterns
 - update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), Pydantic AI Harness skills in [src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/](src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
 
@@ -106,7 +114,7 @@ The repo contains a `uv` workspace defining multiple Python packages:
 
 The project uses:
 
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.10 through 3.13
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.11 through 3.15
     - Install all dependencies with `make install`
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
@@ -122,7 +130,7 @@ The project uses:
 
 ## Test process isolation
 
-Do not use subprocesses to test logic that can run in-process. Starting another interpreter and importing the project again makes the full test suite materially slower. Reserve subprocesses for behavior that depends on the process boundary, such as CLI invocation, interpreter startup, or import isolation.
+Do not use subprocesses to test logic that can run in-process. Starting another interpreter and importing the project again makes the full test suite materially slower. Reserve subprocesses for behavior that depends on the process boundary, such as interpreter startup, import isolation, or signal handling; call a CLI's entry point in-process. `tests/cost_guards.py` fails a test that launches a Python interpreter unless it is marked `@pytest.mark.subprocess(reason=...)`; see "Test cost" in [tests/AGENTS.md](tests/AGENTS.md).
 
 ## When to verify
 
@@ -141,6 +149,7 @@ Additionally, always read the directory-specific instructions when working in th
 
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [docs/harness/AGENTS.md](docs/harness/AGENTS.md)
+- [docs/model_aliases/AGENTS.md](docs/model_aliases/AGENTS.md)
 - [docs/realtime/AGENTS.md](docs/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)
