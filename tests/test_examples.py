@@ -1198,7 +1198,11 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
-        elif isinstance(m.content, list) and isinstance(m.content[0], StructuredContent):
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and m.content[0].value.get('expected_answer') == '4'
+        ):
             # docs/models/decision.md: a decision model judges a structured value
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
         assert isinstance(m.content, str)

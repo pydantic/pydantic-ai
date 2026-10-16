@@ -246,6 +246,13 @@ def test_structured_content_rejects_empty_text(item: Callable[[], StructuredCont
         item()
 
 
+def test_structured_content_renders_again_when_replaced_without_content():
+    """Changing the value keeps the stored text, so replacing it renders again only when `content` is cleared."""
+    item = StructuredContent({'a': 1}, tag='t')
+    assert replace(item, value={'a': 2}).content == '<t>{"a":1}</t>'
+    assert replace(item, value={'a': 2}, content='').content == '<t>{"a":2}</t>'
+
+
 def test_structured_content_rejects_an_invalid_tag():
     with pytest.raises(ValueError, match=r"`StructuredContent\.tag` must be a valid XML tag name, got 'ui state'"):
         StructuredContent({}, tag='ui state')
