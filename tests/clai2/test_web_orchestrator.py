@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 from starlette.testclient import WebSocketTestSession
 
 from pydantic_ai import Agent
@@ -438,6 +439,22 @@ def test_completion_in_the_orchestrator_chat(make_web: MakeWeb) -> None:
         response = web_.get(f'/api/orchestrator/complete?text={quote(text)}')
         return [found['text'] for found in response.json()]
 
+    # The commands that change CLAI rather than the session's conversation, as they declare it.
+    assert sorted(command.name for command in web_.shell.commands if not command.conversation) == snapshot(
+        [
+            'accounts',
+            'config',
+            'keys',
+            'login',
+            'plugins',
+            'set',
+            'settings',
+            'spinner',
+            'theme',
+            'web',
+            'workspaces',
+        ]
+    )
     offered = texts('/')
     assert {'model', 'new', 'clear', 'help', 'stop', 'workspaces', 'plugins', 'set', 'keys', 'login'} <= set(offered)
     assert not {'fork', 'compact', 'resume', 'tasks', 'monty', 'exit'} & set(offered)

@@ -1487,11 +1487,12 @@ which change CLAI rather than the session's conversation (built in: `/workspaces
 running session turn as there, and their results show in the orchestrator chat instead of the
 session's. The terminal, under `/web`, still echoes them. `/set model` is refused there, since it
 picks the session's model; `/model NAME` picks the orchestrator's. `/set` alone opens CLAI's
-settings menu where it opens from the session's composer, and its model row is the session's. Any
-other command, such as `/fork`, `/resume`, `/compact`, or a skill, says it works in a session. The
-chat matches a result to the command it entered by its text, so if you cancel one it entered while
-it runs, the next identical command from the session's composer answers in the orchestrator chat. `/plugins` alone opens the plugins panel. Text starting with `/` that is not a command,
-such as a path, is a prompt.
+settings menu where it opens from the session's composer, and its model row is the session's;
+`/plugins` alone opens the plugins panel. Any other command, such as `/fork`, `/resume`,
+`/compact`, or a skill, says it works in a session. Text starting with `/` that is not a command,
+such as a path, is a prompt. The chat matches a result to the command it entered by its text, so
+if you cancel one it entered while it runs, the next identical command from the session's composer
+answers in the orchestrator chat.
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
 orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
