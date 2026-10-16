@@ -9955,9 +9955,10 @@ async def test_agent_realtime_session_token_limit_raises() -> None:
     async with agent.realtime(model, usage_limits=UsageLimits(total_tokens_limit=50)).session() as session:
         with pytest.raises(UsageLimitExceeded, match='exceed the total_tokens_limit of 50'):
             _ = [e async for e in session]
-    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
-    assert response.state == 'complete'
-    assert response.usage == RequestUsage(input_tokens=100, output_tokens=100)
+    # The usage report the session stopped reading at counts toward the session; the response it was for never
+    # started, so there's none in history.
+    assert session.usage.input_tokens == 100 and session.usage.output_tokens == 100
+    assert not any(isinstance(message, ModelResponse) for message in session.new_messages())
 
 
 async def test_agent_realtime_session_cost_limit_raises_on_usage() -> None:

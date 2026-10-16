@@ -305,10 +305,11 @@ class InferredLifecycle:
     def take_pending(self) -> list[LifecycleEvent]:
         """The events the inputs sent since the last frame settled.
 
-        Where each joined the conversation, or that it will go unanswered. A connection returns them from [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send], so the session
-        applies them before anything it reads next, and puts them at the head of a frame of its own (like the one it
-        reports a reconnect in). [`frame_for()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frame_for] takes any
-        still waiting into the frame it makes.
+        Where each joined the conversation, or that it will go unanswered. A connection returns them from
+        [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send], so the session applies them before anything it
+        reads next, and puts them at the head of a frame of its own (like the one it reports a reconnect in).
+        [`frame_for()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.frame_for] takes any still waiting into the
+        frame it makes.
         """
         pending, self._pending = self._pending, []
         # (A commit whose events are out can't be taken back any more.)
