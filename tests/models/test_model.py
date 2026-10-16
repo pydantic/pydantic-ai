@@ -799,6 +799,26 @@ def test_prepare_messages_resolves_tool_call_id_collisions_in_history_order(fore
     assert pairs == expected
 
 
+@pytest.mark.parametrize(
+    'length,message',
+    [
+        (0, '`tool_call_id_length` must be at least 1, got 0.'),
+        (1, 'The message history has more distinct tool call IDs than fit in 1 alphanumeric characters'),
+    ],
+)
+def test_prepare_messages_rejects_tool_call_id_length_without_room(length: int, message: str):
+    """A length that can't hold every distinct ID raises instead of rehashing forever.
+
+    A unit test because no real profile sets such a length; it guards a user-supplied profile.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id=f'call_{index}') for index in range(63)])
+    ]
+
+    with pytest.raises(UserError, match=re.escape(message)):
+        TestModel(profile=ModelProfile(tool_call_id_length=length)).prepare_messages(messages)
+
+
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model

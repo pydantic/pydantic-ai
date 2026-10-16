@@ -2652,12 +2652,20 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     original list when nothing changed, so the identity check in `_make_request` can skip the redundant
     `_clean_message_history` pass.
     """
+    if length < 1:
+        raise UserError(f'`tool_call_id_length` must be at least 1, got {length}.')
     replacements: dict[str, str] = {}
     taken: set[str] = set()
 
     def fit(tool_call_id: str) -> str:
         if (replacement := replacements.get(tool_call_id)) is not None:
             return replacement
+        # Without a free value left, rehashing below would never end.
+        if len(taken) >= 62**length:
+            raise UserError(
+                f'The message history has more distinct tool call IDs than fit in {length} alphanumeric characters '
+                "(the profile's `tool_call_id_length`)."
+            )
         fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
         replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
         attempt = 0
