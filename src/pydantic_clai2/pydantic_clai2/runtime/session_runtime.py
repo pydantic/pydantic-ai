@@ -842,9 +842,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             1 for session in self.process.live.listing() if session.running and session.id != self.live_session.id
         )
         if running:
-            sessions = f'{running} sessions are' if running > 1 else '1 session is'
             raise ValueError(
-                f'{sessions} running in the browser; try again when {"they finish" if running > 1 else "it finishes"}.'
+                f'{running} other sessions are running turns; try again when they finish.'
+                if running > 1
+                else '1 other session is running a turn; try again when it finishes.'
             )
 
     async def run(self) -> SessionEndReason:

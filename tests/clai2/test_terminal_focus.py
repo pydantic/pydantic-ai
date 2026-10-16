@@ -162,13 +162,11 @@ async def test_restarts_wait_for_the_sessions_running_in_the_browser(
             await started['b'].wait()
             await started['c'].wait()
             for command in ('/reload', '/update'):
-                with pytest.raises(
-                    ValueError, match='2 sessions are running in the browser; try again when they finish'
-                ):
+                with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
                     await home.commands.execute_async(command)
             release['c'].set()
             await until(desk.live, lambda: not c.running)
-            with pytest.raises(ValueError, match='1 session is running in the browser; try again when it finishes'):
+            with pytest.raises(ValueError, match='1 other session is running a turn; try again when it finishes'):
                 await home.commands.execute_async('/reload')
             release['b'].set()
             await until(desk.live, lambda: not b.running)
