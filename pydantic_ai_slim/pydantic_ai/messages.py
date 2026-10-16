@@ -1835,7 +1835,9 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 _TAG_ESCAPES = {
     'system': re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE),
-    'validation_errors': re.compile(r'<(?=\s*/\s*validation_errors(?=[\s/>])|\s*/?\s*system(?=[\s/>]))', re.IGNORECASE),
+    'validation_errors': re.compile(
+        r'<(?=\s*/\s*validation_errors(?=[\s/>])|\s*(?:/\s*)?system(?=[\s/>]))', re.IGNORECASE
+    ),
 }
 """Per-tag patterns matching only the `<` of a tag the wrapped text must not be able to write.
 
