@@ -160,6 +160,8 @@ class PluginCatalog(Protocol):
     Each action applies at once and is saved, as the same `/plugins` action is; a running turn keeps
     the plugins it started with. Adding and removing declarations goes through the prompt, with
     `PluginHost.send_input`, as does a plugin's own settings menu (`/plugins configure NAME`).
+    Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
+    own `on_session_start` or `on_session_end`, which a change runs.
     """
 
     def listing(self) -> list[PluginInfo]:
