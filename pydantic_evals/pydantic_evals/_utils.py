@@ -85,17 +85,27 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
+def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether ``loop`` overrides the abstract ``run_until_complete`` implementation."""
+    return getattr(loop.run_until_complete, '__func__', None) is not asyncio.AbstractEventLoop.run_until_complete
+
+
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
+    if event_loop is not None and not _implements_run_until_complete(event_loop):
+        # Runtime-owned loops such as Temporal's workflow loop may also leave ``is_closed`` abstract.
+        # Preserve the loop so the caller gets the existing unsupported-loop error instead of a bare
+        # NotImplementedError from probing the loop here.
+        return event_loop
+
     if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
-
 
 def running_on_asyncio() -> bool:
     """Whether the caller runs on asyncio rather than Trio.
