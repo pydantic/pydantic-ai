@@ -391,6 +391,7 @@ def test_from_dict():
         pytest.param(partial(has_prefix, prefix='H'), id='partial'),
         pytest.param(AsyncCallable(), id='callable-object'),
         pytest.param(PrefixCheck('H').check, id='bound-method'),
+        pytest.param(['HELLO'].count, id='built-in-bound-method'),
     ],
 )
 def test_unnamed_function_not_serializable(tmp_path: Path, function: EvaluatorFunc[str, str, Any]):

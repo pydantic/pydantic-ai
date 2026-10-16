@@ -91,7 +91,9 @@ def get_function_serialization_name(func: Callable[..., Any]) -> str | None:
         doesn't identify the instance it's bound to, just like the name of the function a partial wraps doesn't
         capture its bound arguments.
     """
-    if inspect.ismethod(func):
+    # Python and built-in bound methods both have a `__self__`, while built-in functions are bound to their module.
+    bound_to = getattr(func, '__self__', None)
+    if bound_to is not None and not inspect.ismodule(bound_to):
         return None
     name = getattr(func, '__name__', None)
     return name if isinstance(name, str) and name.isidentifier() else None
