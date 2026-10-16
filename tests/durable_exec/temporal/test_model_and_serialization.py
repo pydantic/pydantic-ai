@@ -2235,6 +2235,52 @@ async def test_temporal_model_request_stream_outside_workflow():
     assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
 
 
+async def test_temporal_model_request_stream_with_unregistered_model_string():
+    """A model ID can be scheduled without constructing its provider in the workflow."""
+    response = ModelResponse(parts=[TextPart('Stream response')])
+    scheduled_params: list[_RequestParams] = []
+
+    async def handle_stream(_ctx: RunContext[None], _stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    async def schedule_activity(**kwargs: object) -> ModelResponse:
+        args = kwargs['args']
+        assert isinstance(args, list)
+        assert isinstance(args[0], _RequestParams)
+        scheduled_params.append(args[0])
+        return response
+
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__unregistered_stream',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        event_stream_handler=handle_stream,
+    )
+    run_context = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='unregistered-stream')
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    parameters = ModelRequestParameters(
+        function_tools=[],
+        native_tools=[],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[],
+        output_object=None,
+    )
+
+    with (
+        temporal_model.using_model('openai:gpt-5'),
+        patch('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._model.execute_activity', new=schedule_activity),
+    ):
+        async with temporal_model.request_stream(messages, None, parameters, run_context) as stream:
+            async for _ in stream:
+                pass
+            assert stream.get() == response
+
+    assert [params.model_id for params in scheduled_params] == ['openai:gpt-5']
+
+
 class CustomPydanticPayloadConverter(PydanticPayloadConverter):
     """A custom payload converter that inherits from PydanticPayloadConverter."""
 
