@@ -241,7 +241,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               </button>
               {!closed &&
                 project.worktrees.map((worktree) => {
-                  const id = `${project.key}\n${worktree.root}`
+                  const id = `${project.key}\0${worktree.root}`
                   const shut = nested && !query && (collapsed[id] ?? false)
                   return (
                     <div

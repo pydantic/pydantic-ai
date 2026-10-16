@@ -4,7 +4,7 @@ import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
@@ -429,10 +429,17 @@ class Remote:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
         entries = await self.catalog.listing(query=query)
         workspaces = {entry.workspace for entry in entries} | {self.host.status.workspace}
-        unknown = [workspace for workspace in workspaces if workspace not in self._identities]
-        if unknown:
-            found = await to_thread.run_sync(lambda: [project_identity(workspace) for workspace in unknown])
-            self._identities.update(zip(unknown, found))
+        known = dict(self._identities)
+
+        def resolve() -> dict[str, ProjectIdentity]:
+            # A folder removed or recreated since it was last listed resolves again: one stat each, Git only for those.
+            return {
+                workspace: project_identity(workspace)
+                for workspace in workspaces
+                if (identity := known.get(workspace)) is None or Path(workspace).exists() == identity.missing
+            }
+
+        self._identities.update(await to_thread.run_sync(resolve))
         # Checking whether another process runs a session can spawn a program (`tasklist` on Windows).
         running = [entry for entry in entries if entry.outcome == 'running']
         busy: set[str] = (
