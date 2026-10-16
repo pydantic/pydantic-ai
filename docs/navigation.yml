@@ -46,6 +46,8 @@ navigation:
           - "agents"
           - "core-concepts/agents"
           - "agent"
+          - "core-concepts/usage-limits"
+          - "usage-limits"
       - page: "Dependencies"
         path: "dependencies.md"
         slug: "core-concepts/dependencies"
@@ -104,6 +106,7 @@ navigation:
           - "storage"
           - "persistence"
           - "core-concepts/storage"
+          - "capabilities/persistence"
       - page: "Direct Model Requests"
         path: "direct.md"
         slug: "core-concepts/direct"
@@ -144,6 +147,7 @@ navigation:
         slug: "overview/gateway"
         aliases:
           - "gateway"
+          - "models/overview/gateway"
       - page: "OpenAI"
         path: "models/openai.md"
         slug: "models/openai"
@@ -233,6 +237,7 @@ navigation:
         aliases:
           - "core-concepts/tools"
           - "tools"
+          - "tools/overview"
       - page: "Advanced Tool Features"
         path: "tools-advanced.md"
         slug: "tools-toolsets/tools-advanced"
@@ -746,6 +751,8 @@ navigation:
       - page: "Overview"
         path: "evals.md"
         slug: "evals/evals"
+        aliases:
+          - "evals/overview"
       - section: "Getting Started"
         slug: ""
         contents:
@@ -997,6 +1004,8 @@ navigation:
         slug: "comparisons/vs-langchain-langgraph"
         aliases:
           - "comparisons/langchain-langgraph"
+          - "comparisons/langchain"
+          - "comparisons/langgraph"
           - "pydantic-ai-vs-langchain-langgraph"
           - "langchain-langgraph-vs-pydantic-ai"
       - page: "vs Claude Agent SDK"
