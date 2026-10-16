@@ -57,7 +57,7 @@ def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -
                 raise value
             return value
 
-    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 @pytest.mark.parametrize('mode', ['eof', 'interrupt', 'error', 'cancel', 'double', 'structured'])

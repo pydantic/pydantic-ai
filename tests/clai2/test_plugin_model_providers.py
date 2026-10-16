@@ -191,7 +191,7 @@ async def test_shell_runs_a_plugin_model(tmp_path: Path, monkeypatch: pytest.Mon
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir(parents=True, exist_ok=True)
     (store.plugins_dir / 'echo.py').write_text(PLUGIN.replace('{PREFIX}', 'plugin'))

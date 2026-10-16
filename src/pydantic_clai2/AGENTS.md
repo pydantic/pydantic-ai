@@ -139,9 +139,20 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   already holding a conversation, and `Session.resume` refuses one another session
   holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
   `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
-  `/reload` and `/update` (only the session CLAI started with restarts it), and close
+  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  CLAI started with, restarts it, and never while another session runs a turn), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
-  watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
+  watcher, or terminal focus.
+- **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
+  owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
+  history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
+  their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
+  terminal's. `/resume` of a conversation another live session holds shows that one
+  (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
+  live, and the session CLAI started with is closed for idleness like any other while
+  hidden. With one live session nothing changes, and the toolbar adds `N live` only for more. `/set` of anything but `model` and `run.*` reaches
   every live session (`CommandContext.adopt`) unless its project file sets it.
   There is no turn cap.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A

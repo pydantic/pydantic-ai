@@ -718,13 +718,17 @@ async def test_consumed_background_report_does_not_start_another_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+    from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+    from pydantic_clai2.ui.prompt.terminal import Terminal
 
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     shell.console = Console(file=io.StringIO(), force_terminal=True, width=100, height=24)
+    Terminal[None, str](console=shell.console, transcript=TranscriptBuffer(), history=InMemoryHistory()).attach(shell)
     reads = 0
 
     async def read(live: LivePrompt) -> str:

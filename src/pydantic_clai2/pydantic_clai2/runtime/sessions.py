@@ -80,6 +80,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
+        self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
+        """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
 
     @property
     def follows_workspace(self) -> bool:
@@ -93,7 +95,10 @@ class Sessions(Generic[DepsT, OutputT]):
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
+        In the terminal, that session is shown instead, and this one stays live as it is.
         """
+        if (shown := await self.show_live(conversation_id)) is not None:
+            return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
         with self.session.claim(conversation_id):
             if self.relocate is not None and not allow_other_workspace:
@@ -327,6 +332,9 @@ class Sessions(Generic[DepsT, OutputT]):
             return ''
         if (imported := imports.get(selected)) is not None:
             selected = await save_import(self.store, imported)
+        # Another session can be shown while this one runs a turn: that turn goes on.
+        if (notice := await self.show_live(selected)) is not None:
+            return notice
         if self.session.running:
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
@@ -365,6 +373,10 @@ class Sessions(Generic[DepsT, OutputT]):
             + effects
             + conversation_text(list(reversed(saved.messages)))
         )
+
+
+async def _not_shown(conversation_id: str) -> str | None:
+    return None
 
 
 class PersistencePlugin(Plugin):

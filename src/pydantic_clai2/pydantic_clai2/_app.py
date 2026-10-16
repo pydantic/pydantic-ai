@@ -1,7 +1,7 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,7 +25,7 @@ from pydantic_clai2.commands import (
 )
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
-from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.models.resolver import ModelResolver
@@ -167,6 +167,7 @@ async def chat(
     fork_session: bool = False,
     worktree: Worktree | None = None,
     web: WebHandoff | None = None,
+    settings_for: Callable[[ProjectSettings], Settings] | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -182,6 +183,9 @@ async def chat(
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
     `web` is the web UI CLAI served before `/update` restarted it: the `web` plugin serves it again, with no
     browser opening, so its open pages reconnect.
+    `settings_for` gives the settings of a session the web UI opens in another directory, beside that one's
+    project file; without it, such a session starts with `settings`. The terminal shows one session at a
+    time: `/resume` of one the web UI has open shows that one, and the other stays live.
     """
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
@@ -216,14 +220,29 @@ async def chat(
         async with agent:
             while True:
                 reason: SessionEndReason = 'error'
-                # The terminal shows this session, the process's only one, live again after a failed reload.
+                # The terminal shows this session, live again after a failed reload.
                 shell.process.live.add(shell)
                 shell.process.live.focused = shell.live_session.id
+                terminal = shell.terminal
+                assert terminal is not None, 'a shell built for the terminal is shown in it'
+                shell.process.live.build = _opener(
+                    shell,
+                    agent=lambda: rebuild_stock(()) if rebuild_stock is not None else agent,
+                    deps=deps,
+                    plugins=plugins,
+                    settings=lambda project: (
+                        settings_for(project) if settings_for is not None else shell.context.settings
+                    ),
+                    load_plugins=load_plugins,
+                    console=terminal.session_console,
+                )
                 with theme.use(
-                    lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None
+                    lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
+                    output=console.file if console.is_terminal else None,
                 ):
                     try:
-                        async with create_task_group() as workers:
+                        # Sessions the web UI opens run beside this one, from the start: plugins may open some.
+                        async with create_task_group() as workers, shell.process.live.serving():
                             workers.start_soon(shell.process.namer.run)
                             try:
                                 with transcript.capture(console):
@@ -268,19 +287,23 @@ async def chat(
                             raise exc.exceptions[0] from None
                         raise
                     finally:
-                        served = _serving(shell)  # Before closing the plugins stops the web UI.
-                        with transcript.capture(console):
-                            await shell.close(reason)
-                if not shell.reload_requested:
-                    if (relaunch := shell.relaunch(web=served)) is not None:
+                        # The session shown last restarts CLAI: `/reload` and `/update` work in it.
+                        last = terminal.ended_in or shell
+                        # Before closing the plugins stops the web UI.
+                        served = None if last.updates.relaunch is None else web_serving(shell.loader)
+                        if not terminal.home_closed:
+                            with transcript.capture(console):
+                                await shell.close(reason)
+                if not last.reload_requested:
+                    if (relaunch := last.relaunch(web=served)) is not None:
                         raise relaunch
                     return
-                shell.reload_requested = False
+                last.reload_requested = False
                 if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
                     warming.join()
                 try:
                     shell = reload_clai(
-                        lambda shell=shell: create_shell(
+                        lambda shell=last: create_shell(
                             rebuild_stock(()) if rebuild_stock is not None else agent,
                             deps=deps,
                             plugins=plugins,
@@ -295,11 +318,11 @@ async def chat(
                                 if use_defaults
                                 else builtin_plugins
                             ),
-                            project=project,
+                            project=shell.context.project,
                             message_history=shell.session.messages,
                             summary=shell.session.summary,
                             launched=shell.sessions.launched,
-                            transcript=shell.transcript,
+                            transcript=transcript,
                             load_plugins=load_plugins,
                             workspace=Path(shell.session.workspace),
                         )
@@ -331,9 +354,39 @@ async def _serve_again(loader: SessionPlugins[DepsT], web: WebHandoff | None, *,
         console.print(await serve_again(loader, web), markup=False)
 
 
-def _serving(shell: SessionRuntime[DepsT, OutputT]) -> WebHandoff | None:
-    """The web UI to serve again once `/update` restarts CLAI; `None` when it does not, or none runs."""
-    return None if shell.updates.relaunch is None else web_serving(shell.loader)
+def _opener(
+    shell: SessionRuntime[DepsT, OutputT],
+    *,
+    agent: Callable[[], AbstractAgent[DepsT, OutputT]],
+    deps: DepsT,
+    plugins: Sequence[AgentCapability[DepsT]],
+    settings: Callable[[ProjectSettings], Settings],
+    load_plugins: bool,
+    console: Callable[[], Console],
+) -> Callable[[Path | None], SessionRuntime[DepsT, OutputT]]:
+    """Builds a session the web UI opens beside `shell`, in a directory, by default the one CLAI started in."""
+    launched_in, launch_project = Path(shell.session.workspace), shell.context.project
+
+    def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
+        project = launch_project if directory in (None, launched_in) else load_project_settings(directory)
+        return create_shell(
+            agent(),
+            deps=deps,
+            plugins=plugins,
+            usage_limits=shell.session.usage_limits,
+            console=console(),
+            settings=settings(project),
+            store=None,
+            builtin_plugins=(),
+            project=project,
+            headless=True,
+            load_plugins=load_plugins,
+            workspace=directory or launched_in,
+            process=shell.process,
+            signals=False,
+        )
+
+    return build
 
 
 def _report_project_plugins(loader: SessionPlugins[DepsT], console: Console) -> None:
