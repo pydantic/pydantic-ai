@@ -1208,34 +1208,45 @@ show a "waiting for you" state) returns a `Hooks` capability with
 
 The built-in `web` plugin (`pydantic_clai2.builtin_plugins.web`) starts disabled. Enable it with
 `/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
-UI for the running session. `clai2 --web` starts CLAI with only the browser to drive it, loading
+UI for your sessions. `clai2 --web` starts CLAI with only the browser to drive it, loading
 `web` for that launch without saving anything. `/web stop` ends the server and `/web status`
-shows its address and how many browsers are connected.
+shows its address and how many browsers are connected. `web` is
+[process-scoped](#one-instance-for-the-whole-process-scope--process): one server for the whole
+CLAI, however many sessions are live.
 
-Everything the browser does goes through the prompt, as typing there would
-(`host.send_input`): prompts and `/commands` run in the same session, in order with what the
-terminal enters, and both show them. A capability the plugin binds gives the browser the held
-conversation's runs as turns, with their stream events (text, thinking, tool calls and results,
-shell output, diffs), but not a background `/fork`'s, though it fires the turn moments too.
-Command results come from `on_command_end` and history from `host.conversation`. The
-sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
-repository, then by checkout, with a session from a removed worktree under its repository by the
-checkout saved with it (`ConversationSummary.checkout`), archived ones left out unless its archive
-button is on (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and
-`/unarchive`).
-Clicking a session sends `/resume ID`.
-Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
-directory (`host.sessions.follows_workspace`): `/resume ID` first moves the session to the
-directory it was saved in (`host.workspace`), reads that directory's `.clai/settings.json`, and
-loads every plugin but `web` again, so the coding tools, `repo_context`, skills, and MCP project
-files refer to it, as after `--worktree`. The process's working directory does not change, so a
-plugin that reads `Path.cwd()` still sees the launch directory. Each of those plugins gets
-`on_session_end` and then `on_session_start`, as on `/plugins reload`. `clai2 --web --resume ID`
-starts in that session's directory. A new session from the browser runs where the user picks,
-sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
-moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
-gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
-directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
+Everything the browser does in a session goes through that session's prompt, as typing there
+would (its `send_input`, reached through `host.live`): prompts and `/commands` run in that
+session, in order with what the terminal enters, and both show them. A capability the plugin
+binds gives the browser each live session's runs as turns, with their stream events (text,
+thinking, tool calls and results, shell output, diffs), but not a background `/fork`'s, though
+it fires the turn moments too. Command results come from `on_command_end` and history from each
+session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
+`/resume` groups them: by repository, then by checkout, with a session from a removed worktree
+under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
+left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
+`POST /api/sessions/ID/archive` and `/unarchive`).
+
+Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
+`host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
+the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
+each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
+it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
+calls `host.live.new`). The page watches the session it shows (`LiveSession.watch`), so that one
+is never closed for being idle; any other live session closes after an idle hour, and clicking it
+again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
+one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
+session only. The process's working directory never changes: each session reads its own as
+`host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
+was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
+there (`host.sessions.follows_workspace`); its plugins load again, each getting `on_session_end`
+and then `on_session_start`, as on `/plugins reload`. Nothing moves while a turn, a background
+`/fork`, or a delegated task runs. `clai2 --web --resume ID` starts in that session's directory.
+The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
+routes for one session.
+
+A session whose directory is gone opens read-only. With `/web` from a terminal, CLAI opens no
+other sessions: clicking one resumes it in the terminal's session, and a session saved in another
+directory opens read-only, since `/resume ID` refuses it there. Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, the others a dialog. Its edits go through the menu's own source, as in
