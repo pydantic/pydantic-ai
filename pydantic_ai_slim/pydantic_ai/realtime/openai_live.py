@@ -534,6 +534,9 @@ async def replay_input_items(messages: Sequence[ModelMessage], *, provider_name:
     """
     replayable = [replayable for message in messages if (replayable := without_media(message)) is not None]
     items = seed_input_items(replayable, provider_name=provider_name)
+    if not items:
+        # Nothing to cut to the caps: the redial needn't wait for the tokenizer to load (seconds, on first use).
+        return []
     encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
     kept: list[dict[str, Any]] = []
     tokens = 0

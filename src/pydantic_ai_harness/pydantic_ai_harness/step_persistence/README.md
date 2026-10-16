@@ -372,8 +372,8 @@ configured retention can delete older snapshots.
   `check_same_thread=False` because hook calls are dispatched onto a
   worker thread.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
-  `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`,
-  and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
+  `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`,
+  `tool_effects`, and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
   atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`.
   Needs the `mongodb` extra
   (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a
@@ -381,12 +381,12 @@ configured retention can delete older snapshots.
   `await store.aclose()` to release it).
   Externalizes individual parts at or above `media_threshold_bytes` by
   default to a `MongoMediaStore` on the same client. That is a per-value
-  offload, not an aggregate cap: a snapshot of many below-threshold parts can
+  offload, not an aggregate cap: a message of many below-threshold parts can
   still exceed MongoDB's 16 MiB document limit and fail on insert -- lower the
   threshold if that is a risk for your workload.
 - `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables
   `{table}_runs`, `{table}_events`, `{table}_snapshots`,
-  `{table}_snapshot_keys`, and `{table}_tool_effects`, plus `{table}_media`
+  `{table}_snapshot_keys`, `{table}_messages`, and `{table}_tool_effects`, plus `{table}_media`
   for externalized blobs (see [Persisting media](#persisting-media) below).
   `table` is a prefix, not a table name. `pool` is a caller-owned
   asyncpg-compatible pool: the harness imports no driver and defines no extra
@@ -575,16 +575,23 @@ database doesn't shrink right away: its earlier rows keep their history until
 pruning or deleting their conversation removes them, and SQLite keeps the freed
 space in the file until you run `VACUUM`.
 
-`FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's
-directory stays readable and greppable on its own. `MongoStepStore` and
-`PostgresStepStore` also store each snapshot's full history.
+`PostgresStepStore` and `MongoStepStore` store each message once too, in a
+`{table}_messages` table and a `snapshot_messages` collection, with each
+snapshot holding the keys of its messages in order. Unlike `SqliteStepStore`,
+they keep a stored message when the snapshots referencing it are pruned, as they
+do externalized media: with several writers at once, deleting a message along
+with its last snapshot could race with a save that is about to reference it. So
+messages that only pruned snapshots referenced, such as those compaction
+replaced, stay stored, and pruning doesn't bound these stores' size or remove
+that content. `FileStepStore` keeps writing each snapshot as a complete JSON
+file, so a run's directory stays readable and greppable on its own.
 
 ## Persisting media
 
 `BinaryContent` payloads (images, audio, documents, video) inline as
 base64 inside a snapshot would balloon every file/row containing the
 message; a large text part (e.g. a big tool-return string) does the same and
-can push a `MongoStepStore` snapshot past MongoDB's 16 MiB document cap
+can push a `MongoStepStore` message past MongoDB's 16 MiB document cap
 ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The
 file/sqlite/mongo/postgres backends externalize any `BinaryContent.data`, and any
 part whose string `content` is at or above 64 KiB, through a configured
@@ -839,6 +846,13 @@ associated run records from the same SQLite database atomically, retaining share
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
 between hosts. PID reuse is conservatively treated as busy.
+
+`set_archived(conversation_id=..., archived=...)` archives or unarchives a
+conversation through `ConversationSummary.archived_at`, a metadata-only change that
+keeps its messages, content revision, and activity timestamp. Saving new content
+unarchives it, since the conversation is in use again. Archiving deletes nothing.
+`listing(archived=False)` leaves archived conversations out, `archived=True` lists
+only those, and the default `None` lists both, as before archiving existed.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
