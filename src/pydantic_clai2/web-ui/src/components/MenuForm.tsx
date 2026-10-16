@@ -124,7 +124,7 @@ export function MenuForm({
   )
 }
 
-/** Whether a row's choices are a yes/no switch, as a boolean setting's are: typing anything else would be refused. */
+/** Whether a row's choices are a yes/no switch, as a boolean setting's are, such as `/set`'s, which take no other text. */
 const isSwitch = (field: MenuField) =>
   field.choices.length === 2 && field.choices.every((choice) => choice.value === 'true' || choice.value === 'false')
 

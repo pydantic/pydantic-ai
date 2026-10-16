@@ -1360,6 +1360,8 @@ async with WebClient(url='http://127.0.0.1:8765/', token=token) as client:
 `ServerMessage`s. It sends the token in the header, and as the WebSocket's query parameter with the
 server's own `Origin`, never through a proxy. Failures raise what the server raised: `LookupError`
 (404), `RuntimeError` (409), `ValueError` (400 and 422), and `PermissionError` (403, a wrong token).
+A bare command that declares its menu (`host.command_menu`), such as `/set`, would open that menu
+in a page, so `send` raises `ValueError` for it and nothing runs; send it with arguments instead.
 
 `SessionView(client)` follows the stream as the page does: `items` (the transcript, the running turn
 included), `running`, `questions`, `dialogs`, `notices` (command results), `last_turn` (how it ended,
