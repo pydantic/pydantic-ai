@@ -1207,7 +1207,7 @@ show a "waiting for you" state) returns a `Hooks` capability with
 The built-in `web` plugin (`pydantic_clai2.builtin_plugins.web`) starts disabled. Enable it with
 `/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
 UI for the running session. `clai2 --web` starts CLAI with only the browser to drive it, loading
-`web` for that launch without saving anything. `/web stop` ends the server and `/web status`
+`web` for that launch without saving anything; `clai2 --desktop` does the same in a window of its own. `/web stop` ends the server and `/web status`
 shows its address and how many browsers are connected.
 
 Everything the browser does goes through the prompt, as typing there would
