@@ -131,7 +131,7 @@ a plugin once, by the first session that loads it, and joins it to every live se
 - **The host follows the handled session where that is the only sensible answer.**
   `session_id`, `workspace`, `tasks`, `plugins`, `setting`, `send_input`,
   `submit_prompt`, and `interrupt` resolve to `host.live.current()`, else to the
-  loading session. `conversation`, `status`, and `console` stay the loading session's;
+  loading session, or the oldest live session once that one has closed. `conversation`, `status`, and `console` stay the loading session's;
   `host.live` reaches the others. A second, per-session host object would have been an
   alternative, but the existing `PluginHost` attributes already read lazily, so
   following the handled session kept one host and one plugin contract.

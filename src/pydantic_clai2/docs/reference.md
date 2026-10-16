@@ -2298,12 +2298,12 @@ many sessions run at once.
   at a time, and its toolbar shows `N live` while more than one is. `/resume ID` of a
   session live in the browser shows that session in the terminal, even mid-turn,
   instead of copying it; the session shown before keeps running.
-- **`/reload` and `/update`** restart CLAI, so they run only in the session the
-  terminal shows, or under `clai2 --web` in the session it started with. Elsewhere
-  they refuse and say where to enter them. They also refuse while another session
-  runs a turn, saying how many run, so try again when they finish. With `/web` from
-  a terminal, CLAI restarts in the folder it started in, so they refuse in a shown
-  session that works in another folder.
+- **`/update` and `/reload`** restart CLAI, so `/update` runs only in the session
+  the terminal shows, or under `clai2 --web` in the session it started with, and
+  `/reload` only in the terminal. Elsewhere they refuse and say where to enter them.
+  They also refuse while another session runs a turn, saying how many run, so try
+  again when they finish. With `/web` from a terminal, CLAI restarts in the folder it
+  started in, so they refuse in a shown session that works in another folder.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 

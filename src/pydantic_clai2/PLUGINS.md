@@ -3497,7 +3497,8 @@ these rules works the same in both.
    plugin for each live session, so under the web UI several exist at once. Each is
    loaded and unloaded on its own: `on_session_start` when its session opens or the
    plugin is turned on, `on_session_end` when its session closes or the plugin is
-   turned off. A session closes after it has sat idle for an hour: no turn, no queued
+   turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
+   `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
    input, no fork or delegated task, and no browser or terminal showing it. Only the
    session `clai2 --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
@@ -3506,9 +3507,11 @@ these rules works the same in both.
    `Path.cwd()` is the folder CLAI started in, not the session's. Never call
    `os.chdir`: it would move every session at once. Resolve a relative path against
    `self.host.workspace`, and start a subprocess with `cwd=self.host.workspace`.
-3. **No module-level mutable state.** Python imports your module once per process, so
-   a dict, list, cache, or client at module level is shared by every live session.
-   Keep state on `self`, set up in `__init__` or `on_session_start`. When sessions
+3. **No module-level mutable state.** An installed module is imported once per
+   process, so a dict, list, cache, or client at module level is shared by every live
+   session. A drop-in or Git plugin file runs again for each session, so its module
+   state is not shared at all. Either way, keep state on `self`, set up in `__init__`
+   or `on_session_start`. When sessions
    should share one thing, make the plugin process-scoped (below).
 4. **Do not assume a terminal.** A session the browser opened may have none: its
    console writes to a log or nowhere, and nobody can press a key in it. Check
@@ -3595,7 +3598,7 @@ What changes for a process-scoped plugin:
 | `current()` | the session being handled now, or `None` outside a moment, command, or run |
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
-| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, `ValueError` for the session the terminal shows or the one `clai2 --web` started with, and `RuntimeError` where CLAI opens no other sessions |
+| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
 | `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
