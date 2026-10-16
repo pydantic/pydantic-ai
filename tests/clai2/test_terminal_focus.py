@@ -62,9 +62,6 @@ class Desk(Fleet):
     def shown(self) -> str:
         return '\n'.join([*self.screen.history, *self.screen.lines()])
 
-    def runtime(self, conversation_id: str) -> SessionRuntime[None, str]:
-        return next(runtime for runtime in self.runtimes.values() if runtime.session.conversation_id == conversation_id)
-
     async def run(self, body: Callable[[], Awaitable[None]]) -> str:
         """Run the terminal's session while `body` drives the others; the reason the session shown last ended."""
         reasons: list[str] = []
