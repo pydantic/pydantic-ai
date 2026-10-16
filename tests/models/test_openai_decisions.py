@@ -28,10 +28,15 @@ from pydantic_ai import (
     BinaryContent,
     BoolCriteria,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
+    ModelTimeoutError,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -617,11 +622,41 @@ async def test_sdk_errors_map_to_model_api_error_with_cause(allow_model_requests
     assert exc_info.value.message == 'OpenAI Decisions request failed'
     if error_kind == 'connection':
         [transport_error] = transport_errors
+        assert isinstance(exc_info.value, ModelConnectionError)
+        assert exc_info.value.phase == 'connect'
         assert isinstance(exc_info.value.__cause__, APIConnectionError)
         assert exc_info.value.__cause__.__cause__ is transport_error
     else:
         [sdk_error] = sdk_errors
         assert exc_info.value.__cause__ is sdk_error
+
+
+@pytest.mark.parametrize(
+    ('status', 'body', 'category'),
+    [
+        (429, {'message': 'Rate limit reached.', 'code': 'rate_limit_exceeded'}, ModelRateLimitError),
+        (429, {'message': 'You exceeded your quota.', 'code': 'insufficient_quota'}, ModelQuotaExceededError),
+        (500, {'message': 'The server had an error.', 'type': 'server_error'}, ModelServerError),
+    ],
+)
+async def test_http_error_category(
+    allow_model_requests: None, status: int, body: dict[str, str], category: type[ModelAPIError]
+):
+    """A rate limit, exhausted quota or outage is raised in its error category, as for any other provider."""
+    model = mock_model(lambda _: httpx2.Response(status, json={'error': body}))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+    assert isinstance(exc_info.value, category)
+    assert exc_info.value.status_code == status
+
+
+async def test_timeout_error(allow_model_requests: None):
+    def time_out(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await mock_model(time_out).decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+    assert exc_info.value.message == 'OpenAI Decisions request failed'
 
 
 async def test_sdk_status_error_below_400_maps_to_model_api_error(allow_model_requests: None):
