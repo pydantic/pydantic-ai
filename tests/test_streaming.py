@@ -6028,6 +6028,92 @@ async def test_run_stream_early_exit_in_cancelled_scope_closes_model_stream():
     assert stream_closed
 
 
+@dataclass
+class _ModelRequestCleanup(AbstractCapability[None]):
+    """Cleanup in `wrap_model_request` that starts once its handler returns, and finishes once `permitted` is set."""
+
+    shielded: bool
+    started: anyio.Event = field(default_factory=anyio.Event)
+    permitted: anyio.Event = field(default_factory=anyio.Event)
+    finished: anyio.Event = field(default_factory=anyio.Event)
+
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        finally:
+            with anyio.CancelScope(shield=self.shielded):
+                self.started.set()
+                await self.permitted.wait()
+                self.finished.set()
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_run_stream_early_exit_in_cancelled_scope_cancels_model_request_cleanup_like_the_scope(shielded: bool):
+    """Leaving `run_stream()` early inside a cancelled `anyio` scope lets `wrap_model_request` cleanup finish only if it
+    shields it. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup = _ModelRequestCleanup(shielded=shielded)
+
+    async def permit_cleanup() -> None:
+        await cleanup.started.wait()
+        # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+        for _ in range(3):
+            await anyio.lowlevel.checkpoint()
+        cleanup.permitted.set()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(permit_cleanup)
+            with anyio.CancelScope() as scope:
+                async with agent.run_stream('hello') as result:
+                    assert await anext(result.stream_text(delta=True, debounce_by=None))
+                    scope.cancel()
+
+    assert cleanup.finished.is_set() is shielded
+
+
+async def test_run_stream_records_response_returned_after_absorbing_native_cancel():
+    """A response `wrap_model_request` returns after absorbing a native cancellation is recorded before the run is
+    cancelled, as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup_started = anyio.Event()
+
+    class AbsorbCancellation(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            response = await handler(request_context)
+            cleanup_started.set()
+            try:
+                await anyio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+            return response
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[AbsorbCancellation()])
+    messages: list[ModelMessage] = []
+
+    async def drive() -> None:
+        nonlocal messages
+        with capture_run_messages() as messages:
+            async with agent.run_stream('hello') as result:
+                async for _ in result.stream_text(debounce_by=None):
+                    pass
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
+    assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
+
+
 @pytest.mark.parametrize('delta', [True, False])
 @pytest.mark.parametrize('debounce_by', [None, 0.1])
 async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):

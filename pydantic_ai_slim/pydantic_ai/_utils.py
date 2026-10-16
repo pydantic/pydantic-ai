@@ -376,12 +376,15 @@ class ScopedTask(Generic[T]):
     async def result(self) -> T:
         """Wait for the task like `wait()` and return its result.
 
-        As with a plain `await`, an error the task raised wins over a cancellation of the awaiter.
+        As with a plain `await`, an error the task raised wins over a cancellation of the awaiter, and so does a result
+        it returned after absorbing a native cancellation: the awaiter can record it before `raise_if_cancelling`
+        re-asserts the cancellation. A result after an `anyio` cancellation is dropped for the cancellation, since the
+        cancelled scope would raise again at the next checkpoint anyway.
         """
         try:
             await self.wait()
         except asyncio.CancelledError:
-            if self.task.cancelled() or self.task.exception() is None:
+            if self.task.cancelled() or (self.task.exception() is None and in_cancelled_anyio_scope()):
                 raise
         return self.task.result()
 
