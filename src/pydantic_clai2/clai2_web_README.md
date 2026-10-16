@@ -156,3 +156,11 @@ Logfire's live view of the current conversation, opened at the latest turn. Logf
 other sites show its pages inside theirs today, so the panel opens it in a window beside CLAI's
 instead, and points that window at each new turn. Without a Logfire project the panel says how to
 set one up.
+
+<!-- From #10359 -->
+When the agent delegates to sub-agents, a **Workers** tree appears under the current session:
+one row per worker, under the worker that started it, with its agent, model, elapsed time, and
+last action. Click one, or the link on the tool call that started it, to watch its transcript
+live; type in its box to steer it (it reads your message at its next model request). Stop,
+Background, and Resume do what `/tasks stop`, `background`, and `resume` do. A finished worker
+shows what it saved; **← Session**, or the session's row, goes back.
