@@ -2543,25 +2543,20 @@ class BaseToolCallPart:
 
         This is just for convenience with models that require JSON strings as input.
 
+        The string is always compact JSON serialized from
+        [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict], keeping key order, even when `args`
+        is already a JSON string: a model's raw arguments may contain whitespace (`{"a": 1}`), while the same call
+        loaded back from a UI protocol or storage as a dict serializes compactly. Rendering both the same way keeps
+        the request bytes, and with them the provider's prompt cache, stable across that round trip.
+
         JSON that's malformed or doesn't represent an object is handled gracefully by returning
-        `'{"INVALID_JSON":"<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
-        so that the value can still be sent to a model API (e.g. during a retry flow) instead of being rejected
-        by one that requires an object.
+        `'{"INVALID_JSON":"<raw args>"}'`, matching `args_as_dict`, so that the value can still be sent to a model
+        API (e.g. during a retry flow) instead of being rejected by one that requires an object.
 
         Because of that, this is not the way to render args that are still streaming in: a partial fragment
         that only becomes valid JSON once the following deltas are concatenated would be degraded to the
         wrapper. Emit those verbatim instead, as the UI event streams do.
         """
-        if not self.args:
-            return '{}'
-        if isinstance(self.args, str):
-            try:
-                if isinstance(pydantic_core.from_json(self.args), dict):
-                    # Returned verbatim rather than re-serialized, as the exact bytes the model produced
-                    # (key order, whitespace) matter for prompt caching.
-                    return self.args
-            except ValueError:
-                pass
         return pydantic_core.to_json(self.args_as_dict()).decode()
 
     def has_content(self) -> bool:
