@@ -2604,6 +2604,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             A `ModelResponse` with a single `CompactionPart` containing the encrypted compaction data.
         """
         check_allow_model_requests()
+        if self._websocket is not None and self._websocket.closed:
+            raise UserError('This Responses WebSocket is closed. Open a new `model.connect()` context.')
         model_settings, model_request_parameters = self.prepare_request(
             request_context.model_settings,
             request_context.model_request_parameters,
@@ -2757,6 +2759,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
         check_allow_model_requests()
+        if self._websocket is not None and self._websocket.closed:
+            raise UserError('This Responses WebSocket is closed. Open a new `model.connect()` context.')
         if not self.profile.get('openai_supports_input_token_counting', True):
             raise UserError(
                 f'Server-side token counting is not available for {self.system} models '

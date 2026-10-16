@@ -775,6 +775,10 @@ async def test_connected_model_http_operations_replay_socket_history(
             )
             counted = await connected.count_tokens(context.messages, settings, context.model_request_parameters)
             compacted = await connected.compact_messages(context)
+        with pytest.raises(UserError, match='WebSocket is closed'):
+            await connected.count_tokens(context.messages, settings, context.model_request_parameters)
+        with pytest.raises(UserError, match='WebSocket is closed'):
+            await connected.compact_messages(context)
 
     assert len(socket.sent) == 1
     assert counted.input_tokens == 16
