@@ -311,6 +311,10 @@ class LiveSession(Protocol):
         """Whether a turn runs in the session now."""
         ...
 
+    def setting(self, key: str, /) -> JsonValue:
+        """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
+        ...
+
     def send_input(self, text: str, /) -> None:
         """Enter `text` at the session's prompt, as `PluginHost.send_input` does."""
         ...

@@ -134,7 +134,7 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
 def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
     """The turn reports the failed save and leaves no temporary file; the chat keeps it until a save succeeds."""
     web_ = orchestrated(make_web)
-    path = web_.plugin.remote.orchestrator.path
+    path = web_.plugin.service.orchestrator.path
     path.mkdir(parents=True)  # A folder where the file goes: it reads as no conversation, and cannot be replaced.
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         opened(socket)
@@ -153,7 +153,7 @@ def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
 
 def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -> None:
     web_ = orchestrated(make_web)
-    orchestrator = web_.plugin.remote.orchestrator
+    orchestrator = web_.plugin.service.orchestrator
     assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': False}
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         opened(socket)
@@ -221,7 +221,7 @@ def test_the_session_agent_gets_no_workspace_tools(make_web: MakeWeb) -> None:
 
 def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> None:
     web_ = make_web(Agent(deps_type=type(None)), extra=[WORKSPACES])
-    orchestrator = web_.plugin.remote.orchestrator
+    orchestrator = web_.plugin.service.orchestrator
     orchestrator.path.parent.mkdir(parents=True)
     orchestrator.path.write_text('not json')
     assert web_.portal.call(orchestrator.load).messages == []

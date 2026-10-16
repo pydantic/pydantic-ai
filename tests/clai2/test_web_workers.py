@@ -161,7 +161,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
 
 def test_without_a_task_owner(make_web: MakeWeb) -> None:
     web_ = make_web(Agent(TestModel()))
-    assert web_.plugin.remote.tasks() == []
+    assert web_.plugin.service.default().tasks() == []
     assert web_.get('/api/tasks/any').json() == {'detail': 'This CLAI runs no delegated tasks.'}
     assert web_.post('/api/tasks/any/stop').status_code == 404
     assert web_.post('/api/tasks/any/steer', {'text': 'hello'}).status_code == 404

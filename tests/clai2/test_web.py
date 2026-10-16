@@ -35,7 +35,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins import web
-from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, live, remote as remote_module
+from pydantic_clai2.builtin_plugins.web import (
+    WebPlugin,
+    WebSettings,
+    channel as channel_module,
+    live,
+    service as service_module,
+)
 from pydantic_clai2.builtin_plugins.web.app import (
     HEADER,
     UNBUILT,
@@ -161,7 +167,7 @@ def make_web(tmp_path: Path) -> Iterator['MakeWeb']:
         [entry] = [entry for entry in shell.loader.entries() if entry.name == 'web']
         plugin = entry.loaded.plugin if entry.loaded else None
         assert isinstance(plugin, WebPlugin)
-        client = TestClient(create_app(remote=plugin.remote, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
+        client = TestClient(create_app(service=plugin.service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
         client.portal = portal
         made = Web(shell=shell, plugin=plugin, client=client, portal=portal)
         made_webs.append(made)
@@ -192,7 +198,7 @@ def receive_until(socket: WebSocketTestSession, kind: type[MessageT]) -> tuple[l
 
 def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
     """A prompt entered over HTTP runs in the shell; the browser sees the turn, its text, its tools, and the end."""
-    monkeypatch.setattr(remote_module, 'STATUS_INTERVAL', 0)
+    monkeypatch.setattr(channel_module, 'STATUS_INTERVAL', 0)
     tools = Capability[None]()
 
     @tools.tool_plain
@@ -259,7 +265,7 @@ def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
             await asyncio.gather(*(record.task for record in shell.forks.records))
 
         web_.portal.call(forks_finished)
-        assert not web_.plugin.remote.running
+        assert not web_.plugin.service.default().running
         web_.post('/api/input', {'text': 'here'})
         messages, end = receive_until(socket, TurnEnded)
         started = [message for message in [*forked, *messages] if isinstance(message, TurnStarted)]
@@ -562,7 +568,7 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
         )
     [removed] = web_.get('/api/sessions').json()[-1]['worktrees']
     assert {entry['title']: entry['state'] for entry in removed['sessions']} == {'Live': 'busy', 'Dead': 'cancelled'}
-    web_.plugin.remote.running = True
+    web_.plugin.service.default().running = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
@@ -1013,9 +1019,9 @@ def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tm
     # The page's own plugin stays on: turning it off or reloading it would end this page.
     for action in ('disable', 'reload'):
         refused = web_.post(f'/api/plugins/web/{action}')
-        assert (refused.status_code, refused.json()['detail']) == (400, remote_module.SERVING)
+        assert (refused.status_code, refused.json()['detail']) == (400, service_module.SERVING)
     refused = web_.post('/api/plugins/web/settings', {'changes': {'open_browser': True}})
-    assert (refused.status_code, refused.json()['detail']) == (400, remote_module.SERVING)
+    assert (refused.status_code, refused.json()['detail']) == (400, service_module.SERVING)
     assert plugin_rows(web_)['web']['status'] == 'on'
 
     failed = web_.post('/api/plugins/broken/enable')
@@ -1077,7 +1083,7 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
-    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).remote
+    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).service
     with TestClient(create_app(remote=remote, token=TOKEN, hosts=HOSTS, static=tmp_path / 'missing')) as client:
         page = client.get(f'/?token={TOKEN}')
         assert (page.status_code, page.text) == (503, UNBUILT)
@@ -1087,7 +1093,7 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
     static = tmp_path / 'bare'
     static.mkdir()
     (static / 'index.html').write_text('<html><head></head></html>')
-    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).remote
+    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).service
     with TestClient(create_app(remote=remote, token=TOKEN, hosts=HOSTS, static=static)) as client:
         assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
@@ -1252,7 +1258,7 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
     """A browser that stops reading is closed with "try again" rather than buffering the whole session."""
     monkeypatch.setattr(live, 'QUEUE_LIMIT', 2)
     web_ = make_web(Agent(TestModel()))
-    hub = web_.plugin.hub
+    hub = web_.plugin.service.hub
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         socket.receive_text()
         socket.receive_text()  # The orchestrator chat's state.
@@ -1316,7 +1322,7 @@ def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tm
         assert web_.post('/api/plugins/declared/fields/size', {'value': ' '}).json()['messages'] == ['Reset Size.']
         assert web_.post('/api/plugins/declared/fields/size', {}).json()['menu']['fields'][1]['value'] == '2'
     # The page's own plugin is never edited from it.
-    assert web_.post('/api/plugins/web/fields/host', {'value': 'x'}).json()['detail'] == remote_module.SERVING
+    assert web_.post('/api/plugins/web/fields/host', {'value': 'x'}).json()['detail'] == service_module.SERVING
     assert web_.post('/api/plugins/declared/fields/nope', {'value': '1'}).status_code == 404
     assert web_.post('/api/plugins/declared/fields/size/action').status_code == 404
     # A plugin without a declared menu, or one that is off, has no fields here.
@@ -1415,7 +1421,7 @@ def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_
         receive_until(socket, DialogOpened)
         web_.portal.call(web_.plugin.stop)
         assert action.result(timeout=10).json()['messages'] == []
-    assert web_.plugin.remote.dialogs.dialogs == []
+    assert web_.plugin.service.dialogs.dialogs == []
 
 
 def follow_workspaces(

@@ -1,82 +1,66 @@
-"""The session as the browser drives it: what it sees on connect, what each action does, and the sidebar's sessions."""
+"""The web UI of one CLAI process: its live sessions, each a `SessionChannel`, and everything the page shares.
 
-import math
-import time
+The browser names a session by the conversation it holds. Sessions open and close while CLAI runs,
+and each one's channel is made when it is first seen and dropped once it is gone.
+"""
+
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
-from pathlib import Path, PurePath
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
 from anyio import Lock, fail_after, get_cancelled_exc_class, to_thread
 from pydantic import JsonValue
-from pydantic.errors import PydanticInvalidForJsonSchema
 from termflow.themes import PALETTES
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.messages import UserContent, UserPromptPart
-from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
-    ConversationSummary,
-    ensure_inactive,
-)
+from pydantic_ai_harness.ask_user import Answerer
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
-from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
+from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
+from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Client, Hub
+from pydantic_clai2.builtin_plugins.web.menu_forms import menu_info, plugin_form, run_action, set_row
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
-    Choice,
-    CompletionInfo,
-    EventTranslator,
-    Item,
-    ItemAdded,
-    ItemLog,
+    LiveChanged,
+    LiveEntry,
+    LiveState,
     MenuEdited,
-    MenuField,
     MenuInfo,
     Notice,
     Palette,
     PanelInfo,
-    PluginForm,
     PluginRow,
     PluginsChanged,
     Project,
+    QuestionAsked,
+    QuestionClosed,
     SessionEntry,
-    SessionInfo,
     SessionsChanged,
-    SessionState,
     SettingsChanged,
-    Snapshot,
-    StatusChanged,
-    StatusInfo,
-    TaskEntry,
     TaskTranscript,
-    TextDelta,
     ThemeChanged,
     ThemeInfo,
-    TitleChanged,
     Transcript,
-    TurnEnded,
-    TurnStarted,
     UpdateChanged,
     UpdateInfo,
-    Worktree,
+    dump,
     history_items,
-    usage_info,
-    user_text,
 )
-from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
+from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.cli.self_update import installed
-from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    LiveSession,
+    LiveSessions,
     PanelView,
     PluginCatalog,
     PluginHost,
@@ -85,92 +69,224 @@ from pydantic_clai2.plugins import (
     SidePanel,
     TaskCatalog,
     TaskEvent,
-    TurnOutcome,
     UpdateProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
-from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 
 THEME = 'display.theme'
-CODE_MODE = 'run.code_mode'
-SPECULATION = 'run.speculative_code_mode'
-Switch = Literal['run.code_mode', 'run.speculative_code_mode']
-"""The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 PluginAction = Literal['enable', 'disable', 'reload']
 TaskAction = Literal['stop', 'background', 'resume']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
 VIEW_TIMEOUT = 10.0
 """Seconds a side panel's view may take before the panel says it did not answer, so one cannot hold up the rest."""
-STATUS_INTERVAL = 0.2
-"""Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
 
-class Remote:
-    """One shell session, as every connected browser shares it.
+class WebService:
+    """What every browser of this CLAI shares: the live sessions, plugins, settings menus, sidebar, and orchestrator.
 
-    Everything a browser does goes through the prompt, as typing there would, so the terminal and
-    the browser always drive the same session. What happens comes back through the plugin's moments
-    and the run's events.
+    The legacy routes and a browser that never sends `watch` use the default session: the one the
+    page opened or started last while it is live, else the newest live one.
     """
 
-    def __init__(self, *, host: PluginHost[None], hub: Hub, answerer: BrowserAnswerer) -> None:
+    def __init__(self, *, host: PluginHost[None], terminal: Answerer | None = None) -> None:
+        """`terminal` races the browser to answer the model's questions, where CLAI has a terminal."""
         self.host = host
-        self.hub = hub
-        self.answerer = answerer
-        self.workers = Workers(publish=hub.publish, history=lambda task_id: self.task_catalog.history(task_id))
-        """The delegated tasks, which the plugin's `on_task_event` keeps up to date."""
-        self.dialogs = BrowserDialogs(publish=hub.publish)
+        self.live: LiveSessions = host.live if host.live is not None else HostSessions(host)
+        """The process's live sessions; a host built outside CLAI's loader is its own one."""
+        self.hub = Hub(default=self._default_id)
+        self.answerer = BrowserAnswerer(publish=self._question, terminal=terminal, session=self._asking)
+        """Asks the model's questions in the browsers watching the session asking."""
+        self.dialogs = BrowserDialogs(publish=self.hub.publish)
         """Where the settings menus opened in this page ask their questions."""
-        self.orchestrator = Orchestrator(host=host, publish=hub.publish)
-        """The orchestrator chat, a separate agent with its own conversation, beside the session."""
-        self.running = False
-        self._translator = EventTranslator()
-        """One for the whole load, so item IDs stay unique across turns in a browser that keeps them all."""
-        self._turn = ItemLog()
-        self._status_sent = 0.0
-        self._usage: RunUsage | None = None
-        """The running turn's usage, as its run context reports it; `None` between turns."""
-        self._identities: dict[str, ProjectIdentity] = {}
-        self._shown = host.conversation.conversation_id
-        """The conversation browsers were last sent, so a retitle sends only the title."""
-        self._theme = self._theme_name()
-        """The theme browsers were last sent, so a command that changes it sends it again."""
+        self.orchestrator = Orchestrator(host=host, publish=self.hub.publish)
+        """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
-        self._command_edits = Lock()
-        """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
         self.version = installed().label
         self.update: UpdateInfo | None = None
         """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
         self._uv_output: list[str] = []
+        self._channels: dict[str, SessionChannel] = {}
+        """By `LiveSession.id`."""
+        self._chosen: str | None = None
+        """The `LiveSession.id` the page opened or started last, which legacy routes follow while it is live."""
+        self._identities: dict[str, ProjectIdentity] = {}
+        self._theme = self._theme_name()
+        """The theme browsers were last sent, so a command that changes it sends it again."""
+        self._command_edits = Lock()
+        """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
+        self._live_sent: LiveChanged | None = None
+        self._default_sent: str | None = None
+        """The default session's conversation, as browsers without `watch` were last sent it."""
+        self._unsubscribe = self.live.subscribe(self.live_changed)
 
-    # What the browser sees.
+    def close(self) -> None:
+        """Stop following the live sessions and stop counting browsers as their watchers."""
+        self._unsubscribe()
+        for client in self.hub.connected():
+            self.unwatch(client)
 
-    def snapshot(self) -> Snapshot:
-        conversation = self.host.conversation
-        items = history_items(conversation.messages)
-        if self.running:
-            items += self._turn.items.values()
-        return Snapshot(
-            session=SessionInfo(
-                id=conversation.conversation_id, title=conversation.title, workspace=self.host.status.workspace
-            ),
-            items=items,
-            running=self.running,
-            status=self.status(),
-            questions=self.answerer.questions,
-            dialogs=self.dialogs.dialogs,
-            theme=self.theme(),
-            tasks=self.tasks(),
-            task_items=self.workers.items(),
-            follows_workspace=self.host.sessions is not None and self.host.sessions.follows_workspace,
-            version=self.version,
-            update=self.update,
+    # Live sessions and their channels.
+
+    def channel(self, session: LiveSession) -> SessionChannel:
+        found = self._channels.get(session.id)
+        if found is None:
+            found = self._channels[session.id] = SessionChannel(session=session, service=self)
+        return found
+
+    def channels(self) -> list[SessionChannel]:
+        """A channel per live session, oldest first."""
+        return [self.channel(session) for session in self.live.listing()]
+
+    def session(self, conversation_id: str) -> SessionChannel:
+        """The channel of the live session holding `conversation_id`; `LookupError` when none does."""
+        for channel in self.channels():
+            if channel.id == conversation_id:
+                return channel
+        raise LookupError(f'Session {conversation_id} is not open; open it first.')
+
+    def default(self) -> SessionChannel:
+        """The session the legacy routes drive: the one the page chose last while live, else the newest."""
+        sessions = self.live.listing()
+        if not sessions:
+            raise LookupError('No session is open.')
+        chosen = next((session for session in sessions if session.id == self._chosen), sessions[-1])
+        return self.channel(chosen)
+
+    def _default_id(self) -> str | None:
+        try:
+            return self.default().id
+        except LookupError:
+            return None
+
+    def current(self) -> SessionChannel:
+        """The channel of the session whose moment or run is handled now, else the default one."""
+        session = self.live.current()
+        return self.default() if session is None else self.channel(session)
+
+    def live_message(self) -> LiveChanged:
+        return LiveChanged(
+            sessions=[
+                LiveEntry(
+                    id=channel.id,
+                    state=self._state(channel),
+                    title=channel.session.conversation.title,
+                    workspace=str(channel.session.workspace),
+                )
+                for channel in self.channels()
+            ]
         )
+
+    def _state(self, channel: SessionChannel) -> LiveState:
+        session = channel.session
+        if self.answerer.asked(channel.id):
+            return 'asking'
+        if session.queued:
+            return 'queued'
+        return 'running' if session.running else 'idle'
+
+    def live_changed(self) -> None:
+        """A session opened, closed, changed state, or switched conversation: tell every browser what changed.
+
+        Called synchronously by the live sessions, so it never waits and never raises.
+        """
+        live = {session.id for session in self.live.listing()}
+        for gone in self._channels.keys() - live:
+            del self._channels[gone]
+            for client in self.hub.connected():
+                if (unwatch := client.unwatch.pop(gone, None)) is not None:
+                    unwatch()
+        message = self.live_message()
+        if message != self._live_sent:
+            self._live_sent = message
+            self.hub.publish(message)
+        default = self._default_id()
+        if default != self._default_sent:
+            self._default_sent = default
+            legacy = [client for client in self.hub.connected() if client.watching is None]
+            if default is not None and legacy:
+                # A browser that never said which session it shows follows the default one, as it did before.
+                self.hub.send(legacy, dump(self.default().snapshot()))
+
+    def watch(self, client: Client, conversation_ids: Sequence[str]) -> None:
+        """Replace what `client` watches; it gets a snapshot of each live session it did not watch before."""
+        before: set[str] = set() if client.watching is None else client.watching
+        client.watching = set(conversation_ids)
+        held = {channel.id: channel for channel in self.channels()}
+        wanted = {held[conversation].session.id for conversation in client.watching if conversation in held}
+        for live_id in client.unwatch.keys() - wanted:
+            client.unwatch.pop(live_id)()
+        for conversation in client.watching:
+            channel = held.get(conversation)
+            if channel is None:
+                continue
+            if channel.session.id not in client.unwatch:
+                client.unwatch[channel.session.id] = channel.session.watch()
+            if conversation not in before:
+                self.hub.send([client], dump(channel.snapshot()))
+
+    def unwatch(self, client: Client) -> None:
+        """`client` left: it no longer keeps any session from closing for being idle."""
+        for unwatch in client.unwatch.values():
+            unwatch()
+        client.unwatch.clear()
+
+    def _question(self, message: QuestionAsked | QuestionClosed, session: str | None) -> None:
+        if session is None:
+            self.hub.publish(message)
+        else:
+            self.hub.publish_session(message, session=session)
+        self.live_changed()
+
+    def _asking(self) -> str | None:
+        session = self.live.current()
+        return (session or self.default().session).conversation.conversation_id
+
+    async def open(self, conversation_id: str) -> str:
+        """Make a saved session live, resumed in a session of its own unless one holds it; its conversation ID.
+
+        A CLAI that opens no other sessions, as with `/web` from a terminal, resumes it in the default
+        session instead: the ID is then the default session's, whose watchers get the resumed one next.
+        """
+        try:
+            session = await self.live.open(conversation_id)
+        except RuntimeError:
+            default = self.default()
+            default.session.send_input(f'/resume {conversation_id}')
+            return default.id
+        return self._choose(session)
+
+    async def new(self, workspace: str | None = None) -> str:
+        """Start a new live session in `workspace`, by default the default session's directory; its conversation ID.
+
+        A CLAI that opens no other sessions starts it in the default session, as `open` does.
+        """
+        default = self.default()
+        directory = default.session.workspace if workspace is None else workspace_directory(workspace)
+        try:
+            session = await self.live.new(directory)
+        except RuntimeError:
+            if directory != default.session.workspace:
+                if not self.catalog.follows_workspace:
+                    raise ValueError(f'This CLAI works in {default.session.workspace}. Start CLAI in {directory}.')
+                default.session.send_input(f'/workspace {directory}')
+            else:
+                default.session.send_input('/new')
+            return default.id
+        return self._choose(session)
+
+    def _choose(self, session: LiveSession) -> str:
+        self._chosen = session.id
+        self.live_changed()
+        self.hub.publish(SessionsChanged())
+        return self.channel(session).id
+
+    # Theme and settings, which every session shares.
 
     def theme(self) -> ThemeInfo:
         """The `/theme` choice with its palette, as the terminal paints it."""
@@ -185,113 +301,39 @@ class Remote:
         except KeyError:
             return 'default'
 
-    def status(self) -> StatusInfo:
-        status = self.host.status
-        return StatusInfo(
-            model=status.model,
-            activity=status.activity if self.running else 'ready',
-            context_tokens=status.context_tokens,
-            context_window=status.context_window,
-            cost=None if status.cost is None else str(status.cost),
-            streamed_tokens=math.ceil(status.streamed_chars / 4),
-            output_tokens=status.output_tokens,
-            run=None if self._usage is None else usage_info(self._usage),
-            code_mode=self._switch(CODE_MODE),
-            speculation=self._switch(SPECULATION),
-        )
-
-    def _switch(self, key: str) -> bool | None:
-        try:
-            return self.host.setting(key) is True
-        except KeyError:
-            return None
-
-    def switch(self, key: Switch, on: bool) -> None:
-        """Flip a run switch as `/set` typed at the prompt does; a running turn keeps the tools it started with."""
-        self.host.send_input(f'/set {key} {"true" if on else "false"}')
-
-    def publish_status(self) -> None:
-        self._status_sent = time.monotonic()
-        self.hub.publish(StatusChanged(status=self.status()))
-
-    # What happens in the session, from the plugin's moments and capability.
-
-    def foreground(self, ctx: RunContext[None]) -> bool:
-        """A run of the conversation the shell holds, rather than a background `/fork` or a delegated task."""
-        return ctx.conversation_id == self.host.conversation.conversation_id and DelegationTasks.child_id() is None
-
-    def observe(self, event: AgentStreamEvent, *, usage: RunUsage, by_user: bool = False) -> None:
-        """Send `event` to browsers; `by_user` marks a `/monty` cell's run, which is not a turn and has no usage to show."""
-        if not by_user:
-            self._usage = usage
-        for message in self._translator.translate(event):
-            if by_user:
-                # Only the cell itself: the scripted model's closing text is not the user's.
-                if isinstance(message, TextDelta) or (isinstance(message, ItemAdded) and message.item.kind != 'tool'):
-                    continue
-                if isinstance(message, ItemAdded):
-                    message = ItemAdded(item=replace(message.item, by_user=True))
-            self._turn.apply(message)
-            self.hub.publish(message)
-        if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
-            self.publish_status()
-
-    def run_started(self, prompt: str | Sequence[UserContent] | None) -> None:
-        """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
-        self.running = True
-        self._usage = None
-        self._turn.clear()
-        item = None
-        if prompt is not None:
-            item = Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=user_text(UserPromptPart(prompt)))
-        self.hub.publish(TurnStarted(item=item))
-        self.publish_status()
-
-    def run_ended(
-        self, outcome: TurnOutcome, *, error: BaseException | None = None, usage: RunUsage | None = None
-    ) -> None:
-        self.running = False
-        self._usage = None
-        self._turn.clear()
-        self.hub.publish(
-            TurnEnded(
-                outcome=outcome,
-                error=None if error is None else str(error) or type(error).__name__,
-                usage=None if usage is None else usage_info(usage),
-            )
-        )
-        self.publish_status()
-
-    def turn_ended(self) -> None:
-        """A turn, or a background `/fork`, ended and saved its outcome and usage: the figures and sidebar show it."""
-        self.publish_status()
-        self.hub.publish(SessionsChanged())
-
-    def conversation_changed(self, event: ConversationChanged) -> None:
-        if event.conversation_id == self._shown:
-            self.hub.publish(TitleChanged(title=event.title))
-        else:
-            self._shown = event.conversation_id
-            self.workers.reset()
-            self.hub.publish(self.snapshot())
-        self.hub.publish(SessionsChanged())
-
-    def command_ended(self, event: CommandEnd) -> None:
-        if event.error is not None:
-            self.hub.publish(Notice(text=str(event.error), level='error', command=event.text))
-        elif event.output:
-            self.hub.publish(Notice(text=event.output, command=event.text))
-        self._settings_changed()
-        # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
-        self.hub.publish(PluginsChanged())
-
-    def _settings_changed(self) -> None:
-        """Tell browsers CLAI's settings may have changed: the theme if it did, the status row, and open menus."""
+    def settings_changed(self, channel: SessionChannel | None = None) -> None:
+        """Tell browsers CLAI's settings may have changed: the theme if it did, the status rows, and open menus."""
         if (name := self._theme_name()) != self._theme:
             self._theme = name
             self.hub.publish(ThemeChanged(theme=self.theme()))
-        self.publish_status()
+        for each in self.channels() if channel is None else [channel]:
+            each.publish_status()
         self.hub.publish(SettingsChanged())
+
+    # The plugin's moments, routed to the session they happened in.
+
+    def turn_ended(self) -> None:
+        """A turn, or a background `/fork`, ended and saved its outcome and usage: the figures and sidebar show it."""
+        self.current().publish_status()
+        self.hub.publish(SessionsChanged())
+
+    def conversation_changed(self, event: ConversationChanged) -> None:
+        # By the conversation, not `current()`: a session that is still opening is not listed yet.
+        for channel in self.channels():
+            if channel.id == event.conversation_id:
+                channel.conversation_changed(title=event.title)
+        self.live_changed()
+        self.hub.publish(SessionsChanged())
+
+    def command_ended(self, event: CommandEnd) -> None:
+        channel = self.current()
+        channel.command_ended(event)
+        self.settings_changed(channel)
+        # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
+        self.hub.publish(PluginsChanged())
+
+    def task_event(self, event: TaskEvent) -> None:
+        self.current().workers.observe(event)
 
     def update_progress(self, event: UpdateProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
@@ -304,46 +346,13 @@ class Remote:
         else:
             if self._uv_output:
                 level = 'error' if event.stage == 'failed' else 'info'
-                self.hub.publish(Notice(text='\n'.join(self._uv_output), level=level, command='uv'))
+                self.current().publish(Notice(text='\n'.join(self._uv_output), level=level, command='uv'))
             self.update = UpdateInfo(target=event.target, restarting=True) if event.stage == 'restarting' else None
         self.hub.publish(UpdateChanged(update=self.update))
-
-    # What the browser does.
-
-    def send(self, text: str) -> str | None:
-        """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
-
-        That menu opens in the page instead of the terminal: the name of its command is returned, and
-        nothing is entered. Otherwise the result is `None`.
-        """
-        text = text.strip()
-        if not text:
-            raise ValueError('Type a prompt or a /command.')
-        if text.startswith('!'):
-            raise ValueError('Shell lines (!) run only in the terminal.')
-        if is_command_input(text) and len(text.split()) == 1 and self.host.command_menu(text[1:]) is not None:
-            return text[1:]
-        self.host.send_input(text)
-        return None
-
-    async def complete(self, text: str) -> list[CompletionInfo]:
-        return [
-            CompletionInfo(
-                text=completion.text,
-                start=-completion.start_position,
-                display=completion.display or completion.text,
-                meta=completion.display_meta,
-            )
-            for completion in await self.host.complete(text)
-        ]
 
     async def models(self) -> list[str]:
         """The saved models and chains `/model` offers, as `PROVIDER:NAME`."""
         return [completion.text for completion in await self.host.complete('/model ') if ':' in completion.text]
-
-    def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
-        """Answer an open question, or decline it with `None`; `ValueError` when the answers do not fit it."""
-        self.answerer.reply(request_id, answers)
 
     # The plugins panel.
 
@@ -377,7 +386,7 @@ class Remote:
             has_menu=info.has_menu,
             settings_menu=info.settings_menu,
             terminal=self.host.console.is_terminal,
-            form=None if info.settings_menu else _form(info),
+            form=None if info.settings_menu else plugin_form(info),
             serving=info.name == self.host.name,
         )
 
@@ -423,7 +432,7 @@ class Remote:
 
     def open_plugin_menu(self, name: str) -> None:
         """Open a plugin's own settings menu in the terminal, as `/plugins configure NAME` typed there does."""
-        self.host.send_input(f'/plugins configure {self._plugin(name).name}')
+        self.default().session.send_input(f'/plugins configure {self._plugin(name).name}')
 
     async def plugin_menu(self, name: str) -> MenuInfo:
         """A plugin's declared settings menu, with every row's current value."""
@@ -431,18 +440,18 @@ class Remote:
         if menu is None:
             raise LookupError(f'{name} declares no settings menu here; open its own in the terminal.')
         # Its source may read the keyring or files, so it runs off the loop, as the terminal's menu does.
-        return await to_thread.run_sync(_menu_info, menu)
+        return await to_thread.run_sync(menu_info, menu)
 
     async def edit_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
         """Set a row of a plugin's declared menu to `value`, or reset it with `None` or empty text, as its menu does.
 
         Raises `ValueError` with the row's own message when the menu rejects the value; nothing is saved then.
         """
-        return await self._edit(name, partial(_set_row, key=key, value=value))
+        return await self._edit(name, partial(set_row, key=key, value=value))
 
     async def run_menu_action(self, name: str, key: str) -> MenuEdited:
         """Run what a row of a plugin's declared menu does when chosen, asking through this page's dialogs."""
-        return await self._edit(name, partial(_run_action, key=key, dialogs=self.dialogs, owner=name))
+        return await self._edit(name, partial(run_action, key=key, dialogs=self.dialogs, owner=name))
 
     async def _edit(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
         """One edit, after which the plugin loads again if it saved new settings; shown here and in the terminal."""
@@ -456,7 +465,7 @@ class Remote:
         finally:
             self.hub.publish(PluginsChanged())
         menu = catalog.settings_menu(name)
-        return MenuEdited(messages=messages, menu=None if menu is None else await to_thread.run_sync(_menu_info, menu))
+        return MenuEdited(messages=messages, menu=None if menu is None else await to_thread.run_sync(menu_info, menu))
 
     def answer_dialog(self, dialog_id: str, value: str | None) -> None:
         """Answer a settings menu's open dialog, or cancel it with `None`."""
@@ -472,15 +481,15 @@ class Remote:
 
     async def command_menu(self, name: str) -> MenuInfo:
         """The menu bare `/NAME` opens, as the command declares it, with every row's current value."""
-        return await to_thread.run_sync(_menu_info, self._command_menu(name))
+        return await to_thread.run_sync(menu_info, self._command_menu(name))
 
     async def edit_command_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
         """Set a row of a command's menu to `value`, or reset it with `None` or empty text, as the terminal's menu does."""
-        return await self._edit_command(name, partial(_set_row, key=key, value=value))
+        return await self._edit_command(name, partial(set_row, key=key, value=value))
 
     async def run_command_menu_action(self, name: str, key: str) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
-        return await self._edit_command(name, partial(_run_action, key=key, dialogs=self.dialogs, owner=f'/{name}'))
+        return await self._edit_command(name, partial(run_action, key=key, dialogs=self.dialogs, owner=f'/{name}'))
 
     async def _edit_command(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
         """One edit, printed in the terminal too, after which every page reads the settings again."""
@@ -489,33 +498,28 @@ class Remote:
             try:
                 messages = await edit(menu)
             finally:
-                self._settings_changed()
+                self.settings_changed()
         for message in messages:
             self.host.console.print(message, markup=False, highlight=False)
-        return MenuEdited(messages=messages, menu=await to_thread.run_sync(_menu_info, menu))
+        return MenuEdited(messages=messages, menu=await to_thread.run_sync(menu_info, menu))
 
-    # The sidebar's workers: the delegated tasks.
+    # The Workers tree: the delegated tasks of every live session, by task ID.
 
-    @property
-    def task_catalog(self) -> TaskCatalog:
-        if self.host.tasks is None:
-            raise LookupError('This CLAI runs no delegated tasks.')
-        return self.host.tasks
-
-    def tasks(self) -> list[TaskEntry]:
-        """The conversation's delegated tasks, each parent before its children; none without a task owner."""
-        return [] if self.host.tasks is None else [task_entry(task) for task in self.host.tasks.listing()]
+    def _task(self, task_id: str) -> tuple[SessionChannel, TaskCatalog]:
+        for channel in self.channels():
+            catalog = channel.session.tasks
+            if catalog is not None and any(task.id == task_id for task in catalog.listing()):
+                return channel, catalog
+        raise LookupError(f'No task {task_id!r} in an open session.')
 
     def task_transcript(self, task_id: str) -> TaskTranscript:
-        catalog = self.task_catalog
-        task = next((task for task in catalog.listing() if task.id == task_id), None)
-        if task is None:
-            raise LookupError(f'No task {task_id!r} in this conversation.')
+        _, catalog = self._task(task_id)
+        [task] = [task for task in catalog.listing() if task.id == task_id]
         return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
 
     async def task_action(self, task_id: str, action: TaskAction) -> None:
         """Stop, background, or resume a task, as `/tasks` does."""
-        catalog = self.task_catalog
+        channel, catalog = self._task(task_id)
         if action == 'stop':
             await catalog.stop(task_id)
         elif action == 'background':
@@ -525,14 +529,15 @@ class Remote:
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:
-                self.workers.observe(TaskEvent(task=task))
+                channel.workers.observe(TaskEvent(task=task))
 
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running task a message, shown in its transcript; `False` once it has finished."""
+        channel, catalog = self._task(task_id)
         text = text.strip()
-        steered = self.task_catalog.steer(task_id, text)
+        steered = catalog.steer(task_id, text)
         if steered:
-            self.workers.steered(task_id, text)
+            channel.workers.steered(task_id, text)
         return steered
 
     # Side panels.
@@ -561,14 +566,16 @@ class Remote:
 
     @property
     def catalog(self) -> SessionCatalog:
-        if self.host.sessions is None:
+        sessions = self.default().session.sessions
+        if sessions is None:
             raise LookupError('This CLAI does not save sessions.')
-        return self.host.sessions
+        return sessions
 
     async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
         entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
-        workspaces = {entry.workspace for entry in entries} | {self.host.status.workspace}
+        workspace = str(self.default().session.workspace)
+        workspaces = {entry.workspace for entry in entries} | {workspace}
         known = dict(self._identities)
 
         def resolve() -> dict[str, ProjectIdentity]:
@@ -580,48 +587,35 @@ class Remote:
             }
 
         self._identities.update(await to_thread.run_sync(resolve))
+        live = {channel.id: channel.session for channel in self.channels()}
         # Checking whether another process runs a session can spawn a program (`tasklist` on Windows).
-        running = [entry for entry in entries if entry.outcome == 'running']
+        running = [entry for entry in entries if entry.outcome == 'running' and entry.id not in live]
         busy: set[str] = (
-            await to_thread.run_sync(lambda: {entry.id for entry in running if _busy(entry)}) if running else set()
+            await to_thread.run_sync(lambda: {entry.id for entry in running if busy_elsewhere(entry)})
+            if running
+            else set()
         )
         # Every workspace seen so far, not only this search's, tells where a removed folder belonged.
         places = placements(entries, identities=self._identities)
-        here = places[self.host.status.workspace]
+        here = places[workspace]
+        default = self.default().id
         checkouts: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
             _, sessions = checkouts.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
-            sessions.append(self._entry(entry, busy=entry.id in busy))
+            sessions.append(
+                session_entry(entry, live=live.get(entry.id), busy=entry.id in busy, current=entry.id == default)
+            )
         projects = [
             Project(
                 key=key,
                 name=next(iter(found.values()))[0].name,
                 current=key == here.key,
-                worktrees=_worktrees(found, here=here),
+                worktrees=worktrees(found, here=here),
             )
             for key, found in checkouts.items()
         ]
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
-
-    def _entry(self, summary: ConversationSummary, *, busy: bool) -> SessionEntry:
-        current = summary.id == self.host.conversation.conversation_id
-        state: SessionState = summary.outcome
-        if current and self.running:
-            state = 'running'
-        elif summary.outcome == 'running':
-            state = 'busy' if busy else 'cancelled'
-        return SessionEntry(
-            id=summary.id,
-            title=summary.title,
-            workspace=summary.workspace,
-            updated_at=summary.updated_at,
-            state=state,
-            messages=summary.message_count,
-            model=summary.model,
-            current=current,
-            archived=summary.archived_at is not None,
-        )
 
     async def transcript(self, conversation_id: str) -> Transcript:
         saved = await self.catalog.saved(conversation_id)
@@ -636,8 +630,8 @@ class Remote:
         )
 
     def _continuable(self, workspace: str) -> bool:
-        """Whether `/resume` continues a session saved in `workspace`: here, or there while CLAI follows sessions."""
-        if workspace == self.host.status.workspace:
+        """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
+        if workspace == str(self.default().session.workspace):
             return True
         if not self.catalog.follows_workspace:
             return False
@@ -647,30 +641,16 @@ class Remote:
             return False
         return True
 
-    def open(self, conversation_id: str) -> None:
-        self.host.send_input(f'/resume {conversation_id}')
-
-    def new(self, workspace: str | None = None) -> None:
-        """Start a new session, in the directory `workspace` names when CLAI follows sessions' directories."""
-        if workspace is not None:
-            directory = str(workspace_directory(workspace))
-            if directory != self.host.status.workspace:
-                if not self.catalog.follows_workspace:
-                    raise ValueError(f'This CLAI works in {self.host.status.workspace}. Start CLAI in {directory}.')
-                self.host.send_input(f'/workspace {directory}')
-                return
-        self.host.send_input('/new')
-
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
         self.hub.publish(SessionsChanged())
 
     async def fork(self, conversation_id: str) -> str:
-        """Copy a session and switch to the copy."""
+        """Copy a session and open the copy."""
         copy = await self.catalog.fork(conversation_id)
         self.hub.publish(SessionsChanged())
         if self._continuable(copy.workspace):
-            self.open(copy.id)
+            await self.open(copy.id)
         return copy.id
 
     async def delete(self, conversation_id: str) -> None:
@@ -708,121 +688,42 @@ def _web_page(url: str) -> bool:
     return parts.scheme in ('http', 'https') and bool(parts.hostname) and not any(char.isspace() for char in url)
 
 
-def _worktrees(
-    found: Mapping[str, tuple[ProjectIdentity, list[SessionEntry]]], *, here: ProjectIdentity
-) -> list[Worktree]:
-    """A project's checkouts, the current one first, each labelled by its branch or else its folder.
-
-    A label two of them share, such as two removed folders of one name, shows the folder's path instead.
-    """
-    labels = {root: identity.checkout or PurePath(root).name or root for root, (identity, _) in found.items()}
-    worktrees = [
-        Worktree(
-            root=root,
-            label=labels[root] if list(labels.values()).count(labels[root]) == 1 else root,
-            current=(identity.key, root) == (here.key, here.root),
-            missing=identity.missing,
-            sessions=sessions,
-        )
-        for root, (identity, sessions) in found.items()
-    ]
-    return sorted(worktrees, key=lambda worktree: not worktree.current)
-
-
-def _form(info: PluginInfo) -> PluginForm | None:
-    """A settings form for a plugin that is on and takes settings, unless its model has no JSON Schema."""
-    if info.settings_model is None or info.settings is None:
-        return None
-    try:
-        schema = info.settings_model.model_json_schema(by_alias=True)
-    except PydanticInvalidForJsonSchema:  # A type JSON Schema cannot express; its own menu or `/plugins add` still can.
-        return None
-    return PluginForm(json_schema=schema, values=info.settings.model_dump(mode='json', by_alias=True))
-
-
-def _menu_info(menu: SettingsMenu) -> MenuInfo:
-    """Every row of `menu` with its current value; reads the menu's source, so call it off the loop."""
-    source = menu.source
-    return MenuInfo(
-        title=source.title,
-        fields=[
-            MenuField(
-                key=row.key,
-                label=row.label or row.key,
-                description=row.description,
-                value=source.current(row),
-                default=row.default,
-                choices=[Choice(value=choice, label=row.display(choice)) for choice in row.choices],
-                allow_custom=row.allow_custom,
-                secret=row.secret,
-                note=row.note,
-                action=row.key in menu.actions,
-            )
-            for row in source.rows()
-        ],
-    )
-
-
-def _row(menu: SettingsMenu, key: str) -> FieldRow:
-    row = next((row for row in menu.source.rows() if row.key == key), None)
-    if row is None:
-        raise LookupError(f'{menu.source.title} has no setting {key}.')
-    return row
-
-
-async def _set_row(menu: SettingsMenu, *, key: str, value: str | None) -> list[str]:
-    """Set a row as its menu does: empty text resets it, and a value the row rejects raises `ValueError`."""
-    row = await to_thread.run_sync(_row, menu, key)
-    text = (value or '').strip()
-    if not text:
-        return [await to_thread.run_sync(menu.source.reset, row)]
-    if (problem := await to_thread.run_sync(menu.source.problem, row, text)) is not None:
-        raise ValueError(problem)
-    return [await to_thread.run_sync(menu.source.apply, row, text)]
-
-
-async def _run_action(menu: SettingsMenu, *, key: str, dialogs: Dialogs, owner: str) -> list[str]:
-    """Run a row's action, asking through `dialogs`; `owner`, the plugin or `/command`, names the menu in errors."""
-    action = menu.actions.get(key)
-    if action is None:
-        raise LookupError(f'{owner} has no action {key}.')
-    return list(await action(dialogs))
-
-
-def _busy(summary: ConversationSummary) -> bool:
-    """Whether another live CLAI is running this saved session now, rather than having died mid-turn."""
-    try:
-        ensure_inactive(summary)
-    except ConversationConflict:
-        return True
-    return False
-
-
 @dataclass
 class Observer(AbstractCapability[None]):
-    """Hands the held conversation's runs and their events to the browser.
+    """Hands each live session's own runs and their events to its channel.
 
     Turns follow these runs rather than the turn moments, which a background `/fork` fires too.
     """
 
-    remote: Remote
+    service: WebService
+
+    def _channel(self, ctx: RunContext[None]) -> SessionChannel | None:
+        """The channel of the session whose held conversation this run continues; `None` for a fork or a task."""
+        if DelegationTasks.child_id() is not None:
+            return None
+        try:
+            channel = self.service.current()
+        except LookupError:
+            return None
+        return channel if ctx.conversation_id == channel.id else None
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         # A `/monty` cell is not a turn: its result comes as the command's, and its events as any run's.
-        if not self.remote.foreground(ctx) or is_monty_cell(ctx):
+        channel = self._channel(ctx)
+        if channel is None or is_monty_cell(ctx):
             return await handler()
-        self.remote.run_started(ctx.prompt)
+        channel.run_started(ctx.prompt)
         try:
             result = await handler()
         except get_cancelled_exc_class():
-            self.remote.run_ended('cancelled')
+            channel.run_ended('cancelled')
             raise
         except Exception as error:
-            self.remote.run_ended('failed', error=error)
+            channel.run_ended('failed', error=error)
             raise
-        self.remote.run_ended('completed', usage=result.usage)
+        channel.run_ended('completed', usage=result.usage)
         return result
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
-        if self.remote.foreground(ctx):
-            self.remote.observe(event, usage=ctx.usage, by_user=is_monty_cell(ctx))
+        if (channel := self._channel(ctx)) is not None:
+            channel.observe(event, usage=ctx.usage, by_user=is_monty_cell(ctx))

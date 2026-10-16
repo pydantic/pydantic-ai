@@ -45,7 +45,7 @@ from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserR
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2.builtin_plugins.web import WebPlugin, remote as remote_module, server as server_module
+from pydantic_clai2.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER, Receive, Scope, Send
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
@@ -78,8 +78,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump_session,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.remote import Observer
 from pydantic_clai2.builtin_plugins.web.server import WebServer
+from pydantic_clai2.builtin_plugins.web.service import Observer
 from pydantic_clai2.cli import _cli
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
@@ -332,7 +332,7 @@ async def test_the_browser_answers_first() -> None:
             stopped.set()
         return RED  # pragma: no cover
 
-    answerer = BrowserAnswerer(publish=published.append, terminal=terminal)
+    answerer = BrowserAnswerer(publish=lambda message, _: published.append(message), terminal=terminal)
     answers: list[AskUserResponse] = []
     async with anyio.create_task_group() as group:
 
@@ -358,7 +358,7 @@ async def test_the_terminal_answers_first() -> None:
     async def terminal(request: AskUserRequest) -> AskUserResponse:
         return RED
 
-    answerer = BrowserAnswerer(publish=lambda message: None, terminal=terminal)
+    answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=terminal)
     assert await answerer(REQUEST) == RED
     assert answerer.questions == []
 
@@ -371,29 +371,31 @@ async def test_only_the_held_conversation_reaches_the_browser(monkeypatch: pytes
     """A background `/fork` or delegated task runs with the plugin's capability too; the browser shows only the shell's own."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     plugin = WebPlugin.from_host(host)
-    observer = Observer(plugin.remote)
-    with plugin.hub.subscribe() as queue:
+    observer = Observer(plugin.service)
+    with plugin.service.hub.subscribe() as client:
+        queue = client.queue
         await observer.on_event(context('another'), event=PartStartEvent(index=0, part=TextPart('fork')))
         assert queue.empty()
-        monkeypatch.setattr(remote_module, 'STATUS_INTERVAL', 0)
+        monkeypatch.setattr(channel_module, 'STATUS_INTERVAL', 0)
         await observer.on_event(
             context(host.conversation.conversation_id), event=PartStartEvent(index=0, part=TextPart('mine'))
         )
         assert '"text":"mine"' in queue.get_nowait()
         assert '"type":"status"' in queue.get_nowait()
-    assert isinstance(StatusChanged(status=plugin.remote.status()), StatusChanged)
+    assert isinstance(StatusChanged(status=plugin.service.default().status()), StatusChanged)
 
 
 async def test_runs_of_the_held_conversation_are_turns() -> None:
     """A run woken by a finished task has no prompt; a failure without a message is named by its type."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     plugin = WebPlugin.from_host(host)
-    observer = Observer(plugin.remote)
+    observer = Observer(plugin.service)
 
     async def fail() -> AgentRunResult[object]:
         raise RuntimeError()
 
-    with plugin.hub.subscribe() as queue:
+    with plugin.service.hub.subscribe() as client:
+        queue = client.queue
         with pytest.raises(RuntimeError):
             await observer.wrap_run(context('another'), handler=fail)
         assert queue.empty(), 'a background run is not a turn'
@@ -404,7 +406,7 @@ async def test_runs_of_the_held_conversation_are_turns() -> None:
         TurnStarted(item=None),
         TurnEnded(outcome='failed', error='RuntimeError'),
     ]
-    assert not plugin.remote.running
+    assert not plugin.service.default().running
 
 
 async def test_a_taken_port_is_reported() -> None:

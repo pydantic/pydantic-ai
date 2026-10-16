@@ -115,7 +115,7 @@ class Orchestrator:
     def __init__(self, *, host: PluginHost[None], publish: Callable[[ServerMessage], None]) -> None:
         self.host = host
         self._publish = publish
-        self.answerer = BrowserAnswerer(publish=self._send, terminal=None)
+        self.answerer = BrowserAnswerer(publish=lambda message, _session: self._send(message), terminal=None)
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
         self._turn = ItemLog()
