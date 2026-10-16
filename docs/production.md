@@ -194,7 +194,9 @@ async def handle(prompt: str) -> str:
     return result.output
 ```
 
-For budgets longer than one run, such as a daily ceiling, a monthly one or a per-tenant share, [`SpendLimits`](harness/spend.md) (Harness) prices every response and refuses the next request once a budget is spent, with a counter that several worker processes can share. The [Gateway](gateway.md) adds spending caps per project, user and key on the provider side. [Timeouts](timeouts.md) bound each model request, tool call and hook, [cancellation](agent.md#cancelling-a-run) stops a run from a stop button or a timer, and [`max_concurrency`](agent.md#concurrency-limiting) caps how many runs an agent executes at once.
+Cost is best-effort: a model [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for isn't counted (with a `cost_limit`, a run that can't be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning]), so keep `request_limit` alongside `cost_limit`; see [usage limits](agent.md#usage-limits). Keep [model prices up to date](agent.md#keeping-model-prices-up-to-date) so cost limits and traces price new models.
+
+For budgets longer than one run, such as a daily ceiling, a monthly one or a per-tenant share, [`SpendLimits`](harness/spend.md) (Harness) prices every response and refuses the next request once a budget is spent, with a counter that several worker processes can share. Its USD budgets have the same gap: an unpriced response counts as free unless you set `on_unpriced='raise'` or supply your own `price`, while its token budgets still hold. The [Gateway](gateway.md) adds spending caps per project, user and key on the provider side. [Timeouts](timeouts.md) bound each model request, tool call and hook, [cancellation](agent.md#cancelling-a-run) stops a run from a stop button or a timer, and [`max_concurrency`](agent.md#concurrency-limiting) caps how many runs an agent executes at once.
 
 ## What happens when a provider is down? {#outages}
 
@@ -292,4 +294,4 @@ An agent is a Python object in your process, so you deploy it the way you deploy
 - **A voice agent**: see [realtime deployment](realtime/deployment.md).
 - **An agent on a repository**: [GitHub Agentic Workflows](harness/gh-aw.md) run an agent on issues, pull requests or a schedule.
 
-Keep [model prices up to date](agent.md#keeping-model-prices-up-to-date) so cost limits and traces price new models, and pin your versions: Pydantic AI follows its [version policy](version-policy.md), and Pydantic AI Harness is on [0.x releases](harness/index.md#version-policy) whose API may change between minor versions.
+Pin your versions: Pydantic AI follows its [version policy](version-policy.md), and Pydantic AI Harness is on [0.x releases](harness/index.md#version-policy) whose API may change between minor versions.
