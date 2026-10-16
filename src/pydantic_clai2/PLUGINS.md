@@ -620,11 +620,13 @@ settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
 `/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
 Each change is saved as soon as you make it, and the plugin loads again when the
-menu closes, so the next turn uses the new settings.
+menu closes, so the next turn uses the new settings. The same menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where picking
+the key and the browser sign-in open as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
-| Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
+| Key | none | the `/keys` entry to connect with: pick a saved key by name, or type a new one into a masked field; `R` clears the choice |
 | Sign-in | browser | browser uses the browser sign-in, and choosing it signs in if needed; key only uses the chosen key and never the browser. Choosing a key switches to key only, and `R` on the key switches back |
 | Tools | read and write | read-only keeps only the tools the server marks as read-only |
 | Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
@@ -2628,7 +2630,7 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`. The built-in `github`, `grain`, `notion`, and
+`api_keys.prompt_api_key`. The built-in `github` and
 [`pylon`](#configuring-pylon) plugins still work this way.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
