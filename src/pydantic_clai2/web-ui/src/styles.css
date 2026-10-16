@@ -682,6 +682,37 @@ pre {
   scrollbar-gutter: stable;
 }
 
+/* Sticks to the bottom of the scroller with no height, so the button floats over the output without adding to it. */
+.jump-dock {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+}
+
+.jump-to-latest {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: var(--glow);
+  color: var(--text-soft);
+  font: 12.5px/1.2 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', system-ui, sans-serif;
+  white-space: nowrap;
+  animation: appear 0.15s ease-out;
+}
+
+.jump-to-latest:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .column {
   max-width: 780px;
   margin: 0 auto;
