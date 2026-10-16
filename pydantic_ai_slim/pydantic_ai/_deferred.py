@@ -14,7 +14,7 @@ module only depends on `messages`, `exceptions`, and `_utils`, so
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, fields
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Field, StrictBool, Tag
@@ -58,10 +58,12 @@ class DeferredToolRequests:
 
     def __repr__(self) -> str:
         # As the dataclass would, without `native_approvals` when there are none (a standard run never has any).
-        fields = [f'calls={self.calls!r}', f'approvals={self.approvals!r}', f'metadata={self.metadata!r}']
-        if self.native_approvals:
-            fields.append(f'native_approvals={self.native_approvals!r}')
-        return f'{type(self).__name__}({", ".join(fields)})'
+        shown = [
+            f'{f.name}={getattr(self, f.name)!r}'
+            for f in fields(self)
+            if f.repr and (f.name != 'native_approvals' or self.native_approvals)
+        ]
+        return f'{type(self).__name__}({", ".join(shown)})'
 
     def build_results(
         self,
