@@ -2042,7 +2042,32 @@ async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None
             }
         ]
     )
-    assert events == [ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city":"Berlin"}')]
+    # Its response ends once no more calls come (here, the socket closing after it).
+    assert events == [
+        ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city":"Berlin"}', response_usage_follows=True),
+        SessionUsage(usage=RequestUsage()),
+    ]
+
+
+@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop'])
+async def test_a_replys_parallel_tool_calls_are_one_response(ended_by: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Verified live: a reply's parallel calls come as separate frames, back to back, and nothing follows until their
+    # results are in. They are one response, which ends once no more come.
+    monkeypatch.setattr(rt_elevenlabs, '_TOOL_CALL_BATCH_WINDOW', 0.01)
+    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': []}[ended_by]
+    connection, ws = _connection(
+        [_tool_call_frame('get_weather'), _tool_call_frame('get_time', tool_call_id='call_2'), *after]
+    )
+    ws.hold_open = ended_by != 'drop'
+    frames = connection.frames()
+    seen: list[Any] = []
+    while not any(isinstance(event, ResponseEnded) for event in seen):
+        seen += await anext(frames)
+    started = [event for event in seen if isinstance(event, ResponseStarted)]
+    ended = [event for event in seen if isinstance(event, ResponseEnded)]
+    calls = [event.tool_call_id for event in seen if isinstance(event, ToolCall)]
+    assert (len(started), calls) == (1, ['call_1', 'call_2'])
+    assert [(event.status, event.finish_reason) for event in ended] == [('completed', 'tool_call')]
 
 
 async def test_fire_and_forget_tool_calls_never_send_a_result() -> None:
@@ -2079,15 +2104,17 @@ async def test_client_tool_call_string_parameters_pass_through() -> None:
         },
     }
     events = await connection._map_event(frame)  # pyright: ignore[reportPrivateUsage]
-    assert events == [ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city": "Berlin"}')]
+    assert events == [
+        ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city": "Berlin"}', response_usage_follows=True)
+    ]
 
 
-def _tool_call_frame(tool_name: str, *, expects_response: bool = True) -> dict[str, Any]:
+def _tool_call_frame(tool_name: str, *, expects_response: bool = True, tool_call_id: str = 'call_1') -> dict[str, Any]:
     return {
         'type': 'client_tool_call',
         'client_tool_call': {
             'tool_name': tool_name,
-            'tool_call_id': 'call_1',
+            'tool_call_id': tool_call_id,
             'parameters': {},
             'expects_response': expects_response,
         },
@@ -2099,7 +2126,7 @@ async def test_client_tool_calls_are_never_filtered_in_the_codec() -> None:
     # manager, so a call to any name maps to a `ToolCall`, with nothing answered on the wire.
     connection, ws = _connection()
     assert await connection._map_event(_tool_call_frame('delete_order')) == [  # pyright: ignore[reportPrivateUsage]
-        ToolCall(tool_call_id='call_1', tool_name='delete_order', args='{}')
+        ToolCall(tool_call_id='call_1', tool_name='delete_order', args='{}', response_usage_follows=True)
     ]
     assert ws.sent == []
     # A fire-and-forget call to an undefined tool is tracked like any other: the tool manager's

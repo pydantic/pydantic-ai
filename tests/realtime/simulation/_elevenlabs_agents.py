@@ -96,6 +96,8 @@ class ElevenLabsAgentsServer:
         """The reply being generated: its terminal (`agent_response`, or its tool calls) is still to come."""
         self.voicing: TruthResponse | None = None
         """The reply whose text is complete, while TTS may still be voicing it."""
+        self.calling: TruthResponse | None = None
+        """The reply that made tool calls, which the connection takes to be over once no more of its calls come."""
         self.delivered: TruthResponse | None = None
         """The latest reply the server voiced in full, which the user may still be hearing."""
         self.triggers: list[str] = []
@@ -118,8 +120,11 @@ class ElevenLabsAgentsServer:
 
     def on_disconnect(self, socket: FakeWebSocket) -> None:
         self.truth.connection_losses.append(self.truth.tick())
-        # Nothing under way on a lost conversation is said any more.
+        # Nothing under way on a lost conversation is said any more. (A reply's tool calls were all it had to say.)
         self.speaking = self.voicing = None
+        if (called := self.calling) is not None:
+            self.calling = None
+            called.terminal_read = self.truth.tick()
         for response in self.truth.responses.values():
             if response.terminal_read is None:
                 self.truth.lose(response)
@@ -127,6 +132,10 @@ class ElevenLabsAgentsServer:
     def _emit(self, frame: dict[str, Any], *, immediately: bool = False) -> None:
         socket = self.socket
         assert socket is not None
+        if (called := self.calling) is not None and frame.get('type') != 'client_tool_call':
+            # Something else comes: the reply's calls were all it had.
+            self.calling = None
+            frame = {**frame, '_simulation': {**frame.get('_simulation', {}), 'called': called.key}}
         socket.emit(frame, immediately=immediately)
 
     def on_client_frame(self, socket: FakeWebSocket, frame: dict[str, Any]) -> None:
@@ -158,6 +167,13 @@ class ElevenLabsAgentsServer:
             self.truth.tool_calls[call_id].output_received = True
             self.truth.add_input(call_id, 'tool_output')
             caller = self.pending_calls.pop(call_id)
+            # Verified live: every result is acknowledged, so the next reply's calls never follow its calls directly.
+            self._emit(
+                {
+                    'type': 'agent_tool_response',
+                    'agent_tool_response': {'tool_name': 'lookup', 'tool_call_id': call_id, 'tool_type': 'client'},
+                }
+            )
             self.answered_calls.append(call_id)
             if not any(response is caller for response in self.pending_calls.values()):
                 # Every result the reply asked for is in: the agent goes on answering them.
@@ -180,6 +196,8 @@ class ElevenLabsAgentsServer:
                 response.content_read = now
             if tags.get('terminal') and response.terminal_read is None:
                 response.terminal_read = now
+        if (called := self.truth.responses.get(tags.get('called', ''))) is not None and called.terminal_read is None:
+            called.terminal_read = now
         if (voiced := self.truth.responses.get(tags.get('voiced', ''))) is not None and voiced.terminal_read is None:
             # The frame that tells the connection the reply before it was voiced in full ends that reply.
             voiced.terminal_read = now
@@ -306,15 +324,15 @@ class ElevenLabsAgentsServer:
                         'response': response.key,
                         'content': True,
                         'calls': [call_id],
-                        # The calls end the reply that makes them.
-                        'terminal': True,
                         **voiced,
                     },
                 }
             )
         self.speaking = None
+        # The calls end the reply that makes them, which the connection learns once no more come.
         response.status = 'completed'
         response.seq_end = self.truth.tick()
+        self.calling = response
         return ids
 
     def user_says(self) -> str:
@@ -482,6 +500,9 @@ class ElevenLabsAgentsSimulation(Simulation):
         server = self.server
         server.network.deliver()
         self.loop.run_until_idle()
+        if (called := server.calling) is not None and seconds >= rt_elevenlabs._TOOL_CALL_BATCH_WINDOW:  # pyright: ignore[reportPrivateUsage]
+            server.calling = None
+            called.terminal_read = self.truth.tick()
         quieted = server.voicing if seconds >= rt_elevenlabs._AUDIO_TAIL_GRACE else None  # pyright: ignore[reportPrivateUsage]
         if quieted is not None:
             server.voiced()
@@ -602,14 +623,20 @@ class ElevenLabsAgentsMachine(SessionMachine):  # pragma: lax no cover (driven o
     def finish(self, deliver: bool, ticks: int | None) -> None:
         self.run(lambda: self.el_sim.finish(deliver=deliver, ticks=ticks))
 
+    # Not straight after another reply's calls: live, something always comes between the agent's replies (an
+    # `agent_tool_response` for each result, say), and the connection takes calls in a row for one reply's.
     @precondition(
-        lambda self: self.alive() and self.el_sim.server.speaking is None and bool(self.el_sim.server.triggers)
+        lambda self: (
+            self.alive()
+            and self.el_sim.server.speaking is None
+            and self.el_sim.server.calling is None
+            and bool(self.el_sim.server.triggers)
+        )
     )
-    @rule(deliver=st.booleans(), ticks=TICKS)
-    def call_tool(self, deliver: bool, ticks: int | None) -> None:
-        # One call per reply, as recorded: whether the agent makes parallel client tool calls, each in a frame
-        # of its own, is still to be established, and the connection would take each frame for a reply.
-        self.run(lambda: self.el_sim.call_tool(deliver=deliver, ticks=ticks))
+    @rule(count=st.integers(1, 3), deliver=st.booleans(), ticks=TICKS)
+    def call_tool(self, count: int, deliver: bool, ticks: int | None) -> None:
+        # Parallel calls come in frames of their own, back to back (verified live).
+        self.run(lambda: self.el_sim.call_tool(count=count, deliver=deliver, ticks=ticks))
 
     @precondition(lambda self: self.alive())
     @rule(deliver=st.booleans(), ticks=TICKS)

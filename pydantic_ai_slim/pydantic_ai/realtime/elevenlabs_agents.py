@@ -119,6 +119,15 @@ __all__ = (
 _PROVIDER_LABEL = 'ElevenLabs Agents'
 
 _AUDIO_TAIL_GRACE = 1.0
+_TOOL_CALL_BATCH_WINDOW = 0.05
+"""How long a reply's tool calls wait for a sibling before their response ends, in seconds.
+
+Verified live: a reply's parallel calls come as separate `client_tool_call` frames, back to back, and nothing else
+follows until their results are in, so there is no frame to end their response at. The calls go to the session as
+they come (their tools run at once, and their results aren't held back); only their response ends after this quiet
+stretch, or at the next frame of any other kind (verified live: each result the agent gets is acknowledged with an
+`agent_tool_response`, so the next reply's calls never follow these directly).
+"""
 """How long a reply whose text is complete can go without audio before it counts as spoken in full.
 
 `agent_response` arrives when the LLM finishes writing, while TTS can still be voicing it for seconds (verified live,
@@ -1430,6 +1439,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         self._mcp_calls: set[str] = set()
         self._mcp_tool_names: dict[str, str] = {}
         self._warned_mcp_approval = False
+        self._calls_open = False
+        """Whether the response under way made tool calls, and ends once no more come."""
         self._mcp_denied: dict[str, NativeToolReturnPart] = {}
         self._native_part_index = 0
         # Whether the conversation is waiting in the workspace's concurrency queue, where the server
@@ -1561,9 +1572,15 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                     read = asyncio.create_task(self._ws.recv())
                 # A reply whose text is complete waits only so long for more of its audio (see `_AUDIO_TAIL_GRACE`).
                 # The read stays in flight across the wait: a cancelled read could drop the frame it holds.
-                done, _ = await asyncio.wait({read}, timeout=_AUDIO_TAIL_GRACE if self._tail is not None else None)
+                if self._calls_open:
+                    timeout = _TOOL_CALL_BATCH_WINDOW
+                elif self._tail is not None:
+                    timeout = _AUDIO_TAIL_GRACE
+                else:
+                    timeout = None
+                done, _ = await asyncio.wait({read}, timeout=timeout)
                 if not done:
-                    yield self._frame(self._end_tail())
+                    yield self._frame(self._end_calls() if self._calls_open else self._end_tail())
                     continue
                 finished, read = read, None
                 try:
@@ -1656,11 +1673,14 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         else:
             message = f'{_PROVIDER_LABEL} connection closed: {error}'
         self._tail = None
+        # The calls' response was over when their last one came; it isn't lost with the connection.
+        ended = self._end_calls() if self._calls_open else []
         # A call denied for want of an approval was answered on the wire, so its return is in the response all the same.
         denied = [event for part in self._mcp_denied.values() for event in self._native_part(part)]
         self._mcp_denied.clear()
         return self._name_conversation(
             [
+                *(self._lifecycle.frame_for(ended) if ended else []),
                 *(self._lifecycle.frame_for(denied) if denied else []),
                 *self._lifecycle.connection_lost(),
                 RealtimeSessionErrorEvent(message=message, recoverable=False),
@@ -1673,8 +1693,16 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         if event_type == 'ping':
             await _send_pong(self._ws, data)
             return []
-        ended = self._end_tail() if self._tail is not None and event_type in _TAIL_ENDING_FRAMES else []
+        ended = self._end_calls() if self._calls_open and event_type != 'client_tool_call' else []
+        if self._tail is not None and event_type in _TAIL_ENDING_FRAMES:
+            ended += self._end_tail()
         return [*ended, *await self._map_frame(event_type, data)]
+
+    def _end_calls(self) -> list[RealtimeCodecEvent]:
+        """End the response whose tool calls are all in: the agent goes on once their results are."""
+        self._calls_open = False
+        # (ElevenLabs reports no usage per response: this one only ends it.)
+        return [SessionUsage(usage=RequestUsage(), response_scoped=True)]
 
     async def _map_frame(self, event_type: Any, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         if event_type == 'queue_status':
@@ -1712,7 +1740,14 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 args = call.parameters
             else:
                 args = to_json(call.parameters or {}).decode()
-            return [ToolCall(tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args)]
+            # Its response ends with the reply's last call (see `_TOOL_CALL_BATCH_WINDOW`), so that parallel calls are
+            # one response, as the agent answers them.
+            self._calls_open = True
+            return [
+                ToolCall(
+                    tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args, response_usage_follows=True
+                )
+            ]
         if event_type == 'mcp_tool_call':
             return await self._map_mcp_tool_call(_McpToolCallEvent.model_validate(data).mcp_tool_call)
         if event_type == 'context_usage':

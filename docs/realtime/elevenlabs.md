@@ -247,6 +247,9 @@ itself closes has none), and the live connection has it as
   text in history; ElevenLabs' correction of it is dropped.
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
   its next turn on, without stopping or replying.
+- ElevenLabs sends a response's parallel tool calls one frame each, and nothing after them until their
+  results are in, so the response they end is taken to be over 50 ms after the last one; their tools run
+  as each call arrives.
 - Client tools registered with `expects_response: false` are fire-and-forget: the session still runs
   them, but their results are never sent back to the agent.
 - A conversation waiting in the workspace's concurrency queue hears ElevenLabs' hold audio, which

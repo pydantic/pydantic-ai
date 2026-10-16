@@ -2304,11 +2304,6 @@ def test_elevenlabs_agents_reply_voiced_after_its_text() -> None:
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Verified live: ElevenLabs sends a reply's parallel tool calls as separate `client_tool_call` frames, and "
-    '`InferredLifecycle` ends a response at its first call, so each call is recorded as a response of its own.',
-)
 def test_elevenlabs_agents_parallel_tool_calls_are_one_response() -> None:
     """A reply's parallel tool calls are one response, and the agent answers once every result is in."""
 
