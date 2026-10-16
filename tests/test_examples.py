@@ -1081,6 +1081,11 @@ tool_responses: dict[tuple[str, str], str] = {
         'delete_file',
         'Deleting files is not allowed',
     ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
+    # The handler example's results go out in call order, so the `.env` update answers last.
+    (
+        'update_file',
+        "File '.env' updated: ''",
+    ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
 }
 
 
