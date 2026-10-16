@@ -68,6 +68,7 @@ from .._cancel import (
     CancellationToken,
     RunBinding,
     RunCancellation,
+    current_run_clock,
     inherited_run_deadline,
     provide_run_deadline,
     take_run_binding,
@@ -1720,8 +1721,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
         # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
-        # the deadline it started with. A run started inside another run can only shorten its deadline.
-        run_clock = bootstrap_capability._run_clock() or _utils.now_utc  # pyright: ignore[reportPrivateUsage]
+        # the deadline it started with. A run started inside another run can only shorten its deadline, and
+        # without a clock of its own measures it against the clock the outer run set it with.
+        run_clock = bootstrap_capability._run_clock() or current_run_clock()  # pyright: ignore[reportPrivateUsage]
         deadline = inherited_run_deadline()
         if timeout is not None:
             start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]

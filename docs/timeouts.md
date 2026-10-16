@@ -60,7 +60,7 @@ async def main():
 
 1. [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] includes the completed tool results and the partial response of an interrupted stream. Pass it as `message_history` to a new run to resume.
 
-`RunTimedOut` is a subclass of both [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], so `except RunCancelled` handles every way the run can be stopped on purpose, and `TimeoutError`, the error `asyncio.timeout()` raises. Unlike `asyncio.timeout()`, it doesn't need the run's state recovered from the exception chain, and the deadline is visible inside the run:
+`RunTimedOut` subclasses [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], so `except RunCancelled` handles every way a run can be stopped on purpose. It also subclasses `TimeoutError`, the error `asyncio.timeout()` raises. Unlike `asyncio.timeout()`, it doesn't need the run's state recovered from the exception chain, and the deadline is visible inside the run:
 
 - [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] is the time the run has to finish by, in UTC, and [`RunContext.remaining_time()`][pydantic_ai.tools.RunContext.remaining_time] returns the seconds left, so a tool can size its own work or timeouts to fit.
 - An agent run from a tool, as in [agent delegation](multi-agent-applications.md#agent-delegation), inherits the deadline. Its own `timeout=` can make it earlier, but not later. When the shared deadline passes, the parent raises `RunTimedOut`; a sub-agent's own, shorter timeout fails just the delegate tool, like a sub-agent [cancelling itself](agent.md#cancellation-and-sub-agents).

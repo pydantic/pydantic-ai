@@ -59,6 +59,26 @@ def _call_slow_tool(messages: list[ModelMessage], _info: AgentInfo) -> ModelResp
     return ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='call_slow')])
 
 
+def _expire(ctx: RunContext[object]) -> None:
+    """Expire the run's deadline now, as its timer would, so a test doesn't race a real timer against the run's progress."""
+    cancellation = ctx._cancellation  # pyright: ignore[reportPrivateUsage]
+    assert cancellation is not None
+    cancellation.expire()
+
+
+def _streaming_agent() -> tuple[Agent[object, str], list[RunContext[object]]]:
+    """An agent whose stream never finishes, and the run contexts its instructions captured, to expire the run from."""
+    contexts: list[RunContext[object]] = []
+    agent = Agent(FunctionModel(stream_function=_never_finishes_streaming))
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> str:
+        contexts.append(ctx)
+        return 'Stream.'
+
+    return agent, contexts
+
+
 def _slow_tool_agent() -> Agent[object, str]:
     agent = Agent(FunctionModel(_call_slow_tool))
 
@@ -93,10 +113,16 @@ async def test_timeout_during_model_request():
 
 
 async def test_timeout_during_tool_call_keeps_resumable_state():
-    agent = _slow_tool_agent()
+    agent = Agent(FunctionModel(_call_slow_tool))
+
+    @agent.tool
+    async def slow_tool(ctx: RunContext[object]) -> str:
+        _expire(ctx)
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
 
     with pytest.raises(RunTimedOut) as exc_info:
-        await agent.run('go', timeout=SHORT_TIMEOUT)
+        await agent.run('go', timeout=LONG_TIMEOUT)
 
     messages = exc_info.value.all_messages()
     assert messages == snapshot(
@@ -132,13 +158,15 @@ async def test_timeout_during_tool_call_keeps_resumable_state():
 
 
 async def test_timeout_during_run_stream_keeps_partial_response():
-    agent = Agent(FunctionModel(stream_function=_never_finishes_streaming))
+    agent, contexts = _streaming_agent()
 
     chunks: list[str] = []
     with pytest.raises(RunTimedOut) as exc_info:
-        async with agent.run_stream('go', timeout=SHORT_TIMEOUT) as result:
+        async with agent.run_stream('go', timeout=LONG_TIMEOUT) as result:
             async for chunk in result.stream_text(delta=True, debounce_by=None):
                 chunks.append(chunk)
+                if chunk == 'output':
+                    _expire(contexts[-1])
 
     assert chunks == ['partial ', 'output']
     response = exc_info.value.all_messages()[-1]
@@ -148,12 +176,12 @@ async def test_timeout_during_run_stream_keeps_partial_response():
 
 
 async def test_timeout_during_run_stream_events():
-    agent = Agent(FunctionModel(stream_function=_never_finishes_streaming))
+    agent, contexts = _streaming_agent()
 
     with pytest.raises(RunTimedOut) as exc_info:
-        async with agent.run_stream_events('go', timeout=SHORT_TIMEOUT) as events:
+        async with agent.run_stream_events('go', timeout=LONG_TIMEOUT) as events:
             async for _event in events:
-                pass
+                _expire(contexts[-1])
 
     response = exc_info.value.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -178,13 +206,15 @@ def test_timeout_run_sync():
 
 
 def test_timeout_run_stream_sync():
-    agent = Agent(FunctionModel(stream_function=_never_finishes_streaming))
+    agent, contexts = _streaming_agent()
 
     chunks: list[str] = []
     with pytest.raises(RunTimedOut):
-        with agent.run_stream_sync('go', timeout=SHORT_TIMEOUT) as result:
+        with agent.run_stream_sync('go', timeout=LONG_TIMEOUT) as result:
             for chunk in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
                 chunks.append(chunk)
+                if chunk == 'output':
+                    _expire(contexts[-1])
     assert chunks == ['partial ', 'output']
 
 
@@ -352,11 +382,13 @@ async def test_cancel_before_expiry_stays_run_cancelled():
     @agent.tool
     async def cancel_run(ctx: RunContext[object]) -> str:
         ctx.cancel()
-        await asyncio.sleep(SHORT_TIMEOUT * 4)
+        # The deadline passing after the cancellation doesn't change the outcome.
+        _expire(ctx)
+        await asyncio.Event().wait()
         raise AssertionError('unreachable')  # pragma: no cover
 
     with pytest.raises(RunCancelled) as exc_info:
-        await agent.run('go', timeout=SHORT_TIMEOUT)
+        await agent.run('go', timeout=LONG_TIMEOUT)
 
     assert not isinstance(exc_info.value, RunTimedOut)
 
@@ -422,3 +454,23 @@ async def test_capability_supplies_clock_and_start_time():
 
     await agent.run('go', timeout=60)
     assert seen == [(_FIXED_NOW + timedelta(seconds=50), 50.0)]
+
+
+async def test_nested_run_measures_inherited_deadline_with_parent_clock():
+    """A run without a clock of its own measures the deadline it inherits against the clock the parent run set it with."""
+    seen: list[float | None] = []
+    sub_agent = Agent(TestModel())
+
+    @sub_agent.tool
+    def check_remaining(ctx: RunContext[object]) -> str:
+        seen.append(ctx.remaining_time())
+        return 'ok'
+
+    agent = Agent(TestModel(), capabilities=[_ReplaySafeClock()])
+
+    @agent.tool_plain
+    async def delegate() -> str:
+        return (await sub_agent.run('sub')).output
+
+    await agent.run('go', timeout=60)
+    assert seen == [50.0]
