@@ -309,9 +309,9 @@ def test_the_orchestrator_has_its_own_model(make_web: MakeWeb, monkeypatch: pyte
         400,
         'Cannot use nope:model: its extra is not installed.',
     )
-    choices = web_.plugin.remote.orchestrator.choices_path
-    choices.unlink()
-    choices.mkdir()
+    settings = web_.plugin.remote.orchestrator.settings_path
+    settings.unlink()
+    settings.mkdir()
     unsaved = web_.post('/api/orchestrator/model', {'name': None})
     assert unsaved.status_code == 409 and unsaved.json()['detail'].startswith("The orchestrator's model could not be")
     assert web_.portal.call(again.state).model is None, 'a file it cannot read follows the session'

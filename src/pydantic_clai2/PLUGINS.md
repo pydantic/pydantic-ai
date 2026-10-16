@@ -1464,8 +1464,9 @@ workspace has an **Open** link to its page, as the sidebar's Workspaces section 
 model picker (the same saved models the session's offers) or with `/model NAME`; **Same as
 session** in the picker, or `/model session` (or `default`), follows the session's again. A pick
 applies from the next turn, is checked as the session's `/model NAME` checks a name, and is built
-the same way (`chain:NAME`, `PROVIDER@PROFILE:NAME`, a plugin's prefix). Picking one for either
-chat never changes the other's. It is saved in
+the same way (`chain:NAME`, `PROVIDER@PROFILE:NAME`, a plugin's prefix), but unlike there a name
+not yet saved is not added to the saved models. Picking one for either chat never changes the
+other's. It is saved in
 `$XDG_STATE_HOME/pydantic-clai2/orchestrator-settings.json`, beside the conversation, so a reload, a
 restart, another CLAI, and **New chat** keep it.
 

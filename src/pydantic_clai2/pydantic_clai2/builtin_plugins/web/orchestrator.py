@@ -56,13 +56,14 @@ from pydantic_clai2.commands import expand_bare_command, is_command_input
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.models.model_catalog import check_installed
 from pydantic_clai2.plugins import CommandEnd, PluginHost, TurnOutcome
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
 
 HISTORY = 'orchestrator.json'
 """The conversation's file in CLAI's state directory."""
-CHOICES = 'orchestrator-settings.json'
+SETTINGS = 'orchestrator-settings.json'
 """What the user chose for the orchestrator, beside its conversation, so every CLAI and a new chat keep it."""
 
 INSTRUCTIONS = """\
@@ -130,19 +131,19 @@ def _replace(path: Path, data: bytes) -> None:
         raise
 
 
-class Choices(BaseModel):
+class OrchestratorSettings(BaseModel):
     """What the user chose for the orchestrator chat; a choice not made follows the session."""
 
     model: str | None = None
     """The model its turns run on; `None` uses the session's."""
 
 
-def read_choices(path: Path) -> Choices:
+def read_settings(path: Path) -> OrchestratorSettings:
     """The choices in `path`; none when there is no file or it cannot be read."""
     try:
-        return Choices.model_validate_json(path.read_bytes())
+        return OrchestratorSettings.model_validate_json(path.read_bytes())
     except (OSError, ValidationError):
-        return Choices()
+        return OrchestratorSettings()
 
 
 class Orchestrator:
@@ -167,7 +168,11 @@ class Orchestrator:
         self._model: str | None = None
         """The model chosen for its turns, as last read or chosen; `None` follows the session's."""
         self._entered: list[str] = []
-        """CLAI commands this chat entered at the prompt whose end it has not seen yet, to show their results."""
+        """CLAI commands this chat entered at the prompt whose end it has not seen yet, to show their results.
+
+        Matched by text, all `CommandEnd` carries: one cancelled while it runs ends without one, so the same
+        text entered next from the session's composer answers here instead.
+        """
 
     @property
     def running(self) -> bool:
@@ -178,14 +183,14 @@ class Orchestrator:
         return state_dir() / HISTORY
 
     @property
-    def choices_path(self) -> Path:
-        return state_dir() / CHOICES
+    def settings_path(self) -> Path:
+        return state_dir() / SETTINGS
 
     async def load(self) -> Saved:
         """The conversation and its model, read again between turns, as another CLAI may have saved them since."""
         if self.running:
             return self._saved
-        self._model = (await to_thread.run_sync(read_choices, self.choices_path)).model
+        self._model = (await to_thread.run_sync(read_settings, self.settings_path)).model
         if self._unsaved is not None:
             return Saved(messages=self._unsaved, revision=self._saved.revision)
         self._saved = await to_thread.run_sync(read_saved, self.path)
@@ -355,8 +360,6 @@ class Orchestrator:
 
     async def _model_command(self, args: list[str]) -> str:
         """`/model`: show the orchestrator's model and the saved ones, pick one, or follow the session's again."""
-        from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS
-
         if args and args[0] in MODEL_SUBCOMMANDS:
             raise ValueError(f'/model {args[0]} works in a session, not in the orchestrator chat.')
         if len(args) > 1:
@@ -382,9 +385,9 @@ class Orchestrator:
         """
         if name is not None:
             check_installed(name)
-        data = Choices(model=name).model_dump_json().encode()
+        data = OrchestratorSettings(model=name).model_dump_json().encode()
         try:
-            await to_thread.run_sync(_replace, self.choices_path, data)
+            await to_thread.run_sync(_replace, self.settings_path, data)
         except OSError as exc:
             raise RuntimeError(f"The orchestrator's model could not be saved: {exc}") from exc
         self._model = name
