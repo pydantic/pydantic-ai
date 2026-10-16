@@ -27,22 +27,13 @@ _UNDIM = '\x1b[22m'
 _STATUS_WIDTH = len('failed')
 
 
+_ROLES = {'on': theme.SUCCESS, 'off': theme.MUTED, 'failed': theme.ERROR, 'idle': theme.WARNING}
+
+
 def _status(entry: PluginEntry[DepsT]) -> tuple[str, str]:
-    """A one-word status and the theme role that colours it."""
-    if entry.loaded is not None:
-        return 'on', theme.SUCCESS
-    if not entry.declaration.enabled:
-        return 'off', theme.MUTED
-    return ('failed', theme.ERROR) if entry.error else ('idle', theme.WARNING)
-
-
-def _origin(entry: PluginEntry[DepsT]) -> str:
-    """Where the declaration came from, short enough for the list."""
-    if entry.project:
-        return 'project'
-    if entry.builtin:
-        return 'built-in'
-    return 'drop-in' if entry.path is not None else 'installed'
+    """A one-word status and the theme role that colours it; an included plugin's own state, as it is never loaded."""
+    word = entry.own_status
+    return word, _ROLES[word]
 
 
 def _paint(role: str, text: str, *, bold: bool = False) -> str:
@@ -98,7 +89,7 @@ class PluginMenu(Generic[DepsT]):
                 MenuItem(
                     f'{"●" if entry.loaded else "○"} {entry.name:<{width}}',
                     value=entry.name,
-                    description=f'{status} {_paint(theme.MUTED, _origin(entry))}',
+                    description=f'{status} {_paint(theme.MUTED, entry.origin)}',
                 )
             )
         return [*rows, save_and_close_item()]
@@ -112,7 +103,7 @@ class PluginMenu(Generic[DepsT]):
         word, role = _status(entry)
         lines = [
             _paint(theme.ACCENT, entry.name),
-            f'{_paint(role, word)}{_paint(theme.MUTED, f" · {_origin(entry)}")}',
+            f'{_paint(role, word)}{_paint(theme.MUTED, f" · {entry.origin}")}',
             '',
             *self._description(entry),
             self._field('source', entry.declaration.factory if entry.path is None else str(entry.path)),
@@ -198,7 +189,7 @@ class PluginMenu(Generic[DepsT]):
     def _description(self, entry: PluginEntry[DepsT]) -> list[str]:
         """The plugin's docstring summary and a blank line, or nothing when it has none."""
         if entry.name not in self._descriptions:
-            self._descriptions[entry.name] = describe(entry)
+            self._descriptions[entry.name] = describe(entry.declaration.factory, entry.path)
         text = self._descriptions[entry.name]
         return [*self._wrap(text, theme.SUGAR), ''] if text else []
 

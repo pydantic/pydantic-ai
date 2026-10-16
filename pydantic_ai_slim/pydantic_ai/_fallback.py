@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 from opentelemetry.trace import Span, Tracer
 
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
-from ._utils import await_maybe, get_first_param_type, is_str_dict
+from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import FallbackExceptionGroup, UserError
 from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, ModelResponseStreamEvent
 
@@ -327,22 +327,15 @@ async def request_stream_until_first_event(
     error as the first stream event. Waiting for the first event means such an error is raised here,
     while the request can still fall back to another model. The event is replayed to the consumer,
     so the stream it gets is unchanged. A stream that ends without any event is handed over as is.
+
+    Shared by `FallbackModel` for each candidate and by the agent's primed stream, which the `Fallback`
+    capability relies on.
     """
     async with model.request_stream(messages, model_settings, model_request_parameters, run_context) as response:
-        events = aiter(response)
-        try:
-            first_event = await anext(events)
-        except StopAsyncIteration:
-            pass
-        else:
-            # `StreamedResponse.__aiter__` hands out the iterator stored here, so this puts the event back.
-            response._event_iterator = _prepend_event(first_event, events)  # pyright: ignore[reportPrivateUsage]
+        events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
+            PeekableAsyncStream(aiter(response))
+        )
+        await events.peek()
+        # `StreamedResponse.__aiter__` hands out the iterator stored here, so the consumer gets the peeked event too.
+        response._event_iterator = events  # pyright: ignore[reportPrivateUsage]
         yield response
-
-
-async def _prepend_event(
-    first_event: ModelResponseStreamEvent, events: AsyncIterator[ModelResponseStreamEvent]
-) -> AsyncIterator[ModelResponseStreamEvent]:
-    yield first_event
-    async for event in events:
-        yield event

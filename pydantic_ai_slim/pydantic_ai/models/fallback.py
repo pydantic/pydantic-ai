@@ -133,6 +133,10 @@ class FallbackModel(Model):
             if self._entered_count == 0:
                 await self._exit_stack.aclose()
 
+    def _refresh_http_client(self) -> None:
+        for model in self.models:
+            model._refresh_http_client()
+
     @property
     def provider(self) -> None:
         return None  # pragma: no cover
@@ -252,7 +256,11 @@ class FallbackModel(Model):
         If a previous response set `state='suspended'`, the request is routed directly
         to the pinned continuation model, bypassing the fallback chain. If the pinned model
         raises a fallback-eligible error while opening the stream, the messages are rewound
-        and the normal fallback chain is tried. Mid-stream failures still propagate.
+        and the normal fallback chain is tried.
+
+        A stream is only handed over once it has produced its first event, so an error the stream
+        raises before that, such as a provider reporting an overload after acknowledging the request,
+        falls back like an error while opening it. Failures after the first event still propagate.
 
         Response handlers are not applied: the response has already been streamed by the time
         it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
