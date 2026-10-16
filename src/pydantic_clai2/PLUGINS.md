@@ -1245,7 +1245,8 @@ history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
-and a change made in the terminal shows in the browser once the command ends.
+which applies at once, even while a turn runs, and a change made in the terminal shows in the
+browser once the command ends.
 
 The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
 cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes
@@ -2059,7 +2060,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- / search · space on/off · c configure · r reload · d remove · esc close
+ / search - Enter/Space on/off - c configure - r reload - d remove - Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -2072,17 +2073,17 @@ paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
-Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
-it, and `d` removes it. Press `/` to search: while searching, every key you type
+Enter or Space turns the highlighted plugin on or off; `c` configures it, `r`
+reloads it, and `d` removes it. Press `/` to search: while searching, every key you type
 filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
 Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
 close.
 
-Turning a plugin on with Space opens its settings menu straight away when it
+Turning a plugin on with Enter or Space opens its settings menu straight away when it
 offers one (see [settings menu](#offer-a-settings-menu-def-settings_menuself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
@@ -2834,7 +2835,7 @@ menu's `Dialogs` and saves the new value for you.
 ### Offer a settings menu: `def settings_menu(self)`
 
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
-CLAI opens it when the plugin is turned on (Space in `/plugins`, `/plugins enable`,
+CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
 the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
 it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
@@ -3207,6 +3208,42 @@ add one name, the later one wins. Unloading the plugin removes it.
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
+
+### Ask for one line under printed output: `read_line`
+
+A sign-in often prints a URL and then asks for something to paste back, such as
+the address the browser ended on. Print with `host.console`, then ask with
+`read_line` from `pydantic_clai2.ui.prompt.line_input`:
+
+```python
+from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.ui.prompt.line_input import read_line
+
+
+async def sign_in(host: PluginHost, authorization_url: str) -> str:
+    host.console.print(authorization_url, markup=False, highlight=False)
+    pasted = await read_line(
+        'Or paste the address your browser ended on (Esc cancels): ', console=host.console, hidden=True
+    )
+    if pasted is None:
+        return 'Sign-in cancelled.'
+    ...
+```
+
+The prompt and the typed answer are pinned under the transcript, the way
+`ask_user` shows its questions, so the URL stays on screen above them. It returns
+the answer when the user presses Enter, and `None` on Esc or Ctrl-C. Pasting
+works, and pasted line breaks are dropped. Pass `hidden=True` to show how many
+characters were typed instead of the text, for an answer that carries a secret
+such as an authorization code. Cancelling the task that awaits it, because the
+browser's callback won the race, closes the prompt. A slash command or
+`/login` handler can call it directly; a tool or hook asking mid-run takes the
+screen first, inside `async with host.full_screen()`. Without the live editor it
+is a plain terminal prompt.
+
+Do not draw a prompt yourself from a `run_worker` operation. By default
+`run_worker` takes the live panel, and the transcript with your URL, off the
+screen while the operation runs.
 
 ### Several accounts: `resolve_profile` and `profile_handler`
 

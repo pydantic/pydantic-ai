@@ -132,15 +132,25 @@ async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Pat
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     second = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
     steps = SqliteStepStore(database=store.database)
+    shared = ModelRequest(parts=[UserPromptPart('shared instructions')])
+    histories: dict[str, list[ModelMessage]] = {}
     for record in (first, second):
+        histories[record.id] = [shared, ModelResponse(parts=[TextPart(f'only in {record.id}')])]
         await steps.register_run(RunRecord(run_id=record.id, conversation_id=record.id))
         await steps.append_event(StepEvent(run_id=record.id, kind='run_started', step_index=0))
-        await steps.save_snapshot(ContinuableSnapshot(run_id=record.id, step_index=0, messages=[]))
+        await steps.save_snapshot(ContinuableSnapshot(run_id=record.id, step_index=0, messages=histories[record.id]))
     await store.delete(source=first)
     assert await steps.get_run(run_id=first.id) is None
     assert await steps.latest_snapshot(run_id=first.id) is None
     assert await steps.list_events(run_id=first.id) == []
-    assert await steps.latest_snapshot(run_id=second.id) is not None
+    kept = await steps.latest_snapshot(run_id=second.id)
+    assert kept is not None
+    assert kept.messages == histories[second.id]
+    # The deleted conversation's messages go with it; the one both stored stays for the other.
+    with closing(sqlite3.connect(store.database)) as conn:
+        stored = [row[0] for row in conn.execute('SELECT message FROM snapshot_messages')]
+    assert len(stored) == 2
+    assert not any(f'only in {first.id}' in message for message in stored)
     assert len(await store.listing()) == 1
 
 
