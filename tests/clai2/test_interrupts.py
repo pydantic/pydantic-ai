@@ -47,6 +47,29 @@ async def test_overlapping_runs_give_ctrl_c_back_whichever_ends_first() -> None:
     assert signal.getsignal(signal.SIGINT) is original
 
 
+async def test_a_replaced_run_takes_ctrl_c_again_on_focus() -> None:
+    """The terminal moves back to a session whose Ctrl-C another took meanwhile: each gives it back once."""
+    original = signal.getsignal(signal.SIGINT)
+    first, second = Interrupts(), Interrupts()
+    started = [asyncio.Event(), asyncio.Event()]
+    finish = [asyncio.Event(), asyncio.Event()]
+
+    async def operation(index: int) -> None:
+        started[index].set()
+        await finish[index].wait()
+
+    one = asyncio.create_task(first.run(operation(0)))
+    await started[0].wait()
+    two = asyncio.create_task(second.run(operation(1)))
+    await started[1].wait()
+    first.focus(signals=True)
+    finish[0].set()
+    assert await one
+    finish[1].set()
+    assert await two
+    assert signal.getsignal(signal.SIGINT) is original
+
+
 @pytest.mark.parametrize('double', [False, True])
 async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
     interrupts = Interrupts()

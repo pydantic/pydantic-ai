@@ -105,6 +105,8 @@ class Interrupts:
             and threading.current_thread() is threading.main_thread()
             and signal.getsignal(signal.SIGINT) is not handler.handle
         ):
+            # Taken before and replaced since: leave that place in the chain before taking the top.
+            self._give(handler)
             handler.previous = signal.getsignal(signal.SIGINT)
             signal.signal(signal.SIGINT, handler.handle)
             _TAKEN.append(handler)
