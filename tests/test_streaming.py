@@ -7207,8 +7207,9 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
-        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
-        await asyncio.wait_for(anext(events), timeout=1.0)
+        # Bound the first iteration so a lazy-start regression fails instead of hanging here. Only a hang should
+        # trip it: getting the first event takes over a second on a loaded CI runner.
+        await asyncio.wait_for(anext(events), timeout=5)
         assert producer_started.is_set()
 
 
