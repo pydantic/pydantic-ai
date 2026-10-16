@@ -2245,7 +2245,8 @@ def _supported_native_tools(
             f'Native tool setting(s) {unapplied} not supported by this model. '
             f'Sending the tool without them would drop the restriction they set. '
             f'Remove the settings, use a model that supports them, or provide a local fallback that applies them '
-            f'itself via `NativeOrLocalTool(native=..., local=...)`.'
+            f'itself, with the settings on the native tool rather than the capability, which disables its local '
+            "fallback when they're set: e.g. `WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`."
         )
 
     return supported_natives

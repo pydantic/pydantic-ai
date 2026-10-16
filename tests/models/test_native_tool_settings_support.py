@@ -227,8 +227,9 @@ class TestGoogle:
         assert str(exc_info.value) == snapshot(
             'Native tool setting(s) `WebSearchTool.allowed_domains` not supported by this model. '
             'Sending the tool without them would drop the restriction they set. Remove the settings, use a model '
-            'that supports them, or provide a local fallback that applies them itself via '
-            '`NativeOrLocalTool(native=..., local=...)`.'
+            'that supports them, or provide a local fallback that applies them itself, with the settings on the native '
+            "tool rather than the capability, which disables its local fallback when they're set: e.g. "
+            '`WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`.'
         )
 
     def test_restricted_web_fetch_without_fallback_raises(self):

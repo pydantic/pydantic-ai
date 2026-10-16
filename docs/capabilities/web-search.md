@@ -17,6 +17,19 @@ indexed-only search. On a model whose native search can't apply one that is set 
 [restricting parameters](../native-tools.md#restricting-parameters)), `WebSearch` raises a
 [`UserError`][pydantic_ai.exceptions.UserError] rather than searching without the restriction.
 
+Setting these fields on `WebSearch` itself disables the `local` fallback, since the bundled local tools can't apply
+them. To fall back to a local search that applies the restriction itself on such models, put the restriction on the
+native tool instead:
+
+```python {title="web_search_restricted_fallback.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.native_tools import WebSearchTool
+
+def search_pydantic_docs(query: str) -> str: ...  # only searches pydantic.dev
+
+WebSearch(native=WebSearchTool(allowed_domains=['pydantic.dev']), local=search_pydantic_docs)
+```
+
 ```python {title="web_search.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebSearch
 
