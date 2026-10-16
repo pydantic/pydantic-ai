@@ -36,7 +36,7 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
     """
 
     _bound_params: ClassVar[frozenset[str]] = frozenset({'client_id', 'redirect_uri', 'state', 'code_challenge'})
-    """Authorization parameters the flow itself validates or exchanges against, so a caller override breaks the login."""
+    """Authorization parameters the flow validates or exchanges against, so a caller override breaks the login."""
 
     def __init__(self, *, redirect_uri: str, state: str | None = None) -> None:
         self.redirect_uri = redirect_uri

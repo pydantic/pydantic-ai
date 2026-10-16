@@ -168,12 +168,14 @@ async def post_token_request(
     *,
     provider_name: str,
     http_client: httpx2.AsyncClient | None = None,
+    rejected_grant_errors: frozenset[str] = frozenset({'invalid_grant'}),
 ) -> _ResponseT:
     """POST a form-urlencoded OAuth token request and validate the JSON response with `response`.
 
     When `http_client` is given the request goes through it (so custom transports and proxies apply
     to refreshes too); otherwise an ephemeral client is used. Failures raise
-    [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError].
+    [`CredentialsRefreshError`][pydantic_ai.providers.openai_codex.CredentialsRefreshError], whose
+    message says the grant was rejected when the error code is one of `rejected_grant_errors`.
     """
     if http_client is None:
         async with httpx2.AsyncClient(timeout=httpx2.Timeout(timeout=30, connect=5)) as client:
@@ -186,7 +188,7 @@ async def post_token_request(
         except ValueError:
             body = _TokenErrorResponse()
         detail = body.error_description or body.error or result.text[:200]
-        hint = '; the grant was rejected, rerun the authorization flow' if body.error == 'invalid_grant' else ''
+        hint = '; the grant was rejected, rerun the authorization flow' if body.error in rejected_grant_errors else ''
         raise CredentialsRefreshError(
             f'Token request to {url} failed with status {result.status_code}: {detail}{hint}', provider_name
         )
@@ -331,7 +333,7 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
         raise NotImplementedError
 
     def _validate_credentials(self, credentials: CredentialsT) -> None:
-        """Reject credentials this provider cannot use, as they are given, loaded, or refreshed."""
+        """Reject credentials this provider cannot use, at construction and before each request."""
 
     def _create_http_client(self) -> httpx2.AsyncClient:
         """Factory used when a closed provider-owned client is reopened."""
@@ -347,13 +349,18 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
     async def _prepare_request_credentials(self) -> tuple[CredentialsT, Callable[[], Awaitable[CredentialsT]]]:
         """The credentials for an outgoing request, plus a replay resolver for a 401 on it."""
         await self._load_if_needed()
+        # Checked before and after every refresh, so refused credentials never reach the API or
+        # spend another refresh token, however they were given, loaded, adopted, or refreshed.
+        self._validate_credentials(self.credentials)
         await self._refresh_if_stale()
+        self._validate_credentials(self.credentials)
         revision_used = self._revision
         # Only share failures that happen after this request starts, not failures from earlier requests.
         refresh_failures = self._refresh_failures
 
         async def replay() -> CredentialsT:
             await self._refresh_for_401(revision_used, refresh_failures=refresh_failures)
+            self._validate_credentials(self.credentials)
             return self.credentials
 
         return self.credentials, replay
@@ -365,9 +372,7 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
         async with self._refresh_lock:
             if self._credentials is None:  # recheck after acquiring: load once, not once per task
                 assert self._credential_source is not None
-                credentials = await self._credential_source.load()
-                self._validate_credentials(credentials)
-                self._credentials = credentials
+                self._credentials = await self._credential_source.load()
 
     @cached_property
     def _refresh_lock(self) -> anyio.Lock:
@@ -427,7 +432,6 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
             # would invalidate theirs. Re-read storage first and adopt a newer set if one is there.
             if (stored := await source.load()) != rejected:
                 self._replace(stored)
-                self._validate_credentials(stored)
                 return
         # The provider's own client, so custom transports and proxies apply to refreshes too;
         # the auth flow ignores other hosts, so this cannot recurse or leak the bearer.
@@ -440,9 +444,6 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
                     'Credentials were refreshed in memory but saving them to the credential source raised.',
                     self.name,
                 ) from e
-        # Checked only once saved: the rotated refresh token is the only usable one, even when this
-        # provider can't use what it now grants.
-        self._validate_credentials(self.credentials)
 
     def _replace(self, credentials: CredentialsT) -> None:
         # Atomic replace of the complete set, then bump the revision so concurrent 401s observe it.

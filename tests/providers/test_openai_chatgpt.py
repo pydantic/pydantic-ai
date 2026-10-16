@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from functools import partial
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
@@ -70,20 +70,31 @@ def make_credentials(*, scope: str = PLAN_SCOPE, access_token: str = 'access-1')
 class TokenEndpoint:
     """A token endpoint answering through the real `post_token_request`, recording the forms it receives."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, respond: Callable[[dict[str, str]], httpx2.Response]):
+    def __init__(self) -> None:
         self.forms: list[dict[str, str]] = []
+        self.respond: Callable[[dict[str, str]], httpx2.Response] | None = None
 
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            assert str(request.url) == TOKEN_URL
-            form = dict(parse_qsl(request.content.decode()))
-            self.forms.append(form)
-            return respond(form)
+    def __call__(self, respond: Callable[[dict[str, str]], httpx2.Response]) -> TokenEndpoint:
+        self.respond = respond
+        return self
 
-        self.client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    def handle(self, request: httpx2.Request) -> httpx2.Response:
+        assert str(request.url) == TOKEN_URL
+        form = dict(parse_qsl(request.content.decode()))
+        self.forms.append(form)
+        assert self.respond is not None, 'call the `token_endpoint` fixture with a responder first'
+        return self.respond(form)
+
+
+@pytest.fixture
+async def token_endpoint(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[TokenEndpoint]:
+    endpoint = TokenEndpoint()
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(endpoint.handle)) as client:
         monkeypatch.setattr(
             'pydantic_ai.providers.openai_chatgpt._post_token_request',
-            partial(post_token_request, http_client=self.client),
+            partial(post_token_request, http_client=client),
         )
+        yield endpoint
 
 
 def token_response(
@@ -158,6 +169,7 @@ def test_extra_params_cannot_override_what_the_exchange_relies_on(param: str):
         'http://localhost:1455/auth/callback',
         'https://127.0.0.1:1455/auth/callback',
         'http://127.0.0.1:1455/callback',
+        'http://127.0.0.1/auth/callback',
     ],
 )
 def test_redirect_uri_must_be_the_loopback_callback(redirect_uri: str):
@@ -183,11 +195,11 @@ def test_id_token_hint_must_identify_an_account():
 # --- Code exchange and ID token validation ---
 
 
-async def test_sign_in_registers_through_the_loopback_callback(monkeypatch: pytest.MonkeyPatch):
+async def test_sign_in_registers_through_the_loopback_callback(token_endpoint: TokenEndpoint):
     """The callback's issued `client_id` is the one exchanged and kept, never `dynamic_agent_client`."""
     url = f'http://127.0.0.1:{free_port()}/auth/callback'
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', host_id=HOST_ID, redirect_uri=url)
-    endpoint = TokenEndpoint(monkeypatch, token_response(flow))
+    endpoint = token_endpoint(token_response(flow))
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
     accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code', 'client_id': CLIENT_ID})
@@ -217,10 +229,21 @@ async def test_sign_in_registers_through_the_loopback_callback(monkeypatch: pyte
     ]
 
 
-async def test_sign_in_again_keeps_the_registration(monkeypatch: pytest.MonkeyPatch):
+async def test_failed_exchange_keeps_the_issued_client(token_endpoint: TokenEndpoint):
+    """SIWC: after a failed exchange, start again with the client id issued for this attempt."""
+    flow = OpenAIChatGPTOAuthFlow(app_name='My App')
+    token_endpoint(lambda form: httpx2.Response(400, json={'error': 'invalid_grant'}))
+
+    with pytest.raises(CredentialsRefreshError, match='the grant was rejected'):
+        await flow.exchange_code('the-code', client_id=CLIENT_ID)
+
+    assert flow.client_id == CLIENT_ID
+
+
+async def test_sign_in_again_keeps_the_registration(token_endpoint: TokenEndpoint):
     """A returning sign-in's callback may omit the client id; the saved one is exchanged."""
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID, id_token_hint=make_jwt({'sub': 'user-1'}))
-    endpoint = TokenEndpoint(monkeypatch, token_response(flow))
+    endpoint = token_endpoint(token_response(flow))
 
     credentials = await flow.exchange_code('the-code')
 
@@ -228,10 +251,10 @@ async def test_sign_in_again_keeps_the_registration(monkeypatch: pytest.MonkeyPa
     assert endpoint.forms[0]['client_id'] == CLIENT_ID
 
 
-async def test_sign_in_without_plan_usage_keeps_the_registration(monkeypatch: pytest.MonkeyPatch):
+async def test_sign_in_without_plan_usage_keeps_the_registration(token_endpoint: TokenEndpoint):
     """Declining plan usage still returns credentials, so the issued client id can be saved and reused."""
     flow = OpenAIChatGPTOAuthFlow(app_name='My App')
-    TokenEndpoint(monkeypatch, token_response(flow, granted_scope='openid profile email offline_access'))
+    token_endpoint(token_response(flow, granted_scope='openid profile email offline_access'))
 
     credentials = await flow.exchange_code('the-code', client_id=CLIENT_ID)
 
@@ -241,9 +264,9 @@ async def test_sign_in_without_plan_usage_keeps_the_registration(monkeypatch: py
         OpenAIChatGPTProvider(credentials=credentials)
 
 
-async def test_sign_in_without_granted_scopes_has_no_plan_usage(monkeypatch: pytest.MonkeyPatch):
+async def test_sign_in_without_granted_scopes_has_no_plan_usage(token_endpoint: TokenEndpoint):
     flow = OpenAIChatGPTOAuthFlow(app_name='My App')
-    TokenEndpoint(monkeypatch, token_response(flow, granted_scope=None))
+    token_endpoint(token_response(flow, granted_scope=None))
 
     credentials = await flow.exchange_code('the-code', client_id=CLIENT_ID)
 
@@ -280,27 +303,27 @@ async def test_exchange_rejects_an_unusable_client_id(
     ],
 )
 async def test_exchange_validates_the_id_token(
-    monkeypatch: pytest.MonkeyPatch, claims: dict[str, JsonValue], message: str
+    token_endpoint: TokenEndpoint, claims: dict[str, JsonValue], message: str
 ):
     """An ID token that fails validation is a failed sign-in, reported like any token endpoint failure."""
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID)
-    TokenEndpoint(monkeypatch, token_response(flow, claims=claims))
+    token_endpoint(token_response(flow, claims=claims))
 
     with pytest.raises(CredentialsRefreshError, match=message):
         await flow.exchange_code('the-code')
 
 
-async def test_exchange_rejects_a_different_account(monkeypatch: pytest.MonkeyPatch):
+async def test_exchange_rejects_a_different_account(token_endpoint: TokenEndpoint):
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID, id_token_hint=make_jwt({'sub': 'user-1'}))
-    TokenEndpoint(monkeypatch, token_response(flow, claims={'sub': 'user-2'}))
+    token_endpoint(token_response(flow, claims={'sub': 'user-2'}))
 
     with pytest.raises(UserError, match='different ChatGPT account'):
         await flow.exchange_code('the-code')
 
 
-async def test_exchange_accepts_an_audience_list(monkeypatch: pytest.MonkeyPatch):
+async def test_exchange_accepts_an_audience_list(token_endpoint: TokenEndpoint):
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID)
-    TokenEndpoint(monkeypatch, token_response(flow, claims={'aud': [CLIENT_ID, 'https://api.openai.com/v1']}))
+    token_endpoint(token_response(flow, claims={'aud': [CLIENT_ID, 'https://api.openai.com/v1']}))
 
     assert (await flow.exchange_code('the-code')).client_id == CLIENT_ID
 
@@ -312,9 +335,9 @@ async def test_exchange_accepts_an_audience_list(monkeypatch: pytest.MonkeyPatch
         pytest.param({'id_token': 'not-a-jwt'}, 'malformed ID token', id='malformed'),
     ],
 )
-async def test_exchange_requires_an_id_token(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any], message: str):
+async def test_exchange_requires_an_id_token(token_endpoint: TokenEndpoint, body: dict[str, Any], message: str):
     payload = {'access_token': 'access-1', 'refresh_token': 'refresh-1', 'scope': PLAN_SCOPE, **body}
-    TokenEndpoint(monkeypatch, lambda form: httpx2.Response(200, json=payload))
+    token_endpoint(lambda form: httpx2.Response(200, json=payload))
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID)
 
     with pytest.raises(CredentialsRefreshError, match=message):
@@ -435,6 +458,54 @@ async def test_provider_refuses_credentials_that_lose_plan_usage(stored_elsewher
             await client.get('https://api.openai.com/v1/models')
 
     assert source.saved == ([] if stored_elsewhere else [without_plan_usage])
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        'invalid_grant',
+        'invalid_refresh_token',
+        'token_expired',
+        'refresh_token_expired',
+        'refresh_token_invalidated',
+        'refresh_token_reused',
+    ],
+)
+async def test_unusable_refresh_tokens_say_to_sign_in_again(error: str):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == 'auth.openai.com':
+            return httpx2.Response(400, json={'error': error})
+        return httpx2.Response(401)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        OpenAIChatGPTProvider(credentials=make_credentials(), http_client=client)
+        with pytest.raises(CredentialsRefreshError, match='the grant was rejected, rerun the authorization flow'):
+            await client.get('https://api.openai.com/v1/models')
+
+
+async def test_provider_stops_using_credentials_that_lost_plan_usage():
+    """A proactive refresh that loses plan usage is refused before the API, and later requests spend nothing."""
+    token_posts: list[str] = []
+    api_requests: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == 'auth.openai.com':
+            token_posts.append(str(request.url))
+            return httpx2.Response(
+                200, json={'access_token': 'access-2', 'refresh_token': 'refresh-2', 'scope': 'openid'}
+            )
+        api_requests.append(str(request.url))  # pragma: no cover
+        return httpx2.Response(200)  # pragma: no cover
+
+    expired = make_credentials(access_token=make_jwt({'exp': time.time() - 3600}))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        OpenAIChatGPTProvider(credentials=expired, http_client=client)
+        for _ in range(2):
+            with pytest.raises(UserError, match='do not grant ChatGPT plan usage'):
+                await client.get('https://api.openai.com/v1/models')
+
+    assert len(token_posts) == 1
+    assert api_requests == []
 
 
 async def test_provider_sends_credentials_only_to_the_openai_api():
