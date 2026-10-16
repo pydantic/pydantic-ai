@@ -1,6 +1,6 @@
-"""Turn-scoped system prompts: `SystemPromptPart(..., scope='turn')`.
+"""Request-scoped system prompts: `SystemPromptPart(..., scope='request')`.
 
-A turn-scoped prompt is a nudge for one model request — a reminder against instruction fade, a note
+A request-scoped prompt is a nudge for one model request — a reminder against instruction fade, a note
 about the current moment — that stays in the message history like any other part. Two renderings:
 
 * Where the API keeps it and stops rendering it itself (Anthropic's `clear_at: 'next_user_message'`),
@@ -12,7 +12,7 @@ about the current moment — that stays in the message history like any other pa
 
 The recorded tests pin both against the real APIs. The unit tests cover what a recording can't see:
 the cache anchor on adapters where we can't record, orphaned parts after a failed step, and the core
-projection on both sides of the `supports_turn_scoped_system_prompts` flag.
+projection on both sides of the `supports_request_scoped_system_prompts` flag.
 """
 
 from __future__ import annotations as _annotations
@@ -106,7 +106,7 @@ PROMPT = 'Get the weather in Paris, then in Oslo, then summarize in one line.'
 
 @dataclass
 class TurnReminder(AbstractCapability[Any]):
-    """Adds a turn-scoped reminder to every model request, the way a harness capability does.
+    """Adds a request-scoped reminder to every model request, the way a harness capability does.
 
     By default it enqueues the reminder, the documented pattern: content enqueued from
     `before_model_request` goes into this request and into history. With `two_writes`, it writes the
@@ -122,7 +122,7 @@ class TurnReminder(AbstractCapability[Any]):
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         self.requests += 1
-        part = SystemPromptPart(self.text.format(n=self.requests), scope='turn')
+        part = SystemPromptPart(self.text.format(n=self.requests), scope='request')
         if not self.two_writes:
             ctx.enqueue(part)
             return request_context
@@ -142,13 +142,13 @@ def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:
     return agent
 
 
-def turn_scoped_texts(messages: Sequence[ModelMessage]) -> list[str]:
+def request_scoped_texts(messages: Sequence[ModelMessage]) -> list[str]:
     return [
         part.content
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.scope == 'turn'
+        if isinstance(part, SystemPromptPart) and part.scope == 'request'
     ]
 
 
@@ -179,7 +179,7 @@ def assert_append_only(bodies: Sequence[dict[str, Any]]) -> None:
 )
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 @pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'])
-async def test_anthropic_turn_scoped_reminders_keep_thinking_and_cache(
+async def test_anthropic_request_scoped_reminders_keep_thinking_and_cache(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
@@ -223,7 +223,7 @@ async def test_anthropic_turn_scoped_reminders_keep_thinking_and_cache(
         }
         for n in range(1, len(bodies) + 1)
     ]
-    # The breakpoint lands on the tool result ahead of the reminder: `cache_control` on a turn-scoped
+    # The breakpoint lands on the tool result ahead of the reminder: `cache_control` on a request-scoped
     # entry is a 400.
     assert [cache_breakpoints(body) for body in bodies[1:]] == [
         (None, [f'messages[{len(body["messages"]) - 2}].content[0]']) for body in bodies[1:]
@@ -255,11 +255,11 @@ FALLBACK_CASES = [
 
 
 @pytest.mark.moves_cache_prefix(
-    reason='a model that cannot clear a turn-scoped prompt is sent it only while current, by design'
+    reason='a model that cannot clear a request-scoped prompt is sent it only while current, by design'
 )
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in FALLBACK_CASES])
-async def test_anthropic_turn_scoped_fallback_on_model_without_native_support(
+async def test_anthropic_request_scoped_fallback_on_model_without_native_support(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
@@ -296,20 +296,20 @@ async def test_anthropic_turn_scoped_fallback_on_model_without_native_support(
     for previous, current in zip(responses, responses[1:]):
         assert current.usage.cache_read_tokens >= previous.usage.input_tokens - 30
     # History keeps every reminder; only the wire leaves the finished ones out.
-    assert turn_scoped_texts(result.all_messages()) == [
+    assert request_scoped_texts(result.all_messages()) == [
         f'Reminder: be terse. This is request {n}.' for n in range(1, len(bodies) + 1)
     ]
 
 
 @pytest.mark.moves_cache_prefix(
-    reason='a model that cannot clear a turn-scoped prompt is sent it only while current, by design'
+    reason='a model that cannot clear a request-scoped prompt is sent it only while current, by design'
 )
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
 @pytest.mark.parametrize('api', ['chat', 'responses'])
-async def test_openai_turn_scoped_reminder_sent_only_while_current(
+async def test_openai_request_scoped_reminder_sent_only_while_current(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, api: str
 ):
-    """OpenAI has no turn-scoped channel: each reminder goes out once, as a mid-conversation system message.
+    """OpenAI has no request-scoped channel: each reminder goes out once, as a mid-conversation system message.
 
     GPT-5.6 takes explicit cache breakpoints, and this is the run that used to crash on Chat
     Completions when a harness reminder led with a `CachePoint`. Nothing here adds one, and each cache
@@ -353,7 +353,7 @@ def recording_function_model(seen: list[list[ModelMessage]], *, profile: ModelPr
 
 
 async def test_superseded_reminders_are_left_out_without_native_support():
-    """A model that can't clear a turn-scoped prompt gets each one only while it's current.
+    """A model that can't clear a request-scoped prompt gets each one only while it's current.
 
     It's moved to the end of its request and `<system>`-wrapped like any mid-conversation system prompt
     on a model without a `system` role, while the history keeps every reminder unchanged.
@@ -368,7 +368,7 @@ async def test_superseded_reminders_are_left_out_without_native_support():
         ['<system>Reminder: be terse. This is request 2.</system>'],
         ['<system>Reminder: be terse. This is request 3.</system>'],
     ]
-    assert all(len(turn_scoped_texts(messages)) == 0 for messages in seen)
+    assert all(len(request_scoped_texts(messages)) == 0 for messages in seen)
     assert all(
         sum(
             isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
@@ -378,7 +378,7 @@ async def test_superseded_reminders_are_left_out_without_native_support():
         == 1
         for messages in seen
     )
-    assert turn_scoped_texts(result.all_messages()) == [
+    assert request_scoped_texts(result.all_messages()) == [
         'Reminder: be terse. This is request 1.',
         'Reminder: be terse. This is request 2.',
         'Reminder: be terse. This is request 3.',
@@ -386,14 +386,14 @@ async def test_superseded_reminders_are_left_out_without_native_support():
 
 
 async def test_native_support_sends_every_reminder():
-    """A model whose API clears turn-scoped prompts itself is sent every one, unchanged and unmoved."""
+    """A model whose API clears request-scoped prompts itself is sent every one, unchanged and unmoved."""
     seen: list[list[ModelMessage]] = []
-    profile = ModelProfile(supports_inline_system_prompts=True, supports_turn_scoped_system_prompts=True)
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
     agent = weather_agent(recording_function_model(seen, profile=profile))
 
     await agent.run(PROMPT)
 
-    assert [turn_scoped_texts(messages) for messages in seen] == [
+    assert [request_scoped_texts(messages) for messages in seen] == [
         ['Reminder: be terse. This is request 1.'],
         ['Reminder: be terse. This is request 1.', 'Reminder: be terse. This is request 2.'],
         [
@@ -424,7 +424,7 @@ async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
         runs.append((seen, result.all_messages()))
 
     (enqueued_seen, enqueued_history), (written_seen, written_history) = runs
-    assert [turn_scoped_texts(messages) for messages in enqueued_seen] == [[], [], []]
+    assert [request_scoped_texts(messages) for messages in enqueued_seen] == [[], [], []]
     assert [
         [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)]
         for messages in enqueued_seen
@@ -436,18 +436,18 @@ async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
     assert [[type(part) for message in messages for part in message.parts] for messages in enqueued_seen] == [
         [type(part) for message in messages for part in message.parts] for messages in written_seen
     ]
-    assert turn_scoped_texts(enqueued_history) == turn_scoped_texts(written_history)
+    assert request_scoped_texts(enqueued_history) == request_scoped_texts(written_history)
     assert [type(message) for message in enqueued_history] == [type(message) for message in written_history]
 
 
-async def test_enqueued_turn_scoped_prompt():
-    """`ctx.enqueue` delivers a turn-scoped prompt into the next request, and it's gone from the one after."""
+async def test_enqueued_request_scoped_prompt():
+    """`ctx.enqueue` delivers a request-scoped prompt into the next request, and it's gone from the one after."""
     seen: list[list[ModelMessage]] = []
     agent = Agent(recording_function_model(seen))
 
     @agent.tool
     def get_weather(ctx: RunContext[Any], city: str) -> str:
-        ctx.enqueue(SystemPromptPart(f'The {city} result is cached; do not fetch it again.', scope='turn'))
+        ctx.enqueue(SystemPromptPart(f'The {city} result is cached; do not fetch it again.', scope='request'))
         return f'{city}: 18C, cloudy'
 
     result = await agent.run(PROMPT)
@@ -460,7 +460,7 @@ async def test_enqueued_turn_scoped_prompt():
         ['<system>The Paris result is cached; do not fetch it again.</system>'],
         ['<system>The Oslo result is cached; do not fetch it again.</system>'],
     ]
-    assert turn_scoped_texts(result.all_messages()) == [
+    assert request_scoped_texts(result.all_messages()) == [
         'The Paris result is cached; do not fetch it again.',
         'The Oslo result is cached; do not fetch it again.',
     ]
@@ -485,7 +485,7 @@ class KeepLastRequest(AbstractCapability[Any]):
 
 
 async def test_current_reminder_survives_compaction():
-    """A compaction capability that keeps the current request keeps its turn-scoped prompt too.
+    """A compaction capability that keeps the current request keeps its request-scoped prompt too.
 
     The reminder capability writes its reminder itself ahead of compaction, so compaction sees it in the
     last request, the one it keeps; the request goes out with it, and the history still records it.
@@ -510,7 +510,7 @@ async def test_current_reminder_survives_compaction():
         ]
         for messages in seen
     ] == [[f'<system>Reminder: be terse. This is request {n}.</system>'] for n in (1, 2, 3)]
-    assert turn_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 3.']
+    assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 3.']
 
 
 @dataclass
@@ -524,8 +524,8 @@ class ProviderDown(AbstractCapability[Any]):
 
 
 @pytest.mark.parametrize('stream', [False, True])
-async def test_failed_step_drops_its_turn_scoped_prompt(stream: bool):
-    """A step that raises takes its turn-scoped prompt with it, so a retry doesn't send it twice.
+async def test_failed_step_drops_its_request_scoped_prompt(stream: bool):
+    """A step that raises takes its request-scoped prompt with it, so a retry doesn't send it twice.
 
     Without that, resuming from the captured history would carry the failed step's reminder into the
     next request alongside the one that request adds for itself. (A stream that fails after it opened
@@ -544,15 +544,15 @@ async def test_failed_step_drops_its_turn_scoped_prompt(stream: bool):
     assert [[type(part).__name__ for part in message.parts] for message in messages] == [['UserPromptPart']]
 
 
-async def test_failed_step_keeps_the_rest_of_a_request_holding_a_turn_scoped_prompt():
-    """Only the turn-scoped part goes when the request it's in also holds other content.
+async def test_failed_step_keeps_the_rest_of_a_request_holding_a_request_scoped_prompt():
+    """Only the request-scoped part goes when the request it's in also holds other content.
 
     Here the prompt arrives in the trailing request of `message_history`, which the run resumes
     without a new prompt; the step fails, and the user prompt next to it stays.
     """
     agent = Agent(TestModel(), capabilities=[ProviderDown()])
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('hello'), SystemPromptPart('Be brief.', scope='turn')])
+        ModelRequest(parts=[UserPromptPart('hello'), SystemPromptPart('Be brief.', scope='request')])
     ]
 
     with capture_run_messages() as messages:
@@ -562,7 +562,7 @@ async def test_failed_step_keeps_the_rest_of_a_request_holding_a_turn_scoped_pro
     assert [[type(part).__name__ for part in message.parts] for message in messages] == [['UserPromptPart']]
 
 
-async def test_retry_without_response_drops_the_turn_scoped_prompt():
+async def test_retry_without_response_drops_the_request_scoped_prompt():
     """A retry that never got a response gives up on the step and its reminder.
 
     The model fails, and a capability turns the failure into a retry. The retry request gets a fresh
@@ -599,7 +599,7 @@ async def test_retry_without_response_drops_the_turn_scoped_prompt():
         ['<system>Reminder: be terse. This is request 1.</system>'],
         ['<system>Reminder: be terse. This is request 2.</system>'],
     ]
-    assert turn_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
+    assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
 
 
 async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
@@ -635,11 +635,13 @@ async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
         ],
         ['<system>Reminder: be terse. This is request 3.</system>'],
     ]
-    assert turn_scoped_texts(result.all_messages()) == [f'Reminder: be terse. This is request {n}.' for n in (1, 2, 3)]
+    assert request_scoped_texts(result.all_messages()) == [
+        f'Reminder: be terse. This is request {n}.' for n in (1, 2, 3)
+    ]
 
 
-async def test_fallback_attempts_keep_the_turn_scoped_prompt():
-    """A fallback attempt is still the same step's turn, so the next model is sent the same reminder."""
+async def test_fallback_attempts_keep_the_request_scoped_prompt():
+    """A fallback attempt is still the same step's request, so the next model is sent the same reminder."""
     seen: list[list[ModelMessage]] = []
 
     def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -661,13 +663,13 @@ async def test_fallback_attempts_keep_the_turn_scoped_prompt():
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
     ]
-    assert turn_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 1.']
+    assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 1.']
 
 
-def test_turn_scoped_prompt_round_trips_through_serialization():
+def test_request_scoped_prompt_round_trips_through_serialization():
     """`scope` survives `ModelMessagesTypeAdapter`, which is what durable execution and storage use."""
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('hi'), SystemPromptPart('Be terse.', scope='turn')])
+        ModelRequest(parts=[UserPromptPart('hi'), SystemPromptPart('Be terse.', scope='request')])
     ]
 
     assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
@@ -679,14 +681,14 @@ def tool_loop_history() -> list[ModelMessage]:
         ModelRequest(parts=[UserPromptPart('Weather in Paris and Oslo?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'Paris: 18C', tool_call_id='call_1')]),
-        ModelRequest(parts=[SystemPromptPart('Reminder 1.', scope='turn')]),
+        ModelRequest(parts=[SystemPromptPart('Reminder 1.', scope='request')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Oslo'}, tool_call_id='call_2')]),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'Oslo: 18C', tool_call_id='call_2')]),
-        ModelRequest(parts=[SystemPromptPart('Reminder 2.', scope='turn')]),
+        ModelRequest(parts=[SystemPromptPart('Reminder 2.', scope='request')]),
     ]
 
 
-REMINDER_ONLY: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('Reminder.', scope='turn')])]
+REMINDER_ONLY: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('Reminder.', scope='request')])]
 
 WEATHER_PARAMETERS = ModelRequestParameters(
     function_tools=[
@@ -719,17 +721,17 @@ async def send(model: Model, history: list[ModelMessage], settings: ModelSetting
     await model.request(model.prepare_messages(history, WEATHER_PARAMETERS), settings, WEATHER_PARAMETERS)
 
 
-def test_current_turn_scoped_prompts_move_to_the_last_request():
-    """Turn-scoped prompts anywhere in the current turn go to the end of its last request.
+def test_current_request_scoped_prompts_move_to_the_last_request():
+    """Request-scoped prompts anywhere in the current request go to the end of its last request.
 
-    The agent merges a turn's requests before preparing them, so this is about `prepare_messages`
+    The agent merges adjacent requests before preparing them, so this is about `prepare_messages`
     called directly on a history that isn't merged: a request holding nothing but a moved prompt is
     left out, and one with other parts keeps them.
     """
     model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Hello'), SystemPromptPart('Reminder A.', scope='turn')]),
-        ModelRequest(parts=[SystemPromptPart('Reminder B.', scope='turn')]),
+        ModelRequest(parts=[UserPromptPart('Hello'), SystemPromptPart('Reminder A.', scope='request')]),
+        ModelRequest(parts=[SystemPromptPart('Reminder B.', scope='request')]),
         ModelRequest(parts=[UserPromptPart('Are you there?')]),
     ]
 
@@ -742,14 +744,14 @@ def test_current_turn_scoped_prompts_move_to_the_last_request():
                     UserPromptPart(content='<system>Reminder A.</system>', timestamp=IsDatetime()),
                     UserPromptPart(content='<system>Reminder B.</system>', timestamp=IsDatetime()),
                 ],
-                metadata={'__pydantic_ai__': {'turn_scoped_tail': 2}},
+                metadata={'__pydantic_ai__': {'request_scoped_tail': 2}},
             ),
         ]
     )
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_turn_scoped_opt_out_through_the_profile(
+async def test_anthropic_request_scoped_opt_out_through_the_profile(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
     """Setting the profile flag to `False` on a model that has it opts out of the beta.
@@ -759,7 +761,9 @@ async def test_anthropic_turn_scoped_opt_out_through_the_profile(
     """
     provider = AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
     model = AnthropicModel(
-        'claude-opus-5-5', provider=provider, profile=AnthropicModelProfile(supports_turn_scoped_system_prompts=False)
+        'claude-opus-5-5',
+        provider=provider,
+        profile=AnthropicModelProfile(supports_request_scoped_system_prompts=False),
     )
     native = AnthropicModel('claude-opus-5-5', provider=provider)
     foundry = AnthropicModel(
@@ -767,9 +771,9 @@ async def test_anthropic_turn_scoped_opt_out_through_the_profile(
         provider=AnthropicProvider(anthropic_client=AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
     )
     assert model.profile.get('supports_inline_system_prompts') is True
-    assert native.profile.get('supports_turn_scoped_system_prompts') is True
-    # Microsoft Foundry serves no `system` role, so it can't serve a turn-scoped one either.
-    assert foundry.profile.get('supports_turn_scoped_system_prompts') is False
+    assert native.profile.get('supports_request_scoped_system_prompts') is True
+    # Microsoft Foundry serves no `system` role, so it can't serve a request-scoped one either.
+    assert foundry.profile.get('supports_request_scoped_system_prompts') is False
 
     await send(model, tool_loop_history())
 
@@ -790,10 +794,10 @@ async def test_anthropic_turn_scoped_opt_out_through_the_profile(
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted(
+async def test_anthropic_leading_request_scoped_prompt_is_not_hoisted(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    """A turn-scoped prompt opening the first request is not part of the standing system prompt.
+    """A request-scoped prompt opening the first request is not part of the standing system prompt.
 
     The top-level `system` parameter goes out with every request, so hoisting it there would make it
     permanent; it's sent as a `clear_at` entry after the user turn instead, with the beta header.
@@ -802,7 +806,7 @@ async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted(
         ModelRequest(
             parts=[
                 SystemPromptPart('You are terse.'),
-                SystemPromptPart('Answer in French this turn.', scope='turn'),
+                SystemPromptPart('Answer in French this turn.', scope='request'),
                 UserPromptPart('Hello'),
             ]
         )
@@ -826,7 +830,7 @@ async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted(
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-async def test_bedrock_message_cache_point_goes_before_the_turn_scoped_prompt(
+async def test_bedrock_message_cache_point_goes_before_the_request_scoped_prompt(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
     """`bedrock_cache_messages` puts its cache point before the reminder, not after it.
@@ -858,7 +862,7 @@ async def test_bedrock_message_cache_point_goes_before_the_turn_scoped_prompt(
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_openrouter_message_cache_control_goes_before_the_turn_scoped_prompt(
+async def test_openrouter_message_cache_control_goes_before_the_request_scoped_prompt(
     allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
 ):
     """`openrouter_cache_messages` marks the message before the reminder, not the reminder.
@@ -891,8 +895,8 @@ async def test_openrouter_message_cache_control_goes_before_the_turn_scoped_prom
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_unified_cache_skips_the_turn_scoped_entry(allow_model_requests: None):
-    """`cache=True` takes the same breakpoint path as the `anthropic_cache*` settings, so it honors turn-scoped entries.
+async def test_anthropic_unified_cache_skips_the_request_scoped_entry(allow_model_requests: None):
+    """`cache=True` takes the same breakpoint path as the `anthropic_cache*` settings, so it honors request-scoped entries.
 
     It turns on automatic caching plus instruction and tool breakpoints. The server's automatic breakpoint skips a
     `clear_at` entry, so an explicit `CachePoint` on the block before one is the block automatic caching would mark:
@@ -929,10 +933,10 @@ async def test_anthropic_unified_cache_skips_the_turn_scoped_entry(allow_model_r
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
+def test_anthropic_bedrock_lookback_breakpoint_skips_the_request_scoped_entry():
     """On Bedrock, the previous request's end gets a breakpoint after a wide turn, but never on its `clear_at` entry.
 
-    The previous request put its breakpoint on the block before its turn-scoped entry (`cache_control` on one is a
+    The previous request put its breakpoint on the block before its request-scoped entry (`cache_control` on one is a
     400), so that's the block the lookback breakpoint goes on, with the entry's blocks counted toward the lookback.
     Driven through the placement method on hand-built wire messages, as the existing lookback test in
     `test_anthropic.py` is: the property is about the previous request, which one request can't show, and the Bedrock
@@ -971,7 +975,7 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
 
 
 def duplicate_text_history() -> list[ModelMessage]:
-    """A tool round whose lasting user text is the same as the turn-scoped reminder after it, as rendered."""
+    """A tool round whose lasting user text is the same as the request-scoped reminder after it, as rendered."""
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
@@ -981,7 +985,7 @@ def duplicate_text_history() -> list[ModelMessage]:
                 UserPromptPart('<system>Reminder.</system>'),
             ]
         ),
-        ModelRequest(parts=[SystemPromptPart('Reminder.', scope='turn')]),
+        ModelRequest(parts=[SystemPromptPart('Reminder.', scope='request')]),
     ]
 
 
@@ -1046,14 +1050,14 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
 def ui_history() -> list[ModelMessage]:
     return [
         ModelRequest(parts=[SystemPromptPart('You are terse.'), UserPromptPart('Hello')]),
-        ModelRequest(parts=[SystemPromptPart('Answer in French this turn.', scope='turn')]),
+        ModelRequest(parts=[SystemPromptPart('Answer in French this turn.', scope='request')]),
         ModelResponse(parts=[TextPart('Bonjour')]),
     ]
 
 
 @pytest.mark.skipif(not vercel_ai_available(), reason='vercel ai adapter not installed')
-def test_vercel_ai_dump_leaves_out_turn_scoped_prompts():
-    """A turn-scoped prompt is for the model's current request, so it's not sent to the frontend.
+def test_vercel_ai_dump_leaves_out_request_scoped_prompts():
+    """A request-scoped prompt is for the model's current request, so it's not sent to the frontend.
 
     Loaded back from the frontend, it would come back as a lasting system prompt.
     """
@@ -1074,8 +1078,8 @@ def test_vercel_ai_dump_leaves_out_turn_scoped_prompts():
 
 
 @pytest.mark.skipif(not ag_ui_available(), reason='ag-ui not installed')
-def test_ag_ui_dump_leaves_out_turn_scoped_prompts():
-    """A turn-scoped prompt is for the model's current request, so it's not sent to the frontend."""
+def test_ag_ui_dump_leaves_out_request_scoped_prompts():
+    """A request-scoped prompt is for the model's current request, so it's not sent to the frontend."""
     dumped = AGUIAdapter.dump_messages(ui_history())
 
     assert [message.model_dump(exclude_none=True) for message in dumped] == snapshot(

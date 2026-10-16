@@ -78,9 +78,9 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
+    _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
-    _turn_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
-    _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -1671,11 +1671,11 @@ class BedrockConverseModel(Model[BaseClient]):
                             _insert_cache_point_before_trailing_documents(
                                 previous_content, self._get_cache_point(cache_messages)
                             )
-                    # A turn-scoped prompt ends the request when it's rendered as text (see
-                    # `_turn_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
+                    # A request-scoped prompt ends the request when it's rendered as text (see
+                    # `_request_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
                     # before it. One with nothing ahead of it in the message gets no breakpoint.
-                    end, _ = _turn_scoped_suffix_start(
-                        last_user_content, _turn_scoped_tail_texts(messages), lambda block: block.get('text')
+                    end, _ = _request_scoped_suffix_start(
+                        last_user_content, _request_scoped_tail_texts(messages), lambda block: block.get('text')
                     )
                     lasting_content = last_user_content[:end]
                     if lasting_content and 'cachePoint' not in lasting_content[-1]:

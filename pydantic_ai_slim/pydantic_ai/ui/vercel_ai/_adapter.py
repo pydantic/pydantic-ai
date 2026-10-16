@@ -711,9 +711,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
-                # A turn-scoped prompt is for the model's current request only; loaded back, it would
+                # A request-scoped prompt is for the model's current request only; loaded back, it would
                 # come back as a lasting system prompt.
-                if part.scope != 'turn':
+                if part.scope != 'request':
                     system_ui_parts.append(TextUIPart(text=part.content, state='done'))
             elif isinstance(part, UserPromptPart):
                 user_ui_parts.extend(_convert_user_prompt_part(part))

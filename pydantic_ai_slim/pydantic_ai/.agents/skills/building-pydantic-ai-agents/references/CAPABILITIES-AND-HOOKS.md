@@ -140,13 +140,13 @@ In `run_stream()`, `ContextVar` values set by an async `before_model_request` ho
 Changing what the model sees from `before_model_request`:
 
 - Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
-- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='turn'))`. Anthropic sends it with `clear_at` and stops showing it once the turn is over; other providers get it with its own request only. It stays in history either way.
+- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once the turn is over; other providers get it with its own request only. It stays in history either way.
 - State the model should track (todo list, notes): instructions, via `get_instructions` returning a callable. Each change re-sends everything after the instructions uncached.
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
 - `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
 
-A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, turn-scoped when one-off; never make them per-request copies.
+A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 

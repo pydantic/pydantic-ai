@@ -11754,13 +11754,13 @@ class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='turn'))
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
         return request_context
 
 
 @pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
-async def test_turn_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
-    """A turn-scoped reminder is for the model's current request, so it never reaches the frontend.
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
 
     Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
     enqueue sends no `data-enqueued-messages` part at all.

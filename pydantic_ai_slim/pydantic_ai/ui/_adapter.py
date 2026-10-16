@@ -190,7 +190,7 @@ def enqueued_messages_for_client(
 
     When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
     frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
-    Turn-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
+    Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
     current request only, and loaded back they'd become lasting system prompts.
     """
     kept: list[ModelMessage] = []
@@ -199,7 +199,8 @@ def enqueued_messages_for_client(
             parts = [
                 part
                 for part in message.parts
-                if not isinstance(part, SystemPromptPart) or (manage_system_prompt == 'client' and part.scope != 'turn')
+                if not isinstance(part, SystemPromptPart)
+                or (manage_system_prompt == 'client' and part.scope != 'request')
             ]
             if not parts:
                 continue

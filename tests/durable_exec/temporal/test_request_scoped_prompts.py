@@ -1,6 +1,6 @@
-"""Turn-scoped system prompts under Temporal.
+"""Request-scoped system prompts under Temporal.
 
-A turn-scoped `SystemPromptPart` stays in the message history, so the history records exactly what
+A request-scoped `SystemPromptPart` stays in the message history, so the history records exactly what
 each model request was built from, and the request a workflow hands its model activity is
 reproducible from that history alone. This runs a workflow whose capability adds one to every
 request, checks what the model activity was sent, then replays the workflow's history to show the
@@ -58,7 +58,7 @@ pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
 
 @dataclass
 class TurnReminder(AbstractCapability[Any]):
-    """Adds a turn-scoped reminder to every model request, from workflow code."""
+    """Adds a request-scoped reminder to every model request, from workflow code."""
 
     requests: int = field(default=0, init=False)
 
@@ -69,7 +69,7 @@ class TurnReminder(AbstractCapability[Any]):
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         self.requests += 1
-        reminder = ModelRequest(parts=[SystemPromptPart(f'Reminder {self.requests}.', scope='turn')])
+        reminder = ModelRequest(parts=[SystemPromptPart(f'Reminder {self.requests}.', scope='request')])
         ctx.messages.append(reminder)
         request_context.messages = [*request_context.messages, reminder]
         return request_context
@@ -100,7 +100,7 @@ def look_up(city: str) -> str:
 
 _agent = Agent(
     FunctionModel(_model_fn),
-    name='turn_scoped_prompts',
+    name='request_scoped_prompts',
     tools=[look_up],
     capabilities=[TurnReminder(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
@@ -114,8 +114,8 @@ class TurnScopedPromptsWorkflow:
         return result.all_messages_json().decode()
 
 
-async def test_turn_scoped_prompts_replay_deterministically(client: Client):
-    """The history records every turn-scoped prompt, the activity got only the current ones, and replay agrees."""
+async def test_request_scoped_prompts_replay_deterministically(client: Client):
+    """The history records every request-scoped prompt, the activity got only the current ones, and replay agrees."""
     _seen_by_model.clear()
     async with Worker(
         client,
@@ -138,9 +138,9 @@ async def test_turn_scoped_prompts_replay_deterministically(client: Client):
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.scope == 'turn'
+        if isinstance(part, SystemPromptPart) and part.scope == 'request'
     ] == ['Reminder 1.', 'Reminder 2.']
-    # `FunctionModel` can't clear a turn-scoped prompt itself, so each request carried only its own.
+    # `FunctionModel` can't clear a request-scoped prompt itself, so each request carried only its own.
     assert _seen_by_model == [
         ['<system>Reminder 1.</system>'],
         ['<system>Reminder 2.</system>'],

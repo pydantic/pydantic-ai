@@ -587,19 +587,19 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 
 ### Turn-scoped system messages
 
-A [turn-scoped](../message-history.md#turn-scoped-system-prompts) `SystemPromptPart` (`scope='turn'`) is sent as a [turn-scoped system message](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#turn-scoped-system-messages): a `{'role': 'system'}` entry with `clear_at: 'next_user_message'`, which the API stops rendering once a later user turn exists, including one that only carries tool results. Pydantic AI sends every one of them with every request, current or not, and adds the `mid-conversation-system-clear-at-2026-08-21` beta header for you.
+A [request-scoped](../message-history.md#request-scoped-system-prompts) `SystemPromptPart` (`scope='request'`) is sent as a [turn-scoped system message](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#turn-scoped-system-messages): a `{'role': 'system'}` entry with `clear_at: 'next_user_message'`, which the API stops rendering once a later user turn exists, including one that only carries tool results. Pydantic AI sends every one of them with every request, current or not, and adds the `mid-conversation-system-clear-at-2026-08-21` beta header for you.
 
 That matters most on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1: they tie each thinking block to the exact conversation it was produced in, so deleting an earlier reminder from a later request invalidates every thinking block after it, while a cleared one left in place doesn't. A cleared entry costs no input tokens and is never part of a cache key, so `anthropic_cache_messages` and `anthropic_cache` put their breakpoints on the content before it.
 
-Support follows mid-conversation system messages, on the same models and transports. Elsewhere, including on models that don't take the `system` role, a turn-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; turn-scoped prompts are then sent only while they're current:
+Support follows mid-conversation system messages, on the same models and transports. Elsewhere, including on models that don't take the `system` role, a request-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; request-scoped prompts are then sent only while they're current:
 
-```python {title="turn_scoped_opt_out.py"}
+```python {title="request_scoped_opt_out.py"}
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
 model = AnthropicModel(
     '{{ anthropic:large.name }}',
-    profile=AnthropicModelProfile(supports_turn_scoped_system_prompts=False),
+    profile=AnthropicModelProfile(supports_request_scoped_system_prompts=False),
 )
 ```
 
