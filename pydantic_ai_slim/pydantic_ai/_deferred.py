@@ -83,7 +83,7 @@ class DeferredToolRequests:
             metadata: Per-call metadata, keyed by `tool_call_id`.
             approve_all: If `True`, every call in `self.approvals` not already listed in
                 `approvals` is approved (with default `ToolApproved()`). Calls in `self.native_approvals`
-                are only approved by name, in `approvals`.
+                are never approved by `approve_all`: answer them by `tool_call_id` in `approvals`.
 
         Raises:
             ValueError: If a key in `approvals`/`calls` doesn't match a pending request of
