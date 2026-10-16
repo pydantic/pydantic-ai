@@ -216,7 +216,7 @@ def test_the_session_agent_gets_no_workspace_tools(make_web: MakeWeb) -> None:
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
     assert 'ask_user_question' in offered
-    assert not [name for name in offered if name.startswith(('workspace_', 'session_'))]
+    assert not [name for name in offered if name.startswith(('workspace_', 'session_', 'sessions_'))]
 
 
 def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> None:

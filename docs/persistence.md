@@ -40,7 +40,7 @@ print(result.usage.requests)  # (2)!
 ```
 
 1. JSON bytes for a `jsonb` column or equivalent, keyed by `result.conversation_id`.
-2. The second run counts on from the first, so a [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget covers the whole conversation rather than each run.
+2. The second run counts on from the first, so a [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget covers the whole conversation rather than each run. Each run adds only what the provider billed during it, so this stays the conversation's true total when a run resumes a turn an earlier run left suspended.
 
 It round-trips with the same fidelity as the message history's own [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), including fields that are never sent to the model, like a part's application-only `metadata`. Because that field is typed `Any`, values with no JSON form are normalized on the way through: a `tuple` reloads as a `list`, a `datetime` as its ISO string, and raw `bytes` as their base64 string. The ["What survives a round-trip"](message-history.md#storing-and-loading-messages-to-json) note covers the edges. No schema migration is needed when Pydantic AI adds a message part, because a conversation serialized by an older version still deserializes.
 

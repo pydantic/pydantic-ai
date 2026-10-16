@@ -52,6 +52,12 @@ export const ArrowUpIcon = icon(
     <path d="m5 12 7-7 7 7" />
   </>,
 )
+export const ArrowDownIcon = icon(
+  <>
+    <path d="M12 5v14" />
+    <path d="m19 12-7 7-7-7" />
+  </>,
+)
 export const StopIcon = icon(<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />)
 export const TerminalIcon = icon(
   <>
@@ -136,6 +142,13 @@ export const OrchestratorIcon = icon(
     <circle cx="18.5" cy="5.5" r="2" />
     <circle cx="12" cy="20" r="2" />
     <path d="m7 7 3.2 3.2M17 7l-3.2 3.2M12 14.5V18" />
+  </>,
+)
+export const ArchiveIcon = icon(
+  <>
+    <rect x="3" y="4" width="18" height="4" rx="1" />
+    <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+    <path d="M10 12h4" />
   </>,
 )
 export const TracesIcon = icon(<path d="M3 12h4l3-8 4 16 3-8h4" />)
