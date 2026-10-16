@@ -939,7 +939,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 if branch_source in {Any, object}:
                     inputs_match = True
                 elif get_origin(branch_source) is Literal:
-                    inputs_match = inputs in get_args(branch_source)
+                    inputs_match = any(
+                        type(inputs) is type(expected) and inputs == expected for expected in get_args(branch_source)
+                    )
                 else:
                     try:
                         inputs_match = isinstance(inputs, branch_source)
