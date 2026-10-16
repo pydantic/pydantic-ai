@@ -4979,16 +4979,29 @@ timed_out_agent = Agent(
 )
 
 
+_timed_out_run_contexts: list[RunContext[None]] = []
+
+
+@timed_out_agent.instructions
+def capture_timed_out_run_context(ctx: RunContext[None]) -> str:
+    _timed_out_run_contexts.append(ctx)
+    return 'Call the tool.'
+
+
 @timed_out_agent.tool_plain
 async def slow_tool() -> str:
-    await asyncio.sleep(30)
+    # The deadline passes once the tool is running: expire the run as its timer would, without racing one.
+    cancellation = _timed_out_run_contexts[-1]._cancellation  # pyright: ignore[reportPrivateUsage]
+    assert cancellation is not None
+    cancellation.expire()
+    await asyncio.Event().wait()
     return 'never reached'  # pragma: no cover
 
 
 @DBOS.workflow()
 async def timed_out_workflow() -> list[str]:
     try:
-        await timed_out_agent.run('Hello', timeout=0.1)
+        await timed_out_agent.run('Hello', timeout=3600)
     except RunTimedOut as exc:
         return [type(message).__name__ for message in exc.all_messages()]
     return []  # pragma: no cover
@@ -5001,4 +5014,4 @@ async def test_dbos_timeout_in_workflow(dbos: DBOS) -> None:
 async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
     """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
     with pytest.raises(RunTimedOut):
-        await timed_out_agent.run('Hello', timeout=0.1)
+        await timed_out_agent.run('Hello', timeout=0)

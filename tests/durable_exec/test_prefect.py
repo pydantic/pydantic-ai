@@ -2811,15 +2811,26 @@ async def test_timeout_in_flow() -> None:
         FunctionModel(call_slow_tool), name='timed_out_flow_agent', capabilities=[PrefectDurability[object]()]
     )
 
+    run_contexts: list[RunContext[object]] = []
+
+    @agent.instructions
+    def capture_run_context(ctx: RunContext[object]) -> str:
+        run_contexts.append(ctx)
+        return 'Call the tool.'
+
     @agent.tool_plain
     async def slow_tool() -> str:
-        await asyncio.sleep(30)
+        # The deadline passes once the tool is running: expire the run as its timer would, without racing one.
+        cancellation = run_contexts[-1]._cancellation  # pyright: ignore[reportPrivateUsage]
+        assert cancellation is not None
+        cancellation.expire()
+        await asyncio.Event().wait()
         return 'never reached'  # pragma: no cover
 
     @flow
     async def timed_out() -> list[str]:
         try:
-            await agent.run('go', timeout=0.5)
+            await agent.run('go', timeout=3600)
         except RunTimedOut as exc:
             return [type(message).__name__ for message in exc.all_messages()]
         return []  # pragma: no cover
@@ -2828,7 +2839,7 @@ async def test_timeout_in_flow() -> None:
 
     # Outside a flow the capability is transparent: the run's own clock starts the deadline.
     with pytest.raises(RunTimedOut):
-        await agent.run('go', timeout=0.1)
+        await agent.run('go', timeout=0)
 
 
 async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
