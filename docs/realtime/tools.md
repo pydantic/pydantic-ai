@@ -98,7 +98,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 
 agent = Agent(instructions='Look up orders with the tool, and keep the caller company while it runs.')
 realtime = agent.realtime(
-    'google:gemini-3.8-live', model_settings=RealtimeModelSettings(async_tool_calls=True)
+    '{{ google:realtime }}', model_settings=RealtimeModelSettings(async_tool_calls=True)
 )
 ```
 
@@ -126,7 +126,7 @@ agent = Agent(instructions='Answer questions, searching the web when useful.')
 
 async def main():
     async with agent.realtime(
-        'google:gemini-2.5-flash-native-audio-latest',
+        '{{ google:realtime }}',
         capabilities=[WebSearch()],
     ).session() as session:
         await session.send("What's the latest Pydantic AI release?")
@@ -184,7 +184,7 @@ async def refund_policy(
 
 async def main():
     async with agent.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         capabilities=[HandleDeferredToolCalls(handler=refund_policy)],
     ).session():
         ...
@@ -248,7 +248,7 @@ agent = Agent()
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         session.enqueue(
             SystemPromptPart(content='A watchdog detected elevated latency. Mention this briefly.'),
             priority='when_idle',
@@ -332,7 +332,7 @@ class Answer(BaseModel):
     confidence: float
 
 
-supervisor = Agent('openai:gpt-5', output_type=Answer)
+supervisor = Agent('{{ openai:medium }}', output_type=Answer)
 voice = Agent(instructions='Answer using the `consult` tool, then read the summary aloud.')
 
 
@@ -343,7 +343,7 @@ async def consult(question: str) -> str:
 
 
 async def main():
-    async with voice.realtime('openai:gpt-realtime').session() as session:
+    async with voice.realtime('{{ openai:realtime }}').session() as session:
         await session.send(
             'Which of our three shipping options is cheapest for a 4 kg parcel to Berlin?'
         )

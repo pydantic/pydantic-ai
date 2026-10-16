@@ -28,7 +28,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and
-  host.sessions lists, renames, forks, and deletes the saved sessions /resume shows.
+  host.sessions lists, reads, renames, forks, and deletes the saved sessions /resume shows.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
 - Offer a settings menu: override async configure().
@@ -733,7 +733,7 @@ builders headlessly, with injected runners instead of a real terminal.
 
 In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
 and focused pytest tests. Check /plugins list for loading errors, reload after
-edits, and verify disable removes your commands and tools. Keep README.md and
+edits, and verify disable removes your commands and tools. Keep README.md, docs/reference.md, and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
 by Plugin or PluginHost, state that limitation and propose a focused source change rather
 than monkeypatching a private global registry.

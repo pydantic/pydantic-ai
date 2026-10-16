@@ -18,7 +18,7 @@ Use the [`Caching`][pydantic_ai.capabilities.Caching] capability to enable cachi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching()])
+agent = Agent('{{ anthropic:large }}', capabilities=[Caching()])
 ```
 
 `model_settings={'cache': True}` is the equivalent through the `cache` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings].
@@ -58,7 +58,7 @@ from pydantic_ai.capabilities import Caching
 handbook = '...'  # a long document, well above the provider's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     capabilities=[Caching(messages=False)],
 )
@@ -74,7 +74,7 @@ On providers where `Caching()` has no effect, `messages=False` doesn't either: i
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     model_settings={'cache': {'retention': '1h', 'messages': False}},
 )
 ```
@@ -194,7 +194,7 @@ from pydantic_ai.capabilities import Caching
 handbook = '...'  # a long document, well above the provider's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     capabilities=[Caching()],
 )

@@ -54,7 +54,7 @@ overrides only what it needs, and the agent asks for each contribution.
 | `get_toolset()`, `get_instructions()`, ... | `get_capabilities()`, `get_commands()`, `get_status_segments()`, `get_spinners()`, `get_model_providers()`, `get_logins()` |
 | `before_run`, `after_tool_execute`, ... | `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed` |
 | `@on_event(EventClass)` | `render(event)` for display; `@on_event` / `Hooks` inside `get_capabilities` for observing |
-| `RunContext` | `self.host`, a `PluginHost` holding the console, conversation, status, full screen, and saved settings |
+| `RunContext` | `self.host`, a `PluginHost` holding the console, conversation, status, full screen, and saved settings, the prompt (`send_input`/`interrupt`/`complete`), and the saved `sessions` |
 
 ```python
 class MyPlugin(Plugin[Settings]):

@@ -395,6 +395,9 @@ class _DecodedFrame:
     stale: bool = False
     """Whether the frame is about a response that has already ended, so its codec events repeat or trail
     that response's terminal and are left out of the lifecycle stream."""
+    redial: str | None = None
+    """Why the connection re-dials right after this frame, when the server ended the conversation on it in a way a
+    new connection recovers from (xAI's `max_duration`): the socket is dropped rather than waited on to close."""
 
     @property
     def ends_session(self) -> bool:
@@ -846,17 +849,23 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     # re-dialing would only run into the same end.
                     self._session_ended = self._session_ended or frame.ends_session
                     yield frame.tagged()
-                # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
-                # on an abnormal one, but a session the server hung up on is over either way: OpenAI
-                # ends one that reaches its duration cap with `1001 Your session hit the maximum
-                # duration of 60 minutes.`. Handle it like a drop so a reconnect policy still runs and,
-                # without one, the consumer learns the conversation was cut off instead of seeing the
-                # stream quietly end.
-                if not self._observes_output_audio:
-                    self._lifecycle.closed(self._unanswered_inputs())
-                    yield [(event, False) for event in self._take_pending_lifecycle()]
-                    return
-                closed = _describe_close(self._ws)
+                    if frame.redial is not None:
+                        # Whether or not the server closes the socket next, nothing more comes on it: the
+                        # re-dial closes it.
+                        closed = frame.redial
+                        break
+                else:
+                    # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
+                    # on an abnormal one, but a session the server hung up on is over either way: OpenAI
+                    # ends one that reaches its duration cap with `1001 Your session hit the maximum
+                    # duration of 60 minutes.`. Handle it like a drop so a reconnect policy still runs and,
+                    # without one, the consumer learns the conversation was cut off instead of seeing the
+                    # stream quietly end.
+                    if not self._observes_output_audio:
+                        self._lifecycle.closed(self._unanswered_inputs())
+                        yield [(event, False) for event in self._take_pending_lifecycle()]
+                        return
+                    closed = _describe_close(self._ws)
             except self.transport_errors as e:
                 # `ConnectionClosed`, any other protocol error, or a socket-level `OSError` (reset,
                 # broken pipe): all mean the link failed, so they all take the same reconnect path
