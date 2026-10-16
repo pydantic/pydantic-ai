@@ -1556,7 +1556,7 @@ and replace none of them.
 
 | Row | What it does |
 | --- | --- |
-| Your instructions | Shows their first line and length. Enter opens them in an editor; saving an empty text removes them. `r` removes them, so only CLAI's defaults are sent. |
+| Your instructions | Shows their first line and how many lines they have. Enter opens them in an editor; saving an empty text removes them. `r` removes them, so only CLAI's defaults are sent. |
 | Append to yours | Opens an empty editor; what you write is added as a new paragraph. |
 | Full system prompt | The instructions sent with the conversation's latest request, yours included, in a scrollable view. |
 
