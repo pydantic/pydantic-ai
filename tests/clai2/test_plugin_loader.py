@@ -1259,6 +1259,16 @@ async def test_one_session_ends_its_own_plugins_before_the_process_ones(tmp_path
     assert harness.text.index('alpha stopped exit') < harness.text.index('shared stopped exit')
 
 
+async def test_the_last_session_closing_mid_turn_ends_process_plugins_after_it(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await harness.loader.load_all()
+    async with harness.loader.turn():
+        await harness.loader.close('exit')
+        assert 'shared stopped' not in harness.text, 'the running turn may still use it'
+    assert harness.text.count('shared stopped exit') == 1
+
+
 async def test_a_process_plugin_follows_the_session_being_handled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1346,7 +1356,7 @@ def test_a_session_joins_a_process_or_makes_its_own(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
 
     def start() -> SessionStart:
-        return SessionStart(agent=Agent(TestModel()), settings=store.load())
+        raise AssertionError  # pragma: no cover -- neither session is built, so nothing starts
 
     console = Console(file=io.StringIO())
     with pytest.raises(TypeError, match='needs the process it joins'):

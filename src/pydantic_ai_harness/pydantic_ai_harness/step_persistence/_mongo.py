@@ -4,9 +4,9 @@ Mirrors `SqliteStepStore`: an append-only event log, continuable snapshots,
 and a tool-effect ledger, keyed off one `AsyncMongoClient`. Binary and text
 parts at or above `media_threshold_bytes` are externalized to a `MediaStore`
 (default: a `MongoMediaStore` sharing the same client). This is a per-value
-offload, not an aggregate size cap: a snapshot made of many parts each below
+offload, not an aggregate size cap: a message made of many parts each below
 the threshold can still exceed MongoDB's 16MB BSON limit and fail on insert.
-Lower `media_threshold_bytes` if your snapshots accumulate many mid-sized
+Lower `media_threshold_bytes` if your messages accumulate many mid-sized
 parts.
 
 Collections (created lazily on first write):
@@ -17,6 +17,11 @@ Collections (created lazily on first write):
 - `snapshots` -- one document per snapshot; latest-per-run is the highest
   `seq`, matching `SqliteStepStore`'s `AUTOINCREMENT seq` so a reused
   `run_id` whose `step_index` reset to 0 cannot clobber an earlier snapshot.
+  `messages` holds `{"message_refs": [sha256, ...]}`; documents written before
+  messages were stored once hold the history's JSON list, and still read.
+- `snapshot_messages` -- `_id = sha256`, each message's JSON once. Like
+  externalized media, a message stays when the snapshots referencing it are
+  pruned.
 - `snapshot_idempotency_keys` -- replay suppression retained after pruning.
 - `tool_effects` -- upsert per `(run_id, tool_call_id)`.
 - `counters` -- one document per sequence name, incremented atomically with
@@ -27,17 +32,25 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncGenerator
 from datetime import datetime
 
 from pymongo import AsyncMongoClient, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.media._mongo import MongoMediaStore
+from pydantic_ai_harness.step_persistence._messages import (
+    MessageRefs,
+    keyed_messages,
+    message_refs,
+    referenced_history_json,
+)
 from pydantic_ai_harness.step_persistence._store import (
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]
+    _OBJECT_LIST_ADAPTER,  # pyright: ignore[reportPrivateUsage]
     _AutoMedia,  # pyright: ignore[reportPrivateUsage]
     _event_from_dict,  # pyright: ignore[reportPrivateUsage]
     _event_to_dict,  # pyright: ignore[reportPrivateUsage]
@@ -61,6 +74,10 @@ from pydantic_ai_harness.step_persistence._types import (
 _MongoDocument = dict[str, object]
 
 _logger = logging.getLogger(__name__)
+
+_DUPLICATE_KEY = 11000
+# Message keys per `$in` lookup, keeping each query far below MongoDB's 16 MiB command limit.
+_KEYS_PER_LOOKUP = 10_000
 
 
 class MongoStepStore:
@@ -215,6 +232,7 @@ class MongoStepStore:
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
             )
+        keyed = keyed_messages(_OBJECT_LIST_ADAPTER.validate_python(messages_json))
         doc: _MongoDocument = {
             'run_id': snapshot.run_id,
             'step_index': snapshot.step_index,
@@ -223,17 +241,20 @@ class MongoStepStore:
             'agent_name': snapshot.agent_name,
             'timestamp': snapshot.timestamp.isoformat(),
             'state': snapshot.state,
-            'messages': json.dumps(messages_json),
+            'messages': json.dumps(MessageRefs(message_refs=[sha256 for sha256, _ in keyed])),
             'idempotency_key': snapshot.idempotency_key,
         }
         if snapshot.idempotency_key is None:
             del doc['idempotency_key']
+            await self._store_messages(dict(keyed))
             doc['seq'] = await self._next_seq('snapshots')
             await self._db['snapshots'].insert_one(doc)
         else:
             key_id: _MongoDocument = {'run_id': snapshot.run_id, 'key': snapshot.idempotency_key}
             if await self._db['snapshot_idempotency_keys'].find_one({'_id': key_id}) is not None:
                 return
+            # Before the snapshot, so a reader never sees it without its messages.
+            await self._store_messages(dict(keyed))
             doc['seq'] = await self._next_seq('snapshots')
             try:
                 await self._db['snapshots'].insert_one(doc)
@@ -248,6 +269,53 @@ class MongoStepStore:
                 {'_id': key_id}, {'$setOnInsert': {'_id': key_id}}, upsert=True
             )
         await self._prune_snapshots(snapshot.run_id)
+
+    async def _store_messages(self, messages: dict[str, str]) -> None:
+        """Insert the messages `snapshot_messages` lacks.
+
+        Every snapshot repeats the history before it, so most are already
+        stored: look those up rather than send them again. A concurrent save
+        storing the same message makes its insert a duplicate, which is fine.
+        """
+        collection = self._db['snapshot_messages']
+        stored = {doc['_id'] async for doc in self._find_message_docs(set(messages), {'_id': 1})}
+        missing: list[_MongoDocument] = [
+            {'_id': sha256, 'message': message} for sha256, message in messages.items() if sha256 not in stored
+        ]
+        if not missing:
+            return
+        try:
+            await collection.insert_many(missing, ordered=False)
+        except BulkWriteError as exc:
+            if exc.details.get('writeConcernErrors') or any(
+                error['code'] != _DUPLICATE_KEY for error in exc.details['writeErrors']
+            ):
+                raise
+
+    async def _find_message_docs(
+        self, keys: set[str], projection: _MongoDocument | None = None
+    ) -> AsyncGenerator[_MongoDocument]:
+        """The `snapshot_messages` documents with these keys, looked up in batches."""
+        ordered = sorted(keys)
+        for start in range(0, len(ordered), _KEYS_PER_LOOKUP):
+            batch = ordered[start : start + _KEYS_PER_LOOKUP]
+            async for doc in self._db['snapshot_messages'].find({'_id': {'$in': batch}}, projection):
+                yield doc
+
+    async def _load_messages(self, docs: list[_MongoDocument]) -> dict[str, str]:
+        """The stored messages the snapshot documents reference, by key."""
+        refs = {
+            ref
+            for doc in docs
+            if isinstance(messages_text := doc.get('messages'), str)
+            for ref in (message_refs(messages_text) or ())
+        }
+        stored: dict[str, str] = {}
+        async for doc in self._find_message_docs(refs):
+            # A message that isn't text is left out, so reading its snapshot fails as a missing message.
+            if isinstance(message := doc.get('message'), str):
+                stored[str(doc['_id'])] = message
+        return stored
 
     async def _prune_snapshots(self, run_id: str) -> None:
         """Delete this run's snapshot documents outside the retain set when bounded.
@@ -272,12 +340,15 @@ class MongoStepStore:
         retained = _retained_seqs(entries, self._max_snapshots_per_run)
         await self._db['snapshots'].delete_many({'run_id': run_id, 'seq': {'$nin': sorted(retained)}})
 
-    async def _snapshot_from_doc(self, run_id: str, doc: _MongoDocument) -> ContinuableSnapshot:
+    async def _snapshot_from_doc(self, run_id: str, doc: _MongoDocument, stored: dict[str, str]) -> ContinuableSnapshot:
         messages_text = doc['messages']
         step_index = doc['step_index']
         timestamp_raw = doc['timestamp']
         if not (isinstance(messages_text, str) and isinstance(step_index, int) and isinstance(timestamp_raw, str)):
             raise ValueError('snapshot document has wrong types')
+        refs = message_refs(messages_text)
+        if refs is not None:
+            messages_text = referenced_history_json(refs, stored)
 
         messages_json: object = json.loads(messages_text)
         if self._media_store is not None:
@@ -302,7 +373,7 @@ class MongoStepStore:
         doc = await self._db['snapshots'].find_one(query, sort=[('seq', -1)])
         if doc is None:
             return None
-        return await self._snapshot_from_doc(run_id, doc)
+        return await self._snapshot_from_doc(run_id, doc, await self._load_messages([doc]))
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
         """Return retained snapshots for `run_id` in write order.
@@ -317,10 +388,12 @@ class MongoStepStore:
         query: _MongoDocument = {'run_id': run_id}
         if not include_interrupted:
             query['state'] = 'complete'
+        docs = [doc async for doc in self._db['snapshots'].find(query).sort('seq', 1)]
+        stored = await self._load_messages(docs)
         snapshots: list[ContinuableSnapshot] = []
-        async for doc in self._db['snapshots'].find(query).sort('seq', 1):
+        for doc in docs:
             try:
-                snapshots.append(await self._snapshot_from_doc(run_id, doc))
+                snapshots.append(await self._snapshot_from_doc(run_id, doc, stored))
             except Exception:
                 _logger.warning('Skipping unparsable snapshot document for run %s', run_id, exc_info=True)
         return snapshots
