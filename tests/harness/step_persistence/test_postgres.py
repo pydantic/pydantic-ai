@@ -49,6 +49,7 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectStatus,
 )
 from tests.harness._postgres_sqlite import SqlitePool
+from tests.harness.step_persistence._histories import growing_histories
 
 
 class _UnusedPool:
@@ -479,24 +480,10 @@ class TestPostgresStepStoreMedia:
         assert [p.data for p in prompt.content if isinstance(p, BinaryContent)] == [big]
 
 
-def _growing_histories(turns: int) -> list[list[ModelMessage]]:
-    """The history after each turn; each is a prefix of the next, as across a conversation's runs."""
-    histories: list[list[ModelMessage]] = []
-    history: list[ModelMessage] = []
-    for turn in range(turns):
-        history = [
-            *history,
-            ModelRequest(parts=[UserPromptPart(content=f'question {turn}')]),
-            ModelResponse(parts=[TextPart(content=f'answer {turn}')]),
-        ]
-        histories.append(history)
-    return histories
-
-
 class TestPostgresStepStoreStoresEachMessageOnce:
     async def test_stores_each_message_once_and_restores_every_snapshot(self, pool: SqlitePool) -> None:
         store = PostgresStepStore(pool, table='steps', media_store=None)
-        histories = _growing_histories(4)
+        histories = growing_histories(4)
         for turn, history in enumerate(histories):
             for step in range(2):
                 await store.save_snapshot(ContinuableSnapshot(run_id=f'r{turn}', step_index=step, messages=history))
@@ -517,7 +504,7 @@ class TestPostgresStepStoreStoresEachMessageOnce:
 
     async def test_rows_written_with_inline_history_still_read(self, pool: SqlitePool) -> None:
         store = PostgresStepStore(pool, table='steps', media_store=None)
-        first, second = _growing_histories(2)
+        first, second = growing_histories(2)
         await store.save_snapshot(ContinuableSnapshot(run_id='r0', step_index=0, messages=second))
         async with pool.acquire() as connection:
             # The row shape releases before messages were stored once wrote.
@@ -540,7 +527,7 @@ class TestPostgresStepStoreStoresEachMessageOnce:
         self, pool: SqlitePool, caplog: pytest.LogCaptureFixture
     ) -> None:
         store = PostgresStepStore(pool, table='steps', media_store=None)
-        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
         async with pool.acquire() as connection:
             await connection.execute("DELETE FROM steps_messages WHERE message LIKE '%question 0%'")
 
@@ -552,7 +539,7 @@ class TestPostgresStepStoreStoresEachMessageOnce:
 
     async def test_pruned_snapshots_leave_their_messages(self, pool: SqlitePool) -> None:
         store = PostgresStepStore(pool, table='steps', media_store=None, max_snapshots_per_run=1)
-        original = _growing_histories(2)[-1]
+        original = growing_histories(2)[-1]
         compacted: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='summary')]), original[-1]]
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=original))
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=compacted))
@@ -565,7 +552,7 @@ class TestPostgresStepStoreStoresEachMessageOnce:
 
     async def test_idempotent_retry_does_not_store_its_messages(self, pool: SqlitePool) -> None:
         store = PostgresStepStore(pool, table='steps', media_store=None)
-        first, second = _growing_histories(2)
+        first, second = growing_histories(2)
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='k'))
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='k'))
 

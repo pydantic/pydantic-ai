@@ -99,6 +99,8 @@ _SNAPSHOT_COLUMNS = (
     'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, idempotency_key'
 )
 _TOOL_EFFECT_COLUMNS = 'run_id, tool_call_id, tool_name, status, started_at, ended_at, idempotency_key, effect_summary'
+# Where `_select_snapshots_sql` puts the `messages` column, which `_snapshot_from_row` unpacks by name.
+_MESSAGES_COLUMN = 6
 # Rows per message `INSERT`, well under both Postgres's 65535 and SQLite's 32766 bound parameters.
 _MESSAGES_PER_INSERT = 1000
 
@@ -391,7 +393,12 @@ class PostgresStepStore:
 
     async def _load_messages(self, connection: PostgresConnection, rows: Sequence[Sequence[object]]) -> dict[str, str]:
         """The stored messages the snapshot rows reference, by key."""
-        refs = {ref for row in rows if isinstance(row[6], str) for ref in (message_refs(row[6]) or ())}
+        refs = {
+            ref
+            for row in rows
+            if isinstance(messages_text := row[_MESSAGES_COLUMN], str)
+            for ref in (message_refs(messages_text) or ())
+        }
         if not refs:
             return {}
         found = await connection.fetch(
@@ -474,9 +481,9 @@ class PostgresStepStore:
         sql = self._select_snapshots_sql(include_interrupted) + ' ORDER BY seq DESC LIMIT 1'
         async with self._pool.acquire() as connection:
             row = await connection.fetchrow(sql, run_id)
-            stored = await self._load_messages(connection, [row]) if row is not None else {}
-        if row is None:
-            return None
+            if row is None:
+                return None
+            stored = await self._load_messages(connection, [row])
         # The connection is released before media is restored, for the same
         # reason `save_snapshot` externalizes before its transaction.
         return await self._snapshot_from_row(run_id, row, stored)

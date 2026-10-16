@@ -43,6 +43,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
+from tests.harness.step_persistence._histories import growing_histories
 
 
 def _mock_client() -> AsyncMongoClient[dict[str, object]]:
@@ -510,25 +511,11 @@ class TestStepPersistenceLazyExport:
             _ = sp.NoSuchStore
 
 
-def _growing_histories(turns: int) -> list[list[ModelMessage]]:
-    """The history after each turn; each is a prefix of the next, as across a conversation's runs."""
-    histories: list[list[ModelMessage]] = []
-    history: list[ModelMessage] = []
-    for turn in range(turns):
-        history = [
-            *history,
-            ModelRequest(parts=[UserPromptPart(content=f'question {turn}')]),
-            ModelResponse(parts=[TextPart(content=f'answer {turn}')]),
-        ]
-        histories.append(history)
-    return histories
-
-
 class TestMongoStepStoreStoresEachMessageOnce:
     async def test_stores_each_message_once_and_restores_every_snapshot(self) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)
-        histories = _growing_histories(4)
+        histories = growing_histories(4)
         for turn, history in enumerate(histories):
             for step in range(2):
                 await store.save_snapshot(ContinuableSnapshot(run_id=f'r{turn}', step_index=step, messages=history))
@@ -550,7 +537,7 @@ class TestMongoStepStoreStoresEachMessageOnce:
     async def test_documents_written_with_inline_history_still_read(self) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)
-        first, second = _growing_histories(2)
+        first, second = growing_histories(2)
         await store.save_snapshot(ContinuableSnapshot(run_id='r0', step_index=0, messages=second))
         # The document shape releases before messages were stored once wrote.
         await client['t']['snapshots'].insert_one(
@@ -575,7 +562,7 @@ class TestMongoStepStoreStoresEachMessageOnce:
     ) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)
-        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
         await client['t']['snapshot_messages'].delete_one({'message': {'$regex': 'question 0'}})
 
         with pytest.raises(ValueError, match='snapshot references 1 stored message'):
@@ -584,10 +571,19 @@ class TestMongoStepStoreStoresEachMessageOnce:
             assert await store.list_snapshots(run_id='r1') == []
         assert any('unparsable' in record.message for record in caplog.records)
 
+    async def test_a_stored_message_that_is_not_text_reads_as_missing(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
+        await client['t']['snapshot_messages'].update_many({}, {'$set': {'message': 42}})
+
+        with pytest.raises(ValueError, match='snapshot references 2 stored message'):
+            await store.latest_snapshot(run_id='r1')
+
     async def test_idempotent_retry_does_not_store_its_messages(self) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)
-        first, second = _growing_histories(2)
+        first, second = growing_histories(2)
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='k'))
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='k'))
 
@@ -599,7 +595,7 @@ class TestMongoStepStoreStoresEachMessageOnce:
     ) -> None:
         client = _mock_client()
         store = MongoStepStore(client=client, database='t', media_store=None)
-        [history] = _growing_histories(1)
+        [history] = growing_histories(1)
         collection = client['t']['snapshot_messages']
         original_insert_many = type(collection).insert_many
 
@@ -639,13 +635,13 @@ class TestMongoStepStoreStoresEachMessageOnce:
 
         monkeypatch.setattr(collection_type, 'insert_many', reject)
         with pytest.raises(BulkWriteError):
-            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
         assert await client['t']['snapshots'].count_documents({}) == 0
 
     async def test_messages_are_looked_up_in_batches(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mongo_module, '_KEYS_PER_LOOKUP', 3)
         store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
-        histories = _growing_histories(4)
+        histories = growing_histories(4)
         for step, history in enumerate(histories):
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=history))
 

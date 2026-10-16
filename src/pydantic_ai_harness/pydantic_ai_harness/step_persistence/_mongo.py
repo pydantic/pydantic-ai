@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncGenerator
 from datetime import datetime
 
 from pymongo import AsyncMongoClient, ReturnDocument
@@ -277,7 +278,7 @@ class MongoStepStore:
         storing the same message makes its insert a duplicate, which is fine.
         """
         collection = self._db['snapshot_messages']
-        stored = await self._find_messages(set(messages), {'_id': 1})
+        stored = {doc['_id'] async for doc in self._find_message_docs(set(messages), {'_id': 1})}
         missing: list[_MongoDocument] = [
             {'_id': sha256, 'message': message} for sha256, message in messages.items() if sha256 not in stored
         ]
@@ -291,15 +292,15 @@ class MongoStepStore:
             ):
                 raise
 
-    async def _find_messages(self, keys: set[str], projection: _MongoDocument | None = None) -> dict[str, str]:
-        """The stored messages with these keys, looked up in batches."""
-        found: dict[str, str] = {}
+    async def _find_message_docs(
+        self, keys: set[str], projection: _MongoDocument | None = None
+    ) -> AsyncGenerator[_MongoDocument]:
+        """The `snapshot_messages` documents with these keys, looked up in batches."""
         ordered = sorted(keys)
         for start in range(0, len(ordered), _KEYS_PER_LOOKUP):
             batch = ordered[start : start + _KEYS_PER_LOOKUP]
             async for doc in self._db['snapshot_messages'].find({'_id': {'$in': batch}}, projection):
-                found[str(doc['_id'])] = str(doc.get('message'))
-        return found
+                yield doc
 
     async def _load_messages(self, docs: list[_MongoDocument]) -> dict[str, str]:
         """The stored messages the snapshot documents reference, by key."""
@@ -309,7 +310,12 @@ class MongoStepStore:
             if isinstance(messages_text := doc.get('messages'), str)
             for ref in (message_refs(messages_text) or ())
         }
-        return await self._find_messages(refs)
+        stored: dict[str, str] = {}
+        async for doc in self._find_message_docs(refs):
+            # A message that isn't text is left out, so reading its snapshot fails as a missing message.
+            if isinstance(message := doc.get('message'), str):
+                stored[str(doc['_id'])] = message
+        return stored
 
     async def _prune_snapshots(self, run_id: str) -> None:
         """Delete this run's snapshot documents outside the retain set when bounded.
