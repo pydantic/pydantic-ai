@@ -126,7 +126,7 @@ def test_theme_and_spinner_menus_are_their_rows_of_set(make_web: MakeWeb) -> Non
 
 @dataclass(frozen=True, kw_only=True)
 class Counter:
-    """A one-row menu whose action asks before it counts."""
+    """A one-row count, set by typing it or by an action that asks before it counts one more."""
 
     counted: list[str]
     title: str = 'Counter'
@@ -138,13 +138,15 @@ class Counter:
         return str(len(self.counted))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
-        return None
+        return None if text.isdigit() else 'Type a number.'
 
     def apply(self, row: FieldRow, raw: str) -> str:
-        return 'unused'
+        self.counted[:] = ['one'] * int(raw)
+        return f'Set to {raw}.'
 
     def reset(self, row: FieldRow) -> str:
-        return 'unused'
+        self.counted.clear()
+        return 'Reset.'
 
 
 def test_a_command_menu_action_asks_through_the_page(make_web: MakeWeb) -> None:
@@ -160,15 +162,20 @@ def test_a_command_menu_action_asks_through_the_page(make_web: MakeWeb) -> None:
     menu = SettingsMenu(source=Counter(counted=counted), actions={'count': count})
     web_.shell.commands.register(Command(name='counter', description='Count.', handler=lambda _: '', menu=lambda: menu))
     assert fields(web_, 'counter')['count']['action'] is True
+    # A row of a command's own menu edits through its source, as in the terminal.
+    assert web_.post('/api/commands/counter/fields/count', {'value': 'x'}).json()['detail'] == 'Type a number.'
+    assert web_.post('/api/commands/counter/fields/count', {'value': '3'}).json()['messages'] == ['Set to 3.']
+    assert web_.post('/api/commands/counter/fields/count', {'value': ''}).json()['messages'] == ['Reset.']
     with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
         socket.receive_text()
         with ThreadPoolExecutor(1) as pool:
-            action = pool.submit(web_.post, '/api/commands/counter/fields/count/action')
-            dialog = receive_until(socket, DialogOpened)[1].dialog
-            assert (dialog.kind, dialog.title) == ('confirm', 'Count one more?')
-            assert web_.post(f'/api/dialogs/{dialog.id}', {'value': 'yes'}).status_code == 204
-            done = action.result(timeout=10).json()
-    assert done['messages'] == ['Counted 1.']
+            for answer in ('no', 'yes'):
+                action = pool.submit(web_.post, '/api/commands/counter/fields/count/action')
+                dialog = receive_until(socket, DialogOpened)[1].dialog
+                assert (dialog.kind, dialog.title) == ('confirm', 'Count one more?')
+                assert web_.post(f'/api/dialogs/{dialog.id}', {'value': answer}).status_code == 204
+                done = action.result(timeout=10).json()
+                assert done['messages'] == ([] if answer == 'no' else ['Counted 1.'])
     assert done['menu']['fields'][0]['value'] == '1'
     assert 'Counted 1.' in terminal(web_)
 

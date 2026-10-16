@@ -1597,6 +1597,7 @@ async def _run_prompt(
 
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
+        status.context_estimated = False
 
     def context_window(window: int) -> None:
         # The `compaction` gauge, when loaded, already measured this request, honouring its override.
@@ -1624,6 +1625,7 @@ async def _run_prompt(
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
                 status.context_tokens = context_tokens(message) or None
+                status.context_estimated = False
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)
