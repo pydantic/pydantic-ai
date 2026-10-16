@@ -927,6 +927,8 @@ An operation can also be called from a tool the capability contributes. Where th
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
+Keep a capability's `id` stable once runs that use it are deployed, including the default `id` of one you did not write: Harness capabilities that record their tool requests, such as [`ExaSearch`](../harness/exa-search.md), name those records after their `id`.
+
 To branch on whether a hook is running in durable workflow code, check [`ctx.in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]. It is `True` inside a durable workflow or flow (like a Temporal or DBOS workflow) when the agent has a durability capability. It is `False` outside durable execution and inside the Temporal activities and DBOS steps where tools and model requests run. Prefect tasks inherit their flow's context, so it is `True` inside a Prefect task too.
 
 The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
