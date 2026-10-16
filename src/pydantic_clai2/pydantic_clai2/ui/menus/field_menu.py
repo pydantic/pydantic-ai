@@ -173,28 +173,27 @@ class FieldMenu:
         return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
     def initial(self, row: FieldRow) -> str:
-        """The text the editor starts with: a value you chose, so Enter keeps it.
+        """The text the editor starts with: the current value, so Enter keeps it.
 
-        Empty for a secret, and for a value left at its default or not set, which a source may show as
-        text you would not type, such as `LOGFIRE_API_KEY, if set`; Enter on empty resets, which keeps it.
+        Empty for a secret, for a value that is not set, and for one at its default, which a source may
+        show as text you would not type, such as `LOGFIRE_API_KEY, if set`. Enter on empty resets, which
+        keeps the default. Text that is not printable is left out rather than drawn as control characters.
         """
         if row.secret:
             return ''
         current = self._source.current(row)
-        return '' if current in (row.default, NOT_SET) else current
+        return '' if current in (row.default, NOT_SET) or not current.isprintable() else current
 
     def build_editor(self, row: FieldRow) -> TextInput:
-        """A typed input holding the current value, that validates as you go; empty resets.
-
-        It is filled in rather than shown as a placeholder: an empty input that read `current: []`
-        looked like the value itself, and Enter on it reset the setting to its default.
-        """
+        """A typed input that opens holding `initial(row)` and validates as you go; empty resets."""
         builder = (
             TextInputBuilder(f'New value for {row.label or row.key}')
             .style(markdown_style())
             .prompt('Value: ')
             .initial(self.initial(row))
-            .placeholder('Enter a new secret' if row.secret else f'empty resets to {row.display(row.default)}')
+            .placeholder(
+                'Enter a new secret' if row.secret else f'empty resets to {row.display(row.default) or "(empty)"}'
+            )
             .validator(lambda text: None if not text.strip() else self._source.problem(row, text.strip()))
             .footer_hint('Enter save - Esc cancel')
             .key_source(menu_key)
@@ -335,7 +334,8 @@ def _edit(menu: FieldMenu, row: FieldRow, runners: Runners) -> str | None:
     if typed.cancelled or not isinstance(typed.value, str):
         return None
     raw = typed.value.strip()
-    # Enter on the value it opened with saves nothing, so the setting is not pinned at its default.
+    # Enter on the value it opened with saves nothing: in `/set`, saving would copy a value from the
+    # project's settings file into your own.
     if raw and raw == menu.initial(row):
         return None
     return menu.apply(row, raw)

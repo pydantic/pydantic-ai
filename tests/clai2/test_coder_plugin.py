@@ -107,7 +107,7 @@ def test_menu_edits_save_only_chosen_settings() -> None:
 
 
 def test_enter_on_skill_folders_turned_off_keeps_them_off() -> None:
-    """The editor opens holding `[]`, so Enter keeps skills off; it used to open empty and reset them."""
+    """The editor opens holding `[]`, so Enter keeps skills off."""
     saved: list[dict[str, JsonValue]] = []
     host = PluginHost[object](
         name='coder', console=Console(file=io.StringIO()), settings={'skill_folders': []}, save_settings=saved.append
