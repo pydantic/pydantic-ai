@@ -80,6 +80,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 
@@ -119,16 +120,16 @@ def _span_tree(exporter: InMemorySpanExporter) -> list[dict[str, Any]]:
     return [render(root) for root in sorted(children.get(None, []), key=lambda span: span.start_time)]
 
 
-class _Connection(RealtimeConnection):
+class _Connection(InferredConnection):
     """Replays a fixed list of events; records nothing of interest for these tests."""
 
     def __init__(self, events: list[RealtimeCodecEvent]) -> None:
         self._events = events
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
 
@@ -455,8 +456,8 @@ async def test_session_and_tool_spans_with_usage() -> None:
     # Every span in a session tree carries the realtime marker — the tool span is created by the
     # shared `Instrumentation` capability, which marks it only when the active model is realtime.
     assert all(s.attributes is not None and s.attributes.get('pydantic_ai.realtime') is True for s in spans.values())
-    # The capability receives the raw call, matching the standard tool-manager path.
-    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city": "Paris"}'
+    # The capability receives the call's args as compact JSON, matching the standard tool-manager path.
+    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city":"Paris"}'
     assert tool.attributes['gen_ai.tool.call.result'] == 'sunny'
     # Both the `chat` span and the `execute_tool` span are children of the session span (siblings),
     # matching the classic agent-run tree where `execute_tool` follows `chat` rather than nesting in it.
@@ -1777,12 +1778,12 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
 async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureFixture) -> None:
     """Owner exit cancels a running tool and finishes every span before returning."""
 
-    class _IdleAfterTool(RealtimeConnection):
+    class _IdleAfterTool(InferredConnection):
         # Tool is cancelled first.
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
+        async def send_input(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}')
             await asyncio.Event().wait()
 

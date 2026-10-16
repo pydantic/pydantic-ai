@@ -23,7 +23,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@29bc2db4d2e109740999d3572c626b8919153ddc
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@b4b9ad3de2d7a9cbfd7c70715f1f945496e990ce
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.

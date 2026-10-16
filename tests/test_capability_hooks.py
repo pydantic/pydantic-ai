@@ -21,7 +21,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, capture_run_messages
 from pydantic_ai.capabilities import (
     CombinedCapability,
     ToolSearch,
@@ -86,7 +86,7 @@ from .capability_models import (
     tool_calling_stream_function,
 )
 from .conftest import IsDatetime, IsStr
-from .continuation_utils import ScriptedContinuationModel, scripted_response
+from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -553,6 +553,48 @@ class TestModelRequestHooks:
 
         assert len(observed_responses) == 1
         assert observed_responses[0] is result.all_messages()[-1]
+
+    async def test_usage_ledger_records_a_stream_the_consumer_stopped(self):
+        """The partial response is recorded before `wrap_model_request` unwinds, and is the one committed to history."""
+        observed_responses: list[ModelResponse] = []
+
+        class ObserveUsage(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                try:
+                    return await handler(request_context)
+                finally:
+                    observed_responses.extend(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
+
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3
+                )
+            ]
+        )
+        agent = Agent(model, capabilities=[ObserveUsage()])
+
+        with capture_run_messages() as messages:
+            async with agent.iter('hello') as run:
+                with pytest.raises(RuntimeError, match='stop'):
+                    async for node in run:  # pragma: no branch
+                        if Agent.is_model_request_node(node):
+                            async with node.stream(run.ctx) as stream:
+                                async for _ in stream:  # pragma: no branch
+                                    raise RuntimeError('stop')
+
+        partial = messages[-1]
+        assert isinstance(partial, ModelResponse)
+        assert partial.state == 'interrupted'
+        assert len(observed_responses) == 1
+        assert observed_responses[0] is partial
+        assert run.usage == RunUsage(input_tokens=7, output_tokens=3, requests=1)
 
     async def test_wrapper_recovery_keeps_continuation_usage(self):
         class RecoverAfterRejection(AbstractCapability[Any]):
@@ -3675,6 +3717,82 @@ class TestModelRetryFromHooks:
                 ),
             ]
         )
+
+    @staticmethod
+    def _reject_bad_text_agent() -> Agent[None, str]:
+        """An agent whose `after_model_request` hook rejects the first, streamed text response."""
+
+        def response_text(messages: list[ModelMessage]) -> str:
+            last = messages[-1]
+            retrying = isinstance(last, ModelRequest) and isinstance(last.parts[0], RetryPromptPart)
+            return 'good response' if retrying else 'bad response'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response(response_text(messages))
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield response_text(messages)
+
+        @dataclass
+        class RejectBadText(AbstractCapability[Any]):
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if response.text == 'bad response':
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        return Agent(FunctionModel(model_fn, stream_function=stream_fn), capabilities=[RejectBadText()])
+
+    async def test_after_model_request_model_retry_run_stream_final_text(self):
+        """A `ModelRetry` rejecting a streamed final result raises, as `run_stream()` can't retry it."""
+        agent = self._reject_bad_text_agent()
+
+        with pytest.raises(UnexpectedModelBehavior, match=r'retries are not supported in `run_stream\(\)`'):
+            async with agent.run_stream('hello') as streamed:
+                await streamed.get_output()
+
+    async def test_after_model_request_model_retry_run_stream_events_final_text(self):
+        """`run_stream_events()` drives the whole run, so it retries the rejected final result."""
+        agent = self._reject_bad_text_agent()
+
+        texts: list[str] = []
+        output: str | None = None
+        async with agent.run_stream_events('hello') as events:
+            async for event in events:
+                if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart):
+                    texts.append(event.part.content)
+                elif isinstance(event, AgentRunResultEvent):
+                    output = event.result.output
+
+        assert texts == ['bad response', 'good response']
+        assert output == 'good response'
+
+    async def test_after_model_request_model_retry_iter_stream_final_text(self):
+        """With `iter()`, `node.stream()` hands the retry to the next node, which the caller then runs."""
+        agent = self._reject_bad_text_agent()
+
+        streamed_texts: list[str] = []
+        async with agent.iter('hello') as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for text in stream.stream_text(debounce_by=None):
+                            streamed_texts.append(text)
+        assert streamed_texts == ['bad response', 'good response']
+        assert run.result is not None
+        assert run.result.output == 'good response'
+
+    async def test_after_model_request_model_retry_run_final_text(self):
+        """The non-streaming run retries the rejected final result."""
+        agent = self._reject_bad_text_agent()
+
+        result = await agent.run('hello')
+        assert result.output == 'good response'
 
     async def test_wrap_model_request_model_retry_streaming_short_circuit(self):
         """wrap_model_request raises ModelRetry without calling handler during streaming."""

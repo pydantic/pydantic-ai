@@ -38,7 +38,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -301,7 +301,7 @@ class OpenAILifecycle:
         for turn_id in merged:
             del self._speaking[turn_id]
         self._speaking[item_id] = None
-        return [*(UserTurnDiscarded(turn_id=turn_id) for turn_id in merged), UserTurnStarted(turn_id=item_id)]
+        return [*(UserTurnClosed(turn_id=turn_id) for turn_id in merged), UserTurnStarted(turn_id=item_id)]
 
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
@@ -359,7 +359,7 @@ class OpenAILifecycle:
         If it hadn't joined the conversation yet, it never will; if it had (xAI adds its item at speech start),
         it stays, with nothing more to come for it.
         """
-        events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
+        events: list[LifecycleEvent] = [UserTurnClosed(turn_id=turn_id) for turn_id in self._speaking]
         # One that hadn't joined never will, whatever the provider still reports about it.
         self._committed.update(self._speaking)
         # Nor is a transcript waited for any more: the turn is settled.
@@ -447,7 +447,7 @@ class OpenAILifecycle:
         self._requests.clear()
         self._lose_everything_open()
         # A transcript still to come for a turn of the old connection never will.
-        self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
+        self._pending.extend(UserTurnClosed(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
         self._untranscribed.clear()
 
     def closed(self, unanswered: Sequence[InputId]) -> None:

@@ -38,6 +38,7 @@ from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, Session
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus import dialogs
 from tests.clai2.menu_script import Script, pick, typed
 
 
@@ -100,7 +101,9 @@ class Recorder:
             scrubbing=scrubbing,
             metrics=False,
             additional_span_processors=[SimpleSpanProcessor(exporter)],
-            advanced=logfire.AdvancedOptions(emit_configuration_span=False),
+            advanced=logfire.AdvancedOptions(
+                emit_configuration_span=False, base_url=advanced.base_url if advanced else None
+            ),
         )
         self.exporters.append(exporter)
         self.instances.append(instance)
@@ -801,7 +804,7 @@ async def test_variables_key_is_kept_apart_from_another_builds_settings(
         requires={key: frozenset({'fleet-control'}) for key in leftovers},
     )
     scripted = Script(lists=[pick('variables_key'), MenuResult(cancelled=True)], choices=[], texts=[typed('MY_KEY')])
-    monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     save_key(name='MY_KEY', value='lf-read-variables-key')
     try:
         await loader.load_all()
@@ -837,7 +840,8 @@ def observability_loader(tmp_path: Path) -> tuple[PluginLoader[None], SettingsSt
     store = SettingsStore(tmp_path / 'config.db')
     loader: PluginLoader[None] = PluginLoader(
         store=store,
-        console=Console(file=io.StringIO()),
+        # A terminal without colours, so the settings menu opens in it.
+        console=Console(file=io.StringIO(), force_terminal=True, color_system=None),
         commands=Commands(),
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
         builtin=(next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability'),),
@@ -864,7 +868,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         texts=[typed('my-clai'), typed('LOGFIRE_API_KEY_TEAM')],
     )
     save_key(name='LOGFIRE_API_KEY_TEAM', value='lf-read-variables-key')
-    monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     loader, store = observability_loader(tmp_path)
     try:
         await loader.load_all()
@@ -905,11 +909,11 @@ async def test_closing_the_menu_unchanged_keeps_the_running_plugin(
     tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scripted = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
-    monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     loader, _ = observability_loader(tmp_path)
     try:
         await loader.load_all()
-        assert await loader.configure('observability') == 'Logfire settings unchanged.'
+        assert await loader.configure('observability') == 'Observability (Logfire): nothing changed.'
         assert len(recorder.instances) == 1
     finally:
         await loader.close('exit')
