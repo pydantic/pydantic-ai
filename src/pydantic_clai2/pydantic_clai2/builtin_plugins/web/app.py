@@ -488,7 +488,7 @@ def _events(app: FastAPI, service: WebService) -> None:
                 except LookupError:
                     snapshot = None  # No session is live, as while CLAI exits; `live` says so.
                 # Before the first `await`, so the default it follows is the one in the snapshot, and every
-                # `live` queued from here on is newer than this one.
+                # `live` already queued, or queued from here on, is no older than this one.
                 service.follow(client, snapshots=False)
                 live = dump(service.live_message())
                 if snapshot is not None:
