@@ -546,6 +546,8 @@ pip/uv-add "pydantic-ai-slim[openai-responses-websocket]"
 Call [`connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] and pass the yielded model through normal Agent model selection:
 
 ```python {test="skip" gateway_toggle="skip"}
+import asyncio
+
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
@@ -557,6 +559,9 @@ async def main() -> None:
     async with responses_model.connect() as connected_model:
         result = await agent.run('Summarize the latest report.', model=connected_model)
         await agent.run('Give me three action items.', model=connected_model, conversation=result.conversation)
+
+
+asyncio.run(main())
 ```
 
 The source `responses_model` still uses HTTP. The connection belongs to `connected_model` and closes when its context exits. You can also construct `Agent(connected_model)` inside the context or return it from a model-selection capability. An explicit `model=` argument has the usual precedence over a capability's model selection; leave it out when the capability should choose. Selecting an ordinary model uses HTTP even while another model's socket is open.
