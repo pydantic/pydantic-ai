@@ -848,6 +848,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='validation_error',
                     )
                 ],
                 timestamp=IsDatetime(),

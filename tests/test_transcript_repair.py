@@ -449,6 +449,7 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='validation_error',
                     )
                 ],
                 timestamp=IsDatetime(),

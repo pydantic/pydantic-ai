@@ -999,6 +999,7 @@ class TestPrepareToolsCapability:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='unknown_tool',
                         )
                     ],
                     timestamp=IsDatetime(),

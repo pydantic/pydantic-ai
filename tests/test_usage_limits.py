@@ -1054,6 +1054,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                         tool_call_id='pyd_ai_tool_call_id__flaky_tool',
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),

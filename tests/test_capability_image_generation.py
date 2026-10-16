@@ -1805,6 +1805,7 @@ class TestImageGenerationCapability:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='model_retry',
                         )
                     ],
                     timestamp=IsDatetime(),

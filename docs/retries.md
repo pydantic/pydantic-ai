@@ -551,6 +551,8 @@ A retried result also records why the call has to be made again, in its [`cause`
 A capability can collect them from each request the run builds in [`after_node_run`](capabilities/custom.md#hooking-into-the-lifecycle), which doesn't move the run onto the streaming path the way [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] does:
 
 ```python {title="audit_rejected_calls.py"}
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 from pydantic_ai import (
