@@ -29,8 +29,8 @@ stays under its project, marked removed; an older session from a removed folder 
 where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
 run turns: each session you open stays live and keeps working while you look at another. A dot by
 a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
-waits for your answer to a question, amber. Use a session's menu to rename, fork,
-archive, or delete it. Archiving hides a session from the sidebar and `/resume`
+waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or
+delete it. Archiving hides a session from the sidebar and `/resume`
 without deleting anything; the archive button beside the search lists archived sessions too, muted,
 and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
 be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
