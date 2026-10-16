@@ -82,11 +82,10 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
-    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+    _seeded_retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -605,6 +604,10 @@ async def _seed_request_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for part in parts:
+        # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches, so a tool-bound legacy
+        # retry seeds through the `ToolReturnPart` branch below like the retried return it always meant.
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            part = _translate_legacy_retry_part(part)
         if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
@@ -646,35 +649,8 @@ async def _seed_request_items(
                 )
             ):
                 items.append(_message_item('user', content))
-        # TODO(v3): remove `RetryPromptPart`
-        elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
-            # A seeded item takes `user` or `assistant` only — a `SystemPromptPart` is routed to the
-            # session `instructions` instead — and a retry answers one response rather than standing
-            # over the session, so routing it there would be wrong. Feedback bound for the system
-            # voice takes the same `<system>` tagging every model without a mid-conversation system
-            # message gets, which is what keeps the model from reading it as something a person said
-            # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            translated = (
-                _translate_legacy_retry_part(part)
-                if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                else part
-            )
-            if isinstance(translated, ToolReturnPart):
-                _require_seeded_call(
-                    translated.tool_name, tool_call_id=translated.tool_call_id, seeded_calls=seeded_calls
-                )
-                items.append(
-                    {
-                        'type': 'function_call_output',
-                        'call_id': _seed_call_id(translated.tool_call_id, call_ids),
-                        'output': translated.model_response_str(),
-                    }
-                )
-            else:
-                text = translated.model_response()
-                if _retry_feedback_speaks_for_the_harness(translated):
-                    text = _wrap_in_system_tags(text)
-                items.append(_message_item('user', [_text_content('input_text', text)]))
+        elif isinstance(part, RetryFeedbackPart):
+            items.append(_message_item('user', [_text_content('input_text', _seeded_retry_feedback_text(part))]))
         else:
             assert_never(part)
     return items

@@ -2551,6 +2551,18 @@ def _wrap_in_system_tags(content: str) -> str:
     return _wrap_in_tag(content, tag='system')
 
 
+def _seeded_retry_feedback_text(part: RetryFeedbackPart) -> str:  # pyright: ignore[reportUnusedFunction]
+    """The text a realtime session seeds retry feedback as.
+
+    A seeded turn has no mid-conversation system role, and a retry answers one response rather than
+    standing over the session, so it goes in as user text. Feedback bound for the system voice takes the
+    `<system>` tagging every model without a mid-conversation system message gets, which keeps the
+    model from reading it as something a person said (https://github.com/pydantic/pydantic-ai/issues/6404).
+    """
+    text = part.model_response()
+    return _wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 

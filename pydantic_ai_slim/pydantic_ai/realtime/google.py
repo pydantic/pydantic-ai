@@ -80,13 +80,12 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     ModelRequestParameters,
-    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+    _seeded_retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
 
@@ -665,18 +664,7 @@ async def _seed_request_parts(
                     )
                 )
         elif isinstance(part, RetryFeedbackPart):
-            # A seeded turn has no system role — a `SystemPromptPart` is hoisted to
-            # `system_instruction` instead — and a retry answers one response rather than standing
-            # over the session, so hoisting it there would be wrong. Feedback bound for the system
-            # voice takes the same `<system>` tagging every model without a mid-conversation system
-            # message gets, which is what keeps the model from reading it as something a person said
-            # (https://github.com/pydantic/pydantic-ai/issues/6404).
-            text = part.model_response()
-            parts.append(
-                genai_types.Part(
-                    text=_wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
-                )
-            )
+            parts.append(genai_types.Part(text=_seeded_retry_feedback_text(part)))
         else:
             assert_never(part)
     return parts

@@ -78,13 +78,12 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
-    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
     ModelRequestParameters,
-    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+    _seeded_retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
     infer_model,
     parse_model_id,
 )
@@ -479,12 +478,7 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
         # `ToolCallPart` before it would not read as a round that failed.
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
     if isinstance(part, RetryFeedbackPart):
-        # A seeded item takes `user` or `assistant` only, and a retry answers one response rather
-        # than standing over the session, so it does not go to `instructions` either. Feedback bound
-        # for the system voice takes the `<system>` tagging every model without a mid-conversation
-        # system message gets (https://github.com/pydantic/pydantic-ai/issues/6404).
-        text = part.model_response()
-        return 'user', _wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
+        return 'user', _seeded_retry_feedback_text(part)
     return None
 
 
