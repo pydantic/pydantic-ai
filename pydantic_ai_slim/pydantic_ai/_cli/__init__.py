@@ -177,7 +177,7 @@ def _print_intro(
             tools=details.tools,
             capabilities=details.capabilities,
             updates=_version_check.cached_updates(cache),
-            version_check=_version_check.version_check_enabled(),
+            announce_version_check=_version_check.announcing(cache),
             observability=not details.instrumented,
             # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
             # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing

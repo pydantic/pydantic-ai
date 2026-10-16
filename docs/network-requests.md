@@ -2,7 +2,7 @@
 
 This page lists every request Pydantic AI makes on its own initiative, what each one carries, and how to turn it off. It doesn't cover the requests you configure: to model providers, MCP servers, or from your own tools.
 
-One of them, [the version check](#the-version-check), goes to a server run by Pydantic, which uses its `User-Agent` in aggregate to understand which versions and platforms Pydantic AI is used on. It [can be turned off](#turning-the-version-check-off) with one environment variable.
+One of them, [the version check](#the-version-check), goes to a server run by Pydantic, which uses its `User-Agent` in aggregate to understand which versions and platforms Pydantic AI is used on. It only runs on a developer's machine, never in CI, under `pytest` or in a deployed service, and it [can be turned off](#turning-the-version-check-off) with one environment variable.
 
 ## Model provider requests
 
@@ -16,9 +16,9 @@ For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`.
 
 ## The version check
 
-When the [first-run banner](logfire.md#the-first-run-banner) or the intro banner of [`clai`](cli.md) is displayed, Pydantic AI checks `https://info.pydantic.dev/versions.json` in a background thread for newer releases of Pydantic AI and Pydantic AI Harness. `clai` displays its banner under the same conditions as the first-run banner, except that configured instrumentation doesn't hide it.
+When the [first-run banner](logfire.md#the-first-run-banner) or the intro banner of [`clai`](cli.md) is displayed, Pydantic AI checks `https://info.pydantic.dev/versions.json` in a background thread for newer releases of Pydantic AI and Pydantic AI Harness. Those banners are only displayed to someone at a terminal or to a coding agent, and never in CI or under `pytest`, so in practice this means a developer's machine: a deployed service with no terminal attached never makes the request. `clai` displays its banner under the same conditions as the first-run banner, except that configured instrumentation doesn't hide it.
 
-The first banner only announces the check. The request is made from the next banner on, at most once per 24 hours per user cache directory, and a newer release it finds appears in the banner after that. A container started with a fresh home directory every time therefore never makes the request.
+The first banner only announces the check, and says how to turn it off. The request is made from the next banner on, at most once per 24 hours per user cache directory, and a newer release it finds appears in the banner after that. A container started with a fresh home directory every time therefore never makes the request.
 
 The request has no query parameters or body. Its only explicitly configured header is a pip-style `User-Agent`, for example:
 

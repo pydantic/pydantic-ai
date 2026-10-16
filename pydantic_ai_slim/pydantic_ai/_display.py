@@ -78,17 +78,25 @@ laid out for, so a reworded line or a wider logo can't quietly cost a link.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
 _UPDATE_PREFIX = 'update available: '
-_VERSION_CHECK_LINE = 'checks for new versions daily: https://pydantic.dev/docs/ai/requests/'
-"""Says that the check happens, wherever it does, and where to read what it sends and how to stop it.
+_VERSION_CHECK_LINE = 'checks for new versions daily from the next run: https://pydantic.dev/docs/ai/requests/'
+_VERSION_CHECK_OPT_OUT_LINE = 'turn it off with PYDANTIC_AI_NO_VERSION_CHECK=1'
+"""Announces the check on the one banner before it starts, with where to read what it sends.
 
-Short enough to stay on one line beside the logo: the banner is already as tall as it should get.
+Shown once rather than on every banner, so it can afford a second line naming how to turn it off.
 The URL is an alias kept no longer than `_OTEL_LINE`'s, so that adding this line can't raise
-`_MIN_TEXT_WIDTH` and change the layout for someone who has turned the check off and never sees it.
+`_MIN_TEXT_WIDTH` and change the layout of every other banner.
 """
 
 _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
     len(word)
-    for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE, _VERSION_CHECK_LINE)
+    for line in (
+        _OBSERVABILITY_HEADING,
+        _LOGFIRE_LINE,
+        _OTEL_LINE,
+        _HIDE_LINE,
+        _VERSION_CHECK_LINE,
+        _VERSION_CHECK_OPT_OUT_LINE,
+    )
     for word in line.split()
 )
 """Narrowest the text column can be and still hold the banner's own words whole.
@@ -264,7 +272,7 @@ def render_banner(
     tools: int | None,
     capabilities: int,
     updates: Sequence[tuple[str, str]] = (),
-    version_check: bool = False,
+    announce_version_check: bool = False,
     observability: bool = True,
     color: bool = True,
     width: int | None = None,
@@ -279,7 +287,7 @@ def render_banner(
             without connecting to something, which leaves the count out rather than understating it.
         capabilities: Number of capabilities registered on the agent.
         updates: Distribution names and newer versions to show below the installed versions.
-        version_check: Whether to disclose the daily version check at the end of the banner.
+        announce_version_check: Whether to announce, at the end of the banner, the version check the next one starts.
         observability: Whether to include the pointer to setting up observability.
         color: Whether to emit the ANSI colour codes that highlight the logo and the agent's identity.
         width: Columns the banner has to lay itself out in, or `None` when the caller is writing
@@ -309,8 +317,8 @@ def render_banner(
         lines += ['', *_observability_lines(text_width)]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
         lines += ['', *_wrapped(_HIDE_LINE, text_width)]
-    if version_check:
-        lines += ['', *_wrapped(_VERSION_CHECK_LINE, text_width)]
+    if announce_version_check:
+        lines += ['', *_wrapped(_VERSION_CHECK_LINE, text_width), *_wrapped(_VERSION_CHECK_OPT_OUT_LINE, text_width)]
 
     banner = _beside_logo(lines) if beside_logo else '\n'.join(line.rstrip() for line in lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -366,7 +374,7 @@ def display_agent_banner(
             tools=tools,
             capabilities=capabilities,
             updates=_version_check.cached_updates(cache),
-            version_check=_version_check.version_check_enabled(),
+            announce_version_check=_version_check.announcing(cache),
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,

@@ -294,7 +294,7 @@ def test_the_observability_links_each_survive_on_one_line(render: Callable[..., 
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
     # a floor under the text column measured from the copy rather than written down beside it.
     for width in range(_MIN_TEXT_WIDTH, 121):
-        rendered = render(width=width, version_check=True).splitlines()
+        rendered = render(width=width, announce_version_check=True).splitlines()
         for url in urls:
             assert sum(url in line for line in rendered) == 1, f'{url} was broken at {width} columns'
 
@@ -383,34 +383,44 @@ def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPa
     assert 'tools: 2 • capabilities: 0' in banner
 
 
-def test_render_banner_with_one_update_and_version_check(render: Callable[..., str]):
-    assert render(updates=[('pydantic-ai', '2.46.0')], version_check=True, observability=False) == snapshot("""\
+def test_render_banner_with_one_update(render: Callable[..., str]):
+    assert render(updates=[('pydantic-ai', '2.46.0')], observability=False) == snapshot("""\
+      / \\
+     /   \\       HEADING
+   /___.___\\     update available: pydantic-ai v2.46.0
+  /    |    \\
+/      |      \\  agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+`---.._|_..---'\
+""")
+
+
+def test_render_banner_announcing_the_version_check(render: Callable[..., str]):
+    """Only a banner with nothing cached yet announces the check, so it never has an update to show too."""
+    assert render(announce_version_check=True, observability=False) == snapshot("""\
       / \\        HEADING
-     /   \\       update available: pydantic-ai v2.46.0
-   /___.___\\
-  /    |    \\    agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-/      |      \\
-`---.._|_..---'  checks for new versions daily: https://pydantic.dev/docs/ai/requests/\
+     /   \\
+   /___.___\\     agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+  /    |    \\
+/      |      \\  checks for new versions daily from the next run:
+`---.._|_..---'    https://pydantic.dev/docs/ai/requests/
+                 turn it off with PYDANTIC_AI_NO_VERSION_CHECK=1\
 """)
 
 
 def test_render_banner_with_two_colored_updates(render: Callable[..., str]):
     banner = render(
         updates=[('pydantic-ai', '2.46.0'), ('pydantic-ai-harness', '0.8.0')],
-        version_check=True,
         observability=False,
         color=True,
     )
 
     assert 'update available: \x1b[32mpydantic-ai v2.46.0\x1b[0m' in banner
     assert '• \x1b[32mpydantic-ai-harness v0.8.0\x1b[0m' in banner
-    assert banner.endswith('https://pydantic.dev/docs/ai/requests/')
 
 
 def test_render_banner_with_updates_at_a_narrow_width(render: Callable[..., str]):
     banner = render(
         updates=[('pydantic-ai', '2.46.0'), ('pydantic-ai-harness', '0.8.0')],
-        version_check=True,
         observability=False,
         width=_MIN_TEXT_WIDTH,
     )
@@ -422,10 +432,7 @@ update available: pydantic-ai v2.46.0 •
 
 agent: support_agent
   model: openai:gpt-5.6-sol • tools: 2
-  capabilities: 0
-
-checks for new versions daily:
-  https://pydantic.dev/docs/ai/requests/\
+  capabilities: 0\
 """)
     assert max(map(len, banner.splitlines())) <= _MIN_TEXT_WIDTH
 
@@ -511,10 +518,24 @@ def test_displayed_banner_shows_cached_updates_then_starts_the_check(
     display_banner()
 
     assert 'update available: pydantic-ai v2.46.0' in stderr.getvalue()
-    assert 'https://pydantic.dev/docs/ai/requests/' in stderr.getvalue()
+    # The check was announced by an earlier banner, which is what left a cache behind.
+    assert 'PYDANTIC_AI_NO_VERSION_CHECK' not in stderr.getvalue()
     read_cache.assert_called_once_with()
     cached_updates.assert_called_once_with(cache)
     assert started is True
+
+
+def test_first_displayed_banner_announces_the_check(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(_version_check, 'read_cache', Mock(return_value=None))
+    start_version_check = Mock()
+    monkeypatch.setattr(_version_check, 'start_version_check', start_version_check)
+
+    display_banner()
+
+    assert 'PYDANTIC_AI_NO_VERSION_CHECK=1' in stderr.getvalue()
+    start_version_check.assert_called_once_with(None)
 
 
 async def test_async_agent_run_shows_cached_update_and_starts_due_check(

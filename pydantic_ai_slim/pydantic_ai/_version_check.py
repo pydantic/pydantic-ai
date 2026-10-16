@@ -50,6 +50,11 @@ def version_check_enabled() -> bool:
     return do_not_track.lower() in ('', '0', 'false')
 
 
+def announcing(cache: VersionCache | None) -> bool:
+    """Whether the banner showing `cache` is the one that announces the check, before any is made."""
+    return cache is None and version_check_enabled()
+
+
 def cached_updates(cache: VersionCache | None) -> list[tuple[str, str]]:
     """Return newer releases found in the cache, without making a request."""
     if not version_check_enabled() or cache is None:
