@@ -115,8 +115,10 @@ Of the shared settings:
 - `turn_detection` cannot be configured: ElevenLabs' server-side turn model is always on, so any
   value other than `True` raises. There is no [push-to-talk](turns.md#push-to-talk).
 - `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
-- `reconnect` raises: conversations cannot be resumed, so a reconnect policy would silently start a
-  conversation that remembers nothing.
+- `reconnect` raises: ElevenLabs has an experimental, text-only way to resume a conversation
+  (`persistent_session_token`), enabled per workspace, which Pydantic AI doesn't use yet. A dropped
+  connection ends the session, and a reconnect policy would silently start a conversation that
+  remembers nothing.
 - `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
   surface and are ignored, matching the [shared settings contract](overview.md#shared-settings).
 
@@ -179,7 +181,7 @@ parameter's description only when the local schema declares one.
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
 | Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable, and a profile value would not be used: the live limit is `ElevenLabsAgentsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`, and `session.context_window_used` is the ratio from the same reports |
 | Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |
-| State-restoring reconnect | Unsupported | Conversations cannot be resumed, at the cap or after a drop; `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
+| State-restoring reconnect | Unsupported | A dropped connection ends the session: ElevenLabs' experimental, workspace-gated, text-only resume isn't used yet, and `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.

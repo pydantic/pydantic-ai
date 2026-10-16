@@ -354,7 +354,7 @@ def test_rejects_non_elevenlabs_provider() -> None:
 
 async def test_reconnect_policy_raises() -> None:
     model = _model(RestRecorder(agent_json()), settings=ElevenLabsAgentsRealtimeModelSettings(reconnect={}))
-    with pytest.raises(UserError, match='cannot be resumed after a drop'):
+    with pytest.raises(UserError, match='not resumed after a drop'):
         async with _connect(model):
             pass  # pragma: no cover
 

@@ -182,8 +182,8 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation surface on the
     agent WebSocket and are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
     (ElevenLabs' server-side turn model is always on), `input_transcription_model=None` cannot be
-    honored (ASR cannot be disabled per-conversation), and `reconnect` is unsupported (the WebSocket
-    has no session resumption), so each of those raises rather than silently under-delivering.
+    honored (ASR cannot be disabled per-conversation), and `reconnect` is unsupported (ElevenLabs'
+    experimental, text-only resume isn't used), so each of those raises rather than silently under-delivering.
     """
 
     elevenlabs_agents_voice_id: str
@@ -1194,7 +1194,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         """Reject shared settings whose intent the agent WebSocket cannot honor."""
         if settings.get('reconnect') is not None:
             raise UserError(
-                'ElevenLabs Agents conversations cannot be resumed after a drop, so a `reconnect` policy '
+                'ElevenLabs Agents conversations are not resumed after a drop, so a `reconnect` policy '
                 'would silently reconnect into a conversation that remembers nothing. Remove the `reconnect` '
                 'policy and open a new session instead.'
             )
