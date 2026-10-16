@@ -168,8 +168,12 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    - **Agent resolution:** a member runs outside any tool `RunContext`, so it can't use the per-run `SubAgents`
      roster.
      - **General-purpose type:** `self` (the `general-purpose` alias) resolves to the `self_agent` the runner
-       passes. In `clai2` that is the Session's *current* agent, read when the member runs, so plugins and
-       guardrails added later apply. `_resolve_agent` handles `include_self` the same way.
+       passes. `_resolve_agent` handles `include_self` the same way.
+     - **In `clai2`:** `Session.agent` is only rebuilt by `Session._bind()` at the start of a lead turn. The
+       runner therefore calls a small public bind step (e.g. `Session.bound() -> (agent, run_model,
+       capabilities)`) before each member run. It passes that agent as `self_agent`, so plugins and guardrails
+       added since the last lead turn apply. It also adds the returned run-level capabilities (`SessionModels`,
+       `ModelDefaults`) to the member run.
      - **Specialist types:** resolve against `owner.agents`, which stays specialists-only. That keeps the lead's
        `delegate_task` instructions and cache-stable prompt unchanged for every non-team user.
      - **`read_only`:** `member_run` applies the resolved `SubAgent`'s `read_only` (`ReadOnlyWorkspace`), as
@@ -183,7 +187,7 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    - **Records:** `start` creates records with `background=True` and `backgroundable=True`. `reports()`, the
      shell's wake, `focused()` and Ctrl+B all key off `background`, so a member is never treated as foreground
      work. `start` refuses agent types listed in `one_shot`, because a teammate must be wakeable.
-   - **Runner contract:** `member_runner` runs the member's agent with `owner.member_run(record)`, adding the
+   - **Runner contract:** `member_runner` runs the member's agent with `owner.member_run(record, self_agent=...)`, adding the
      team's gate listeners to its capabilities. `MemberRun` provides:
      - **Capabilities:** `DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id)`,
        so the inbox callback attaches, plus `owner.persistence_capabilities()`.
