@@ -72,7 +72,7 @@ def build_theme_picker(context: CommandContext) -> Menu:
         .list_width(list_width)
         .preview(lambda item: theme_preview(str(item.value), width=max(20, terminal_size()[0] - list_width - 4)))
     )
-    return slash_search(builder, footer='enter apply · esc close', key_source=menu_key)
+    return slash_search(builder, footer='Enter apply - Esc close', key_source=menu_key)
 
 
 async def theme_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
