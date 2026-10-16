@@ -102,16 +102,18 @@ def _check_thinking(merged: Thinking) -> None:
 def _check_web_search(merged: WebSearch) -> None:
     assert merged.allowed_domains == ['a.com', 'b.com'], 'allow-lists are unioned, not replaced'
     # The native tool is what reaches the provider, so the merge has to reach it too.
-    assert isinstance(merged.native, WebSearchTool)
-    assert merged.native.allowed_domains == ['a.com', 'b.com'], (
+    [native] = merged.get_native_tools()
+    assert isinstance(native, WebSearchTool)
+    assert native.allowed_domains == ['a.com', 'b.com'], (
         'the merged allow-list must reach the native tool, or the request goes out unrestricted'
     )
 
 
 def _check_web_fetch(merged: WebFetch) -> None:
     assert merged.allowed_domains == ['a.com', 'b.com']
-    assert isinstance(merged.native, WebFetchTool)
-    assert merged.native.allowed_domains == ['a.com', 'b.com']
+    [native] = merged.get_native_tools()
+    assert isinstance(native, WebFetchTool)
+    assert native.allowed_domains == ['a.com', 'b.com']
 
 
 def _check_reinject(merged: ReinjectSystemPrompt) -> None:
@@ -124,8 +126,9 @@ def _check_content_filter(merged: RaiseContentFilterError) -> None:
 
 def _check_x_search(merged: XSearch) -> None:
     assert merged.allowed_x_handles == ['a', 'b']
-    assert isinstance(merged.native, XSearchTool)
-    assert merged.native.allowed_x_handles == ['a', 'b']
+    [native] = merged.get_native_tools()
+    assert isinstance(native, XSearchTool)
+    assert native.allowed_x_handles == ['a', 'b']
 
 
 def _check_image_generation(merged: ImageGeneration) -> None:

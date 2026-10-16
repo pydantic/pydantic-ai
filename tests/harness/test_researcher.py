@@ -80,10 +80,10 @@ def test_researcher_members_are_transparent() -> None:
     capability = next(capability for capability in researcher.capabilities if isinstance(capability, Capability))
     assert capability.get_instructions() == [DEFAULT_RESEARCHER_INSTRUCTIONS]
     web_search = next(capability for capability in researcher.capabilities if isinstance(capability, WebSearch))
-    assert isinstance(web_search.native, WebSearchTool)
+    assert isinstance(web_search.get_native_tools()[0], WebSearchTool)
     assert web_search.local is not None
     web_fetch = next(capability for capability in researcher.capabilities if isinstance(capability, WebFetch))
-    assert isinstance(web_fetch.native, WebFetchTool)
+    assert isinstance(web_fetch.get_native_tools()[0], WebFetchTool)
     assert web_fetch.local is not None
     subagents = next(capability for capability in researcher.capabilities if isinstance(capability, SubAgents))
     delegate = subagents.agents[0].agent

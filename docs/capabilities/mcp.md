@@ -37,4 +37,6 @@ MCP(
 )
 ```
 
+The capability's `headers` and `authorization_token` configure only the native tool and the local toolset it builds from `url`. A `local` toolset or client you supply carries its own, so with `native=False` (the default) beside one, they're ignored and the capability warns at construction.
+
 For lower-level access — managing the [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lifecycle directly, advanced transport / client configuration, or using MCP servers without going through a capability — see the [MCP documentation](../mcp/overview.md).

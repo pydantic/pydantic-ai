@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import cached_property
@@ -40,13 +41,25 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     Required when using native MCP. Optional when using a local-only client via `local=`."""
 
     authorization_token: str | None
-    """Authorization header value for MCP server requests. Passed to both native and local."""
+    """Authorization header value for MCP server requests.
+
+    Passed to the native tool and the local toolset built from a URL. A `native=MCPServerTool(...)`
+    instance, or a `local` toolset or client you supply, carries its own.
+    """
 
     headers: dict[str, str] | None
-    """HTTP headers for MCP server requests. Passed to both native and local."""
+    """HTTP headers for MCP server requests.
+
+    Passed to the native tool and the local toolset built from a URL. A `native=MCPServerTool(...)`
+    instance, or a `local` toolset or client you supply, carries its own.
+    """
 
     allowed_tools: list[str] | None
-    """Filter to only these tools. Applied to both native and local."""
+    """Filter to only these tools.
+
+    Applied to every local toolset and to the native tool built from a URL. A
+    `native=MCPServerTool(...)` instance carries its own.
+    """
 
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
@@ -118,6 +131,25 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.description = description
         self.defer_loading = defer_loading
         self.__post_init__()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.native is False and self.local is not None and not isinstance(self.local, (bool, str)):
+            # With no native tool, the user's toolset is the only connection, and it carries its own headers.
+            unapplied = [
+                name
+                for name, value in (('authorization_token', self.authorization_token), ('headers', self.headers))
+                if value is not None
+            ]
+            if unapplied:
+                # user → `__init__` → here → `warn`.
+                warnings.warn(
+                    f'`MCP` ignored setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
+                    'With `native=False` the `local` toolset you supplied is the only connection, and it uses '
+                    'its own headers; configure that toolset instead.',
+                    UserWarning,
+                    stacklevel=3,
+                )
 
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.

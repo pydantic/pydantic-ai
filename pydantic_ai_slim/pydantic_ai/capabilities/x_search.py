@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -7,13 +8,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import deprecated
 
-from pydantic_ai._utils import replace_no_init
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
-from pydantic_ai.toolsets import AbstractToolset
 
 from ._deprecated_fallback_model import check_deprecated_fallback_model
 from .native_or_local import NativeOrLocalTool
@@ -46,7 +45,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     that returns a `Model` instance or model name string.
 
     The model is kept as declared; the `x_search` tool is derived from it and the
-    capability's settings each time the toolset is requested.
+    capability's settings, again for every copy `dataclasses.replace` or a merge makes.
     """
 
     allowed_x_handles: list[str] | None
@@ -64,22 +63,35 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     """
 
     from_date: datetime | None
-    """If provided, only posts created on or after this datetime will be included."""
+    """If provided, only posts created on or after this datetime will be included.
+
+    Native-only; ignored by a `local` tool you supply.
+    """
 
     to_date: datetime | None
-    """If provided, only posts created on or before this datetime will be included."""
+    """If provided, only posts created on or before this datetime will be included.
+
+    Native-only; ignored by a `local` tool you supply.
+    """
 
     enable_image_understanding: bool | None
-    """Enable image analysis from X posts. When unset, inherits the native tool's default (`False`)."""
+    """Enable image analysis from X posts. When unset, inherits the native tool's default (`False`).
+
+    Native-only; ignored by a `local` tool you supply.
+    """
 
     enable_video_understanding: bool | None
-    """Enable video analysis from X content. When unset, inherits the native tool's default (`False`)."""
+    """Enable video analysis from X content. When unset, inherits the native tool's default (`False`).
+
+    Native-only; ignored by a `local` tool you supply.
+    """
 
     include_output: bool | None
     """Include raw X search results in the response as
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart].
 
-    When unset, inherits the native tool's default (`False`).
+    When unset, inherits the native tool's default (`False`). Native-only; ignored by a `local` tool
+    you supply.
     """
 
     id: str | None = 'x_search'
@@ -142,17 +154,36 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
         # one instance's `fallback_subagent_model` with another's `local`, which no constructor
         # accepts, and the local tool would then take effect with `fallback_subagent_model` silently
-        # ignored. Runs before the base resolves `local`, so it reads what was declared rather than
-        # what was materialized.
+        # ignored.
         if self.fallback_subagent_model is not None and self.local is not None:
             raise UserError(
                 'XSearch: cannot specify both `fallback_subagent_model` and `local` — '
                 'use `fallback_subagent_model` for the default subagent fallback, or `local` for a custom tool'
             )
         super().__post_init__()
-        # Built here only so a `native` of the wrong type fails at construction; `get_toolset` builds
-        # the tool it uses.
-        self._fallback_subagent_tool()
+        if self.native is False and self.local is not None and self.local is not False:
+            # With no native tool and no subagent, the user's tool is the only implementation and the
+            # capability passes it nothing.
+            unapplied = [
+                name
+                for name, value in (
+                    ('from_date', self.from_date),
+                    ('to_date', self.to_date),
+                    ('enable_image_understanding', self.enable_image_understanding),
+                    ('enable_video_understanding', self.enable_video_understanding),
+                    ('include_output', self.include_output),
+                )
+                if value is not None
+            ]
+            if unapplied:
+                # user → `__init__` → here → `warn`.
+                warnings.warn(
+                    f'`XSearch` ignored setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
+                    'With `native=False` the `local` tool you supplied is the only implementation, and the '
+                    'capability passes it no settings; configure that tool instead.',
+                    UserWarning,
+                    stacklevel=3,
+                )
 
     # TODO(v3): remove the `fallback_model` property, the deprecated spelling of `fallback_subagent_model`.
     # The message is spelled out rather than shared with the helper that warns at construction:
@@ -197,30 +228,16 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return XSearchTool.kind
 
-    def _has_local_fallback(self) -> bool:
-        # `fallback_subagent_model` stands for a local tool the base cannot see, since `get_toolset`
-        # is where it gets built. Without this, `native=False` beside it would read as a no-op.
-        return super()._has_local_fallback() or self.fallback_subagent_model is not None
+    def _default_local(self) -> Tool[AgentDepsT] | None:
+        """The local fallback used when `local` is unset.
 
-    def _fallback_subagent_tool(self) -> Tool[AgentDepsT] | None:
-        """Build the `x_search` tool that runs `fallback_subagent_model`, from the current settings.
-
-        Derived when the toolset is requested rather than stored on `local`: `dataclasses.replace`
-        feeds every field back through `__init__`, where a derived tool on `local` would read as a
-        second fallback beside `fallback_subagent_model`.
+        With `fallback_subagent_model` set, the `x_search` tool that runs it, built from the current settings.
         """
         if self.fallback_subagent_model is None:
             return None
         from pydantic_ai.common_tools.x_search import x_search_tool
 
         return x_search_tool(model=self.fallback_subagent_model, native_tool=self._resolved_native())
-
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        capability = self
-        if (subagent_tool := self._fallback_subagent_tool()) is not None:
-            # The base builds its toolset from `local`, so the subagent tool goes there on a copy.
-            capability = replace_no_init(self, local=subagent_tool)
-        return super(XSearch, capability).get_toolset()
 
     def _requires_native(self) -> bool:
         # Handle constraints can only be enforced by the native XSearchTool.
