@@ -42,7 +42,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.absurd import AbsurdDurability
 
 absurd = AsyncAbsurd('postgresql://localhost/absurd', queue_name='agents')
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[AbsurdDurability()])
+agent = Agent('{{ openai:medium }}', name='analyst', capabilities=[AbsurdDurability()])
 
 
 @absurd.register_task(name='analyse')

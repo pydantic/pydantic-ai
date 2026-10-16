@@ -31,7 +31,7 @@ You can then use `AnthropicModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 ...
 ```
 
@@ -41,7 +41,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 
-model = AnthropicModel('claude-sonnet-4-5')
+model = AnthropicModel('{{ anthropic:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -61,7 +61,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 model = AnthropicModel(
-    'claude-sonnet-4-5', provider=AnthropicProvider(api_key='your-api-key')
+    '{{ anthropic:medium.name }}', provider=AnthropicProvider(api_key='your-api-key')
 )
 agent = Agent(model)
 ...
@@ -80,7 +80,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = AnthropicModel(
-    'claude-sonnet-4-5',
+    '{{ anthropic:medium.name }}',
     provider=AnthropicProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
@@ -100,10 +100,9 @@ You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.mo
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-sonnet-4-5')
+model = AnthropicModel('{{ anthropic:medium.name }}')
 settings = AnthropicModelSettings(
-    temperature=0.2,
-    top_k=40,
+    anthropic_effort='low',
     service_tier='auto',
 )
 agent = Agent(model, model_settings=settings)
@@ -170,7 +169,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 vertex_client = AsyncAnthropicVertex(region='us-east5', project_id='your-project-id')
 provider = AnthropicProvider(anthropic_client=vertex_client)
-model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -191,7 +190,7 @@ foundry_client = AsyncAnthropicFoundry(
     resource='your-resource-name',
 )
 provider = AnthropicProvider(anthropic_client=foundry_client)
-model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -242,7 +241,7 @@ The provider-agnostic way to enable prompt caching is the unified [`ModelSetting
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions='You are a helpful assistant.',
     model_settings={'cache': True},
 )
@@ -261,7 +260,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 handbook = '...'  # a long document, above the model's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
@@ -298,7 +297,7 @@ client = AsyncAnthropic(
 )
 
 model = AnthropicModel(
-    'claude-sonnet-4-6',
+    '{{ anthropic:medium.name }}',
     provider=AnthropicProvider(anthropic_client=client),
 )
 agent = Agent(
@@ -334,7 +333,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,                   # Server auto-caches last block
@@ -366,7 +365,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     deps_type=str,
     instructions='You are a helpful customer service agent. Follow company policy.',  # (1)!
     model_settings=AnthropicModelSettings(
@@ -396,7 +395,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
 )
 
@@ -418,7 +417,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,
@@ -442,7 +441,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(anthropic_cache=True, anthropic_cache_diagnostics=True),
 )
@@ -483,7 +482,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache=True,                   # 1 cache point (server-applied)
@@ -520,7 +519,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point
@@ -691,7 +690,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicCompaction
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[AnthropicCompaction(token_threshold=100_000)],
 )
 ```
@@ -708,7 +707,7 @@ Alternatively, you can configure compaction directly via model settings using [`
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 result = agent.run_sync(
     'Hello!',
     model_settings=AnthropicModelSettings(
@@ -732,7 +731,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[NativeTool(CodeExecutionTool())],
     model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
 )

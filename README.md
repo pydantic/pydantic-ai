@@ -53,7 +53,7 @@ agent = Agent(
     capabilities=[
         Coder(),  # files, shell, repo context, sub-agents, context management
         WebSearch(),  # look up docs and error messages on the web
-        Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
+        Advisor('openai:gpt-6.1-sol'),  # a second opinion from another model when stuck
     ],
 )
 agent.to_cli_sync()
@@ -71,7 +71,7 @@ capabilities = [
 Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
+uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-1
 ```
 
 **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -99,7 +99,7 @@ class Sentiment(BaseModel):
     score: float = Field(ge=-1, le=1)
 
 
-agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
+agent = Agent('openai:gpt-6.1-sol', output_type=Sentiment)
 
 
 @agent.tool
@@ -133,7 +133,7 @@ from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
 agent = Agent(
-    'openai:gpt-6-sol',
+    'openai:gpt-6.1-sol',
     instructions='Research the topic and write a structured brief.',
     name='researcher',
     capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
@@ -202,7 +202,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('openai:gpt-image-2.5-flare')
 result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
 Path('logo.png').write_bytes(result.image.data)
 ```
@@ -303,7 +303,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(
-    'openai:gpt-6-sol',
+    'openai:gpt-6.1-sol',
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # the run returns a validated SupportOutput, typed as such
     instructions=(

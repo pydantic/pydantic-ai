@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
@@ -23,8 +23,9 @@ WarningKind = Literal['iterations', 'context_window', 'total_tokens']
 
 _WARNING_ORDER: tuple[WarningKind, ...] = ('iterations', 'context_window', 'total_tokens')
 _MARKER = '[WarnNearLimits]'
-_LEGACY_MARKER = '[LimitWarner]'
-"""Marker used by this capability before its rename; still stripped from resumed histories."""
+"""Model-visible heading of each warning. Never used to recognize one: user text can contain it."""
+_WARNING_METADATA = 'pydantic-ai-harness.warn-near-limits.v1'
+"""Model-invisible metadata identifying a warning content item."""
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,8 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
     (models tend to pay more attention to user messages than system messages).
 
     Previous warnings injected by this capability are stripped before deciding
-    whether to inject a new one.
+    whether to inject a new one. They are recognized by metadata on their content, never
+    by their text, so a user prompt that quotes a warning is left alone.
 
     Example:
         ```python
@@ -145,12 +147,12 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
     # -- internal helpers --
 
     @staticmethod
-    def _is_marker_part(part: Any) -> bool:
-        if isinstance(part, SystemPromptPart):
-            return _MARKER in part.content or _LEGACY_MARKER in part.content
-        if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-            return _MARKER in part.content or _LEGACY_MARKER in part.content
-        return False
+    def _is_warning_part(part: ModelRequestPart) -> bool:
+        return (
+            isinstance(part, UserPromptPart)
+            and not isinstance(part.content, str)
+            and any(isinstance(item, TextContent) and item.metadata == _WARNING_METADATA for item in part.content)
+        )
 
     def _strip_old_warnings(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         cleaned: list[ModelMessage] = []
@@ -165,7 +167,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
             if not msg.parts:
                 cleaned.append(msg)
                 continue
-            parts = [p for p in msg.parts if not self._is_marker_part(p)]
+            parts = [p for p in msg.parts if not self._is_warning_part(p)]
             if not parts:
                 continue
             if len(parts) == len(msg.parts):
@@ -267,7 +269,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         order = {k: i for i, k in enumerate(_WARNING_ORDER)}
         active.sort(key=lambda w: order[w.kind])
         warning_text = self._format_warning(active)
-        messages.append(ModelRequest(parts=[UserPromptPart(content=warning_text)]))
+        messages.append(ModelRequest(parts=[UserPromptPart([TextContent(warning_text, metadata=_WARNING_METADATA)])]))
 
         request_context.messages = messages
         return request_context
