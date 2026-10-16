@@ -1330,6 +1330,7 @@ def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tm
         'secret': False,
         'note': '',
         'action': False,
+        'menu': False,
     }
     assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:

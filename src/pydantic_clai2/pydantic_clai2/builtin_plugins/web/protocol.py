@@ -725,6 +725,8 @@ class MenuField:
     """Where the value comes from when not from the user."""
     action: bool
     """Whether choosing it runs an action, with dialogs, instead of editing a value."""
+    menu: bool
+    """Whether choosing it opens another menu, which the routes reach with `?menu=KEY`, instead of editing a value."""
 
 
 @dataclass(kw_only=True)
