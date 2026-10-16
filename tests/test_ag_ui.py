@@ -9111,7 +9111,12 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
     )
     loaded = reloaded.sanitize_messages(reloaded.messages)
-    expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
+    if manage_system_prompt == 'server':
+        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
+        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+            expected = sanitize_messages(server_history)
+    else:
+        expected = sanitize_messages(server_history, strip_system_prompts=False)
     assert _model_visible(loaded) == _model_visible(expected)
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),

@@ -426,6 +426,11 @@ I'd be happy to help you use a tool! However, I need more information about what
                         args={'repo': 'pydantic-ai'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                     ),
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'logfire'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
@@ -437,27 +442,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content="[Scrubbed due to 'API Key']",
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_table_of_contents',
-                        args={'repo': 'logfire'},
-                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
+                    ),
                     ToolReturnPart(
                         tool_name='get_table_of_contents',
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
-                    )
+                    ),
                 ]
             ),
             ModelResponse(
@@ -4816,63 +4807,16 @@ async def test_adapter_load_messages():
                         args={'repo': 'pydantic'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                     ),
-                ],
-                timestamp=IsDatetime(),
-                metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="[Scrubbed due to 'API Key']",
-                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
                     ToolCallPart(
                         tool_name='get_table_of_contents',
                         args={'repo': 'pydantic-ai'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="[Scrubbed due to 'API Key']",
-                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
+                    ),
                     ToolCallPart(
                         tool_name='get_table_of_contents',
                         args={'repo': 'logfire'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="Can't do that",
-                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                        timestamp=IsDatetime(),
-                        outcome='failed',
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
@@ -4900,6 +4844,35 @@ async def test_adapter_load_messages():
                         provider_name='openai',
                         outcome='failed',
                     ),
+                ],
+                timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="Can't do that",
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
                     ),
@@ -11791,7 +11764,12 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         manage_system_prompt=manage_system_prompt,
     )
     loaded = reloaded.sanitize_messages(reloaded.messages)
-    expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
+    if manage_system_prompt == 'server':
+        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
+        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+            expected = sanitize_messages(server_history)
+    else:
+        expected = sanitize_messages(server_history, strip_system_prompts=False)
     assert _model_visible(loaded) == _model_visible(expected)
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),

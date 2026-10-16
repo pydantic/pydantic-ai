@@ -413,7 +413,27 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     builder.add(UserPromptPart(content=user_prompt_content))
 
             elif msg.role == 'assistant':
+                # A `ModelResponse` with parallel tool calls is followed by one `ModelRequest` with all
+                # their returns, but a Vercel tool part carries a call and its output together. Hold the
+                # returns back until the step (one model response) ends, so the calls stay in one
+                # response. Streamed messages mark steps with `step-start` parts; without them (as
+                # `dump_messages` writes, one response per message) content after a completed tool
+                # call is taken to start the next step.
+                pending_returns: list[ToolReturnPart] = []
+                # Enqueued messages were delivered after the step's tool returns, so they wait with them.
+                pending_enqueued: list[ModelMessage] = []
+                has_steps = any(isinstance(part, StepStartUIPart) for part in msg.parts)
                 for part in msg.parts:
+                    if pending_returns and (
+                        isinstance(part, StepStartUIPart)
+                        or (not has_steps and isinstance(part, TextUIPart | ReasoningUIPart | FileUIPart))
+                    ):
+                        for return_part in pending_returns:
+                            builder.add(return_part)
+                        builder.messages.extend(pending_enqueued)
+                        pending_returns = []
+                        pending_enqueued = []
+
                     if isinstance(part, TextUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -468,7 +488,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
                             # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                             loaded = cls.load_messages(_enqueued_ui_messages(part.data))
-                            builder.messages.extend(loaded)
+                            if pending_returns:
+                                pending_enqueued.extend(loaded)
+                            else:
+                                builder.messages.extend(loaded)
                             enqueued.extend(loaded)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
@@ -594,7 +617,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 # error/denied returns it carries no `tool_kind` (typed return subclasses
                                 # signal shape-valid success to their readers).
                                 interrupted = provider_meta.get('outcome') == 'interrupted'
-                                builder.add(
+                                pending_returns.append(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -607,7 +630,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # subclasses only ever wrap successful, shape-valid content, and readers
                             # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
-                                builder.add(
+                                pending_returns.append(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -616,7 +639,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     )
                                 )
                             elif part.state == 'output-denied':
-                                builder.add(
+                                pending_returns.append(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -634,10 +657,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
                         pass
                     elif isinstance(part, StepStartUIPart):
-                        # Nothing to do here
+                        # Step boundaries are handled above, by flushing the held-back tool returns
                         pass
                     else:
                         assert_never(part)
+                for return_part in pending_returns:
+                    builder.add(return_part)
+                builder.messages.extend(pending_enqueued)
             else:
                 assert_never(msg.role)
 
