@@ -15,6 +15,7 @@ from ._output import (
     OutputSchema,
     OutputToolset,
     build_retried_tool_return,
+    retried_return_from_legacy,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -1294,16 +1295,8 @@ class ToolManager(Generic[AgentDepsT]):
             )
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
-            # Same as the `ModelRetry` branch above and as `_tool_execution._call_tool`: the retry
-            # answers this call, so it travels as the call's own result.
             raise ToolRetryError(
-                _messages._translate_legacy_retry_part(  # pyright: ignore[reportPrivateUsage]
-                    {
-                        'content': tool_call_result.content,
-                        'tool_name': call.tool_name,
-                        'tool_call_id': call.tool_call_id,
-                    }
-                )
+                retried_return_from_legacy(tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
             )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the

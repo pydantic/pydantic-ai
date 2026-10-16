@@ -774,17 +774,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
             # TODO(v3): remove `RetryPromptPart`
             elif isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
-                # A handler answering a deferred call with the deprecated part means what a
-                # `ModelRetry` above means: the retry answers this call, so it travels as the call's
-                # own result. The handler's own `tool_name`/`tool_call_id` are ignored either way —
-                # the call being resolved is the one it answers.
                 raise ToolRetryError(
-                    _messages._translate_legacy_retry_part(  # pyright: ignore[reportPrivateUsage]
-                        {
-                            'content': tool_call_result.content,
-                            'tool_name': call.tool_name,
-                            'tool_call_id': call.tool_call_id,
-                        }
+                    _output.retried_return_from_legacy(
+                        tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id
                     )
                 )
             else:

@@ -149,6 +149,28 @@ def build_retried_tool_return(
     return part
 
 
+# TODO(v3): remove `retried_return_from_legacy` along with `RetryPromptPart`
+def retried_return_from_legacy(
+    part: _messages.RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    *,
+    tool_name: str,
+    tool_call_id: str,
+) -> _messages.ToolReturnPart:
+    """The result a deferred call is answered with when its handler hands back the deprecated part.
+
+    It means what a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] there means: the retry answers
+    this call, so it travels as the call's own result. The part's own `tool_name` and `tool_call_id`
+    are ignored, since the call being resolved is the one it answers.
+    """
+    content = part.content
+    return _messages.ToolReturnPart(
+        tool_name=tool_name,
+        content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
+        tool_call_id=tool_call_id,
+        outcome='retried',
+    )
+
+
 def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     """Build the retry signal for output that failed validation or asked to be retried.
 
