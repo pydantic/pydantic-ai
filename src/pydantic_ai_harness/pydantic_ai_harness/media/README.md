@@ -32,10 +32,26 @@ Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `publi
 | Store | Backed by | Use when |
 |---|---|---|
 | `DiskMediaStore(directory=...)` | A directory on disk | Local runs and tests |
-| `SqliteMediaStore(...)` | A SQLite database | A single-file store that travels with the data |
+| `SqliteMediaStore(database=... or connection=...)` | A SQLite-compatible database | A single-file store that travels with the data |
 | `S3MediaStore(...)` | S3 or an S3-compatible bucket | Shared or production storage |
 | `MongoMediaStore(...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document, split so no chunk hits the 16 MiB cap |
 | `PostgresMediaStore(...)` | PostgreSQL (one `BYTEA` row per blob) | A PostgreSQL deployment; blobs up to 1 GB |
+
+`SqliteMediaStore(connection=...)` accepts a dedicated caller-owned connection that speaks SQLite and provides connection-level `execute`, `commit`, and `rollback` methods plus an `in_transaction` property. The store serializes worker-thread access, but the caller controls transactions: configure autocommit or commit writes in the application. The connection must be idle for the first operation while the store creates its schema. Stdlib `sqlite3.Connection` needs `check_same_thread=False`; [Turso](https://turso.tech) also provides the required surface.
+
+uv:
+
+```bash
+uv add pyturso
+```
+
+pip:
+
+```bash
+pip install pyturso
+```
+
+The application owns the Turso connection lifecycle. Pass `isolation_level=None` to `turso.connect(...)` for autocommit. Embedded replicas need explicit `pull()` and `push()` calls, and their commits are transactional only within one local replica.
 
 `MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`) and is imported the same way (`from pydantic_ai_harness.media import MongoMediaStore`). It stores each blob as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob. The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back; it does not bound memory, since `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray` (there is no streaming API). The manifest itself holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used instead of GridFS: it keeps content-addressed dedup (GridFS keys files by `ObjectId` and does none) and stays fully testable in-memory.
 
