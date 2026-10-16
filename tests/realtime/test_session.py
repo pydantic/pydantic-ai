@@ -11315,3 +11315,24 @@ async def test_user_turn_anchored_to_refused_content_is_still_recorded() -> None
         assert session.all_messages() == snapshot(
             [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime())]
         )
+
+
+
+def test_transcript_delta_preserves_explicit_empty_correction() -> None:
+    session = _RealtimeSession.__new__(_RealtimeSession)
+    session._transcript_so_far = {7: 'hello'}
+    session._transcript_delta_taps = {asyncio.Queue(maxsize=513)}
+    session._transcript_taps = set()
+    session._transcript_tap_drops = 0
+
+    event = PartDeltaEvent(
+        index=7,
+        delta=SpeechPartDelta(speaker='user', transcript='', transcript_delta=''),
+    )
+    session._publish_taps(event)
+
+    update = session._transcript_delta_taps.pop().get_nowait()
+    assert update.index == 7
+    assert update.transcript == ''
+    assert update.delta == ''
+    assert session._transcript_so_far[7] == ''
