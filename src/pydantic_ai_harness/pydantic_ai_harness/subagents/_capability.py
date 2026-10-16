@@ -75,8 +75,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     Exposes a single `delegate_task(agent_name, task)` tool. Each delegation
     runs the chosen sub-agent in a fresh, isolated run (it never sees the parent
-    conversation), and the available sub-agents are listed in the system prompt
-    as a static, cache-stable instruction.
+    conversation), and the available sub-agents are listed in the system prompt,
+    stable within a run; a change between runs of a conversation is appended
+    rather than rewritten.
 
     Sub-agents are passed as a sequence of `SubAgent` entries, each pairing an
     agent with its per-delegate run controls (a `usage_limits` budget, a

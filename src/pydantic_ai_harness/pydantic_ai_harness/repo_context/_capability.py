@@ -53,8 +53,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     1. Walk-up instruction autoload (`autoload_instructions`, on by default):
        load `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor
        up to `home_dir`, deduped, ancestor-first. These are read once at run start
-       and injected as **static system instructions** via `get_instructions`, so
-       they stay in the cached prefix and never re-read per turn.
+       and injected as system instructions via `get_instructions`, so they stay in
+       the cached prefix, stable within a run; a change between runs of a
+       conversation is appended rather than rewritten.
 
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
@@ -69,8 +70,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        enqueues a one-line pointer; `'contents'` inlines the file body.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache
-    stability. Strategy 1 is safe because its files are static; the volatile
-    Strategy 3 content rides in the message tail instead.
+    stability. Strategy 1 is safe because its files are stable within a run, and a
+    change between runs is appended rather than rewritten; the volatile Strategy 3
+    content rides in the message tail instead.
 
     ```python
     from pathlib import Path
