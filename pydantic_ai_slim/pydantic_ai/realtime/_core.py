@@ -263,7 +263,10 @@ class ResponseClosed:
 
 @dataclass(frozen=True)
 class UsageCounted:
-    """A usage report counted toward a response: what the request it is used so far."""
+    """A usage report was counted toward a response: `usage` is what that request has used so far.
+
+    The per-request input-token limit is checked against it.
+    """
 
     usage: RequestUsage
 

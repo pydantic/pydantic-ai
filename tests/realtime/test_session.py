@@ -9006,7 +9006,8 @@ async def test_executed_call_still_consumes_the_tool_call_limit() -> None:
     with pytest.raises(UsageLimitExceeded):
         async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
             async for event in session:
-                events.append(event)  # pragma: no cover — nothing streams ahead of the refused call
+                # Nothing streams ahead of the refused call.
+                events.append(event)  # pragma: no cover
 
     # Refused before anything of it streams. (The response that made it ended in the same frame, so it is
     # recorded, and the call gets the interrupted return a call that never ran gets.)
