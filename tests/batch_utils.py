@@ -81,8 +81,10 @@ class SlowBatchTestModel(TestModel):
         return await super().batch_status(batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
-        # A checkpoint first, so a cancellation that reaches the call stops it before it's recorded.
-        await anyio.lowlevel.checkpoint()
+        # Several event loop iterations first, like a real request, so a cancellation that reaches the call stops it
+        # before it's recorded.
+        for _ in range(10):
+            await anyio.lowlevel.checkpoint()
         self.canceled.append(batch.id)
         return await super().batch_cancel(batch)
 
