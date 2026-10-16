@@ -1346,7 +1346,7 @@ def test_a_session_joins_a_process_or_makes_its_own(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
 
     def start() -> SessionStart:
-        return SessionStart(agent=Agent(TestModel()), settings=store.load())
+        raise AssertionError  # pragma: no cover -- neither session is built, so nothing starts
 
     console = Console(file=io.StringIO())
     with pytest.raises(TypeError, match='needs the process it joins'):
