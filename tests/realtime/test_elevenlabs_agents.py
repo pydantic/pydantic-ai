@@ -744,6 +744,27 @@ async def test_tool_choice_restricts_the_attached_tools_per_conversation(tool_ch
     ]
 
 
+async def test_a_tool_choice_that_leaves_out_nothing_sends_no_override() -> None:
+    # `'none'` on an agent whose only tools are ElevenLabs' own narrows nothing: no `tool_ids` override is sent, so
+    # the agent needn't permit one.
+    recorder = RestRecorder(
+        agent_json(tools=[{'type': 'mcp', 'name': 'crm'}], tool_ids=['tool_mcp']),
+        extra={('GET', '/v1/convai/tools'): httpx2.Response(200, json=tools_listing(('tool_mcp', 'mcp', 'crm')))},
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsAgentsRealtimeModelSettings(tool_choice='none', elevenlabs_agents_tool_sync='off')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert recorder.request_summaries() == [
+        f'GET /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/tools',
+        'GET /v1/convai/conversation/get-signed-url',
+    ]
+    assert ws.sent_frames() == [{'type': 'conversation_initiation_client_data', 'source_info': SOURCE_INFO}]
+
+
 async def test_tool_choice_restriction_requires_the_tool_ids_override() -> None:
     recorder = RestRecorder(
         agent_json(tools=[WEATHER_TOOL_REMOTE], tool_ids=['tool_weather']),
@@ -781,27 +802,6 @@ async def test_tool_sync_off_trusts_the_agent() -> None:
             pass
 
 
-class HeldOpenWebSocket(FakeWebSocket):
-    """A `FakeWebSocket` whose server stays silent after the scripted frames instead of closing.
-
-    The session settles tool calls in the background, so a test that needs their outcome to reach the
-    consumer must not have the socket report a close the moment the last frame is read.
-    """
-
-    def __init__(self, incoming: Sequence[dict[str, Any] | str]) -> None:
-        super().__init__(incoming)
-        self._closing = asyncio.Event()
-
-    async def recv(self) -> str:
-        if not self._incoming:
-            await self._closing.wait()
-        return await super().recv()
-
-    async def close(self) -> None:
-        self._closing.set()
-        await super().close()
-
-
 async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() -> None:
     # `'off'` skips the preflight, so the agent keeps `get_weather` attached while the run defines no
     # tool at all. The call is not filtered in the codec: it reaches the session's tool manager,
@@ -822,7 +822,9 @@ async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() ->
         'type': 'agent_response',
         'agent_response_event': {'agent_response': 'I cannot look that up right now.'},
     }
-    ws = HeldOpenWebSocket([HANDSHAKE_FRAME, call_frame, reply_frame])
+    ws = FakeWebSocket([HANDSHAKE_FRAME, call_frame, reply_frame])
+    # The session settles tool calls in the background: the socket stays quiet rather than closing at the last frame.
+    ws.hold_open = True
     model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
     agent: Agent[None, str] = Agent()

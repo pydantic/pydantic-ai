@@ -1563,8 +1563,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 # The read stays in flight across the wait: a cancelled read could drop the frame it holds.
                 done, _ = await asyncio.wait({read}, timeout=_AUDIO_TAIL_GRACE if self._tail is not None else None)
                 if not done:
-                    if events := self._end_tail():
-                        yield self._frame(events)
+                    yield self._frame(self._end_tail())
                     continue
                 finished, read = read, None
                 try:
@@ -1880,8 +1879,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     def _end_tail(self) -> list[RealtimeCodecEvent]:
         """End the reply whose text is complete: its audio, if any more was coming, won't."""
         tail, self._tail = self._tail, None
-        if tail is None:
-            return []
+        assert tail is not None
         return self._finalize_response(
             interrupted=tail.interrupted, provider_response_id=tail.response_id, provider_details=tail.provider_details
         )

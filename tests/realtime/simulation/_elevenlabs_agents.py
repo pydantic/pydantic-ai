@@ -447,7 +447,9 @@ class ElevenLabsAgentsSimulation(Simulation):
         async def observed() -> AsyncIterator[RealtimeFrame]:
             async for frame in connection_frames():
                 for event in frame:
-                    if not isinstance(event, StaleEvent):
+                    # (The simulated server sends a cut reply's terminal right after its interruption, so nothing
+                    # comes between them for the connection to make the terminal's transcript stale.)
+                    if not isinstance(event, StaleEvent):  # pragma: no branch
                         observe(event)
                 yield frame
             observe(None)

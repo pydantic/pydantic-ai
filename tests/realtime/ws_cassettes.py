@@ -463,10 +463,6 @@ class ReplayWebSocket:
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
             if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
                 del actual['response']
-        if actual.get('type') == 'conversation_initiation_client_data' and 'source_info' not in expected:
-            # Recorded before ElevenLabs conversations reported the library in `source_info`; only that is let
-            # through, and the rest of the frame is still pinned.
-            actual.pop('source_info', None)
         if actual.get('type') == 'session.update' and _transcription_model(expected) == 'gpt-realtime-whisper':
             # Recorded before OpenAI's `input_transcription_model='auto'` resolved to `gpt-live-transcribe`;
             # only that model is let through, and the rest of the frame is still pinned.

@@ -155,6 +155,14 @@ def test_infer_realtime_model_elevenlabs_agents(env: TestEnv) -> None:
     assert getattr(model, '_provider').base_url == 'https://api.elevenlabs.io'
 
 
+def test_infer_realtime_model_elevenlabs_agents_with_a_provider_factory() -> None:
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+
+    provider = ElevenLabsProvider(api_key='test')
+    model = infer_realtime_model('elevenlabs-agents:agent_0101test', provider_factory=lambda name: provider)
+    assert getattr(model, '_provider') is provider
+
+
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     # `gateway/openai:...` routes the OpenAI realtime protocol through the Pydantic AI Gateway: an
     # `OpenAIRealtimeModel` whose provider derives its base URL and key from `gateway_provider`.
