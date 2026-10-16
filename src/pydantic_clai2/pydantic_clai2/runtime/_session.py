@@ -71,6 +71,11 @@ def session_context(session_id: str) -> Generator[None]:
         _CURRENT_SESSION_ID.reset(token)
 
 
+def step_store(conversations: SqliteConversationStore) -> SqliteStepStore:
+    """Where runs over `conversations`, delegated tasks' included, capture their steps."""
+    return SqliteStepStore(database=conversations.database, max_snapshots_per_run=8)
+
+
 FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
@@ -355,9 +360,7 @@ class Session(Generic[DepsT, OutputT]):
         self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
         self._published = (self.conversation_id, self.title)
-        self.step_store: StepStore | None = (
-            SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
-        )
+        self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
             ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
             if conversations

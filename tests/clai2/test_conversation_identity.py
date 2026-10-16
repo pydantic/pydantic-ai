@@ -1,6 +1,7 @@
 """Plugins read the conversation's ID and title, and hear `ConversationChanged` when either changes."""
 
 from collections.abc import Sequence
+from dataclasses import replace
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -116,8 +117,8 @@ async def test_naming_and_browser_renames_retitle_the_current_conversation(
     async def generate(prompt: str) -> NamingResult:
         return NamingResult(name=SessionName(title='Renderer fix'))
 
-    service.namer.generate = generate
-    assert await service.namer.name(conversation_id=session.conversation_id)
+    client = replace(service.naming, generate=generate)
+    assert await service.namer.name(conversation_id=session.conversation_id, client=client)
     assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Renderer fix')]
     await service.named('another conversation', 'Ignored')
     assert len(events) == 1

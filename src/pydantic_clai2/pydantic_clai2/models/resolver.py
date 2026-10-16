@@ -44,20 +44,22 @@ class ModelResolver:
     pool_accounts: Callable[[], bool] = lambda: False
     """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
     shared: 'ModelResolver | None' = None
-    """The process's resolver, whose Codex sign-in this one uses."""
+    """The process's resolver, whose Codex providers this one uses."""
     _auth: 'CodexAuth | None' = None
 
-    def for_session(self) -> 'ModelResolver':
-        """A resolver for one session's plugins and settings, sharing this one's store and Codex sign-in."""
-        return ModelResolver(console=self.console, store=self.store, shared=self)
+    def for_session(self, *, console: Console) -> 'ModelResolver':
+        """A resolver for one session's plugins and settings, sharing this one's store and Codex providers.
+
+        Its sign-ins prompt on `console`, the session's own.
+        """
+        return ModelResolver(console=console, store=self.store, shared=self)
 
     def codex_auth(self) -> 'CodexAuth':
-        if self.shared is not None:
-            return self.shared.codex_auth()
         if self._auth is None:
             from pydantic_clai2.auth import CodexAuth
 
-            self._auth = CodexAuth(self.console)
+            shared = self.shared
+            self._auth = shared.codex_auth().for_console(self.console) if shared else CodexAuth(self.console)
         return self._auth
 
     async def login(self, args: list[str]) -> str:

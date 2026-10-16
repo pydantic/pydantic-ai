@@ -72,9 +72,7 @@ class Sessions(Generic[DepsT, OutputT]):
             generate=self.generate, enabled=lambda: self.context.settings.session_namer, on_named=self.named
         )
         """How this session names the conversations it queues on `namer`."""
-        self.namer = namer or SessionNamer(
-            store=store, generate=self.naming.generate, enabled=self.naming.enabled, on_named=self.naming.on_named
-        )
+        self.namer = namer or SessionNamer(store=store)
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None

@@ -78,9 +78,15 @@ def test_runtimes_share_the_process_services(tmp_path: Path) -> None:
     assert a.sessions.namer is b.sessions.namer is process.namer
     assert a.sessions.naming is not b.sessions.naming
     assert process.tasks.owner.directory == tmp_path / 'sessions.db.tasks'
-    session_models = process.models.for_session()
-    assert session_models.store is process.store
-    assert session_models.codex_auth() is process.models.codex_auth()
+    consoles = Console(file=io.StringIO()), Console(file=io.StringIO())
+    first, second = (process.models.for_session(console=console) for console in consoles)
+    assert first.store is second.store is process.store
+    # Each session's sign-in prompts on its own console; every account's provider, and its refresh, is shared.
+    assert (first.codex_auth().console, second.codex_auth().console) == consoles
+    assert first.codex_auth() is first.codex_auth()
+    provider = first.codex_auth().account_provider('openai-codex')
+    assert second.codex_auth().account_provider('openai-codex') is provider
+    assert process.models.codex_auth().provider is provider
     assert not (a.interrupts.signals or b.interrupts.signals)
     alone, _ = runtime_over(ClaiProcess.open(SettingsStore(tmp_path / 'other.db')), tmp_path / 'alone')
     assert alone.tasks.owner is not process.tasks.owner

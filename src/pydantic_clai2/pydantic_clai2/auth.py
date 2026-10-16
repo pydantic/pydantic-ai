@@ -201,6 +201,12 @@ class CodexAuth:
         self.source = CodexCredentials()
         self._providers: dict[str, OpenAICodexProvider] = {}
 
+    def for_console(self, console: Console) -> 'CodexAuth':
+        """Sign-ins that prompt on `console`, sharing this one's providers, so each account refreshes once."""
+        auth = CodexAuth(console, login_timeout=self.login_timeout)
+        auth.source, auth._providers = self.source, self._providers
+        return auth
+
     @property
     def provider(self) -> OpenAICodexProvider | None:
         """The default profile's provider, once a request has built it."""

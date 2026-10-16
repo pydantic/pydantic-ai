@@ -154,7 +154,7 @@ def create_shell(
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
     session.instructions = settings.instructions
-    models = process.models.for_session()
+    models = process.models.for_session(console=console)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))

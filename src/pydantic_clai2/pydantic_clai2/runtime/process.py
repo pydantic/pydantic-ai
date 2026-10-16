@@ -6,10 +6,10 @@ from typing import Self
 
 from rich.console import Console
 
-from pydantic_ai_harness.step_persistence import SqliteStepStore
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.resolver import ModelResolver
+from pydantic_clai2.runtime._session import step_store
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.tasks import TaskRouter
 
@@ -29,13 +29,13 @@ class ClaiProcess:
     namer: SessionNamer
     """The one background naming worker; whoever runs the process runs `namer.run`."""
     models: ModelResolver
-    """The Codex sign-in every session's resolver shares, through `models.for_session()`."""
+    """The Codex providers every session's resolver shares, through `models.for_session(console=...)`."""
 
     @classmethod
     def open(cls, store: SettingsStore | None = None, *, console: Console | None = None) -> Self:
         """The process over `store`, by default the user's settings database.
 
-        `console` is where a Codex sign-in prints.
+        `console` is where a Codex sign-in through `models` itself prints; a session's resolver prints to its own.
         """
         store = store or SettingsStore()
         conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
@@ -44,7 +44,7 @@ class ClaiProcess:
             conversations=conversations,
             tasks=TaskRouter(
                 directory=Path(f'{conversations.database}.tasks'),
-                step_store=SqliteStepStore(database=conversations.database, max_snapshots_per_run=8),
+                step_store=step_store(conversations),
             ),
             namer=SessionNamer(store=conversations),
             models=ModelResolver(console=console or Console(), store=store),
