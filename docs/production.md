@@ -12,7 +12,7 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 |---|---|---|
 | [What happens when the process crashes mid-run?](#crash) | Run the agent on a durable execution engine | Core, plus an engine you run |
 | [How does a human approve a risky action, and the run resume days later?](#approval) | Deferred tools end the run; a later run resumes it | Core |
-| [How do I keep conversation state?](#state) | Store the message history, or let `StepPersistence` do it | Core, or Harness |
+| [How do I keep conversation state?](#state) | Store the run's `Conversation`, or let `StepPersistence` do it | Core, or Harness |
 | [How do I bound cost and runaway loops?](#cost) | `UsageLimits` per run, `SpendLimits` per day, tenant or month | Core, and Harness |
 | [What happens when a provider is down?](#outages) | `FallbackModel`, transport retries, or Gateway failover | Core, or hosted Gateway |
 | [How do I see what happened?](#observability) | OpenTelemetry traces of every run | Core, to any OTel backend or Logfire |
@@ -82,7 +82,7 @@ async def support_run(prompt: str) -> str:
         if approvals is None:  # nobody answered within a week
             approvals = {call_id: False for call_id in pending}
         result = await agent.run(
-            message_history=result.all_messages(),
+            conversation=result.conversation,
             deferred_tool_results=output.build_results(approvals=approvals),
         )
     await DBOS.set_event_async('state', {'output': output})
@@ -130,10 +130,10 @@ In frameworks built around a checkpointer, one mechanism saves state after each 
 
 ## How does a human approve a risky action, and the run resume days later? {#approval}
 
-Mark the tool as needing approval. When the model calls it, the run ends with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output listing the pending calls, and nothing stays in memory while you wait. Store the message history, ask a person, and when they answer, minutes or weeks later, start a new run from that history with their decision:
+Mark the tool as needing approval. When the model calls it, the run ends with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output listing the pending calls, and nothing stays in memory while you wait. Store the run's [`Conversation`][pydantic_ai.conversation.Conversation], which keeps the pending calls as [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests], ask a person, and when they answer, minutes or weeks later, continue the conversation with their decision:
 
 ```python {title="production_approval.py"}
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ModelMessagesTypeAdapter
+from pydantic_ai import Agent, ConversationTypeAdapter, DeferredToolRequests
 
 agent = Agent('{{ anthropic:medium }}', output_type=[str, DeferredToolRequests])
 
@@ -147,13 +147,15 @@ async def start(prompt: str) -> bytes:
     result = await agent.run(prompt)
     if isinstance(result.output, DeferredToolRequests):
         ...  # ask a person about each call in result.output.approvals
-    return result.all_messages_json()  # store this in your database
+    return ConversationTypeAdapter.dump_json(result.conversation)  # store under result.conversation_id
 
 
-async def resume(stored: bytes, tool_call_id: str, approved: bool) -> str | DeferredToolRequests:
+async def resume(stored: bytes, approvals: dict[str, bool]) -> str | DeferredToolRequests:
+    conversation = ConversationTypeAdapter.validate_json(stored)
+    assert conversation.deferred_tool_requests is not None
     result = await agent.run(
-        message_history=ModelMessagesTypeAdapter.validate_json(stored),
-        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: approved}),
+        conversation=conversation,
+        deferred_tool_results=conversation.deferred_tool_requests.build_results(approvals=approvals),
     )
     return result.output
 ```
@@ -167,7 +169,7 @@ For an agent with nobody watching, [`ToolCallJudge`](https://pydantic.dev/docs/a
 
 ## How do I keep conversation state? {#state}
 
-A conversation's state is its message history. Store [`result.new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] under a [`conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) in your own database, serialized with [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] (see [storing messages as JSON](message-history.md#storing-and-loading-messages-to-json)), and pass the history back as `message_history` on the next run. A `jsonb` column is enough; no schema migration is needed when Pydantic AI adds a message part.
+A conversation's state is its [`Conversation`][pydantic_ai.conversation.Conversation]: the messages, the running usage that [`UsageLimits`](#cost) budgets keep counting across turns and approvals, the `conversation_id` that [correlates its runs](message-history.md#correlating-runs-with-run_id-and-conversation_id), and any pending deferred calls. Store [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] in your own database, serialized with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter] and keyed by its `conversation_id`, and pass it back as `conversation=` on the next run. A `jsonb` column is enough; no schema migration is needed when Pydantic AI adds a message part. [Persistence](persistence.md#storing-a-conversation-yourself) also shows an append-only variant that keeps writes proportional to each turn.
 
 To skip writing that code, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) (Harness) stores runs for you, with continue and fork. For what an agent should remember about a user across conversations, [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) (Harness) keeps notes the agent writes itself. [Persistence](persistence.md) compares all of these, and [compaction](capabilities/compaction.md) keeps a long conversation inside the context window.
 
