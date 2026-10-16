@@ -34,7 +34,7 @@ from contextlib import (
 )
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import anyio
 
@@ -43,7 +43,6 @@ from ..exceptions import ModelRequestTimeout
 from ..settings import ModelSettings
 
 if TYPE_CHECKING:
-    from .._run_context import RunContext
     from ..messages import ModelMessage, ModelResponse
     from . import Model, ModelRequestParameters, StreamedResponse
 
@@ -149,13 +148,13 @@ async def open_request_stream(
     messages: list[ModelMessage],
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
-    run_context: RunContext[Any] | None = None,
 ) -> AsyncGenerator[StreamedResponse]:
     """Open a streamed request to `model` under its `request_timeout` deadline, if it's set.
 
-    The deadline covers opening the stream and each pull of its next event.
+    The deadline starts when the stream is opened, not when this is called, and covers opening the stream and each
+    pull of its next event.
     """
-    stream = model.request_stream(messages, model_settings, model_request_parameters, run_context)
+    stream = model.request_stream(messages, model_settings, model_request_parameters)
     async with stream_under_deadline(start_request_deadline(model, model_settings), stream) as streamed_response:
         yield streamed_response
 
