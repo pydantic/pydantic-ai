@@ -399,6 +399,16 @@ async def test_instructions_require_the_prompt_override_toggle() -> None:
             pass  # pragma: no cover
 
 
+async def test_an_agent_without_platform_settings_permits_no_override() -> None:
+    # An agent configuration that leaves out `platform_settings` has every override toggle off.
+    agent = agent_json()
+    del agent['platform_settings']
+    model = _model(RestRecorder(agent))
+    with pytest.raises(UserError, match=r'does not permit the `agent\.prompt\.prompt` conversation override'):
+        async with _connect(model, instructions='Be terse.'):
+            pass  # pragma: no cover
+
+
 async def test_no_instructions_inherits_the_agent_prompt_silently() -> None:
     # Without local instructions the ElevenLabs-side prompt is inherited: no override is sent, and no
     # override permission is required.
