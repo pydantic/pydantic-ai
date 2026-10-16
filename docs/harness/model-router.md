@@ -22,15 +22,15 @@ from pydantic_ai_harness.model_router import ModelChoice, ModelRouter
 router = ModelRouter(
     choices={
         'fast': ModelChoice(
-            'openai:gpt-5.6-luna',
+            '{{ openai:small }}',
             'Lookups, extraction, or a change confined to one place.',
         ),
         'capable': ModelChoice(
-            'openai:gpt-5.6-sol',
+            '{{ openai:medium }}',
             'Architecture, security, or a decision that is expensive to get wrong.',
         ),
     },
-    router_model='openai:gpt-5.6-luna',
+    router_model='{{ openai:small }}',
     default='capable',
 )
 

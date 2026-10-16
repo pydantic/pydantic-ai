@@ -17,15 +17,15 @@ from pydantic_ai_harness.model_router import ModelChoice, ModelRouter
 router = ModelRouter(
     choices={
         'fast': ModelChoice(
-            'openai:gpt-5.6-luna',
+            'openai:gpt-6-luna',
             'Lookups, extraction, or a change confined to one place.',
         ),
         'capable': ModelChoice(
-            'openai:gpt-5.6-sol',
+            'openai:gpt-6.1-sol',
             'Architecture, security, or a decision that is expensive to get wrong.',
         ),
     },
-    router_model='openai:gpt-5.6-luna',
+    router_model='openai:gpt-6-luna',
     default='capable',
 )
 
