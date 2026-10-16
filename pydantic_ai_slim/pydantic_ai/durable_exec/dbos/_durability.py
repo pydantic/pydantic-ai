@@ -24,7 +24,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
-from ._utils import StepConfig, guard_enqueue_in_workflow
+from ._utils import StepConfig, guard_enqueue_in_workflow, using_durable_sleep
 
 if TYPE_CHECKING:
     from dbos._context import DBOSContext
@@ -287,7 +287,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode for every entry point."""
+        """Apply the configured parallel-execution mode, and make agent-graph waits durable in workflows."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
@@ -296,5 +296,5 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         mode = self._parallel_execution_mode
         if self.in_durable_context and ctx.workspace.attached:
             mode = 'sequential'
-        with agent.parallel_tool_call_execution_mode(mode):
+        with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
             return await handler()
