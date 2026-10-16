@@ -292,7 +292,7 @@ class StayTerse(AbstractCapability[Any]):
 agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
 ```
 
-Don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation.
+Don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
 
 A turn-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
 
@@ -837,7 +837,8 @@ The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empt
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
-`RunContext` in scope:
+`RunContext` in scope. For a capability adding steering messages or reminders from
+`before_model_request`, see [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders):
 
 ```python {title="enqueue_from_tool.py"}
 from pydantic_ai import Agent, RunContext

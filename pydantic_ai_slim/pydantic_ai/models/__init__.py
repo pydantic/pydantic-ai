@@ -354,6 +354,11 @@ class ModelRequestContext:
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.
 
+    To add a message the model sees now and that stays in the conversation, such as a steering message
+    or a reminder, call [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] from
+    `before_model_request`: it goes into this request and into the message history. See
+    [Changing what the model sees](../capabilities/custom.md#steering-messages-and-reminders).
+
     Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
     added to the message history, but this is deprecated and emits a warning.
 
