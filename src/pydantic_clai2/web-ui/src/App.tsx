@@ -128,7 +128,7 @@ export function App() {
     }
     // A reconnect watches the shown session again, in order with the messages, so the default session's snapshot
     // that every connection starts with waits aside.
-    const opened = connect(queue, setConnection, () => watching.current, (id) => queue({ type: 'show', id }))
+    const opened = connect(queue, setConnection, () => watching.current, (id) => queue({ type: 'show', id, reconnect: true }))
     socket.current = opened
     return () => {
       socket.current = null
@@ -144,9 +144,10 @@ export function App() {
   }, [shown, connection])
   // A session that closed before it could show leaves nothing shown: show the default session again.
   const lostSession = shown === null && state.version !== null
+  const liveCount = Object.keys(state.live).length
   useEffect(() => {
-    if (lostSession && connection === 'open') void api.state().then(dispatch, () => undefined)
-  }, [lostSession, connection])
+    if (lostSession && connection === 'open' && liveCount > 0) void api.state().then(dispatch, () => undefined)
+  }, [lostSession, connection, liveCount])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
@@ -229,11 +230,9 @@ export function App() {
     else document.title = chat.session?.title ? `${chat.session.title} · CLAI` : 'CLAI'
   }, [chat.session?.title, pane])
 
-  // A switch of the shown session ends any read-only preview, drops a transcript still on its way so it cannot
-  // reopen it, and ends the wait for it if it is the one picked.
+  // A switch of the shown session ends any read-only preview, and the wait for it if it is the one picked.
   const sessionId = chat.session?.id
   useEffect(() => {
-    picked.current++
     setPreview(null)
     setWorker(null)
     setOpening((current) => (current?.id === sessionId ? null : current))
@@ -269,7 +268,7 @@ export function App() {
     setPane('session')
     setWorker(null)
     setPreview(null)
-    dispatch({ type: 'show', id })
+    dispatch({ type: 'show', id, reconnect: false })
   }, [])
 
   const followsWorkspace = state.followsWorkspace
@@ -316,8 +315,8 @@ export function App() {
         }
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
-        setOpening((current) => (current ? { ...current, id } : current))
-        show(id)
+        // With `/web` from a terminal, the shown session itself switches to it, and its new snapshot follows.
+        if (id !== shown) show(id)
       } catch (error) {
         if (request !== picked.current) return
         setOpening(null)

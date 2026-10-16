@@ -68,6 +68,11 @@ export interface State {
   shown: string | null
   /** The session the page last asked to watch, until its snapshot comes. */
   awaiting: string | null
+  /**
+   * Whether a `live` listed `awaiting`, or a reconnect asked for it, so a `live` without it means it closed; one sent
+   * before it opened may still arrive after the page asked.
+   */
+  confirmed: boolean
   /** What showed before `awaiting`, shown again if the awaited session turns out not to be live. */
   previous: string | null
   /**
@@ -75,7 +80,10 @@ export interface State {
    * one is gone.
    */
   stray: Snapshot | null
-  /** Each session's chat, by conversation ID: the shown one's, and others seen before, until they close. */
+  /**
+   * The shown session's chat, by conversation ID; the page watches no other, so no other chat would stay current.
+   * Until a newly shown session's snapshot comes, this is still the previous one's.
+   */
   chats: Record<string, Chat>
   /** The sessions live in this CLAI, by conversation ID, with what each is doing. */
   live: Record<string, LiveEntry>
@@ -98,6 +106,7 @@ export interface State {
 export const initial: State = {
   shown: null,
   awaiting: null,
+  confirmed: false,
   previous: null,
   stray: null,
   chats: {},
@@ -112,8 +121,8 @@ export const initial: State = {
   update: null,
 }
 
-/** What the page does itself: show a session, after asking the server to watch it. */
-export type Action = ServerMessage | { type: 'show'; id: string }
+/** What the page does itself: show a session, after asking the server to watch it, again when `reconnect`ing. */
+export type Action = ServerMessage | { type: 'show'; id: string; reconnect: boolean }
 
 /** The chat of the session the main pane shows, empty while it is on its way. */
 export function shownChat(state: State): Chat {
@@ -273,8 +282,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     running: message.running,
     status: message.status,
     questions: message.questions,
-    // Only the shown session's clock is current: another's chat stopped getting messages when it stopped showing.
-    turnStartedAt: message.running && id === state.shown ? (previous?.turnStartedAt ?? null) : null,
+    turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
     tasks: message.tasks,
     taskItems: message.task_items,
   }
@@ -282,9 +290,10 @@ function applySnapshot(state: State, message: Snapshot): State {
     ...state,
     shown: id,
     awaiting: null,
+    confirmed: false,
     previous: null,
     stray: null,
-    chats: { ...state.chats, [id]: chat },
+    chats: { [id]: chat },
     dialogs: message.dialogs,
     theme: message.theme,
     followsWorkspace: message.follows_workspace,
@@ -297,12 +306,10 @@ function applySnapshot(state: State, message: Snapshot): State {
 export function reduce(state: State, action: Action): State {
   switch (action.type) {
     case 'show': {
-      // A chat kept from an earlier visit missed what happened since, so it goes until the snapshot brings it back.
-      // The shown session is shown again only by a reconnect, whose new connection answers its watch.
-      const chats = { ...state.chats }
-      if (action.id !== state.shown) delete chats[action.id]
+      // A reconnect's first `live` is current, so a session missing from it has closed.
+      const confirmed = action.reconnect || action.id in state.live
       const previous = state.previous ?? state.shown
-      return { ...state, shown: action.id, awaiting: action.id, previous, stray: null, chats }
+      return { ...state, shown: action.id, awaiting: action.id, confirmed, previous, stray: null }
     }
     case 'snapshot': {
       const id = action.session.id
@@ -313,14 +320,15 @@ export function reduce(state: State, action: Action): State {
     }
     case 'live': {
       const live = Object.fromEntries(action.sessions.map((entry) => [entry.id, entry]))
-      // A closed session's chat goes, unless the page still shows it.
-      const chats = Object.fromEntries(Object.entries(state.chats).filter(([id]) => id in live || id === state.shown))
-      const next = { ...state, live, chats }
-      // The awaited session is not live, so no answer comes: show what came instead, or what showed before.
-      if (state.awaiting === null || state.awaiting in live) return next
+      const next = { ...state, live }
+      if (state.awaiting === null) return next
+      if (state.awaiting in live) return { ...next, confirmed: true }
+      // Sent before the awaited session opened: its answer is still to come.
+      if (!state.confirmed) return next
+      // The awaited session closed, so no answer comes: show what came instead, or what showed before.
       if (state.stray) return applySnapshot(next, state.stray)
       const back = state.previous !== null && state.previous in live ? state.previous : null
-      return { ...next, shown: back, awaiting: null, previous: null }
+      return { ...next, shown: back, awaiting: null, confirmed: false, previous: null }
     }
     case 'dialog':
       return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== action.dialog.id), action.dialog] }

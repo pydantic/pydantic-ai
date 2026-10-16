@@ -87,12 +87,18 @@ function dot(session: SessionEntry, live: Record<string, LiveEntry>): Dot {
   return session.state === 'running' ? 'ready' : session.state
 }
 
-/** The dots of a session with a turn running, here or in another CLAI. */
-const WORKING: readonly Dot[] = ['running', 'queued', 'asking', 'busy']
+/** The dots of a session with a turn running, here or in another CLAI, the most urgent first. */
+const WORKING: readonly Dot[] = ['asking', 'queued', 'running', 'busy']
 
-/** Whether a turn runs in one of these sessions, so a collapsed group still shows it. */
-function active(worktrees: Worktree[], live: Record<string, LiveEntry>): boolean {
-  return worktrees.some((worktree) => worktree.sessions.some((s) => WORKING.includes(dot(s, live))))
+/** The most urgent dot among these sessions, so a collapsed group still shows it; `null` when none works. */
+function strongest(worktrees: Worktree[], live: Record<string, LiveEntry>): Dot | null {
+  const found = new Set(worktrees.flatMap((worktree) => worktree.sessions.map((s) => dot(s, live))))
+  return WORKING.find((state) => found.has(state)) ?? null
+}
+
+/** A collapsed group's dot, if a session in it works. */
+function GroupDot({ state }: { state: Dot | null }) {
+  return state === null ? null : <StateDot state={state} />
 }
 
 /** A session's status dot, named for screen readers; none for a session that is not doing anything. */
@@ -376,7 +382,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               >
                 <FolderIcon size={14} />
                 <span className="project-name">{project.name}</span>
-                {closed && active(project.worktrees, live) && <StateDot state="running" />}
+                {closed && <GroupDot state={strongest(project.worktrees, live)} />}
                 <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
               </button>
               {!closed &&
@@ -397,7 +403,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                           <BranchIcon size={12} />
                           <span className="worktree-name">{worktree.label}</span>
                           {worktree.missing && <span className="worktree-tag">removed</span>}
-                          {shut && active([worktree], live) && <StateDot state="running" />}
+                          {shut && <GroupDot state={strongest([worktree], live)} />}
                           <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
                         </button>
                       )}
