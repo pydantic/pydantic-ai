@@ -390,7 +390,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: _messages.ToolKind | ToolPartKind | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -612,7 +612,7 @@ if TYPE_CHECKING:
     ToolKind: TypeAlias = ToolDefinitionKind
 
 
-def _tool_kind_of(value: _messages.ToolKind | ToolPartKind | None) -> ToolPartKind | None:
+def _tool_kind_of(value: _messages.ToolKindLike | None) -> ToolPartKind | None:
     """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
     return value.id if isinstance(value, _messages.ToolKind) else value
 
@@ -634,7 +634,7 @@ if TYPE_CHECKING:
 
         def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None: ...
 
-        def __set__(self, obj: object, value: _messages.ToolKind | ToolPartKind | None) -> None: ...
+        def __set__(self, obj: object, value: _messages.ToolKindLike | None) -> None: ...
 
 
 KindArgsT = TypeVar('KindArgsT')
@@ -910,7 +910,7 @@ def __getattr__(name: str) -> object:
         warnings.warn(
             '`pydantic_ai.tools.ToolKind` has been renamed to `ToolDefinitionKind`; `ToolKind` is now the '
             '`pydantic_ai.ToolKind` class that says what a tool is. Update your imports; this deprecated alias will '
-            'be removed in a future release.',
+            'be removed in v3.',
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )

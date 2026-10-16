@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     InstructionId,
     ToolKind,
+    ToolKindLike,
     ToolPartKind,
 )
 from pydantic_ai.tools import (
@@ -245,7 +246,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolKind | ToolPartKind | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -341,7 +342,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolKind | ToolPartKind | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,

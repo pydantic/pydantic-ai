@@ -12,7 +12,7 @@ from .._instructions import AgentInstructions, normalize_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
-from ..messages import InstructionPart, ToolKind, ToolPartKind
+from ..messages import InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -228,7 +228,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolKind | ToolPartKind | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -402,7 +402,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolKind | ToolPartKind | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -560,7 +560,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
-        tool_kind: ToolKind | ToolPartKind | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
     ) -> Tool[AgentDepsT]:

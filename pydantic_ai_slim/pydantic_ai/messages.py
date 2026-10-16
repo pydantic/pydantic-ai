@@ -1429,6 +1429,13 @@ Distinct from [`ToolDefinitionKind`][pydantic_ai.tools.ToolDefinitionKind] (invo
 """
 
 
+ToolKindLike: TypeAlias = 'ToolKind | ToolPartKind'
+"""How a tool declares its kind: a [`ToolKind`][pydantic_ai.messages.ToolKind], or its [`id`][pydantic_ai.messages.ToolKind.id].
+
+Accepted by `tool_kind` on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], [`Tool`][pydantic_ai.tools.Tool]
+and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+"""
+
 ArgsT_co = TypeVar('ArgsT_co', covariant=True, default=Any)
 """The arguments shape of a [`ToolKind`][pydantic_ai.messages.ToolKind] and of the typed call parts registered for it."""
 
