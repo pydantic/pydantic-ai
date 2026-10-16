@@ -3688,7 +3688,7 @@ async def test_bedrock_tool_choice_none_after_tool_call_claude(
     """`tool_choice='none'` after a tool call must keep `toolConfig`, which Converse requires alongside `toolUse` blocks.
 
     Converse has no `toolChoice.none`, so Claude gets its native `tool_choice` via `additionalModelRequestFields`, which
-    stops it from calling the tool again and keeps the tools cache section intact.
+    stops it from calling the tool again.
     """
     model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     agent = Agent(model, capabilities=[_NoToolsAfterFirstStep()])
@@ -3713,7 +3713,10 @@ async def test_bedrock_tool_choice_none_after_tool_call_claude(
 async def test_bedrock_tool_choice_none_after_tool_call_nova(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
-    """Without a native `none`, the tools are kept (unenforced) once history has a tool call, so Converse accepts it."""
+    """Without a native `none`, the tools are kept (unenforced) once history has a tool call, so Converse accepts it.
+
+    The model can still call them until core enforces `tool_choice` when executing tool calls.
+    """
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(model, capabilities=[_NoToolsAfterFirstStep()])
 
@@ -3730,16 +3733,19 @@ async def test_bedrock_tool_choice_none_after_tool_call_nova(
     assert 'additionalModelRequestFields' not in second
 
 
-async def test_bedrock_tool_choice_none_drops_tools_without_tool_history(bedrock_provider: BedrockProvider):
-    """Without a native `none`, tools are only dropped while history has no tool blocks, which Converse then accepts."""
+@pytest.mark.parametrize('model_name', ['us.amazon.nova-pro-v1:0', 'us.anthropic.claude-haiku-4-5-20251001-v1:0'])
+async def test_bedrock_tool_choice_none_drops_tools_without_tool_history(
+    bedrock_provider: BedrockProvider, model_name: str
+):
+    """While history has no tool blocks, `'none'` still drops the tools, which Converse then accepts."""
     tool_def = ToolDefinition(name='my_tool', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
     settings = BedrockModelSettings(tool_choice='none')
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     user_turn: MessageUnionTypeDef = {'role': 'user', 'content': [{'text': 'hi'}]}
 
     assert model._map_tool_config(params, settings, [user_turn]) is None  # pyright: ignore[reportPrivateUsage]
-    assert model._build_additional_model_request_fields(settings, params) is None  # pyright: ignore[reportPrivateUsage]
+    assert model._build_additional_model_request_fields(settings, params, [user_turn]) is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_bedrock_tool_choice_none_claude_respects_user_tool_choice_field(bedrock_provider: BedrockProvider):
@@ -3750,8 +3756,14 @@ async def test_bedrock_tool_choice_none_claude_respects_user_tool_choice_field(b
         tool_choice='none', bedrock_additional_model_requests_fields={'tool_choice': {'type': 'auto'}}
     )
     model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    tool_turn: MessageUnionTypeDef = {
+        'role': 'assistant',
+        'content': [{'toolUse': {'toolUseId': 't1', 'name': 'my_tool', 'input': {}}}],
+    }
 
-    assert model._build_additional_model_request_fields(settings, params) == {'tool_choice': {'type': 'auto'}}  # pyright: ignore[reportPrivateUsage]
+    assert model._build_additional_model_request_fields(settings, params, [tool_turn]) == {  # pyright: ignore[reportPrivateUsage]
+        'tool_choice': {'type': 'auto'}
+    }
 
 
 async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: BedrockProvider):

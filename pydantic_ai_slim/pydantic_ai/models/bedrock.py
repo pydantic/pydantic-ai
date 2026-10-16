@@ -970,7 +970,7 @@ class BedrockConverseModel(Model[BaseClient]):
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
         _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
         if additional_model_requests_fields := self._build_additional_model_request_fields(
-            settings, model_request_parameters
+            settings, model_request_parameters, bedrock_messages
         ):
             converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
@@ -1096,8 +1096,9 @@ class BedrockConverseModel(Model[BaseClient]):
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
+        bedrock_messages: Sequence[MessageUnionTypeDef] = (),
     ) -> dict[str, Any] | None:
-        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k` and `thinking`."""
+        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k`, `thinking` and `'none'`."""
         existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
         profile = self.profile
 
@@ -1119,8 +1120,10 @@ class BedrockConverseModel(Model[BaseClient]):
             and 'tool_choice' not in existing
             and model_request_parameters.declared_tool_defs
             and resolve_tool_choice(model_settings, model_request_parameters) == 'none'
+            and _has_tool_blocks(bedrock_messages)
         ):
-            # Converse has no `toolChoice.none`; Claude honors its native field when the Converse one is omitted.
+            # Converse has no `toolChoice.none`, and `_map_tool_config` has to keep the tools once history has tool
+            # blocks; Claude honors its native field when the Converse one is omitted.
             existing['tool_choice'] = {'type': 'none'}
 
         thinking = model_request_parameters.thinking
@@ -1218,7 +1221,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 params['serviceTier'] = {'type': unified_tier}
 
         if additional_model_requests_fields := self._build_additional_model_request_fields(
-            settings, model_request_parameters
+            settings, model_request_parameters, bedrock_messages
         ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
@@ -1274,11 +1277,12 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_choice = {'any': {}} if supports else {'auto': {}}
         elif resolved_tool_choice == 'none':
             # Converse's `toolChoice` has no 'none' mode
-            # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), but it rejects
-            # `toolUse`/`toolResult` blocks without a `toolConfig`, so the tools must stay once history has a tool call.
-            # Anthropic models get a native `none` via `additionalModelRequestFields` instead (see
-            # `_build_additional_model_request_fields`), which keeps the tools cache section intact.
-            if profile.get('bedrock_tool_choice_none_variant') is None and not _has_tool_blocks(bedrock_messages):
+            # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
+            # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
+            # a tool call the tools stay: Anthropic models then get a native `none` via `additionalModelRequestFields`
+            # (see `_build_additional_model_request_fields`), while other models can still call them until core enforces
+            # `tool_choice` when executing tool calls.
+            if not _has_tool_blocks(bedrock_messages):
                 return None
             tool_choice = None
         elif isinstance(resolved_tool_choice, tuple):

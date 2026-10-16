@@ -240,16 +240,14 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_tool_choice_none_variant: Literal['anthropic'] | None
-    """How `tool_choice='none'` is sent, given Converse's `toolChoice` has no `none` mode.
+    """How `tool_choice='none'` is sent once the history has a tool call.
 
-    Converse rejects a request whose messages contain `toolUse`/`toolResult` blocks without a
-    `toolConfig`, so the tools are always kept once the history has a tool call:
+    Converse's `toolChoice` has no `none` mode, so the tools are dropped from the request instead. Converse rejects
+    `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once the history has them the tools are kept:
 
-    - `'anthropic'`: the tools are kept, `toolChoice` is omitted, and
-      `{'tool_choice': {'type': 'none'}}` is sent in `additionalModelRequestFields`. Bedrock 400s
-      when this is combined with a Converse `toolChoice`.
-    - `None`: no native `none` exists. Tools are dropped from the request while the history has no
-      tool blocks, and kept (with no `toolChoice`, so the model may still call them) once it does.
+    - `'anthropic'`: `toolChoice` is omitted and `{'tool_choice': {'type': 'none'}}` is sent in
+      `additionalModelRequestFields`. Bedrock 400s when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists, so `toolChoice` is omitted and the model can still call the tools.
 
     Default: `None`.
     """
