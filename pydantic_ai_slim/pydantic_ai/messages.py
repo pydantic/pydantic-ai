@@ -2902,7 +2902,7 @@ class ModelResponse:
     """Usage information for this single request, as a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
 
     Run-level usage accumulated across all requests in a run (e.g. `requests`, `tool_calls`) lives on the run's
-    [`RunUsage`][pydantic_ai.usage.RunUsage], accessible via `result.usage()`; a `RunUsage` should not be assigned to this field.
+    [`RunUsage`][pydantic_ai.usage.RunUsage], accessible via `result.usage`; a `RunUsage` should not be assigned to this field.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
     """
@@ -3069,6 +3069,7 @@ class ModelResponse:
             provider_api_url=self.provider_url,
             provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
+            price_context=self.provider_details,
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
