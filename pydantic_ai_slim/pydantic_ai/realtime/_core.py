@@ -1146,6 +1146,7 @@ class SessionCore:
         turn.audio = b''
         self._record_audio(turn, turn.message)
         part = turn.message.parts[0]
+        assert isinstance(part, SpeechPart)
         if turn.index is None:
             # Nothing streamed for it (no transcript came): it starts and ends at once.
             turn.index = self._take_index()

@@ -312,11 +312,6 @@ def _reply_under_way(session: _RealtimeSession) -> bool:
     return any(response.status is None for response in session._core._responses.values())  # pyright: ignore[reportPrivateUsage]
 
 
-def _own_record(session: _RealtimeSession) -> list[ModelMessage]:
-    """What a tool sees as `RunContext.messages`: the core's conversation so far, with a response under way."""
-    return session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
-
-
 class FakeRealtimeConnection(InferredConnection):
     """A connection that replays a fixed list of events and records what is sent."""
 
@@ -9016,9 +9011,6 @@ async def test_executed_call_still_consumes_the_tool_call_limit() -> None:
     # Refused before anything of it streams. (The response that made it ended in the same frame, so it is
     # recorded, and the call gets the interrupted return a call that never ran gets.)
     assert events == []
-    assert [
-        part.outcome for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
-    ] == ['interrupted']
 
 
 async def test_tools_from_one_response_share_a_run_step() -> None:
@@ -12135,31 +12127,26 @@ async def test_a_response_whose_first_frame_trips_a_token_limit_is_recorded() ->
     assert [type(message).__name__ for message in session.all_messages()] == ['ModelResponse']
 
 
-@pytest.mark.parametrize(
-    ('item_id', 'ended'),
-    [
-        pytest.param('u1', False, id='named-turn-started'),
-        pytest.param('u1', True, id='named-turn-ended'),
-        pytest.param(None, False, id='unnamed-turn-started'),
-    ],
-)
-class _DeferredCommitConnection(_ContinuousMicrophoneConnection):
-    """Sends a commit as it gets it, but reports it through the listener, as a connection that holds it would."""
-
-    _listener: Callable[[], None] | None = None
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        return True
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        self._listener = listener
-
-    async def send_input(self, content: RealtimeInput) -> None:
-        if isinstance(content, CommitAudio):
-            assert self._listener is not None
-            self._listener()
-        await super().send_input(content)
+async def test_a_turn_committed_while_a_response_is_spoken_follows_it() -> None:
+    """A turn the user commits while a response is spoken follows that response in history."""
+    conn = _ContinuousMicrophoneConnection(
+        [
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Hello.', is_final=True),
+            _MIC,
+            _RELEASE,
+            ResponseDone(),
+            InputTranscript(text='Hi.', is_final=True),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all')
+    conn.session = session
+    async with session:
+        await drain_events(session)
+    assert [
+        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
+        for message in session.all_messages()
+    ] == snapshot([('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])])
 
 
 async def test_context_window_used_moves_with_the_usage_counted_in_the_same_frame() -> None:

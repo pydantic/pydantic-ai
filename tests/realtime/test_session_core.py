@@ -1423,3 +1423,9 @@ def test_a_native_part_ends_under_the_index_it_started_with_after_its_response_e
         if isinstance(effect, (PartStartEvent, PartEndEvent))
     ]
     assert indexes == snapshot([('PartStartEvent', 0), ('PartEndEvent', 0)])
+
+
+def test_stripping_a_message_without_tracked_audio_frees_nothing() -> None:
+    message = ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hi.')])
+    budget = RetainedAudioBudget(10, input_sample_rate=24000, output_sample_rate=24000)
+    assert budget.strip(message) == (message, 0)
