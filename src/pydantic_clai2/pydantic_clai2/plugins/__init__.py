@@ -21,17 +21,21 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
+from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
 DepsT = DefaultTypeVar('DepsT', default=None)
 ModelT = TypeVar('ModelT', bound=BaseModel)
+ResultT = TypeVar('ResultT')
 _SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
 SessionEndReason = Literal['exit', 'eof', 'error']
@@ -92,6 +96,14 @@ class SessionCatalog(Protocol):
     Switching to one goes through the prompt, as `/resume ID` typed there does, with `PluginHost.send_input`.
     """
 
+    @property
+    def follows_workspace(self) -> bool:
+        """Whether `/resume ID` moves CLAI into the directory a session was saved in, as under `clai2 --web`.
+
+        Otherwise it refuses a session saved in another directory than the one CLAI runs in.
+        """
+        ...
+
     async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
@@ -118,6 +130,191 @@ class SessionCatalog(Protocol):
 
     async def fork(self, conversation_id: str) -> ConversationSummary:
         """Save a copy of a conversation under a new ID, leaving the original as it was, and return the copy."""
+        ...
+
+
+PanelIcon = Literal['panel', 'traces']
+"""The icons a side panel can show beside its title."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class PanelView:
+    """What a side panel shows now: a page, or a note saying why there is none, such as how to set it up."""
+
+    url: str | None = None
+    """An `http` or `https` page; `None` shows `note` alone."""
+    note: str = ''
+
+
+@dataclass(frozen=True, kw_only=True)
+class SidePanel:
+    """A page shown beside the conversation in the web UI; return it from `Plugin.get_side_panels`.
+
+    `view` is awaited whenever the page asks, such as when a turn starts, so its page can follow
+    the conversation. Keep it quick: cache anything that needs the network.
+    """
+
+    id: str
+    title: str
+    view: Callable[[], Awaitable[PanelView]]
+    icon: PanelIcon = 'panel'
+
+
+PluginOrigin = Literal['built-in', 'project', 'drop-in', 'installed']
+"""Where a plugin's declaration came from, as `/plugins` labels it."""
+PluginStatus = Literal['on', 'off', 'idle', 'failed', 'included']
+"""Loaded; turned off; on but not loaded; on but failed to load; kept off because another loaded plugin includes it."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class PluginInfo:
+    """One `/plugins` row, for a plugin that shows or manages plugins, such as a remote UI."""
+
+    name: str
+    description: str
+    """The first paragraph of the plugin's docstring, read without running its code."""
+    origin: PluginOrigin
+    source: str
+    """The drop-in file, or the import string."""
+    status: PluginStatus
+    included_in: str | None = None
+    """The loaded plugin that includes this one, when `status` is `included`."""
+    error: str | None = None
+    """Why it failed to load, when `status` is `failed`."""
+    notice: str | None = None
+    """Saved settings this build ignored at the last load."""
+    provides: str = ''
+    """What it contributes while loaded, such as `2 commands, 1 capability`."""
+    has_menu: bool = False
+    """Whether it has a settings menu: a declared one (`settings_menu`), or its own `configure`, which runs in the terminal."""
+    settings_menu: bool = False
+    """Whether it declares its settings menu, which `PluginCatalog.edit_settings` can edit from anywhere."""
+    settings_model: type[BaseModel] | None = None
+    """Its settings model while loaded, unless it takes none; validate new settings with it for `save_settings`."""
+    settings: BaseModel | None = None
+    """Its saved settings while loaded, as the plugin reads them with `host.settings`."""
+
+
+class PluginCatalog(Protocol):
+    """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `PluginLoader` is one.
+
+    Each action applies at once and is saved, as the same `/plugins` action is; a running turn keeps
+    the plugins it started with. Adding and removing declarations goes through the prompt, with
+    `PluginHost.send_input`, as does a settings menu that is not declared (`/plugins configure NAME`).
+    Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
+    own `on_session_start` or `on_session_end`, which a change runs.
+    """
+
+    def listing(self) -> list[PluginInfo]:
+        """Every plugin, sorted by name; reads the plugin folder and parses descriptions, so call it when shown."""
+        ...
+
+    async def enable(self, name: str) -> None:
+        """Turn a plugin on and load it, without opening its settings menu; raises `PluginError` if loading fails."""
+        ...
+
+    async def disable(self, name: str) -> None:
+        """Unload a plugin and turn it off."""
+        ...
+
+    async def reload(self, name: str) -> None:
+        """Unload a plugin, import its module again, and load it; raises `ValueError` when it is off."""
+        ...
+
+    async def save_settings(self, name: str, settings: BaseModel) -> None:
+        """Save a loaded plugin's settings, as its settings menu does, then load it again if they changed.
+
+        `settings` is an instance of `PluginInfo.settings_model`. Raises `ValueError` when the plugin is
+        not loaded or takes no settings, and `TypeError` for another model.
+        """
+        ...
+
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        """A loaded plugin's declared settings menu, to show; `None` when it is not loaded or declares none."""
+        ...
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        """The side panels of every loaded plugin that declares some, by plugin name, in load order."""
+        ...
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        """Run `edit` on a loaded plugin's declared settings menu, then load the plugin again if its settings changed.
+
+        This is what closing the menu after an edit does, so call it once per edit: a value applied
+        or reset through the menu's `source`, or one of its `actions` run with your own `Dialogs`.
+        Raises `ValueError` when the plugin is not loaded, declares no menu, or its menu is already
+        open, in the terminal or for another edit.
+        """
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskInfo:
+    """One delegated task, as `/tasks` lists it, for a plugin that shows or controls them, such as a remote UI."""
+
+    id: str
+    parent_id: str | None
+    """The task that delegated this one; `None` for one the conversation itself started."""
+    agent: str
+    """The sub-agent's name: `general-purpose` when the running agent delegated to itself."""
+    model: str | None
+    """The model its run streams from, once known; before that, the model it was asked to use, if any."""
+    prompt: str
+    status: Literal['running', 'finished']
+    outcome: DelegationOutcome | None
+    """How it ended, once `finished`."""
+    started_at: datetime
+    finished_at: datetime | None
+    background: bool
+    """Whether it runs in the background, so the run that started it does not wait for it."""
+    resumable: bool
+    """Whether `TaskCatalog.resume` can continue it once it has finished; one-shot agents such as `Explore` cannot."""
+    activity: str
+    """Its last action, as the `/tasks` panel shows it, such as `starting`, `thinking`, or `running: shell`."""
+    usage: RunUsage
+    """What its model requests have reported so far."""
+
+
+class TaskCatalog(Protocol):
+    """The delegated tasks `/tasks` shows, for a plugin that shows or controls them; the shell's `Tasks` is one.
+
+    Only the current conversation's tasks are listed, with their descendants. Each change to one
+    arrives as `on_task_event`. A task ID from elsewhere raises `LookupError`.
+    """
+
+    def listing(self) -> list[TaskInfo]:
+        """Every task of the current conversation, each parent before its children, oldest first."""
+        ...
+
+    def history(self, task_id: str) -> list[ModelMessage]:
+        """A task's messages: the run's so far while it runs, then what it saved."""
+        ...
+
+    async def stop(self, task_id: str) -> None:
+        """Stop a task and its descendants, as `/tasks stop ID` does; a stopped task resumes only when asked to."""
+        ...
+
+    def background(self, task_id: str) -> None:
+        """Let the run that waits for a task go on without it, as `/tasks background ID` does.
+
+        Raises `ValueError` for a task whose workspace cannot outlive the run that started it.
+        """
+        ...
+
+    async def resume(self, task_id: str) -> None:
+        """Ask the agent to resume a finished task, as `/tasks resume ID` does, entering the request as a prompt.
+
+        Raises `ValueError` for a task that is running or cannot resume, and `RuntimeError` on a CLAI with
+        no prompt to enter it at; the task stays as it was then.
+        """
+        ...
+
+    def steer(self, task_id: str, text: str) -> bool:
+        """Send a running task a user message, which its run reads at its next model request.
+
+        Returns `False` when the task is not running; `resume` continues a finished one. Raises
+        `ValueError` for blank text.
+        """
         ...
 
 
@@ -204,6 +401,17 @@ class CommandEnd:
     text: str
     output: str = ''
     error: BaseException | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskEvent:
+    """A delegated task of the current conversation started, streamed an event, or finished."""
+
+    task: TaskInfo
+    """The task as it is now."""
+    event: AgentStreamEvent | None = None
+    """The event from the task's own run, or its `DelegationStartEvent` or `DelegationEndEvent`; `None` when
+    only the task changed, such as when it finished."""
 
 
 @dataclass(kw_only=True)
@@ -383,7 +591,9 @@ def _runs_already(prefix: str) -> bool:
 COMPLETION_LIMIT = 100
 """The most suggestions `PluginHost.complete` returns, as many as the editor shows."""
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | CommandEnd | PluginLoadFailed
+HostEvent = (
+    SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | CommandEnd | PluginLoadFailed | TaskEvent
+)
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -420,6 +630,8 @@ class PluginHost(Generic[DepsT]):
         commands: Commands | None = None,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
+        plugins: PluginCatalog | None = None,
+        tasks: Callable[[], TaskCatalog | None] = lambda: None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -427,7 +639,9 @@ class PluginHost(Generic[DepsT]):
         last until the plugin unloads. `submit_prompt` runs a prompt as the next turn, and
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
         same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
-        conversations; `setting` reads its settings, as the method of the same name does.
+        conversations; `setting` reads its settings, as the method of the same name does; `plugins`
+        is what `/plugins` manages; `tasks` returns what `/tasks` shows, read each time, as the property
+        of the same name is.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -454,6 +668,19 @@ class PluginHost(Generic[DepsT]):
         self.sessions = sessions
         """The saved conversations `/resume` lists; `None` on a host without session persistence."""
         self._setting = setting
+        self.plugins = plugins
+        """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
+        self._tasks = tasks
+
+    @property
+    def tasks(self) -> TaskCatalog | None:
+        """The delegated tasks `/tasks` shows; `None` while no task owner runs them.
+
+        The shell runs one for its stock agent (`create_stock_agent`) while its prompt is open. Before
+        it opens and after it closes, a headless `-p` run, another agent, and a host built outside the
+        shell have none.
+        """
+        return self._tasks()
 
     def submit_prompt(self, text: str, /) -> None:
         """Run `text` as the next turn, as if typed at the prompt but without echoing it.
@@ -692,18 +919,39 @@ class Plugin(Generic[SettingsT, DepsT]):
         """Sign-ins this plugin adds to `/login`, such as for the subscription behind a model provider."""
         return ()
 
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        """Pages the web UI offers beside the conversation, such as a live view of this session's traces."""
+        return ()
+
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         """Draw an event yourself; return `None` to fall back to the default display."""
         return None
 
-    async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
+    def settings_menu(self) -> SettingsMenu | None:
+        """This plugin's settings menu, declared rather than run, so any surface can show it; `None` for none.
 
-        Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
-        change with `host.save_settings` as the user makes it and return a line to show. When the
-        settings changed, the loader loads the plugin again afterwards, so it builds from them.
+        Its `FieldSource` saves each change with `host.save_settings` as the user makes it, and its
+        actions ask through the `Dialogs` they are given, so the menu works wherever it was opened.
+        When the settings changed, the loader loads the plugin again afterwards, so it builds from them.
         """
-        raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
+        return None
+
+    async def configure(self) -> str:
+        """Show the settings menu in the terminal: `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
+
+        By default it shows `settings_menu` and returns what changed. Override it only for a menu
+        that cannot be declared, which then opens in the terminal alone.
+        """
+        menu = self.settings_menu()
+        if menu is None:
+            raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
+        if not self.host.console.is_terminal:
+            return f'Configure {menu.source.title} from a terminal: /plugins configure {self.host.name}'
+        # Imported here: the terminal menus import this package, and `/reload` refuses an import cycle.
+        from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+
+        messages = await run_settings_menu(menu)
+        return '\n'.join(messages) or f'{menu.source.title}: nothing changed.'
 
     async def on_session_start(self, event: SessionStart) -> None:
         """CLAI is ready for prompts; called once, when the plugin loads."""
@@ -726,10 +974,18 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_command_end(self, event: CommandEnd) -> None:
         """A `/command` finished, with the text the shell showed for it."""
 
+    async def on_task_event(self, event: TaskEvent) -> None:
+        """A delegated task of the current conversation started, streamed an event, or finished.
+
+        It fires for every stream event of every running task, down to each text and thinking delta, so
+        keep it cheap: the task waits for it.
+        """
+
     @property
     def has_configure(self) -> bool:
-        """Whether this plugin overrides `configure`, offering a settings menu."""
-        return type(self).configure is not Plugin.configure
+        """Whether this plugin offers a settings menu, by overriding `settings_menu` or `configure`."""
+        cls = type(self)
+        return cls.settings_menu is not Plugin.settings_menu or cls.configure is not Plugin.configure
 
     @property
     def has_render(self) -> bool:
@@ -750,6 +1006,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     ConversationChanged: 'on_conversation_changed',
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
+    TaskEvent: 'on_task_event',
 }
 
 
@@ -764,6 +1021,7 @@ class LoadedPlugin(Generic[DepsT]):
     spinners: tuple[Spinner, ...]
     model_providers: tuple[ModelProvider, ...]
     logins: tuple[PluginLogin, ...]
+    side_panels: tuple[SidePanel, ...]
 
     @property
     def host(self) -> PluginHost[DepsT]:
@@ -773,6 +1031,11 @@ class LoadedPlugin(Generic[DepsT]):
     async def dispatch(self, event: HostEvent) -> None:
         """Hand a host event to the plugin's matching `on_*` method."""
         await getattr(self.plugin, _HANDLERS[type(event)])(event)
+
+    def handles(self, event: type[HostEvent]) -> bool:
+        """Whether the plugin overrides the `on_*` method for `event`, rather than inheriting the no-op."""
+        name = _HANDLERS[event]
+        return getattr(type(self.plugin), name) is not getattr(Plugin, name)
 
     def summary(self) -> str:
         """One line for the `/plugins` menu, naming only what the plugin contributes."""
@@ -799,6 +1062,7 @@ def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
         spinners=tuple(replace(spinner, source='plugin') for spinner in plugin.get_spinners()),
         model_providers=tuple(plugin.get_model_providers()),
         logins=tuple(plugin.get_logins()),
+        side_panels=tuple(plugin.get_side_panels()),
     )
 
 

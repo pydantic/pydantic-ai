@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -13,6 +14,11 @@ from pydantic_clai2.ui.rendering.splash import Splash
 from pydantic_clai2.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic_clai2.config import Settings
+    from pydantic_clai2.config.project_settings import ProjectSettings
+    from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.worktrees import Worktree
 
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
@@ -59,6 +65,21 @@ def run(*, splash: Splash | None = None) -> None:
         action='store_true',
         help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
     )
+    parser.add_argument(
+        '--port',
+        type=int,
+        metavar='PORT',
+        help='With --web, listen on PORT for this launch instead of the saved port; 0 picks a free one',
+    )
+    parser.add_argument(
+        '--token-file',
+        type=Path,
+        metavar='PATH',
+        help=(
+            "With --web, read this launch's access token from PATH, a file only you can read, instead of making one; "
+            'the address printed leaves it out and no browser opens'
+        ),
+    )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
@@ -69,13 +90,14 @@ def run(*, splash: Splash | None = None) -> None:
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
         args.database = args.database.resolve()
+    if args.token_file is not None:
+        args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
     try:
         from pydantic_ai.usage import UsageLimits
         from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
-        from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
         from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
@@ -95,12 +117,9 @@ def run(*, splash: Splash | None = None) -> None:
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
-        overrides = store.overrides() | project.overrides
-        if model := args.model or os.getenv('CLAI_MODEL'):
-            overrides['model'] = model
-        if args.request_limit is not None:
-            overrides['run.request_limit'] = args.request_limit
-        settings = resolve_settings(overrides)
+        model = args.model or os.getenv('CLAI_MODEL')
+        settings_for = _settings_for(store, model=model, request_limit=args.request_limit)
+        settings = settings_for(project)
         if agent is not None and agent.model is not None and not model:
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
             settings = settings.model_copy(update={'model': None})
@@ -129,7 +148,7 @@ def run(*, splash: Splash | None = None) -> None:
 
             asyncio.run(
                 run_web(
-                    settings=settings,
+                    settings_for=settings_for,
                     store=store,
                     project=project,
                     console=Console(force_terminal=False, highlight=False),
@@ -137,6 +156,8 @@ def run(*, splash: Splash | None = None) -> None:
                     resume_from=args.resume_from,
                     session_id=args.session_id,
                     fork_session=args.fork_session,
+                    port=args.port,
+                    token=None if args.token_file is None else read_token(args.token_file),
                 )
             )
             return
@@ -181,6 +202,23 @@ def run(*, splash: Splash | None = None) -> None:
     except KeyboardInterrupt:
         if args.prompt is not None or args.web:
             raise SystemExit(130) from None
+
+
+def _settings_for(
+    store: 'SettingsStore', *, model: str | None, request_limit: int | None
+) -> 'Callable[[ProjectSettings], Settings]':
+    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags."""
+    from pydantic_clai2.config import resolve_settings
+
+    def settings_for(project: 'ProjectSettings') -> 'Settings':
+        overrides = store.overrides() | project.overrides
+        if model:
+            overrides['model'] = model
+        if request_limit is not None:
+            overrides['run.request_limit'] = request_limit
+        return resolve_settings(overrides)
+
+    return settings_for
 
 
 def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
@@ -240,6 +278,20 @@ def relaunch_argv(
     return argv
 
 
+_TOKEN = re.compile(r'[A-Za-z0-9_-]{32,256}')
+
+
+def read_token(path: Path) -> str:
+    """The access token in `path`; `ValueError` unless only this user can read the file and it holds a long random token."""
+    info = path.stat()
+    if sys.platform != 'win32' and (info.st_mode & 0o077 or info.st_uid != os.geteuid()):
+        raise ValueError(f'{path} must belong to you and be readable by you alone (mode 0600).')
+    token = path.read_text(encoding='utf-8').strip()
+    if not _TOKEN.fullmatch(token):
+        raise ValueError(f'{path} must hold one URL-safe token of at least 32 characters.')
+    return token
+
+
 def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
     """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
     flags = parser.add_mutually_exclusive_group()
@@ -286,6 +338,10 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
         if args.resume == '':
             parser.error('--web requires an explicit --resume SESSION-ID')
+    elif args.port is not None or args.token_file is not None:
+        parser.error('--port and --token-file need --web')
+    if args.port is not None and not 0 <= args.port < 65536:
+        parser.error('--port must be between 0 and 65535')
     if args.prompt is not None:
         if args.command:
             parser.error('--prompt cannot be combined with config or plugins')

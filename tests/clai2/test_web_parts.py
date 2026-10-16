@@ -2,12 +2,17 @@
 
 import asyncio
 import io
+import os
+import re
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
+import httpx
 import pytest
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
@@ -22,6 +27,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -39,10 +45,12 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEve
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2.builtin_plugins.web import WebPlugin, remote as remote_module, server as server_module
-from pydantic_clai2.builtin_plugins.web.app import Receive, Scope, Send
+from pydantic_clai2.builtin_plugins.web.app import HEADER, Receive, Scope, Send
+from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
     RESULT_CHARS,
+    ArgsDelta,
     Diff,
     DiffAdded,
     EventTranslator,
@@ -53,7 +61,12 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ServerMessage,
     ShellDone,
     StatusChanged,
+    SubCall,
+    SubCallAdded,
+    SubCallDone,
+    SubCallOutput,
     TextDelta,
+    ToolArgs,
     ToolDone,
     ToolOutput,
     TurnEnded,
@@ -68,6 +81,10 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.plugins.menus import Option
+from pydantic_clai2.runtime.monty_cells import MontyCell
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.worktrees import Worktree
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -101,6 +118,7 @@ def test_streamed_parts_become_items() -> None:
     assert translate(PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta='sig'))) == []
     assert translate(PartDeltaEvent(index=5, delta=TextPartDelta('lost'))) == []
     assert translate(PartStartEvent(index=2, part=ToolCallPart('shell', '{}'))) == []
+    assert translate(PartStartEvent(index=3, part=NativeToolCallPart('web_search', {}))) == []
     assert translate(PartDeltaEvent(index=2, delta=ToolCallPartDelta(args_delta='{'))) == []
 
 
@@ -160,6 +178,62 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(edit_request) == []
 
 
+def test_a_run_code_cell_streams_with_its_sandbox_calls() -> None:
+    """Code mode runs a cell's calls while the model still writes it, so the cell shows from its first token."""
+    translate = EventTranslator().translate
+    start = PartStartEvent(index=0, part=ToolCallPart('run_code', '', tool_call_id='cell'))
+    assert translate(start) == [ItemAdded(item=Item(id='cell', kind='tool', name='run_code', args='', state='running'))]
+    assert translate(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"code": "ls'))) == [
+        ArgsDelta(id='cell', text='{"code": "ls')
+    ]
+    assert translate(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': 'x'}))) == []
+    nested = ToolCallPart('shell', {'command': 'ls'}, tool_call_id='cell__1')
+    assert translate(SandboxCallStartedEvent(call=nested)) == [
+        SubCallAdded(id='cell', call=SubCall(id='cell__1', name='shell', args='{"command":"ls"}'))
+    ]
+    assert translate(CommandOutputEvent(tool_call_id='cell__1', text='a.py\n')) == [
+        SubCallOutput(id='cell', call_id='cell__1', text='a.py\n')
+    ]
+    finished = SandboxCallFinishedEvent(result=ToolReturnPart('shell', 'a.py', tool_call_id='cell__1'))
+    assert translate(finished) == [SubCallDone(id='cell', call_id='cell__1', text='a.py', state='done')]
+    failed = SandboxCallFinishedEvent(result=RetryPromptPart('no', tool_name='grep', tool_call_id='cell__spec_2'))
+    [done] = translate(failed)
+    assert isinstance(done, SubCallDone) and (done.call_id, done.state) == ('cell__spec_2', 'error')
+    call = ToolCallPart('run_code', {'code': 'ls'}, tool_call_id='cell')
+    assert translate(FunctionToolCallEvent(part=call)) == [ToolArgs(id='cell', args='{"code":"ls"}')]
+    # Events for top-level calls are not sandbox calls.
+    assert translate(SandboxCallStartedEvent(call=ToolCallPart('shell', {}, tool_call_id='plain'))) == []
+    top = SandboxCallFinishedEvent(result=ToolReturnPart('shell', '', tool_call_id='plain'))
+    assert translate(top) == []
+
+
+@pytest.mark.parametrize(('args', 'shown'), [(None, ''), ({'code': 'x'}, '{"code":"x"}'), ('{"co', '{"co')])
+def test_a_streamed_cell_starts_with_its_arguments_so_far(args: str | dict[str, str] | None, shown: str) -> None:
+    [added] = EventTranslator().translate(
+        PartStartEvent(index=0, part=ToolCallPart('run_code', args, tool_call_id='c'))
+    )
+    assert isinstance(added, ItemAdded) and added.item.args == shown
+
+
+def test_the_item_log_follows_a_cell() -> None:
+    log = ItemLog()
+    log.apply(ItemAdded(item=Item(id='cell', kind='tool', name='run_code', state='running')))
+    for message in (
+        ArgsDelta(id='cell', text='{"code": '),
+        ArgsDelta(id='cell', text='"ls"}'),
+        SubCallAdded(id='cell', call=SubCall(id='cell__1', name='shell', args='{}')),
+        SubCallOutput(id='cell', call_id='cell__1', text='out'),
+        SubCallDone(id='cell', call_id='cell__1', text='done', state='done'),
+        SubCallDone(id='cell', call_id='cell__9', text='unknown call', state='error'),
+    ):
+        log.apply(message)
+    [cell] = log.items.values()
+    assert cell.args == '{"code": "ls"}'
+    assert cell.calls == [SubCall(id='cell__1', name='shell', args='{}', state='done', text='done', output='out')]
+    log.apply(ToolArgs(id='cell', args='{"code":"ls"}'))
+    assert cell.args == '{"code":"ls"}'
+
+
 def test_history_items() -> None:
     long = 'x' * (RESULT_CHARS + 5)
     messages = [
@@ -193,6 +267,8 @@ def test_history_items() -> None:
         ('tool', 'grep', 'interrupted'),
     ]
     assert items[0].text == 'Look\n[BinaryContent]'
+    note = MontyCell(code='x = 1', returned='{}').note()
+    assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
 
 
@@ -382,7 +458,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
         async with anyio.create_task_group() as group:
             group.start_soon(
                 lambda: run_web(
-                    settings=Settings(model='test'),
+                    settings_for=lambda project: Settings(model='test'),
                     store=store,
                     project=ProjectSettings(),
                     console=console,
@@ -400,10 +476,76 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
     )
 
 
+async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere."""
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
+    launch, other = tmp_path / 'launch', tmp_path / 'other'
+    launch.mkdir()
+    other.mkdir()
+    monkeypatch.chdir(launch)
+    store = SettingsStore(tmp_path / 'config.db')
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+        summary=ConversationSummary(workspace=str(other.resolve()), title='Elsewhere'), messages=[]
+    )
+    output = _Output()
+    with anyio.fail_after(30):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=lambda project: Settings(model='test'),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    resume=saved.id,
+                )
+            )
+            await output.ready.wait()
+            assert Path.cwd() == other.resolve()
+            found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
+            assert found is not None
+            async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
+                sent = await client.post('/api/input', json={'text': f'/workspace {launch}'})
+                assert sent.status_code == 204
+                while 'New session in' not in output.getvalue():
+                    await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
+    assert 'Resumed Elsewhere' in output.getvalue()
+    assert f'New session in {launch.resolve()}.' in output.getvalue()
+    assert Path.cwd() == launch.resolve()
+
+
+async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+        summary=ConversationSummary(workspace=str(tmp_path / 'gone'), title='Gone'), messages=[]
+    )
+    with pytest.raises(ValueError, match=re.escape(f'does not exist. Session {saved.id} was saved there;')):
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=store,
+            project=ProjectSettings(),
+            console=Console(file=io.StringIO()),
+            resume=saved.id,
+        )
+
+
+async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
+    with pytest.raises(BaseExceptionGroup) as raised:
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=SettingsStore(tmp_path / 'c.db'),
+            project=ProjectSettings(),
+            console=Console(file=io.StringIO()),
+            resume='00000000-0000-0000-0000-000000000000',
+        )
+    assert raised.group_contains(LookupError, match='No saved session')
+
+
 async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='explicit --resume'):
         await run_web(
-            settings=Settings(),
+            settings_for=lambda project: Settings(),
             store=SettingsStore(tmp_path / 'c.db'),
             project=ProjectSettings(),
             console=Console(),
@@ -417,6 +559,9 @@ async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
         (['--web', '-p', 'hi'], '--web cannot be combined'),
         (['--web', '--agent', 'a:b'], '--web cannot be combined'),
         (['--web', '--resume'], '--web requires an explicit --resume SESSION-ID'),
+        (['--port', '8000'], '--port and --token-file need --web'),
+        (['--token-file', 'token'], '--port and --token-file need --web'),
+        (['--web', '--port', '70000'], '--port must be between 0 and 65535'),
     ],
 )
 def test_web_flag_rejects(
@@ -436,12 +581,110 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise KeyboardInterrupt
 
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
-    monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test'])
+    monkeypatch.setattr(
+        sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test', '--request-limit', '7']
+    )
     with pytest.raises(SystemExit) as exited:
         _cli.run()
     assert exited.value.code == 130
     [call] = calls
     assert (call['resume'], call['session_id'], call['fork_session']) == (None, None, False)
+    settings_for = call['settings_for']
+    assert callable(settings_for)
+    settings = settings_for(ProjectSettings(overrides={'model': 'openai:gpt-5', 'run.instructions': 'Be brief.'}))
+    assert isinstance(settings, Settings)
+    assert (settings.model, settings.instructions, settings.request_limit) == ('test', 'Be brief.', 7), (
+        'launch flags still win over a project file'
+    )
+
+
+def test_web_flag_reads_a_private_token_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--token-file` hands `run_web` the token in a file only you can read, and `--port` the port."""
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_web(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
+    token = tmp_path / 'token'
+    token.write_text('a' * 40 + '\n')
+    token.chmod(0o600)
+    # Relative to where CLAI was started, though `--worktree` changes directory before the file is read.
+    monkeypatch.chdir(tmp_path)
+    elsewhere = tmp_path / 'checkout'
+    elsewhere.mkdir()
+
+    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+        os.chdir(elsewhere)
+        return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
+
+    monkeypatch.setattr(_cli, '_enter_worktree', enter_worktree)
+    argv = ['clai2', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
+    monkeypatch.setattr(sys, 'argv', argv)
+    _cli.run()
+    [call] = calls
+    assert (call['token'], call['port']) == ('a' * 40, 4567)
+    argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    for mode, text, error in (
+        (0o644, 'a' * 40, 'must belong to you and be readable by you alone'),
+        (0o600, 'short', 'must hold one URL-safe token of at least 32 characters'),
+    ):
+        token.write_text(text)
+        token.chmod(mode)
+        with pytest.raises(SystemExit):
+            _cli.run()
+        assert error in capsys.readouterr().err
+    token.unlink()
+    with pytest.raises(SystemExit):
+        _cli.run()
+    assert 'No such file' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('launcher_token', [False, True])
+async def test_run_web_on_a_launchers_port_and_token(
+    launcher_token: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launcher's port replaces the saved one; with its token, CLAI listens on loopback whatever the saved address,
+    prints the address without the token, and opens no browser."""
+    store = SettingsStore(tmp_path / 'config.db')
+    saved: dict[str, JsonValue] = {'host': 'localhost', 'port': 1}
+    store.save_plugin(PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings=saved))
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    token = 'b' * 43 if launcher_token else None
+    output = io.StringIO()
+    with anyio.fail_after(30):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=lambda project: Settings(model='test'),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    port=port,
+                    token=token,
+                )
+            )
+            while 'Press Ctrl-C' not in output.getvalue():
+                await anyio.sleep(0.01)
+            async with httpx.AsyncClient(trust_env=False) as client:
+                headers = {HEADER: token or 'wrong'}
+                state = await client.get(f'http://127.0.0.1:{port}/api/state', headers=headers)
+            assert state.status_code == (200 if token else 403)
+            group.cancel_scope.cancel()
+    found = re.search(r'Web UI running at (http://\S+)', output.getvalue())
+    assert found is not None
+    if token is None:
+        assert found[1].startswith(f'http://localhost:{port}/?token=') and len(opened) == 1
+    else:
+        assert found[1] == f'http://127.0.0.1:{port}/' and opened == []
+        assert token not in output.getvalue()
 
 
 def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -451,3 +694,52 @@ def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
     monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db')])
     _cli.run()
+
+
+async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
+    published: list[ServerMessage] = []
+    dialogs = BrowserDialogs(publish=published.append)
+
+    async def forever(show: Callable[[str], None]) -> None:
+        show('code 1')
+        await asyncio.Event().wait()
+
+    async def fails(show: Callable[[str], None]) -> None:
+        raise ValueError('denied')
+
+    waiting: list[bool] = []
+    async with anyio.create_task_group() as group:
+
+        async def wait() -> None:
+            waiting.append(await dialogs.wait(title='Signing in', description='Finish it.', task=forever))
+
+        group.start_soon(wait)
+        await anyio.wait_all_tasks_blocked()
+        [dialog] = dialogs.dialogs
+        assert dialog.shown == 'code 1', 'a browser connecting now sees the latest text'
+        # Any answer cancels a wait, and it reports that it did not finish.
+        dialogs.answer(dialog.id, None)
+    assert waiting == [False]
+    with pytest.raises(ValueError, match='denied'):
+        await dialogs.wait(title='Signing in', description='Finish it.', task=fails)
+
+    answers: list[bool | str | None] = []
+    async with anyio.create_task_group() as group:
+
+        async def confirm() -> None:
+            answers.append(await dialogs.confirm(title='Sure?', yes='Yes', no='No'))
+
+        async def choose() -> None:
+            answers.append(await dialogs.choose(title='Pick', options=[Option(value='a', label='A')]))
+
+        group.start_soon(confirm)
+        group.start_soon(choose)
+        await anyio.wait_all_tasks_blocked()
+        first, second = dialogs.dialogs
+        dialogs.answer(first.id, 'no')
+        # One already answered is left as it is; the rest back out.
+        dialogs.cancel_all()
+        with pytest.raises(LookupError):
+            dialogs.answer(second.id, 'a')
+    assert sorted(answers, key=str) == [False, None]
+    assert [type(message).__name__ for message in published].count('DialogClosed') == 4

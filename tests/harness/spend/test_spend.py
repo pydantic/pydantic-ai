@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -24,6 +24,7 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
@@ -52,6 +53,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -2598,7 +2600,10 @@ class TestContinuationAccrual:
         ]
 
     async def test_a_resumed_chain_is_folded_from_the_response_it_resumes(self):
-        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge."""
+        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge.
+
+        That response was charged by the run that produced it, so only what was billed beyond it is accrued.
+        """
         seed = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a')
         store = _CountingStore()
         model = ScriptedContinuationModel(
@@ -2613,11 +2618,49 @@ class TestContinuationAccrual:
             message_history=[ModelRequest.user_text_prompt('go'), seed]
         )
 
-        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens
+        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens == 16
         assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
-            [(21, Decimal('0.021'))],
+            [(11, Decimal('0.011'))],
             [(5, Decimal('0.005'))],
         ]
+
+    @pytest.mark.parametrize(
+        ('resumed', 'billed'),
+        [
+            pytest.param([StreamSegment(['B'], 'complete', 'b', 8, 6)], 7 + 14, id='pause-turn'),
+            # A background job's final poll reports its cumulative usage.
+            pytest.param([StreamSegment(['B'], 'complete', 'a', 8, 6)], 14, id='background-poll'),
+            pytest.param(
+                [StreamSegment(['B'], 'suspended', 'b', 4, 1), StreamSegment(['C'], 'complete', 'c', 3, 1)],
+                7 + 5 + 4,
+                id='three-segment',
+            ),
+        ],
+    )
+    async def test_a_walk_away_and_the_run_resuming_it_charge_what_the_provider_billed(
+        self, resumed: list[StreamSegment], billed: int
+    ):
+        """The run that walked away from a suspended response charged it, so the run that resumes it charges the rest."""
+        limits = SpendLimits[None](
+            budgets=[Budget(window='conversation'), Budget(window='total')],
+            price=lambda response: Decimal(response.usage.total_tokens),
+        )
+        model = ScriptedContinuationModel(segments=[StreamSegment(['A'], 'suspended', 'a', 5, 2)])
+        with capture_run_messages() as messages:
+            async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream('go') as stream:
+                async for _ in stream.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                    break
+        walked_away = messages[-1]
+        assert isinstance(walked_away, ModelResponse) and walked_away.state == 'suspended'
+
+        model = ScriptedContinuationModel(segments=resumed)
+        async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream(
+            message_history=messages
+        ) as stream:
+            await stream.get_output()
+
+        conversation, total = await limits.status(_run_ctx(conversation_id=walked_away.conversation_id))
+        assert conversation.spent == total.spent == Spent(usd=Decimal(billed), tokens=billed, requests=2)
 
     @pytest.mark.parametrize('failure', ['unpriced', 'raises'])
     async def test_a_boundary_that_cannot_be_priced_defers_to_the_merged_response(self, failure: str):
@@ -2686,8 +2729,8 @@ async def _stop_streaming(agent: Agent[None, str], *, at: str) -> RunUsage:
     return run.usage
 
 
-async def _walk_away(agent: Agent[None, str]) -> list[ModelMessage]:
-    """Close an event generator mid-stream, as a server does when its client disconnects, returning the run's messages.
+async def _walk_away(agent: Agent[None, str]) -> tuple[list[ModelMessage], RunUsage]:
+    """Close an event generator mid-stream, as a server does when its client disconnects, returning the run's messages and usage.
 
     Closing the generator sends `GeneratorExit` into the model request stream: a walk-away rather than a failure.
     """
@@ -2706,7 +2749,7 @@ async def _walk_away(agent: Agent[None, str]) -> list[ModelMessage]:
             stream = events()
             await anext(stream)
             await stream.aclose()
-    return messages
+    return messages, run.usage
 
 
 class TestInterruptedStreams:
@@ -2769,7 +2812,7 @@ class TestInterruptedStreams:
             budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
         )
 
-        messages = await _walk_away(Agent(model, deps_type=type(None), capabilities=[limits]))
+        messages, _ = await _walk_away(Agent(model, deps_type=type(None), capabilities=[limits]))
 
         suspended = messages[-1]
         assert isinstance(suspended, ModelResponse)
@@ -2777,6 +2820,65 @@ class TestInterruptedStreams:
         assert model.cancelled == []
         assert (await limits.status())[0].spent == Spent(usd=Decimal('7'), tokens=7, requests=1)
         assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(7, 1)]]
+
+    @pytest.mark.parametrize('stop', [False, True])
+    async def test_a_walk_away_and_its_resume_are_charged_what_was_billed(self, stop: bool):
+        """The walk-away counts its partial and the resume what it billed beyond it, also when the resume is stopped too.
+
+        `RunUsage`, `SpendLimits` and the `chat` spans each add up to the 21 tokens the provider billed for the turn.
+        """
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='suspended', provider_response_id='a', input_tokens=5, output_tokens=2
+                ),
+                StreamSegment(
+                    texts=['C', 'D'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=6
+                ),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], price=lambda response: Decimal(response.usage.total_tokens)
+        )
+        exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        instrumentation = Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))
+        agent = Agent(model, deps_type=type(None), capabilities=[instrumentation, limits])
+
+        messages, walked_away = await _walk_away(agent)
+        assert walked_away.total_tokens == 7
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('7'), tokens=7, requests=1)
+
+        if stop:
+            with capture_run_messages() as resumed_messages:
+                async with agent.iter(message_history=messages) as run:
+                    with pytest.raises(RuntimeError, match='consumer stopped'):
+                        async for node in run:  # pragma: no branch
+                            if Agent.is_model_request_node(node):
+                                async with node.stream(run.ctx) as stream:
+                                    async for _ in stream.stream_text(debounce_by=None):  # pragma: no branch
+                                        raise RuntimeError('consumer stopped')
+            resumed = run.usage
+            assert isinstance(resumed_messages[-1], ModelResponse)
+            assert resumed_messages[-1].state == 'interrupted'
+        else:
+            async with agent.run_stream(message_history=messages) as result:
+                await result.get_output()
+            resumed = result.usage
+
+        assert walked_away.total_tokens + resumed.total_tokens == 21
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=2)
+        chat_spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+        assert len(chat_spans) == 2
+        assert (
+            sum(
+                cast(int, (span.attributes or {})['gen_ai.usage.input_tokens'])
+                + cast(int, (span.attributes or {})['gen_ai.usage.output_tokens'])
+                for span in chat_spans
+            )
+            == 21
+        )
 
     async def test_the_rejected_attempts_before_it_are_charged_too(self):
         model = _AttemptsBeforeStream(

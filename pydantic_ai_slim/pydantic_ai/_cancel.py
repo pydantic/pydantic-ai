@@ -23,15 +23,27 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+from . import _utils
 
 if TYPE_CHECKING:
     from .run import AgentRun
 
-__all__ = ('CancellationToken', 'RunBinding', 'RunCancellation', 'provide_run_binding', 'take_run_binding')
+__all__ = (
+    'CancellationToken',
+    'RunBinding',
+    'RunCancellation',
+    'current_run_clock',
+    'inherited_run_deadline',
+    'provide_run_binding',
+    'provide_run_deadline',
+    'take_run_binding',
+)
 
 
 class CancellationToken:
@@ -97,6 +109,7 @@ class RunCancellation:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._issued: dict[asyncio.Task[object], int] = {}
         self._requested = False
+        self._timed_out = False
         self._finished = False
         self._lock = threading.RLock()
         self._tokens: list[CancellationToken] = []
@@ -106,6 +119,12 @@ class RunCancellation:
         """Whether a first-party cancellation has been requested. Sticky for the life of the run."""
         with self._lock:
             return self._requested
+
+    @property
+    def timed_out(self) -> bool:
+        """Whether the requested cancellation came from the run's deadline expiring (see `expire()`)."""
+        with self._lock:
+            return self._timed_out
 
     @property
     def has_token(self) -> bool:
@@ -126,7 +145,7 @@ class RunCancellation:
         if task is None:
             try:
                 task = asyncio.current_task()
-            except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+            except RuntimeError:  # No running asyncio loop (e.g. a Trio-backed run)
                 return
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
@@ -151,10 +170,22 @@ class RunCancellation:
 
         Idempotent; a no-op once the run has finished.
         """
+        self._request(timed_out=False)
+
+    def expire(self) -> None:
+        """Request cancellation because the run's deadline passed, so the run ends with `RunTimedOut`.
+
+        A no-op if a cancellation was already requested (the earlier request decides the outcome) or
+        the run has finished.
+        """
+        self._request(timed_out=True)
+
+    def _request(self, *, timed_out: bool) -> None:
         with self._lock:
             if self._finished or self._requested:
                 return
             self._requested = True
+            self._timed_out = timed_out
             owner = self._owner
             loop = self._loop
             if owner is None or loop is None or owner.done():
@@ -281,3 +312,49 @@ def take_run_binding() -> RunBinding | None:
     if binding is not None:
         _current_run_binding.set(None)
     return binding
+
+
+@dataclasses.dataclass
+class _InheritedDeadline:
+    """A run's deadline and clock as runs started inside it inherit them, while that run is active."""
+
+    deadline: datetime
+    clock: Callable[[], datetime] | None
+    active: bool = True
+
+
+_current_run_deadline: ContextVar[_InheritedDeadline | None] = ContextVar('pydantic_ai.run_deadline', default=None)
+"""The deadline of the agent run whose context this is, inherited by agent runs started inside it.
+
+A task spawned inside the run copies this context and can outlive the run, so the run marks it
+inactive on exit: a finished run's deadline no longer applies to agent runs that task starts.
+"""
+
+
+def _active_run_deadline() -> _InheritedDeadline | None:
+    inherited = _current_run_deadline.get()
+    return inherited if inherited is not None and inherited.active else None
+
+
+def current_run_clock() -> Callable[[], datetime]:
+    """The clock that remaining run time is measured against in this context."""
+    inherited = _active_run_deadline()
+    return inherited.clock if inherited is not None and inherited.clock is not None else _utils.now_utc
+
+
+def inherited_run_deadline() -> datetime | None:
+    """The deadline a run started in this context inherits from the active run it was started inside of."""
+    inherited = _active_run_deadline()
+    return inherited.deadline if inherited is not None else None
+
+
+@contextmanager
+def provide_run_deadline(deadline: datetime, clock: Callable[[], datetime] | None = None) -> Generator[None]:
+    """Make `deadline` (and the clock it's measured against, the system clock by default) the one runs started in this context inherit."""
+    inherited = _InheritedDeadline(deadline, clock)
+    token = _current_run_deadline.set(inherited)
+    try:
+        yield
+    finally:
+        inherited.active = False
+        _current_run_deadline.reset(token)

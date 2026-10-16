@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import (
     AgentStreamEvent,
@@ -27,12 +27,22 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
+from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
+from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+
+MONTY_TOOL = 'run_code'
+"""The code mode tool whose cells make up the Monty panel."""
 
 RESULT_CHARS = 20_000
 """The most of a tool result the browser receives; the model's copy is unchanged."""
@@ -48,6 +58,20 @@ class Diff:
     path: str
     diff: str
     truncated: bool = False
+
+
+@dataclass(kw_only=True)
+class SubCall:
+    """A tool `run_code` called from inside its sandbox, as CLAI's code mode reports it."""
+
+    id: str
+    name: str
+    args: str
+    state: ToolState = 'running'
+    text: str = ''
+    """What the tool returned to the script."""
+    output: str = ''
+    """What a shell command printed while it ran."""
 
 
 @dataclass(kw_only=True)
@@ -67,6 +91,10 @@ class Item:
     """What a shell command printed while it ran."""
     exit_code: int | None = None
     diffs: list[Diff] = field(default_factory=list[Diff])
+    calls: list[SubCall] = field(default_factory=list[SubCall])
+    """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
+    by_user: bool = False
+    """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
 
 
 @dataclass(kw_only=True)
@@ -98,6 +126,46 @@ class Questions:
 
 
 @dataclass(kw_only=True)
+class Choice:
+    """One value a settings row or a dialog offers."""
+
+    value: str
+    label: str
+    description: str = ''
+
+
+DialogKind = Literal['choose', 'text', 'confirm', 'wait']
+
+
+@dataclass(kw_only=True)
+class Dialog:
+    """What a plugin's settings menu asks, open until `POST /api/dialogs/ID` answers or cancels it.
+
+    Which fields apply depends on `kind`, after the `Dialogs` method that asks it.
+    """
+
+    id: str
+    kind: DialogKind
+    title: str
+    description: str = ''
+    options: list[Choice] = field(default_factory=list[Choice])
+    """`choose`: what to pick from."""
+    current: str | None = None
+    """`choose`: the value marked as the current one."""
+    label: str = ''
+    """`text`: the input's label."""
+    placeholder: str = ''
+    initial: str = ''
+    secret: bool = False
+    """`text`: mask what is typed; the answer is never sent to any browser."""
+    yes: str = ''
+    """`confirm`: the answer that confirms; `no`, the other, is the safe one."""
+    no: str = ''
+    shown: str = ''
+    """`wait`: the latest text the waiting task showed, such as a sign-in link."""
+
+
+@dataclass(kw_only=True)
 class SessionInfo:
     """The conversation the shell holds."""
 
@@ -113,6 +181,11 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     requests: int = 0
+
+
+def usage_info(usage: RunUsage) -> Usage:
+    """The browser's copy of a run's usage."""
+    return Usage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, requests=usage.requests)
 
 
 @dataclass(kw_only=True)
@@ -137,6 +210,44 @@ class StatusInfo:
 
 
 @dataclass(kw_only=True)
+class Palette:
+    """A termflow palette as `/theme` applies it to the terminal: background, foreground, and the 16 ANSI slots."""
+
+    bg: str
+    fg: str
+    ansi: list[str]
+
+
+@dataclass(kw_only=True)
+class ThemeInfo:
+    """The `/theme` choice: `default` is Pydantic's own colours, in the browser's light or dark mode."""
+
+    name: str
+    names: list[str]
+    palette: Palette | None = None
+
+
+@dataclass(kw_only=True)
+class TaskEntry:
+    """A delegated task as the sidebar's Workers tree shows it, like a `/tasks` row."""
+
+    id: str
+    parent_id: str | None
+    agent: str
+    model: str | None
+    prompt: str
+    status: Literal['running', 'finished']
+    outcome: DelegationOutcome | None
+    started_at: datetime
+    finished_at: datetime | None
+    background: bool
+    resumable: bool
+    activity: str
+    """Its last action, such as `thinking` or `running: shell`."""
+    usage: Usage
+
+
+@dataclass(kw_only=True)
 class Snapshot:
     """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
 
@@ -146,6 +257,14 @@ class Snapshot:
     running: bool
     status: StatusInfo
     questions: list[Questions]
+    dialogs: list[Dialog]
+    theme: ThemeInfo
+    tasks: list[TaskEntry]
+    """The conversation's delegated tasks, each parent before its children."""
+    task_items: dict[str, list[Item]]
+    """Each running task's transcript so far, by task ID."""
+    follows_workspace: bool = False
+    """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
 
 
 @dataclass(kw_only=True)
@@ -163,6 +282,54 @@ class TextDelta:
     type: Literal['delta'] = 'delta'
     id: str
     text: str
+
+
+@dataclass(kw_only=True)
+class ArgsDelta:
+    """More of a `run_code` cell's arguments as the model writes them, as raw JSON text."""
+
+    type: Literal['args_delta'] = 'args_delta'
+    id: str
+    text: str
+
+
+@dataclass(kw_only=True)
+class ToolArgs:
+    """A streamed `run_code` cell's complete arguments, replacing what its deltas built."""
+
+    type: Literal['tool_args'] = 'tool_args'
+    id: str
+    args: str
+
+
+@dataclass(kw_only=True)
+class SubCallAdded:
+    """A `run_code` cell called a tool from its sandbox, possibly while the cell was still being written."""
+
+    type: Literal['call'] = 'call'
+    id: str
+    call: SubCall
+
+
+@dataclass(kw_only=True)
+class SubCallOutput:
+    """More of what a shell command called from a `run_code` cell printed."""
+
+    type: Literal['call_output'] = 'call_output'
+    id: str
+    call_id: str
+    text: str
+
+
+@dataclass(kw_only=True)
+class SubCallDone:
+    """A tool called from a `run_code` cell returned or failed."""
+
+    type: Literal['call_done'] = 'call_done'
+    id: str
+    call_id: str
+    text: str
+    state: ToolState
 
 
 @dataclass(kw_only=True)
@@ -245,6 +412,31 @@ class QuestionClosed:
 
 
 @dataclass(kw_only=True)
+class DialogOpened:
+    """A plugin's settings menu asks something; answer it with `POST /api/dialogs/ID`."""
+
+    type: Literal['dialog'] = 'dialog'
+    dialog: Dialog
+
+
+@dataclass(kw_only=True)
+class DialogShown:
+    """A `wait` dialog's task showed new text, such as a sign-in code."""
+
+    type: Literal['dialog_shown'] = 'dialog_shown'
+    id: str
+    text: str
+
+
+@dataclass(kw_only=True)
+class DialogClosed:
+    """A dialog was answered or cancelled, or its menu closed it."""
+
+    type: Literal['dialog_closed'] = 'dialog_closed'
+    id: str
+
+
+@dataclass(kw_only=True)
 class Notice:
     """A `/command`'s result, or another line the browser should show once."""
 
@@ -263,24 +455,102 @@ class TitleChanged:
 
 
 @dataclass(kw_only=True)
+class ThemeChanged:
+    """`/theme` or `/set display.theme` chose another palette."""
+
+    type: Literal['theme'] = 'theme'
+    theme: ThemeInfo
+
+
+@dataclass(kw_only=True)
 class SessionsChanged:
     """The saved sessions changed; the sidebar should list them again."""
 
     type: Literal['sessions'] = 'sessions'
 
 
-ItemMessage = ItemAdded | TextDelta | ToolOutput | ToolDone | ShellDone | DiffAdded
+@dataclass(kw_only=True)
+class TaskChanged:
+    """A delegated task started, or its row changed: its activity, usage, or status."""
+
+    type: Literal['task'] = 'task'
+    task: TaskEntry
+
+
+@dataclass(kw_only=True)
+class PluginsChanged:
+    """A command ran, which may have changed the plugins or their settings; an open plugins panel lists them again."""
+
+    type: Literal['plugins'] = 'plugins'
+
+
+ItemMessage = (
+    ItemAdded
+    | TextDelta
+    | ArgsDelta
+    | ToolArgs
+    | ToolOutput
+    | ToolDone
+    | ShellDone
+    | DiffAdded
+    | SubCallAdded
+    | SubCallOutput
+    | SubCallDone
+)
+
+
+@dataclass(kw_only=True)
+class TaskItems:
+    """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
+
+    type: Literal['task_event'] = 'task_event'
+    id: str
+    """The task's ID."""
+    messages: list[ItemMessage]
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorState:
+    """The orchestrator chat, sent on connect, as a turn starts, and on a new chat; `GET /api/orchestrator/state` too."""
+
+    type: Literal['orchestrator_state'] = 'orchestrator_state'
+    enabled: bool
+    """Whether the `workspaces` plugin is on; the orchestrator runs only then."""
+    running: bool
+    items: list[Item]
+    questions: list[Questions]
+
+
+OrchestratorEvent = ItemMessage | TurnStarted | TurnEnded | QuestionAsked | QuestionClosed | OrchestratorState
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorMessage:
+    """A message for the orchestrator chat, on the session's WebSocket."""
+
+    type: Literal['orchestrator'] = 'orchestrator'
+    message: OrchestratorEvent
+
+
 ServerMessage = (
     Snapshot
+    | OrchestratorMessage
     | ItemMessage
     | TurnStarted
     | TurnEnded
     | StatusChanged
     | QuestionAsked
     | QuestionClosed
+    | DialogOpened
+    | DialogShown
+    | DialogClosed
     | Notice
     | TitleChanged
+    | ThemeChanged
     | SessionsChanged
+    | PluginsChanged
+    | TaskChanged
+    | TaskItems
 )
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
@@ -308,14 +578,27 @@ class SessionEntry:
     current: bool
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
+class Worktree:
+    """A project's checkout, or a folder outside Git, with the sessions saved in it."""
+
+    root: str
+    label: str
+    """Its branch, or its folder's name outside Git or when the branch is unknown."""
+    current: bool
+    missing: bool
+    """The folder is gone, as with a removed worktree."""
+    sessions: list[SessionEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
 class Project:
-    """Saved sessions grouped by repository, as the `/resume` browser groups them."""
+    """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
     name: str
     current: bool
-    sessions: list[SessionEntry]
+    worktrees: list[Worktree]
 
 
 @dataclass(kw_only=True)
@@ -327,7 +610,134 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it here; it refuses a session saved in another directory."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    missing: bool = False
+    """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+
+
+@dataclass(kw_only=True)
+class TaskTranscript:
+    """A delegated task with its history, as it saved it."""
+
+    task: TaskEntry
+    items: list[Item]
+
+
+@dataclass(kw_only=True)
+class PluginForm:
+    """A plugin's settings as a form: its settings model's JSON Schema, by alias, and the saved values."""
+
+    json_schema: dict[str, JsonValue]
+    values: dict[str, JsonValue]
+
+
+@dataclass(kw_only=True)
+class PluginRow:
+    """A plugin as the plugins panel shows it, like a `/plugins` row."""
+
+    name: str
+    description: str
+    origin: PluginOrigin
+    source: str
+    status: PluginStatus
+    included_in: str | None
+    error: str | None
+    notice: str | None
+    provides: str
+    has_menu: bool
+    """Whether it has a settings menu."""
+    settings_menu: bool
+    """Whether that menu is declared, so this page shows it; otherwise it opens in the terminal."""
+    terminal: bool
+    """Whether this CLAI has a terminal for an undeclared menu to open in; `clai2 --web` has none."""
+    form: PluginForm | None
+    """Its settings while it is on, unless it declares a menu, takes none, or its model has no JSON Schema."""
+    serving: bool
+    """Whether it is the plugin serving this page, which the page must not turn off or reload."""
+
+
+@dataclass(kw_only=True)
+class PanelInfo:
+    """A plugin's side panel, as the page shows it now."""
+
+    plugin: str
+    id: str
+    title: str
+    icon: PanelIcon
+    url: str | None
+    """The page to show; `None` shows `note` alone."""
+    note: str
+    embed: bool
+    """Whether `url` lets this page show it in a frame; otherwise it opens in a window of its own."""
+
+
+@dataclass(kw_only=True)
+class MenuField:
+    """One row of a declared settings menu, as `FieldRow` describes it, with its current value."""
+
+    key: str
+    label: str
+    description: str
+    value: str
+    """The current value as the user would type it, as the terminal list shows it: never a secret itself."""
+    default: str
+    choices: list[Choice]
+    allow_custom: bool
+    """Whether a value other than `choices` may be typed."""
+    secret: bool
+    note: str
+    """Where the value comes from when not from the user."""
+    action: bool
+    """Whether choosing it runs an action, with dialogs, instead of editing a value."""
+
+
+@dataclass(kw_only=True)
+class MenuInfo:
+    """A plugin's declared settings menu, with every row's current value."""
+
+    title: str
+    fields: list[MenuField]
+
+
+@dataclass(kw_only=True)
+class MenuEdited:
+    """What an edit through a settings menu said, and the menu as it is now."""
+
+    messages: list[str]
+    menu: MenuInfo | None
+    """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
+
+
+WorkspaceState = Literal['ready', 'running', 'stopped']
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRow:
+    """A workspace as the sidebar lists it; never its token."""
+
+    id: str
+    kind: str
+    repo: str
+    branch: str
+    path: str
+    status: WorkspaceState
+    url: str | None
+    """Its page's address without the token, while its CLAI runs."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspacesInfo:
+    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
+
+    enabled: bool
+    workspaces: list[WorkspaceRow]
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceOpened:
+    """A workspace's page, with its token, for this page to open."""
+
+    url: str
 
 
 @dataclass(kw_only=True)
@@ -349,10 +759,17 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
 
 
 def user_text(part: UserPromptPart) -> str:
-    """A prompt's text, naming the attachments the browser does not show."""
+    """A prompt's text, naming the attachments the browser does not show.
+
+    Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
+    """
     if isinstance(part.content, str):
         return part.content
-    return '\n'.join(item if isinstance(item, str) else f'[{type(item).__name__}]' for item in part.content)
+    return '\n'.join(
+        item if isinstance(item, str) else f'[{type(item).__name__}]'
+        for item in part.content
+        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+    )
 
 
 def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
@@ -407,36 +824,71 @@ class EventTranslator:
     """Turn one conversation's stream events into item messages, keeping what a later event needs.
 
     A part's index is only unique within one model response, so each `PartStartEvent` starts a new
-    item and takes the index over. A file write's diff arrives before the write and is shown once it lands.
+    item and takes the index over. A `run_code` cell is shown as soon as the model starts writing it,
+    with its source streaming in, because code mode runs its statements and their tool calls
+    (`SandboxCallStartedEvent`) while it is still being written. A file write's diff arrives before
+    the write and is shown once it lands.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, scope: str = '') -> None:
+        """`scope` starts every item ID, so a delegated task's items cannot take the session's IDs."""
+        self._scope = scope
         self._parts: dict[int, str] = {}
         self._count = 0
         self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
+        self._streamed: set[str] = set()
+        """`run_code` cells already shown from their streamed part, so their call event only completes them."""
 
     def translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         """The item messages `event` makes; none for an event the browser does not show."""
+        messages = self._translate(event)
+        if not self._scope:
+            return messages
+        return [
+            ItemAdded(item=replace(message.item, id=self._scope + message.item.id))
+            if isinstance(message, ItemAdded)
+            else replace(message, id=self._scope + message.id)
+            for message in messages
+        ]
+
+    def _translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         if isinstance(event, PartStartEvent):
             return self._start(event)
         if isinstance(event, PartDeltaEvent):
-            delta = event.delta
-            item_id = self._parts.get(event.index)
-            if isinstance(delta, TextPartDelta | ThinkingPartDelta) and delta.content_delta and item_id is not None:
-                return [TextDelta(id=item_id, text=delta.content_delta)]
-            return []
+            return self._delta(event)
+        if isinstance(event, SandboxCallStartedEvent):
+            call = event.call
+            parent = _parent(call.tool_call_id)
+            sub = SubCall(id=call.tool_call_id, name=call.tool_name, args=call.args_as_json_str())
+            return [] if parent is None else [SubCallAdded(id=parent, call=sub)]
+        if isinstance(event, SandboxCallFinishedEvent):
+            result = event.result
+            parent = _parent(result.tool_call_id)
+            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            done = SubCallDone(id=parent or '', call_id=result.tool_call_id, text=tool_result_text(result), state=state)
+            return [] if parent is None else [done]
         if isinstance(event, FunctionToolCallEvent):
             part = event.part
+            if part.tool_call_id in self._streamed:
+                return [ToolArgs(id=part.tool_call_id, args=part.args_as_json_str())]
             item = Item(id=part.tool_call_id, kind='tool', name=part.tool_name, args=part.args_as_json_str())
             return [ItemAdded(item=replace(item, state='running'))]
         if isinstance(event, FunctionToolResultEvent):
             result = event.part
-            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = 'done' if isinstance(result, ToolReturnPart) else 'error'
             return [ToolDone(id=result.tool_call_id, text=tool_result_text(result), state=state)]
         return self._harness(event)
 
     def _start(self, event: PartStartEvent) -> list[ItemMessage]:
         part = event.part
+        if isinstance(part, ToolCallPart):
+            if part.tool_name != MONTY_TOOL:
+                return []
+            self._parts[event.index] = part.tool_call_id
+            self._streamed.add(part.tool_call_id)
+            args = part.args if isinstance(part.args, str) else part.args_as_json_str() if part.args else ''
+            item = Item(id=part.tool_call_id, kind='tool', name=MONTY_TOOL, args=args, state='running')
+            return [ItemAdded(item=item)]
         if not isinstance(part, TextPart | ThinkingPart):
             return []
         self._count += 1
@@ -445,9 +897,23 @@ class EventTranslator:
         kind: ItemKind = 'assistant' if isinstance(part, TextPart) else 'thinking'
         return [ItemAdded(item=Item(id=item_id, kind=kind, text=part.content))]
 
+    def _delta(self, event: PartDeltaEvent) -> list[ItemMessage]:
+        delta = event.delta
+        item_id = self._parts.get(event.index)
+        if item_id is None:
+            return []
+        if isinstance(delta, TextPartDelta | ThinkingPartDelta) and delta.content_delta:
+            return [TextDelta(id=item_id, text=delta.content_delta)]
+        if isinstance(delta, ToolCallPartDelta) and isinstance(delta.args_delta, str) and delta.args_delta:
+            # A provider that streams arguments as objects sends them whole with the call event instead.
+            return [ArgsDelta(id=item_id, text=delta.args_delta)]
+        return []
+
     def _harness(self, event: AgentStreamEvent) -> list[ItemMessage]:
         """Shell output and file diffs from harness capability events, tied to their tool call."""
         if isinstance(event, CommandOutputEvent) and event.tool_call_id is not None:
+            if (parent := _parent(event.tool_call_id)) is not None:
+                return [SubCallOutput(id=parent, call_id=event.tool_call_id, text=event.text)]
             return [ToolOutput(id=event.tool_call_id, text=event.text)]
         if isinstance(event, CommandFinishedEvent) and event.tool_call_id is not None:
             return [ShellDone(id=event.tool_call_id, exit_code=event.exit_code)]
@@ -464,6 +930,12 @@ class EventTranslator:
         return []
 
 
+def _parent(tool_call_id: str) -> str | None:
+    """The `run_code` cell a sandbox call belongs to, from its `PARENT__N` id; `None` for a top-level call."""
+    nested = NESTED_CALL.fullmatch(tool_call_id)
+    return None if nested is None else nested['parent']
+
+
 class ItemLog:
     """The current turn's items, kept in step with what browsers were sent, for one that connects mid-turn."""
 
@@ -476,18 +948,33 @@ class ItemLog:
     def apply(self, message: ItemMessage) -> None:
         """Change the logged items as a browser applies `message`."""
         if isinstance(message, ItemAdded):
-            self.items[message.item.id] = replace(message.item, diffs=list(message.item.diffs))
+            self.items[message.item.id] = replace(
+                message.item, diffs=list(message.item.diffs), calls=list(message.item.calls)
+            )
             return
         item = self.items.get(message.id)
         if item is None:
             return
         if isinstance(message, TextDelta):
             item.text += message.text
+        elif isinstance(message, ArgsDelta):
+            item.args += message.text
+        elif isinstance(message, ToolArgs):
+            item.args = message.args
         elif isinstance(message, ToolOutput):
             item.output += message.text
         elif isinstance(message, ToolDone):
             item.text, item.state = message.text, message.state
         elif isinstance(message, ShellDone):
             item.exit_code = message.exit_code
-        else:
+        elif isinstance(message, DiffAdded):
             item.diffs.append(message.diff)
+        elif isinstance(message, SubCallAdded):
+            item.calls.append(replace(message.call))
+        else:
+            for call in item.calls:
+                if call.id == message.call_id:
+                    if isinstance(message, SubCallOutput):
+                        call.output += message.text
+                    else:
+                        call.text, call.state = message.text, message.state

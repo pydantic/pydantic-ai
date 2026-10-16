@@ -61,6 +61,7 @@ from pydantic_clai2.plugins import (
     Renderer,
     SessionEndReason,
     SessionStart,
+    TaskEvent,
     TurnEnd,
     TurnStart,
     bare_screen,
@@ -84,7 +85,7 @@ from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
@@ -769,6 +770,7 @@ def create_shell(
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
+        tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -861,6 +863,15 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+    commands.register(
+        Command(
+            name='monty',
+            description="Run your own Python in Monty, this session's run_code sandbox: /monty CODE",
+            handler=shell.monty_command,
+            raw=True,
+            live=True,
+        )
+    )
 
     async def show_resumed(messages: Sequence[ModelMessage]) -> None:
         # The live panel swaps to the restored conversation; startup output above it stays.
@@ -949,6 +960,9 @@ class _Shell(Generic[DepsT, OutputT]):
             if str(self.sessions.store.database) == ':memory:'
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
+            fire=self.loader.fire,
+            listening=lambda: self.loader.handles(TaskEvent),
+            send_input=self.send_input,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -1010,19 +1024,15 @@ class _Shell(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /tasks [stop|background|resume ID]')
         record = self.tasks.resolve(args[1])
         if args[0] == 'stop':
-            await self.tasks.owner.cancel(record.id)
-            await self.tasks.owner.save(record)
+            await self.tasks.stop(record.id)
             return f'Stopping task {record.id[:8]} and its descendants.'
         if args[0] == 'background':
-            self.tasks.owner.background(record.id)
+            self.tasks.background(record.id)
             return f'Task {record.id[:8]} moved to background.'
         await self.tasks.owner.allow_resume(record.id)
         if self.editor is None:
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
-        self.editor.submit(
-            f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
-            f'resume={record.id!r}. Continue from its saved history and report the result.'
-        )
+        self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
 
     def submit_prompt(self, text: str) -> None:
@@ -1030,6 +1040,21 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.submitted is None:
             raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
         self.submitted.append(text)
+
+    async def monty_command(self, args: list[str]) -> str:
+        """`/monty CODE`: run a cell in Monty, code mode's sandbox; the next prompt tells the model."""
+        code = args[0].strip() if args else ''
+        if not code:
+            raise ValueError("Usage: /monty CODE runs your own cell in Monty, this session's run_code sandbox.")
+        if not (self.speculation.enabled or self.context.settings.code_mode):
+            raise ValueError('Code mode is off, so there is no Monty sandbox. Turn it on with /set run.code_mode true.')
+        if self.session.repl_states is None:
+            raise ValueError('This CLAI saves no sessions, so no Monty state outlives a run.')
+        self.session.plugins = self.run_plugins()
+        cell = await self.session.run_in_monty(code)
+        if cell.failed:
+            raise ValueError(f'The cell failed:\n{cell.report()}')
+        return cell.report() or '(no output)'
 
     def send_input(self, text: str) -> None:
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
@@ -1134,6 +1159,12 @@ class _Shell(Generic[DepsT, OutputT]):
         async with commands, create_task_group() as menus:
             async for text in commands:
                 menus.start_soon(self._run_mid_turn, text)
+
+    def background_running(self) -> bool:
+        """Whether a background fork or a delegated task runs, using the plugins loaded now."""
+        return any(record.status == 'running' for record in self.forks.records) or any(
+            record.status == 'running' for record in self.tasks.owner.records.values()
+        )
 
     def plugins_busy(self, text: str) -> bool:
         """Keep plugin-owned transports alive until all children using them settle."""
@@ -1560,6 +1591,7 @@ async def _run_prompt(
 
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
+        status.context_estimated = False
 
     def context_window(window: int) -> None:
         # The `compaction` gauge, when loaded, already measured this request, honouring its override.
@@ -1587,6 +1619,7 @@ async def _run_prompt(
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
                 status.context_tokens = context_tokens(message) or None
+                status.context_estimated = False
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)
