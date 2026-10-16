@@ -241,8 +241,9 @@ async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
 async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> None:
     """Under `.prefixed()`, a dynamic toolset's child tasks still answer from the snapshots serialized at dispatch.
 
-    `available_tool_names` and `active_capability_ids` live outside `RenderRunContext`'s dataclass fields, so the
-    context copies that carry or strip the tool name path have to keep them.
+    `available_tool_names` and `active_capability_ids` are not `RunContext` fields, so every context copy made inside
+    a child task has to keep them: the ones that carry or strip the tool name path, the enqueue guard, the one a tool's
+    `prepare` gets, and the ones the inner prefix and rename make before the tool runs.
     """
     reads: list[tuple[str, list[str], int]] = []
 
@@ -263,12 +264,16 @@ async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> Non
             'Done.',
             [
                 ('factory', [], 3),
+                ('prepare', [], 3),
                 ('instructions', [], 3),
                 ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
                 ('validator', ['demo_probe'], 3),
                 ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
                 ('body', ['demo_probe'], 3),
                 ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
                 ('instructions', ['demo_probe'], 3),
             ],
         )
