@@ -2543,20 +2543,20 @@ def test_retry_prompt_strips_input_from_top_level_errors():
     assert '"required_field"' in response
 
 
-def test_retry_prompt_keeps_input_for_nested_errors():
-    """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
+def test_retry_prompt_strips_input_from_nested_native_output_errors():
+    """NativeOutput validation errors omit `input` because the invalid JSON is already in model context."""
     part = RetryPromptPart(
         content=[
             {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
         ],
     )
     response = part.model_response()
-    assert '"input"' in response
+    assert '"input"' not in response
     assert '"sub_field"' in response
 
 
-def test_retry_prompt_mixed_top_level_and_nested_errors():
-    """When both top-level and nested errors exist, only top-level input should be stripped."""
+def test_retry_prompt_mixed_native_output_errors_strip_all_inputs():
+    """NativeOutput retries strip both top-level and nested inputs."""
     part = RetryPromptPart(
         content=[
             {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
@@ -2569,10 +2569,29 @@ def test_retry_prompt_mixed_top_level_and_nested_errors():
         ],
     )
     response = part.model_response()
-    # Nested error's input should be present
-    assert '"nested_key"' in response
-    # But root-level input should not
+    assert '"nested_key"' not in response
     assert '"root_key"' not in response
+
+
+def test_retry_prompt_native_output_nested_input_does_not_multiply_large_payload():
+    """Repeated nested inputs must not scale retry feedback with the number of validation errors."""
+    payload = 'nested-marker-' + 'x' * 10_000
+    part = RetryPromptPart(
+        content=[
+            {
+                'type': 'missing',
+                'loc': ('items', 0, f'required_{index}'),
+                'msg': 'Field required',
+                'input': {'payload': payload},
+            }
+            for index in range(20)
+        ],
+    )
+    response = part.model_response()
+
+    assert response.count(payload) == 0
+    assert response.count('"loc"') == 20
+    assert len(response) < len(payload) * 2
 
 
 def test_retry_prompt_strips_input_from_top_level_type_errors():
