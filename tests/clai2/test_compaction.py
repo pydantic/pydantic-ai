@@ -1,7 +1,7 @@
 """The built-in `compaction` plugin, loaded with `load_plugin` and driven through one `chat()` run."""
 
 import io
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
@@ -36,14 +36,16 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.compaction import (
     CompactionPlugin,
     CompactionSettings,
     CompactionSource,
     build_chain,
 )
-from pydantic_clai2.commands import Commands
+from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, Transcript, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
@@ -330,6 +332,71 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
     restored = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await restored.resume(session.summary.id)
     assert restored.messages == session.messages
+
+
+async def test_gauge_marks_its_reading_estimated_until_a_response_reports_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first request's reading counts characters and no tool definitions, so it reads `~`."""
+    inputs(monkeypatch, ['hi', '/inspect', 'again', '/exit'])
+    readings: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        readings.append(shell.status.text())
+        yield 'hello'
+
+    shell = create_shell(
+        Agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(
+            PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
+        ),
+        project=ProjectSettings(),
+    )
+
+    def inspect(args: list[str]) -> str:
+        readings.append(shell.status.text())
+        return ''
+
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.loader.load_all()
+    try:
+        await shell.run()
+    finally:
+        await shell.loader.close('exit')
+    during_first, after_first, during_second = (reading.split('context: ')[1].split(' ')[0] for reading in readings)
+    assert during_first.startswith('~')
+    assert not after_first.startswith('~'), 'the response reported its usage'
+    assert not during_second.startswith('~'), 'anchored on the first response'
+
+
+async def test_gauge_clears_the_estimate_mark_within_a_turn() -> None:
+    """After a tool call, the turn's next request is anchored on the first response's usage."""
+    estimated: list[bool] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        estimated.append(plugin.host.status.context_estimated)
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain
+    def work() -> str:
+        return 'worked'
+
+    session = Session(agent, deps=None)
+    plugin = make_plugin(session)
+    session.plugins = plugin.capabilities
+    await session.prompt('hi')
+    assert estimated == [True, False]
 
 
 async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
