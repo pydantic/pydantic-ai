@@ -229,6 +229,8 @@ async def _print_shell_call(console: Console, command: str) -> None:
     )
 
 
+# Rich 15.0.0's `from_ansi` keeps the trailing newline that earlier versions drop
+# (https://github.com/Textualize/rich/pull/4076), so tests strip it before counting rows.
 async def _highlighted_header(command: str, *, width: int = 100) -> tuple[Console, Text]:
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', width=width)
@@ -334,7 +336,7 @@ async def test_highlighted_shell_header_keeps_the_hanging_indent_and_row_cap() -
     await _print_shell_call(Console(file=plain, width=40), command)
     console, text = await _highlighted_header(command, width=40)
     assert text.plain == Text.from_ansi(plain.getvalue()).plain, 'highlighting moves no character'
-    assert text.plain.splitlines() == [
+    assert text.plain.rstrip('\n').splitlines() == [
         '● shell python3 - <<EOF',
         '        x =',
         '        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -355,10 +357,10 @@ async def test_highlighted_shell_header_keeps_the_hanging_indent_and_row_cap() -
 async def test_shell_header_stops_highlighting_inline_code_at_the_row_cap() -> None:
     command = "python3 -c '\n" + '\n'.join(f'import m{index}' for index in range(12)) + "\n'"
     console, text = await _highlighted_header(command)
-    assert text.plain.splitlines()[-1] == '        … +4 lines'
+    assert text.plain.rstrip('\n').splitlines()[-1] == '        … +4 lines'
     assert _color(console, text, 'import m8') == KEYWORD
     _, empty = await _highlighted_header("python3 -c ''")
-    assert empty.plain == "● shell python3 -c ''\n"
+    assert empty.plain.rstrip('\n') == "● shell python3 -c ''"
 
 
 async def test_shell_header_lexes_a_long_one_liner_only_as_far_as_its_shown_rows() -> None:
@@ -366,7 +368,7 @@ async def test_shell_header_lexes_a_long_one_liner_only_as_far_as_its_shown_rows
     plain = io.StringIO()
     await _print_shell_call(Console(file=plain, width=60), command)
     console, text = await _highlighted_header(command, width=60)
-    lines = text.plain.splitlines()
+    lines = text.plain.rstrip('\n').splitlines()
     assert len(lines) == 11
     assert lines[-1] == f'        … +{len(Text(command).wrap(console, 52, overflow="fold")) - 10} lines'
     assert text.plain == Text.from_ansi(plain.getvalue()).plain

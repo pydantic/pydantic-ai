@@ -121,6 +121,7 @@ try:
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._model_errors import (
+        _retry_policy_type,  # pyright: ignore[reportPrivateUsage]
         model_errors_as_application_errors,
         rebuilt_model_errors,
     )
@@ -209,9 +210,6 @@ with try_import() as anthropic_imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
-
-with try_import() as websocket_imports_successful:
-    from pydantic_ai.models._openai_responses_websocket import WebSocketTransportError
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -3189,17 +3187,14 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert type(rebuilt) is type(error)
 
 
-@pytest.mark.skipif(not websocket_imports_successful(), reason='websockets not installed')
-def test_a_category_subclass_from_an_adapter_keeps_its_own_type():
-    """A subclass of a category defined outside `pydantic_ai.exceptions` crossed under its own name before
-    categories existed, so a retry policy still sees that name rather than the category's legacy one."""
-    error = WebSocketTransportError('gpt-test', 'socket closed', phase='read')
-    with pytest.raises(ApplicationError) as raised:
-        with model_errors_as_application_errors():
-            raise error
-    assert raised.value.type == 'WebSocketTransportError'
-    rebuilt = _crossed(error)
-    assert type(rebuilt) is WebSocketTransportError
+def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
+    """Only the categories in `pydantic_ai.exceptions` report their legacy class: a subclass defined elsewhere,
+    like an adapter-specific error, reports its own name, as it did before categories existed."""
+
+    class AdapterTimeoutError(ModelTimeoutError):
+        pass
+
+    assert _retry_policy_type(AdapterTimeoutError('gpt-test', 'timed out', phase='read')) == 'AdapterTimeoutError'
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):

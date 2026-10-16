@@ -34,9 +34,9 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
-from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.field_menu import first_error, shown
 from pydantic_clai2.ui.rendering.status import Status
 
 
@@ -207,11 +207,8 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             ),
         )
 
-    async def configure(self) -> str:
-        if not self.host.console.is_terminal:
-            return 'Configure compaction from a terminal: /plugins configure compaction'
-        messages = await run_worker(lambda: run_flow(FieldMenu(CompactionSource(self.host))))
-        return '\n'.join(messages) or 'No compaction settings changed.'
+    def settings_menu(self) -> SettingsMenu:
+        return SettingsMenu(source=CompactionSource(self.host))
 
     async def on_session_end(self, event: SessionEnd) -> None:
         self.host.status.context_window = None

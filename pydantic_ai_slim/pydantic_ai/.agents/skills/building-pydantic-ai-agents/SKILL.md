@@ -409,7 +409,7 @@ Load only the most relevant reference first. Read additional references only if 
 
 | I want to... | Reference |
 |---|---|
-| Create/configure agents, choose output types, use deps, define specs, reuse an OpenAI Responses WebSocket, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Create/configure agents, choose output types, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
@@ -454,11 +454,11 @@ These are mistakes agents commonly make with Pydantic AI. Getting these wrong pr
 
 - **`@agent.tool` requires `RunContext` as first param**; `@agent.tool_plain` must **not** have it. Mixing these up causes runtime errors. Use `tool_plain` when you don't need deps, usage, or messages.
 - **Model strings need the provider prefix**: `'openai:gpt-5.2'` not `'gpt-5.2'`. Without the prefix, Pydantic AI can't resolve the provider.
-- **`TestModel` requires `agent.override()`**: Don't set `agent.model` directly. Always use the context manager: `with agent.override(model=TestModel()):`.
+- **Temporarily replacing a model in tests**: Use `with agent.override(model=TestModel()):` to substitute a model for an existing agent instead of mutating `agent.model`.
 - **`str` in output_type allows plain text to end the run**: If your union includes `str` (or no `output_type` is set), the model can return plain text instead of structured output. Omit `str` from the union to force tool-based output.
 - **Hook decorator names on `.on` don't repeat `on_`**: Use `hooks.on.run_error` and `hooks.on.model_request_error` — not `hooks.on.on_run_error`.
 - **`history_processors` is deprecated; use `capabilities=[ProcessHistory(p), ...]`**, or hook `before_model_request` directly via `capabilities=[Hooks(before_model_request=fn)]`. `ProcessHistory` is a thin wrapper around that hook — the hook itself is the underlying primitive. The kwarg still works in 1.x but emits a `PydanticAIDeprecationWarning` and will be removed in v2.
-- **Enter the agent once in a long-lived service**: an agent that isn't entered with `async with agent:` closes and recreates its provider's HTTP client after every run, so no connections are reused, and a model name passed as `agent.run(..., model='provider:name')` creates a new provider and client per run. Enter the agent at startup and pass entered `Model` instances to switch models. To tune timeouts or connection pool limits, pass `http_client=create_async_httpx2_client(timeout=..., limits=...)` (from `pydantic_ai.models`) to the provider (Groq, Cohere and GitHub take a legacy `httpx.AsyncClient` instead); a client you pass in is yours to close.
+- **Enter the agent once in a long-lived service**: without `async with agent:`, a model name passed as `agent.run(..., model='provider:name')` creates a new provider and HTTP client for each run, Pydantic AI never closes the client of the agent's own model, and a client kept open between runs fails on a new event loop (a second `asyncio.run()`) with `Event loop is closed`. Inside the block, runs reuse one provider per model name and the agent closes the clients on exit. A `Model` instance a model selector returns is entered and exited by each run unless you enter it yourself. To tune timeouts or connection pool limits, pass `http_client=create_async_httpx2_client(timeout=..., limits=...)` (from `pydantic_ai.models`) to the provider (Groq, Cohere and GitHub take a legacy `httpx.AsyncClient` instead); a client you pass in is yours to close.
 
 ## Task-Family References
 
@@ -466,7 +466,7 @@ Load exactly one of these unless the task clearly spans multiple families:
 
 | Task family | Reference |
 |---|---|
-| Core agent setup, output, deps, specs, models, OpenAI Responses WebSockets, run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Core agent setup, output, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
