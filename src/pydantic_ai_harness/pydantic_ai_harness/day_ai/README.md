@@ -131,9 +131,10 @@ adds both prefixes.
   it recorded, and their tool calls use the old names, so a run started before
   the change that calls a `DayAI` tool after it no longer replays. Activity and
   step names come from the capability's `id`, which is unchanged. Let those runs
-  finish, keep `tool_prefix=None` until they have, or version the deployment;
-  see [deploying
-  changes](https://pydantic.dev/docs/ai/harness/durable-execution/#engine-notes).
+  finish, keep `tool_prefix=None` until they have, or deploy the change with
+  [Temporal worker
+  versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
+  or a new DBOS application version.
 
 ## Tool selection and approval
 
