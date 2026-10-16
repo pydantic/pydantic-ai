@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from pydantic_core import to_json
 
+from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import now_utc
 from ..._uuid import uuid7
 from ...exceptions import RunCancelled
@@ -37,6 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._adapter import compaction_payload
+from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
@@ -483,6 +485,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if isinstance(result, ToolReturnPart):
             async for event in self._handle_tool_return_outcome(result, message_id):
                 yield event
+
+            if (
+                parse_ag_ui_version(self.ag_ui_version) >= ACTIVITY_EVENTS_VERSION
+                and (app := get_mcp_app_tool_result(result.metadata)) is not None
+            ):
+                from ag_ui.core import ActivitySnapshotEvent
+
+                yield ActivitySnapshotEvent(
+                    message_id=str(uuid4()), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+                )
 
             # Check for AG-UI events returned by tool calls.
             possible_event = result.metadata or result.content
