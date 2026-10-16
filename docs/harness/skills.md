@@ -163,11 +163,18 @@ The loader uses these parts of `SKILL.md`:
 | `name` | Optional. Defaults to the parent directory name. If provided, it must match the directory after Unicode normalization. |
 | `description` | Required and non-blank. The Agent Skills limit is 1,024 characters; longer descriptions load with a warning. This appears in the initial catalog. |
 | Markdown body | Optional. This is loaded under a generated `# Skill: <name>` heading. |
+| `disable-model-invocation` | Optional, `true` or `false`. `true` leaves the skill out of the model's catalog; see [Invoke a skill yourself](#invoke-a-skill-yourself). |
+| `user-invocable` | Optional, `true` or `false`. `false` tells a host not to offer the skill as a command; the model still sees it. |
 
 Skill names and `include` or `exclude` values are normalized with Unicode NFKC
 before matching. A normalized name can contain at most 64 lowercase Unicode
 letters or numbers, separated by single hyphens. It cannot start or end with a
 hyphen.
+
+`disable-model-invocation` and `user-invocable` come from
+[Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).
+Any value other than `true` or `false` (in any letter case) skips the skill
+with a warning, rather than guessing whether it may be invoked.
 
 Only immediate children are discovered. For example,
 `code-review/references/SKILL.md` does not create another skill. Ordinary files
@@ -206,8 +213,10 @@ skills = Skills(
 ```
 
 - `missing_directories='skip'` leaves out a library directory that does not
-  exist, instead of failing the run. A path that exists but is not a directory
-  still fails.
+  exist, instead of failing the run. A path that is a file, or that holds a
+  `SKILL.md` itself (a skill package rather than a library of them), is left
+  out with a `UserWarning`, so one a model creates mid-session doesn't fail
+  every later run.
 - `duplicate_names='keep_first'` keeps the skill from the earlier directory when
   two valid skills with different `SKILL.md` files share a name, and skips the
   other with a `UserWarning`. An invalid `SKILL.md` is skipped first, so it does
@@ -248,8 +257,7 @@ behavior is not implemented:
 
 ```text
 agent, allowed-tools, argument-hint, arguments, context, dependencies,
-disable-model-invocation, disallowed-tools, effort, hooks, model, paths, shell,
-tools, user-invocable, when_to_use
+disallowed-tools, effort, hooks, model, paths, shell, tools, when_to_use
 ```
 
 If a selected skill uses any of these fields, the run emits one aggregated
@@ -273,11 +281,23 @@ review = next(skill for skill in catalog.skills if skill.name == 'code-review')
 result = await agent.run(review.render('src/app.py'))
 ```
 
-`load` reads the libraries as a run would, without emitting warnings: the
-catalog's `skipped` messages name each `SKILL.md` left out, malformed or named
-like a skill found earlier, for the host to show. Each `SkillDefinition` has
-the skill's `name`, `description`, `body`, `path`, `directory`, and
-`in_run_workspace`.
+`load` reads the libraries as a run would, without emitting warnings. Each
+entry in the catalog's `skipped` is a `SkippedSkill` with the `path` left out,
+a `reason`, and the `message` a run would warn with, for the host to show:
+
+| `reason` | Left out |
+|---|---|
+| `'invalid'` | A `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name |
+| `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
+| `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
+| `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
+
+Each `SkillDefinition` has the skill's `name`, `description`, `body`, `path`,
+`directory`, `in_run_workspace`, `model_invocable`, and `user_invocable`. The
+catalog includes skills with `disable-model-invocation: true`
+(`model_invocable` is `False`), which a run leaves out of the model's catalog,
+so a host can offer them as commands only. `Skills` doesn't offer commands
+itself, so `user_invocable` is for the host to check before it offers one.
 
 `render(arguments)` returns what loading the skill returns, with every
 `$ARGUMENTS` in the body replaced by `arguments`. A body without `$ARGUMENTS`
@@ -349,12 +369,12 @@ Skills(
 - `directories` accepts one library path or a sequence of paths.
 - `include` exposes only the named skills.
 - `exclude` omits the named skills from the catalog.
-- `missing_directories='skip'` leaves out library directories that do not exist.
+- `missing_directories='skip'` leaves out library paths that do not exist, and warns about and leaves out those that are files or skill packages.
 - `duplicate_names='keep_first'` keeps the first of two skills with one name, with a warning.
 - `workspace` reads the libraries from this backend instead of the run's workspace.
 
 Pass at least one library directory, not the path of an individual skill
-package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and non-directory library paths unless `duplicate_names` or `missing_directories` say otherwise.
+package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names` or `missing_directories` say otherwise.
 
 Two `Skills` on one agent combine into one catalog.
 
@@ -372,3 +392,5 @@ Two `Skills` on one agent combine into one catalog.
 ::: pydantic_ai_harness.skills.SkillDefinition
 
 ::: pydantic_ai_harness.skills.SkillCatalog
+
+::: pydantic_ai_harness.skills.SkippedSkill

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -20,7 +21,7 @@ from pydantic_ai._instrumentation import (
 )
 from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import await_maybe, get_first_param_type
+from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
@@ -42,7 +43,7 @@ from ._request_timeout import (
 )
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage
+    from ..messages import ModelMessage, ModelResponseStreamEvent
     from ..settings import ModelSettings
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
@@ -133,6 +134,11 @@ class FallbackModel(Model):
                 Handler type is auto-detected by inspecting type hints on the first parameter.
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+                Response handlers only apply to non-streamed requests. A streamed request accepts
+                the response as is and emits a `UserWarning`. A request is streamed whenever
+                something consumes the run's events, including `run()` with an
+                `event_stream_handler` or an event listener.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -210,6 +216,10 @@ class FallbackModel(Model):
             self._entered_count -= 1
             if self._entered_count == 0:
                 await self._exit_stack.aclose()
+
+    def _refresh_http_client(self) -> None:
+        for model in self.models:
+            model._refresh_http_client()
 
     @property
     def provider(self) -> None:
@@ -345,7 +355,14 @@ class FallbackModel(Model):
         If a previous response set `state='suspended'`, the request is routed directly
         to the pinned continuation model, bypassing the fallback chain. If the pinned model
         raises a fallback-eligible error while opening the stream, the messages are rewound
-        and the normal fallback chain is tried. Mid-stream failures still propagate.
+        and the normal fallback chain is tried.
+
+        A stream is only handed over once it has produced its first event, so an error the stream
+        raises before that, such as a provider reporting an overload after acknowledging the request,
+        falls back like an error while opening it. Failures after the first event still propagate.
+
+        Response handlers are not applied: the response has already been streamed by the time
+        it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
         """
         exceptions: list[Exception] = []
         attempts: list[ModelRequestAttempt] = []
@@ -364,11 +381,8 @@ class FallbackModel(Model):
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
-                        stream_under_deadline(
-                            deadline,
-                            pinned.request_stream(
-                                prepared_messages, model_settings, model_request_parameters, run_context
-                            ),
+                        _request_stream_until_first_event(
+                            pinned, deadline, prepared_messages, model_settings, model_request_parameters, run_context
                         )
                     )
                 except Exception as exc:
@@ -397,6 +411,15 @@ class FallbackModel(Model):
                         carry_deadline(streamed_response, deadline)
                     return
 
+        if self._response_handlers:
+            warnings.warn(
+                '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests, '
+                'so the streamed response is accepted as is. A request is streamed whenever something consumes '
+                "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
+                'an `event_stream_handler`, or an event listener or hook.',
+                UserWarning,
+            )
+
         for model in self.models:
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
@@ -406,11 +429,8 @@ class FallbackModel(Model):
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     deadline = start_request_deadline(model, model_settings)
                     streamed_response = await stack.enter_async_context(
-                        stream_under_deadline(
-                            deadline,
-                            model.request_stream(
-                                prepared_messages, model_settings, model_request_parameters, run_context
-                            ),
+                        _request_stream_until_first_event(
+                            model, deadline, prepared_messages, model_settings, model_request_parameters, run_context
                         )
                     )
                 except Exception as exc:
@@ -604,6 +624,36 @@ def _pinned_request_deadline(
     if deadline is not None and (expires_at := carried_deadline(suspended_response)) is not None:
         return deadline.until(expires_at)
     return deadline
+
+
+@asynccontextmanager
+async def _request_stream_until_first_event(
+    model: Model,
+    deadline: RequestDeadline | None,
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    run_context: RunContext[Any] | None,
+) -> AsyncGenerator[StreamedResponse]:
+    """Open `model`'s stream and wait for its first event before handing it over.
+
+    Providers can accept a streamed request and then report a failure before producing any output,
+    like an OpenAI Responses `response.failed` after `response.created`, or a Bedrock throttling
+    error as the first stream event. Waiting for the first event means such an error is raised here,
+    inside the candidate's own stream context, where `FallbackModel` can still move on to the next
+    model. The event is replayed to the consumer, so the stream it gets is unchanged. The stream is opened under
+    `deadline`, so waiting for the first event counts towards it like every event after it.
+    """
+    async with stream_under_deadline(
+        deadline, model.request_stream(messages, model_settings, model_request_parameters, run_context)
+    ) as response:
+        events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
+            PeekableAsyncStream(aiter(response))
+        )
+        await events.peek()
+        # `StreamedResponse.__aiter__` hands out the iterator stored here, so the consumer gets the peeked event too.
+        response._event_iterator = events  # pyright: ignore[reportPrivateUsage]
+        yield response
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

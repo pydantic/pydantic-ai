@@ -4,11 +4,11 @@ description: "Set timeouts in Pydantic AI for model requests, tool calls, hooks,
 
 # Timeouts
 
-Bounding how long one step inside a run may take, and ending a run from inside a tool, are answered by separate mechanisms with separate failure modes. This page maps them. To stop a run that is already in flight, see [Cancelling a Run](agent.md#cancelling-a-run).
+Bounding how long one step inside a run may take, bounding the whole run, and ending a run from inside a tool are answered by separate mechanisms with separate failure modes. This page maps them. To stop a run that is already in flight, see [Cancelling a Run](agent.md#cancelling-a-run).
 
 ## Bounding how long a step takes
 
-Each knob below bounds a different unit of work. None of them bounds the wall-clock duration of a whole run.
+Each knob below bounds a different unit of work.
 
 | What you want to bound | How to set it | What happens on expiry |
 |---|---|---|
@@ -20,7 +20,7 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | A single MCP request | `MCPToolset(read_timeout=...)`, default `300` seconds | The request fails; under the default [`tool_error_behavior='retry'`](mcp/client.md#tool-errors) the model sees it as a retryable tool error |
 | Opening a [realtime session](realtime/overview.md) | `handshake_timeout` on [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings], default `30` seconds — OpenAI, Azure OpenAI, xAI, and Gemini | Opening the session raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. On a reconnect it consumes a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] attempt instead |
 | Total work done by a run | [`UsageLimits`][pydantic_ai.usage.UsageLimits] — requests, tool calls, tokens, or cost — see [Usage Limits](agent.md#usage-limits) | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] |
-| Wall-clock duration of a whole run | Nothing built in — wrap `agent.run()` in `asyncio.timeout` (Python 3.11+) or `anyio.fail_after()`, or cancel a [`CancellationToken`][pydantic_ai.CancellationToken] from a timer | The run is [cancelled](agent.md#cancelling-a-run) |
+| Wall-clock duration of a whole run | `timeout=` on any run method — see [Bounding a whole run](#bounding-a-whole-run) | [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], carrying everything the run completed |
 
 Three of these need qualifying:
 
@@ -72,7 +72,58 @@ When the deadline passes, the request is cancelled and [`ModelRequestTimeout`][p
 - **Streaming.** The deadline is fixed when the request is made and covers reading the stream until its last chunk, so the time your code takes to consume the events counts towards it: a consumer that is still reading when the deadline passes gets `ModelRequestTimeout` from the stream. What has been streamed so far is kept in the message history as an `'interrupted'` response. Once the last chunk has been read, the deadline no longer applies. This includes the streaming `run()` does behind the scenes, for example with an [event stream handler](agent.md#streaming-all-events).
 - **Fallback.** A [`FallbackModel`](models/overview.md#fallback-model) gives each model it tries a fresh deadline, and its default `fallback_on` moves on to the next model when one runs out. Each attempt that ran out is recorded in the response's [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]. If the model it picked pauses its response, the continuation is still the same request to that model and keeps its deadline, while a later run that resumes the paused response from message history starts a fresh one. A model's own `settings` can set a different `request_timeout` for it. Once a streamed response has started, `FallbackModel` no longer falls back, so running out while it's being read raises `ModelRequestTimeout`.
 - **Durable execution.** On [Temporal](durable_execution/temporal.md), the deadline runs on the workflow's clock, as a durable timer. When it passes, the model request activity is cancelled, which also ends its activity retries, and `ModelRequestTimeout` is raised in the workflow. A `FallbackModel` runs inside the activity, along with the deadlines it gives each model. Each segment of a paused response is a separate activity, and the deadline of the model it picked carries over from one to the next as a wall-clock timestamp, so it still covers the whole continuation. On [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md), a `FallbackModel`'s deadlines carry over between steps the same way. Otherwise the deadline runs on the process's clock, around the model request step, and a workflow that is recovered after a crash starts a fresh one.
+- **Run timeouts.** `timeout=` on a run method [bounds the whole run](#bounding-a-whole-run), including its model requests, so both deadlines apply to a request and the earlier one wins. If the run's deadline passes first, the request is cancelled along with the rest of the run, which raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] rather than `ModelRequestTimeout`, and a `FallbackModel` doesn't fall back.
 - **Direct requests.** [`model_request()`][pydantic_ai.direct.model_request] and [`model_request_stream()`][pydantic_ai.direct.model_request_stream] apply it too.
+
+## Bounding a whole run
+
+Pass `timeout=` (in seconds) to [`run()`][pydantic_ai.agent.AbstractAgent.run], [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`iter()`][pydantic_ai.agent.Agent.iter] to bound everything the run does: every model request, tool call and hook, and, for the streaming methods, the time you spend consuming the stream. When the time is up, the run is [cancelled](agent.md#cancelling-a-run) the same way as with [`CancellationToken`][pydantic_ai.CancellationToken]: the in-flight model request or stream is closed, running tool calls are cancelled, and the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] with everything it completed:
+
+```python {title="run_timeout.py"}
+from pydantic_ai import Agent, RunTimedOut
+
+agent = Agent('{{ openai:medium }}')
+
+
+async def main():
+    try:
+        result = await agent.run('What is the capital of France?', timeout=30)
+    except RunTimedOut as exc:
+        history = exc.all_messages()  # (1)!
+        print(f'Timed out with {len(history)} messages to resume from')
+        return
+    print(result.output)
+    #> The capital of France is Paris.
+```
+
+1. [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] includes the completed tool results and the partial response of an interrupted stream. Pass it as `message_history` to a new run to resume.
+
+`RunTimedOut` subclasses [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], so `except RunCancelled` handles every way a run can be stopped on purpose. It also subclasses `TimeoutError`, the error `asyncio.timeout()` raises. Unlike `asyncio.timeout()`, it doesn't need the run's state recovered from the exception chain, and the deadline is visible inside the run:
+
+- [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] is the time the run has to finish by, in UTC, and [`RunContext.remaining_time()`][pydantic_ai.tools.RunContext.remaining_time] returns the seconds left, so a tool can size its own work or timeouts to fit.
+- An agent run from a tool, as in [agent delegation](multi-agent-applications.md#agent-delegation), inherits the deadline. Its own `timeout=` can make it earlier, but not later. When the shared deadline passes, the parent raises `RunTimedOut`; a sub-agent's own, shorter timeout fails just the delegate tool, like a sub-agent [cancelling itself](agent.md#cancellation-and-sub-agents).
+- Running out of time is cancellation, not a model error, so a [`FallbackModel`](models/overview.md#fallback-model) doesn't fall back on it. To give up on one slow model request and fall back while the run goes on, use [`request_timeout`](#model-request-deadlines) too: whichever deadline passes first applies.
+- The deadline is enforced with a timer on the asyncio event loop, so under another async backend, such as Trio, `timeout=` raises a [`UserError`][pydantic_ai.exceptions.UserError] before the run starts.
+
+```python {title="run_timeout_delegation.py"}
+from pydantic_ai import Agent, RunContext
+
+research_agent = Agent('{{ openai:medium }}')
+agent = Agent('{{ openai:medium }}')
+
+
+@agent.tool
+async def research(ctx: RunContext, topic: str) -> str:
+    remaining = ctx.remaining_time()
+    if remaining is not None and remaining < 10:
+        return 'Not enough time left to research this topic.'
+    result = await research_agent.run(topic)  # (1)!
+    return result.output
+```
+
+1. The sub-agent run stops at the same deadline as the run that called this tool.
+
+Under [durable execution](durable_execution/overview.md), the deadline is stored as wall-clock time, so a run that's replayed or recovered keeps the deadline it started with. The `TemporalDurability`, `DBOSDurability` and `PrefectDurability` capabilities take care of this; the deprecated wrapper agents reject `timeout=`. See the notes for [Temporal](durable_execution/temporal.md#run-timeouts), [DBOS](durable_execution/dbos.md#run-timeouts) and [Prefect](durable_execution/prefect.md#run-timeouts).
 
 ## Ending a run from inside a tool
 

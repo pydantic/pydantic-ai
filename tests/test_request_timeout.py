@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequestTimeout,
     ModelResponse,
+    RunTimedOut,
     TextPart,
     capture_run_messages,
 )
@@ -112,6 +113,15 @@ class StreamThatHangs:
             yield 'unreachable'  # pragma: no cover
         finally:
             self.closed = True
+
+
+async def test_the_tighter_of_the_request_and_run_deadlines_wins():
+    agent = Agent(FunctionModel(hang, model_name='slow'))
+
+    with pytest.raises(ModelRequestTimeout):
+        await agent.run('Hello', model_settings={'request_timeout': SHORT_TIMEOUT}, timeout=LONG_TIMEOUT)
+    with pytest.raises(RunTimedOut):
+        await agent.run('Hello', model_settings={'request_timeout': LONG_TIMEOUT}, timeout=SHORT_TIMEOUT)
 
 
 async def test_request_timeout_raises_model_request_timeout():
