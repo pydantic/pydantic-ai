@@ -523,9 +523,12 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     # A replay re-emits `last_event` without rerunning the handler, so a previous run can leave it closed.
     store.released.set()
     emit = RunContext.emit
+    last_event_emits = 0
 
     async def emit_marking_last_event(self: RunContext[None], event: CapabilityEvent, /) -> CapabilityEvent:
+        nonlocal last_event_emits
         if store.is_last_event(event):
+            last_event_emits += 1
             store.released.clear()
         return await emit(self, event)
 
@@ -533,6 +536,10 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
         assert await _PLAN_EVENT_WORKFLOWS[scenario]() == 'done'
+    # The fix makes the wait inert, so pin both sides of the scaffolding before the fork's replay
+    # re-emits `last_event` without rerunning the handler.
+    assert last_event_emits == 1, 'the tool never emitted `last_event` through the patched `emit`'
+    assert store.released.is_set(), 'the handler never handled `last_event`'
 
     steps = await dbos.list_workflow_steps_async(workflow_id)
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
