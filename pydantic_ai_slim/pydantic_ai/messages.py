@@ -2205,9 +2205,9 @@ def _render_instruction_baseline(part: InstructionPart, *, inline_system: bool) 
     The sentence after the element tells the model that a later
     [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] replaces it, and which sentence
     depends on how that update arrives. A model that receives mid-conversation system content natively
-    gets a neutral one, because Claude Opus 5 refuses a prefix asserting that the update persists. A
-    model that gets the update `<system>`-wrapped in a user turn needs that assertion to keep following
-    the update on later turns.
+    gets a neutral one, since the update itself arrives as system content. A model that gets the update
+    `<system>`-wrapped in a user turn is also told that the update stays in effect, which it needs to keep
+    following the update on later turns.
 
     History stores only the content, so each model renders its own prefix, and renders it identically
     on every request.
