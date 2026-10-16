@@ -1595,6 +1595,7 @@ async def test_reveal_held_back_while_deferred_wrapper_capability_is_unloaded() 
     wrapper = PrefixTools[object](wrapped=workflow, prefix='team', id='wf', defer_loading=True)
     # In a run, core resolves tools through the wrapper's prefixed toolset, which delegates to
     # this one; the registry holds only the wrapper, never the inner workflow.
+    # `test_reveal_on_deferred_wrapper_capability_end_to_end_via_agent_run` drives that for real.
     ts = workflow.get_toolset()
 
     unloaded = _deferred_ctx(wrapper, loaded=False)
@@ -1637,6 +1638,49 @@ async def test_reveal_on_deferred_capability_end_to_end_via_agent_run() -> None:
     # Step after the reveal (capability still unloaded): no announcement leaked.
     # Step after load_capability: the announcement arrived.
     assert announcement_seen == [False, True]
+
+
+async def test_reveal_on_deferred_wrapper_capability_end_to_end_via_agent_run() -> None:
+    # The registry shape `test_reveal_held_back_while_deferred_wrapper_capability_is_unloaded`
+    # builds by hand, produced by a real run: core registers the deferred `PrefixTools` wrapper
+    # in place of the workflow, so the reveal waits for the wrapper's `load_capability`.
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('base-done', 'base')])
+    extra = _sub_agent('extra-done', 'extra')
+    wrapper = PrefixTools[object](wrapped=workflow, prefix='team', id='wf', defer_loading=True)
+    announcement_seen: list[bool] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(m, ModelResponse) for m in messages)
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_extra', args={})])
+        announcement_seen.append('async def extra' in _user_prompt_text(messages))
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'wf'})])
+        if step == 2:
+            code = "await extra(task='go')"
+            return ModelResponse(parts=[ToolCallPart(tool_name='team_run_workflow', args={'code': code})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[wrapper])
+
+    @agent.tool_plain
+    def reveal_extra() -> str:
+        workflow.reveal(extra)
+        return 'revealed'
+
+    result = await agent.run('start')
+    assert result.output == 'done'
+    # Held back while the wrapper was unloaded; announced once it loaded.
+    assert announcement_seen == [False, True, True]
+    # And the revealed sub-agent ran through the prefixed tool.
+    workflow_returns = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'team_run_workflow'
+    ]
+    assert workflow_returns == ['extra-done']
 
 
 async def test_reveal_end_to_end_via_agent_run() -> None:
