@@ -17,7 +17,6 @@ from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
 from ...conftest import try_import
-from ..conftest import cache_breakpoints
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -45,34 +44,44 @@ _MESSAGE_JSON = {
     'usage': {'input_tokens': 5, 'output_tokens': 1},
 }
 
-_Breakpoints = tuple[dict[str, Any] | None, list[str]]
+_CacheControl = dict[str, str]
+_Breakpoints = tuple[_CacheControl | None, list[_CacheControl | None]]
+"""The request-level `cache_control`, and the `cache_control` of each block in the user message."""
 
-_AUTOMATIC: _Breakpoints = ({'type': 'ephemeral', 'ttl': '5m'}, [])
-"""The top-level `cache_control` parameter, with no breakpoint on any block."""
 
-_LAST_BLOCK: _Breakpoints = (None, ['messages[0].content[0]'])
-"""No top-level parameter, with the breakpoint on the last block of the conversation instead."""
+def _automatic(cache_control: _CacheControl) -> _Breakpoints:
+    """The top-level `cache_control` parameter, with no breakpoint on the block."""
+    return cache_control, [None]
 
-_EXPECTED_BREAKPOINTS: dict[str, _Breakpoints] = {
-    'api': _AUTOMATIC,
+
+def _last_block(cache_control: _CacheControl) -> _Breakpoints:
+    """No top-level parameter, with the breakpoint on the last block of the conversation instead."""
+    return None, [cache_control]
+
+
+_EXPECTED_BREAKPOINTS: dict[str, Callable[[_CacheControl], _Breakpoints]] = {
+    'api': _automatic,
     # The legacy Bedrock InvokeModel API rejects the top-level `cache_control` parameter with a 400.
-    'bedrock': _LAST_BLOCK,
-    'mantle': _AUTOMATIC,
-    'vertex': _AUTOMATIC,
-    'foundry': _AUTOMATIC,
+    'bedrock': _last_block,
+    'mantle': _automatic,
+    'vertex': _automatic,
+    'foundry': _automatic,
 }
 
 
 @pytest.mark.parametrize(
-    'settings',
+    'settings,ttl',
     [
         # Plain dicts: parameters are built at collection time, also on installs without `anthropic`.
-        pytest.param({'max_tokens': 256, 'anthropic_cache': True}, id='anthropic_cache'),
-        pytest.param({'max_tokens': 256, 'cache': True}, id='unified-cache'),
+        pytest.param({'max_tokens': 256, 'anthropic_cache': True}, '5m', id='anthropic_cache'),
+        pytest.param({'max_tokens': 256, 'anthropic_cache': '1h'}, '1h', id='anthropic_cache-1h'),
+        pytest.param({'max_tokens': 256, 'cache': True}, '5m', id='unified-cache'),
     ],
 )
 @pytest.mark.parametrize('client_name', list(_EXPECTED_BREAKPOINTS))
-async def test_automatic_caching_by_client(allow_model_requests: None, client_name: str, settings: ModelSettings):
+async def test_automatic_caching_by_client(
+    allow_model_requests: None, client_name: str, settings: ModelSettings, ttl: str
+):
     """Every client except the legacy Bedrock one sends the conversation breakpoint as automatic caching."""
     bodies: list[dict[str, Any]] = []
 
@@ -96,4 +105,6 @@ async def test_automatic_caching_by_client(allow_model_requests: None, client_na
         await Agent(model, model_settings=settings).run('Hello')
 
     [body] = bodies
-    assert cache_breakpoints(body) == _EXPECTED_BREAKPOINTS[client_name]
+    [message] = body['messages']
+    breakpoints = (body.get('cache_control'), [block.get('cache_control') for block in message['content']])
+    assert breakpoints == _EXPECTED_BREAKPOINTS[client_name]({'type': 'ephemeral', 'ttl': ttl})
