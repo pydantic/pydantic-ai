@@ -405,6 +405,15 @@ class TestModelRouter:
         assert attributes['model_router.run_step'] == 1
         assert attributes['model_router.error.type'] == 'UserError'
 
+    async def test_a_user_error_propagates_without_instrumentation(self) -> None:
+        def reject(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            raise UserError('Files are not supported by this model.')
+
+        agent = Agent(name='parent', capabilities=[_router(FunctionModel(reject))])
+
+        with pytest.raises(UserError, match='Files are not supported'):
+            await agent.run('Choose')
+
     async def test_routing_is_a_durable_operation(self) -> None:
         capable = _answer_model('capable')
         fast = _answer_model('fast')
