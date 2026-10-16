@@ -5,10 +5,10 @@ import html
 import io
 import re
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlparse
@@ -18,7 +18,7 @@ import httpx
 import httpx2
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
@@ -51,6 +51,7 @@ from pydantic_clai2.builtin_plugins.web.app import (
 from pydantic_clai2.builtin_plugins.web.protocol import (
     ItemAdded,
     Notice,
+    PluginsChanged,
     QuestionAsked,
     QuestionClosed,
     ServerMessage,
@@ -125,7 +126,9 @@ def make_web(tmp_path: Path) -> Iterator['MakeWeb']:
     made_webs: list[Web] = []
     portals: list[AbstractContextManager[BlockingPortal]] = []
 
-    def make(agent: Agent[None, str], settings: dict[str, JsonValue] | None = None) -> Web:
+    def make(
+        agent: Agent[None, str], settings: dict[str, JsonValue] | None = None, extra: Sequence[PluginSettings] = ()
+    ) -> Web:
         shell = create_shell(
             agent,
             deps=None,
@@ -139,7 +142,8 @@ def make_web(tmp_path: Path) -> Iterator['MakeWeb']:
                     id='web',
                     factory='pydantic_clai2.builtin_plugins.web',
                     settings={'open_browser': False, **(settings or {})},
-                )
+                ),
+                *extra,
             ],
             project=ProjectSettings(),
             headless=True,
@@ -147,7 +151,7 @@ def make_web(tmp_path: Path) -> Iterator['MakeWeb']:
         portals.append(start_blocking_portal())
         portal = portals[-1].__enter__()
         portal.call(shell.loader.load_all)
-        [entry] = [entry for entry in shell.loader.entries() if entry.loaded is not None]
+        [entry] = [entry for entry in shell.loader.entries() if entry.name == 'web']
         plugin = entry.loaded.plugin if entry.loaded else None
         assert isinstance(plugin, WebPlugin)
         client = TestClient(create_app(remote=plugin.remote, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
@@ -527,6 +531,238 @@ def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
     web_ = make_web(Agent(TestModel()))
     web_.plugin.host.sessions = None
     assert web_.get('/api/sessions').status_code == 404
+
+
+PANEL_PLUGINS = """
+\"\"\"Plugins for the plugins panel.\"\"\"
+
+from collections.abc import Callable
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from pydantic_clai2.plugins import Plugin
+
+
+class SampleSettings(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal['fast', 'slow'] = 'fast'
+    limit: int = Field(default=3, ge=1)
+    label: str = 'hi'
+
+
+class Sample(Plugin[SampleSettings]):
+    \"\"\"A plugin with settings and a menu of its own.\"\"\"
+
+    def __init__(self, host, settings):
+        if settings.label == 'boom':
+            raise RuntimeError('boom refused')
+        super().__init__(host, settings)
+
+    async def configure(self) -> str:
+        return 'Sample menu closed.'
+
+
+class Plain(Plugin):
+    \"\"\"A plugin without settings.\"\"\"
+
+
+class OpaqueSettings(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    hook: Callable[[], None] | None = None
+
+
+class Opaque(Plugin[OpaqueSettings]):
+    \"\"\"Settings JSON Schema cannot describe.\"\"\"
+"""
+
+
+def panel_plugins(tmp_path: Path) -> list[PluginSettings]:
+    """`sample`, `plain`, and `opaque` on; `broken`, which fails to import, off; `ask_user`, which `web` includes."""
+    path = tmp_path / 'panel.py'
+    path.write_text(PANEL_PLUGINS)
+    broken = tmp_path / 'broken.py'
+    broken.write_text("raise RuntimeError('cannot import')")
+    return [
+        *(
+            PluginSettings(id=name.lower(), factory=f'panel:{name}', path=str(path))
+            for name in ('Sample', 'Plain', 'Opaque')
+        ),
+        PluginSettings(id='broken', factory='broken', path=str(broken), enabled=False),
+        PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
+    ]
+
+
+def plugin_rows(web_: Web) -> dict[str, dict[str, JsonValue]]:
+    rows = TypeAdapter(list[dict[str, JsonValue]]).validate_python(web_.get('/api/plugins').json())
+    return {str(row['name']): row for row in rows}
+
+
+def loaded_plugin(web_: Web, name: str) -> object:
+    [entry] = [entry for entry in web_.shell.loader.entries() if entry.name == name]
+    return entry.loaded.plugin if entry.loaded is not None else None
+
+
+def test_the_plugins_panel_lists_every_plugin_with_a_form_for_its_settings(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    rows = plugin_rows(web_)
+    assert sorted(rows) == ['ask_user', 'broken', 'opaque', 'plain', 'sample', 'web']
+    sample = rows['sample']
+    assert (sample['description'], sample['status'], sample['origin'], sample['source']) == (
+        'A plugin with settings and a menu of its own.',
+        'on',
+        'built-in',
+        str(tmp_path / 'panel.py'),
+    )
+    # A headless CLAI has no terminal for the plugin's own menu to open in.
+    assert (sample['has_menu'], sample['terminal'], sample['serving'], sample['provides']) == (
+        True,
+        False,
+        False,
+        'nothing yet',
+    )
+    assert sample['form'] == {
+        'json_schema': SampleSettings_schema(),
+        'values': {'mode': 'fast', 'limit': 3, 'label': 'hi'},
+    }
+    # No settings, settings JSON Schema cannot describe, and a plugin that is off: no form.
+    assert (rows['plain']['form'], rows['plain']['has_menu']) == (None, False)
+    assert (rows['opaque']['status'], rows['opaque']['form']) == ('on', None)
+    assert (rows['broken']['status'], rows['broken']['form']) == ('off', None)
+    assert (rows['ask_user']['status'], rows['ask_user']['included_in']) == ('included', 'web')
+    web_row = rows['web']
+    assert web_row['serving'] is True
+    assert isinstance(web_row['form'], dict) and web_row['form']['values'] == {
+        'host': '127.0.0.1',
+        'port': 0,
+        'open_browser': False,
+        'ask_user': True,
+    }
+
+
+def SampleSettings_schema() -> JsonValue:
+    return {
+        'additionalProperties': False,
+        'properties': {
+            'mode': {'default': 'fast', 'enum': ['fast', 'slow'], 'title': 'Mode', 'type': 'string'},
+            'limit': {'default': 3, 'minimum': 1, 'title': 'Limit', 'type': 'integer'},
+            'label': {'default': 'hi', 'title': 'Label', 'type': 'string'},
+        },
+        'title': 'SampleSettings',
+        'type': 'object',
+    }
+
+
+def test_settings_from_the_browser_are_validated_saved_and_applied(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    first = loaded_plugin(web_, 'sample')
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        assert web_.post('/api/plugins/sample/settings', {'changes': {'limit': 5, 'mode': 'slow'}}).status_code == 204
+        receive_until(socket, PluginsChanged)
+    # Saved, then loaded again with them, as the plugin's own menu does.
+    form = plugin_rows(web_)['sample']['form']
+    assert isinstance(form, dict) and form['values'] == {'mode': 'slow', 'limit': 5, 'label': 'hi'}
+    second = loaded_plugin(web_, 'sample')
+    assert second is not first
+    assert [saved.settings for saved in web_.shell.loader._store.plugins() if saved.id == 'sample'] == [  # pyright: ignore[reportPrivateUsage]
+        {'mode': 'slow', 'limit': 5, 'label': 'hi'}
+    ]
+    # Nothing changed, nothing reloaded.
+    assert web_.post('/api/plugins/sample/settings', {'changes': {'limit': 5}}).status_code == 204
+    assert loaded_plugin(web_, 'sample') is second
+
+    rejected = web_.post('/api/plugins/sample/settings', {'changes': {'limit': 0, 'colour': 'red'}})
+    assert rejected.status_code == 422
+    assert rejected.json()['detail'] == {
+        'message': 'Some settings are not valid.',
+        'errors': {'limit': 'Input should be greater than or equal to 1', 'colour': 'Extra inputs are not permitted'},
+    }
+    assert web_.post('/api/plugins/sample/settings', {'reset': ['limit', 'unknown']}).status_code == 204
+    form = plugin_rows(web_)['sample']['form']
+    assert isinstance(form, dict) and form['values'] == {'mode': 'slow', 'limit': 3, 'label': 'hi'}
+
+    # Settings the plugin refuses when it loads leave it failed, as its own menu would.
+    refused = web_.post('/api/plugins/sample/settings', {'changes': {'label': 'boom'}})
+    assert refused.status_code == 400 and 'boom refused' in refused.json()['detail']
+    assert plugin_rows(web_)['sample']['status'] == 'failed'
+    off = web_.post('/api/plugins/sample/settings', {'changes': {'label': 'fine'}})
+    assert (off.status_code, off.json()['detail']) == (400, 'Turn sample on to change its settings.')
+
+    none = web_.post('/api/plugins/plain/settings', {'changes': {'x': 1}})
+    assert (none.status_code, none.json()['detail']) == (
+        400,
+        'plain has no settings form; replace its declaration with /plugins add.',
+    )
+    assert web_.post('/api/plugins/missing/settings', {'changes': {}}).status_code == 404
+
+
+def test_settings_built_from_a_stale_listing_are_refused(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reload re-imports the plugin's module between the listing and the save, so its model is another class."""
+
+    class Stale(BaseModel):
+        pass
+
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    loader = web_.shell.loader
+    listing = loader.listing
+    monkeypatch.setattr(
+        loader,
+        'listing',
+        lambda: [replace(info, settings_model=Stale) if info.settings else info for info in listing()],
+    )
+    stale = web_.post('/api/plugins/sample/settings', {'changes': {'limit': 5}})
+    assert (stale.status_code, stale.json()['detail']) == (400, 'sample changed; reload the panel and try again.')
+
+
+def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        assert web_.post('/api/plugins/sample/disable').status_code == 204
+        receive_until(socket, PluginsChanged)
+    assert (plugin_rows(web_)['sample']['status'], loaded_plugin(web_, 'sample')) == ('off', None)
+    assert web_.post('/api/plugins/sample/enable').status_code == 204
+    enabled = loaded_plugin(web_, 'sample')
+    assert enabled is not None
+    assert web_.post('/api/plugins/sample/reload').status_code == 204
+    assert loaded_plugin(web_, 'sample') not in (None, enabled)
+
+    # The page's own plugin stays on: turning it off or reloading it would end this page.
+    for action in ('disable', 'reload'):
+        refused = web_.post(f'/api/plugins/web/{action}')
+        assert (refused.status_code, refused.json()['detail']) == (400, remote_module.SERVING)
+    refused = web_.post('/api/plugins/web/settings', {'changes': {'open_browser': True}})
+    assert (refused.status_code, refused.json()['detail']) == (400, remote_module.SERVING)
+    assert plugin_rows(web_)['web']['status'] == 'on'
+
+    failed = web_.post('/api/plugins/broken/enable')
+    assert failed.status_code == 400 and 'cannot import' in failed.json()['detail']
+    broken = plugin_rows(web_)['broken']
+    assert broken['status'] == 'failed' and 'cannot import' in str(broken['error'])
+    assert web_.post('/api/plugins/sample/explode').status_code == 422
+
+
+def test_a_plugins_own_settings_menu_opens_in_the_terminal(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        web_.run()
+        assert web_.post('/api/plugins/sample/menu').status_code == 204
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.text, notice.command) == ('Sample menu closed.', '/plugins configure sample')
+        receive_until(socket, PluginsChanged)
+    assert web_.post('/api/plugins/missing/menu').status_code == 404
+
+
+def test_a_host_without_plugins(make_web: 'MakeWeb') -> None:
+    web_ = make_web(Agent(TestModel()))
+    web_.plugin.host.plugins = None
+    assert web_.get('/api/plugins').status_code == 404
 
 
 def test_access_checks(make_web: 'MakeWeb') -> None:

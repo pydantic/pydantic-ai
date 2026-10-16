@@ -127,6 +127,7 @@ export type ServerMessage =
   | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
+  | { type: 'plugins' }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 
@@ -167,4 +168,53 @@ export interface AnswerBody {
   header: string
   selected: string[]
   custom: string | null
+}
+
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+export type PluginOrigin = 'built-in' | 'project' | 'drop-in' | 'installed'
+export type PluginStatus = 'on' | 'off' | 'idle' | 'failed' | 'included'
+export type PluginAction = 'enable' | 'disable' | 'reload'
+
+export interface PluginForm {
+  json_schema: Schema
+  values: Record<string, JsonValue>
+}
+
+export interface PluginRow {
+  name: string
+  description: string
+  origin: PluginOrigin
+  source: string
+  status: PluginStatus
+  included_in: string | null
+  error: string | null
+  notice: string | null
+  provides: string
+  /** It has a settings menu of its own, which opens in the terminal. */
+  has_menu: boolean
+  /** Whether this CLAI has a terminal for that menu to open in; `clai2 --web` has none. */
+  terminal: boolean
+  form: PluginForm | null
+  /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */
+  serving: boolean
+}
+
+/** The parts of a Pydantic JSON Schema the settings form reads. */
+export interface Schema {
+  type?: string
+  enum?: JsonValue[]
+  const?: JsonValue
+  anyOf?: Schema[]
+  oneOf?: Schema[]
+  allOf?: Schema[]
+  $ref?: string
+  $defs?: Record<string, Schema>
+  items?: Schema
+  properties?: Record<string, Schema>
+  title?: string
+  description?: string
+  default?: JsonValue
+  minimum?: number
+  maximum?: number
 }

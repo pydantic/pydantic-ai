@@ -19,13 +19,13 @@ import anyio
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
-from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, Project, Transcript, dump
-from pydantic_clai2.builtin_plugins.web.remote import Remote, Switch
+from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, PluginRow, Project, Transcript, dump
+from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -128,6 +128,13 @@ class Interrupted(BaseModel):
     interrupted: bool
 
 
+class PluginChanges(BaseModel):
+    """Settings to change, by their saved names, and settings to reset to their defaults; the rest are kept."""
+
+    changes: dict[str, JsonValue] = {}
+    reset: list[str] = []
+
+
 class Forked(BaseModel):
     """The copy a fork saved."""
 
@@ -143,6 +150,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _page(app, token=token, static=static)
     _prompt(app, remote)
     _sessions(app, remote)
+    _plugins(app, remote)
     _events(app, remote)
     if (static / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
@@ -252,6 +260,27 @@ def _sessions(app: FastAPI, remote: Remote) -> None:
         await _wait(remote.delete(conversation_id))
 
 
+def _plugins(app: FastAPI, remote: Remote) -> None:
+    """The plugins panel: list plugins, turn them on and off, reload them, and edit their settings."""
+
+    @app.get('/api/plugins')
+    async def plugins() -> list[PluginRow]:
+        return _run(remote.plugins)
+
+    # Before the action route, which would otherwise take `settings` and `menu` for actions.
+    @app.post('/api/plugins/{name}/settings', status_code=204)
+    async def settings(name: str, body: PluginChanges) -> None:
+        await _wait(remote.configure_plugin(name, body.changes, body.reset))
+
+    @app.post('/api/plugins/{name}/menu', status_code=204)
+    async def menu(name: str) -> None:
+        _run(lambda: remote.open_plugin_menu(name))
+
+    @app.post('/api/plugins/{name}/{action}', status_code=204)
+    async def act(name: str, action: PluginAction) -> None:
+        await _wait(remote.plugin_action(name, action))
+
+
 def _events(app: FastAPI, remote: Remote) -> None:
     """The WebSocket: a snapshot on connect, then every message the session publishes."""
 
@@ -294,16 +323,24 @@ def _status(error: Exception) -> Failure:
     return 400
 
 
-def _run(action: Callable[[], None]) -> None:
+def _run(action: Callable[[], ResultT]) -> ResultT:
     """Run an action, turning the errors it raises for the user into HTTP errors carrying their message."""
     try:
-        action()
+        return action()
     except (ValueError, LookupError, RuntimeError) as error:
-        raise HTTPException(_status(error), str(error)) from error
+        raise _http(error) from error
 
 
 async def _wait(action: Awaitable[ResultT]) -> ResultT:
     try:
         return await action
     except (ValueError, LookupError, RuntimeError) as error:
-        raise HTTPException(_status(error), str(error)) from error
+        raise _http(error) from error
+
+
+def _http(error: ValueError | LookupError | RuntimeError) -> HTTPException:
+    """The error's message; settings a model rejected answer 422 with what is wrong with each, by its path."""
+    if isinstance(error, ValidationError):
+        problems = {'.'.join(str(part) for part in problem['loc']): problem['msg'] for problem in error.errors()}
+        return HTTPException(422, {'message': 'Some settings are not valid.', 'errors': problems})
+    return HTTPException(_status(error), str(error))

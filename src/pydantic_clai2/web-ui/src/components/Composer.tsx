@@ -16,6 +16,8 @@ interface Props {
   model: string
   disabled: boolean
   placeholder: string
+  /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
+  local?: Readonly<Record<string, () => void>>
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
@@ -24,7 +26,7 @@ interface Props {
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, meter, controls, model, disabled, placeholder, draft: text, onDraft: setText, onError },
+  { running, meter, controls, model, disabled, placeholder, local, draft: text, onDraft: setText, onError },
   ref,
 ) {
   const [suggestions, setSuggestions] = useState<CompletionInfo[]>([])
@@ -91,6 +93,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (!value || disabled) return
     setText('')
     setSuggestions([])
+    // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
+    const handle = local && Object.hasOwn(local, value) ? local[value] : undefined
+    if (handle) {
+      handle()
+      return
+    }
     try {
       await api.send(value)
     } catch (error) {

@@ -1,4 +1,14 @@
-import type { AnswerBody, CompletionInfo, Project, ServerMessage, Switch, Transcript } from './protocol'
+import type {
+  AnswerBody,
+  CompletionInfo,
+  JsonValue,
+  PluginAction,
+  PluginRow,
+  Project,
+  ServerMessage,
+  Switch,
+  Transcript,
+} from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
 const token =
@@ -10,9 +20,18 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** What is wrong with each rejected setting, by its path, such as `limit` or `token.name`. */
+    readonly fields: Record<string, string> = {},
   ) {
     super(message)
   }
+}
+
+function problem(detail: unknown): { message: string; fields: Record<string, string> } | null {
+  if (!detail || typeof detail !== 'object' || !('message' in detail) || !('errors' in detail)) return null
+  const { message, errors } = detail as { message: unknown; errors: unknown }
+  if (typeof message !== 'string' || !errors || typeof errors !== 'object') return null
+  return { message, fields: Object.fromEntries(Object.entries(errors).map(([key, value]) => [key, String(value)])) }
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -23,16 +42,19 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   })
   if (!response.ok) {
     let detail = response.statusText
+    let fields: Record<string, string> = {}
     try {
       const data: unknown = await response.json()
       if (data && typeof data === 'object' && 'detail' in data) {
         const value = (data as { detail: unknown }).detail
-        detail = typeof value === 'string' ? value : JSON.stringify(value)
+        const rejected = problem(value)
+        if (rejected) ({ message: detail, fields } = rejected)
+        else detail = typeof value === 'string' ? value : JSON.stringify(value)
       }
     } catch {
       // Not JSON: keep the status text.
     }
-    throw new ApiError(detail, response.status)
+    throw new ApiError(detail, response.status, fields)
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
 }
@@ -52,6 +74,11 @@ export const api = {
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
+  plugins: () => call<PluginRow[]>('GET', '/api/plugins'),
+  plugin: (name: string, action: PluginAction) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/${action}`),
+  pluginSettings: (name: string, changes: Record<string, JsonValue>, reset: string[] = []) =>
+    call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
+  pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */

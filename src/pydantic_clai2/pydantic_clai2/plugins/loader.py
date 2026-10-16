@@ -8,9 +8,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Generic
+from typing import Generic, Literal
 
-from anyio import CancelScope, fail_after
+from anyio import CancelScope, Lock, fail_after
 from anyio.lowlevel import checkpoint
 from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
@@ -35,10 +35,14 @@ from pydantic_clai2.plugins import (
     HostEvent,
     LoadedPlugin,
     ModelProvider,
+    NoSettings,
     Plugin,
     PluginHost,
+    PluginInfo,
     PluginLoadFailed,
     PluginLogin,
+    PluginOrigin,
+    PluginStatus,
     Renderer,
     SessionCatalog,
     SessionEnd,
@@ -51,6 +55,7 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
 from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
+from pydantic_clai2.plugins.describe import describe
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -157,6 +162,29 @@ class PluginEntry(Generic[DepsT]):
         return f'{self.declaration.factory} (built-in)' if self.builtin else self.declaration.factory
 
     @property
+    def origin(self) -> PluginOrigin:
+        """Where the declaration came from, short enough for a list."""
+        if self.project:
+            return 'project'
+        if self.builtin:
+            return 'built-in'
+        return 'drop-in' if self.path is not None else 'installed'
+
+    @property
+    def own_status(self) -> Literal['on', 'off', 'idle', 'failed']:
+        """Loaded, turned off, on but not loaded, or on but failed to load, whether or not another plugin includes it."""
+        if self.loaded is not None:
+            return 'on'
+        if not self.declaration.enabled:
+            return 'off'
+        return 'failed' if self.error else 'idle'
+
+    @property
+    def status(self) -> PluginStatus:
+        """`own_status`, or `included` while another loaded plugin includes it."""
+        return 'included' if self.included_in is not None else self.own_status
+
+    @property
     def state(self) -> str:
         """Human-readable enabled/loaded/failed state."""
         if self.included_in is not None:
@@ -225,6 +253,8 @@ class PluginLoader(Generic[DepsT]):
         self._guards: dict[str, PluginGuard[DepsT]] = {}
         # Plugins unloaded while a turn runs, with their `session_end` reasons; `None` between turns.
         self._retired: list[tuple[str, LoadedPlugin[DepsT], SessionEndReason]] | None = None
+        # Held by each `PluginCatalog` change and `remove`, which the panel and the terminal can run at once.
+        self._changing = Lock()
         self.enabled = enabled
 
     @property
@@ -466,6 +496,7 @@ class PluginLoader(Generic[DepsT]):
             commands=self._commands,
             sessions=self._sessions,
             setting=self._setting,
+            plugins=self,
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
@@ -578,14 +609,12 @@ class PluginLoader(Generic[DepsT]):
         loaded = entry.loaded
         if loaded is None:
             return
+        # Dropped first, so a concurrent unload finds nothing left to end.
+        self._drop(entry)
         if self._retired is not None:
-            self._drop(entry)
             self._retired.append((name, loaded, reason))
             return
-        try:
-            await self._end(name, loaded, reason=reason)
-        finally:
-            self._drop(entry)
+        await self._end(name, loaded, reason=reason)
 
     async def _end(self, name: str, loaded: LoadedPlugin[DepsT], *, reason: SessionEndReason) -> None:
         try:
@@ -646,12 +675,13 @@ class PluginLoader(Generic[DepsT]):
 
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""
-        entry = self._entry(name)
-        _check_not_included(entry)
-        _requested('enable', name)
-        declaration = entry.declaration.model_copy(update={'enabled': True})
-        self._store.save_plugin(declaration, requires=self._requirements(entry))
-        await self._load_enabled(entry)
+        async with self._changing:
+            entry = self._entry(name)
+            _check_not_included(entry)
+            _requested('enable', name)
+            declaration = entry.declaration.model_copy(update={'enabled': True})
+            self._store.save_plugin(declaration, requires=self._requirements(entry))
+            await self._load_enabled(entry)
 
     async def _load_enabled(self, entry: PluginEntry[DepsT]) -> None:
         """Load an enabled declaration and remember requirements learned from its plugin."""
@@ -664,15 +694,20 @@ class PluginLoader(Generic[DepsT]):
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
-        entry = self._entry(name)
-        _requested('disable', name)
-        requires = self._requirements(entry)
-        await self.unload(name)
-        self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
-        await self._load_released(entry)
+        async with self._changing:
+            entry = self._entry(name)
+            _requested('disable', name)
+            requires = self._requirements(entry)
+            await self.unload(name)
+            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+            await self._load_released(entry)
 
     async def remove(self, name: str) -> str:
         """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
+        async with self._changing:
+            return await self._remove(name)
+
+    async def _remove(self, name: str) -> str:
         entry = self._entry(name)
         _requested('remove', name)
         requires = self._requirements(entry)
@@ -717,10 +752,11 @@ class PluginLoader(Generic[DepsT]):
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""
-        if not self._entry(name).declaration.enabled:
-            raise ValueError(f'Plugin {name} is disabled; enable it before reloading.')
-        _requested('reload', name)
-        await self._load_again(name, fresh=True)
+        async with self._changing:
+            if not self._entry(name).declaration.enabled:
+                raise ValueError(f'Plugin {name} is disabled; enable it before reloading.')
+            _requested('reload', name)
+            await self._load_again(name, fresh=True)
 
     async def _load_again(self, name: str, *, fresh: bool = False) -> None:
         """Unload and load again, then load what it no longer includes, also when loading fails."""
@@ -748,6 +784,32 @@ class PluginLoader(Generic[DepsT]):
             # Also when the menu fails after saving, so the running plugin matches what is saved.
             if self._entry(name).declaration.settings != before:
                 await self._load_again(name)
+
+    def listing(self) -> list[PluginInfo]:
+        """Every plugin as `/plugins` shows it, for `host.plugins`; see `PluginCatalog`."""
+        return [_info(entry) for entry in self.entries()]
+
+    async def save_settings(self, name: str, settings: BaseModel) -> None:
+        """Save a loaded plugin's settings through its host, then load it again if they changed, as `configure` does."""
+        async with self._changing:
+            await self._save_settings(name, settings)
+
+    async def _save_settings(self, name: str, settings: BaseModel) -> None:
+        entry = self._entry(name)
+        _check_not_included(entry)
+        loaded = entry.loaded
+        if loaded is None:
+            raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
+        model = loaded.plugin.settings_type
+        if model is NoSettings:
+            raise ValueError(f'Plugin {name} takes no settings.')
+        if not isinstance(settings, model):
+            raise TypeError(f'Plugin {name} takes {model.__name__}, not {type(settings).__name__}.')
+        _requested('configure', name)
+        before = entry.declaration.settings
+        loaded.plugin.host.save_settings(settings)
+        if self._entry(name).declaration.settings != before:
+            await self._load_again(name)
 
     def configurable(self, name: str) -> bool:
         """Whether the plugin is loaded and offers a settings menu by overriding `configure`."""
@@ -904,6 +966,27 @@ def _check_not_included(entry: PluginEntry[DepsT]) -> None:
     """Refuse to turn on a plugin that a loaded plugin already includes."""
     if entry.included_in is not None:
         raise ValueError(f'{entry.name} is included in {entry.included_in}; disable {entry.included_in} to use it.')
+
+
+def _info(entry: PluginEntry[DepsT]) -> PluginInfo:
+    """A `/plugins` row for `host.plugins`, with the settings model and saved settings of a loaded plugin."""
+    loaded = entry.loaded
+    model = loaded.plugin.settings_type if loaded is not None else NoSettings
+    settings = loaded.plugin.host.settings(model) if loaded is not None and model is not NoSettings else None
+    return PluginInfo(
+        name=entry.name,
+        description=describe(entry.declaration.factory, entry.path),
+        origin=entry.origin,
+        source=entry.declaration.factory if entry.path is None else str(entry.path),
+        status=entry.status,
+        included_in=entry.included_in,
+        error=entry.error,
+        notice=entry.ignored,
+        provides=loaded.summary() if loaded is not None else '',
+        has_menu=loaded is not None and loaded.plugin.has_configure,
+        settings_model=None if settings is None else model,
+        settings=settings,
+    )
 
 
 def _requested(action: str, name: str) -> None:

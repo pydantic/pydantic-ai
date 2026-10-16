@@ -32,3 +32,9 @@ what the cell printed and returned, keeps the state with the session, and stays 
 of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
 web UI, the REPL panel's input runs `/repl` too.
+
+<!-- From #10289 -->
+The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
+composer) turns plugins on and off and edits their settings in a form, saved and applied at once,
+as `/plugins` does in the terminal. Sign-ins and keys stay in each plugin's own menu, which opens
+in the terminal.

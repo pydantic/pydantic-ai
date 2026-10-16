@@ -27,6 +27,8 @@ export interface State {
   status: StatusInfo | null
   questions: Questions[]
   sessionsVersion: number
+  /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
+  pluginsVersion: number
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
   theme: ThemeInfo | null
@@ -39,6 +41,7 @@ export const initial: State = {
   status: null,
   questions: [],
   sessionsVersion: 0,
+  pluginsVersion: 0,
   turnStartedAt: null,
   theme: null,
 }
@@ -170,5 +173,7 @@ export function reduce(state: State, message: ServerMessage): State {
       return { ...state, theme: message.theme }
     case 'sessions':
       return { ...state, sessionsVersion: state.sessionsVersion + 1 }
+    case 'plugins':
+      return { ...state, pluginsVersion: state.pluginsVersion + 1 }
   }
 }

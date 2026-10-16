@@ -1213,6 +1213,19 @@ mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the
 the browser at its next status update, which an idle session sends only when a prompt or command
 runs; reloading the page shows it at once.
 
+The **Plugins** panel (the puzzle button in the sidebar's footer, ⌘, or `/plugins` typed in the
+composer) is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
+status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
+`/plugins disable` do, without opening its settings menu. A plugin that is on shows a form for
+its settings model, built from the model's JSON Schema: a switch for each boolean, a list for
+each choice, fields for text and numbers, one line per item for a list of strings, and JSON for
+anything else. Each change is validated by the model and saved at once, then the plugin is
+loaded again with it, as its own settings menu does; a value the model rejects shows its error
+beside the field and is not saved. A plugin's own menu (`configure`), for sign-ins and `/keys`
+entries, opens in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to
+open it in. The panel cannot turn off, reload, or reconfigure `web` itself, which would end the
+page; change those from the terminal.
+
 While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
 terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
 as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugins.web '{...}'`:
@@ -2185,7 +2198,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2221,6 +2234,15 @@ prompt the keyboard does:
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming.
+- `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
+  `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
+  what it provides, whether it has its own settings menu, and, while it is on, its settings model and
+  saved settings); `enable(NAME)`, `disable(NAME)`, and `reload(NAME)` act as the `/plugins`
+  subcommands do, saved at once, but `enable` opens no settings menu; and
+  `save_settings(NAME, SETTINGS)` saves a loaded plugin's settings, an instance of its own settings
+  model, as its menu would with `host.save_settings`, then loads it again if they changed. Adding
+  and removing declarations, and a plugin's own menu, go through the prompt:
+  `send_input('/plugins configure NAME')`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
