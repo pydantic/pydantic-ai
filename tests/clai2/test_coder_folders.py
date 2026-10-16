@@ -65,8 +65,12 @@ class Keyboard:
 
     @property
     def transcript(self) -> str:
-        """Raw terminal output since the last `press`."""
-        return self.capsys.readouterr().out
+        """Terminal output since the last `press`, with CRLF row endings as LF.
+
+        The widgets paint CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+        https://github.com/Textualize/rich/issues/4090
+        """
+        return self.capsys.readouterr().out.replace('\r\n', '\n')
 
     def frame(self, menu: Menu) -> list[str]:
         """The physical rows of the menu's only frame."""
