@@ -38,6 +38,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
+from tests.harness.step_persistence._histories import growing_histories
 
 
 def _sample_messages_with_media(payload_size: int) -> list[ModelMessage]:
@@ -790,20 +791,6 @@ class TestSqliteListSnapshots:
 # ---------------------------------------------------------------------------
 
 
-def _growing_histories(turns: int) -> list[list[ModelMessage]]:
-    """The history after each turn; each is a prefix of the next, as across a conversation's runs."""
-    histories: list[list[ModelMessage]] = []
-    history: list[ModelMessage] = []
-    for turn in range(turns):
-        history = [
-            *history,
-            ModelRequest(parts=[UserPromptPart(content=f'question {turn}')]),
-            ModelResponse(parts=[TextPart(content=f'answer {turn}')]),
-        ]
-        histories.append(history)
-    return histories
-
-
 def _count(db: Path, table: str) -> int:
     conn = sqlite3.connect(db)
     try:
@@ -817,7 +804,7 @@ class TestSqliteStoresEachMessageOnce:
     async def test_stores_each_message_once_and_restores_every_snapshot(self, tmp_path: Path) -> None:
         db = tmp_path / 'runs.db'
         store = SqliteStepStore(database=db, media_store=None, max_snapshots_per_run=1)
-        histories = _growing_histories(5)
+        histories = growing_histories(5)
         for turn, history in enumerate(histories):
             # A second, pruned step per run: its messages stay, as later snapshots share them.
             for step in range(2):
@@ -842,7 +829,7 @@ class TestSqliteStoresEachMessageOnce:
     async def test_rows_written_with_inline_history_still_read(self, tmp_path: Path) -> None:
         db = tmp_path / 'runs.db'
         store = SqliteStepStore(database=db, media_store=None)
-        first, second = _growing_histories(2)
+        first, second = growing_histories(2)
         await store.save_snapshot(ContinuableSnapshot(run_id='r0', step_index=0, messages=second))
         conn = sqlite3.connect(db, isolation_level=None)
         try:
@@ -877,7 +864,7 @@ class TestSqliteStoresEachMessageOnce:
         conn = sqlite3.connect(tmp_path / 'runs.db', check_same_thread=False)
         try:
             store = SqliteStepStore(connection=conn, media_store=None)
-            history = _growing_histories(2)[-1]
+            history = growing_histories(2)[-1]
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
             snap = await store.latest_snapshot(run_id='r1')
             assert snap is not None
@@ -890,7 +877,7 @@ class TestSqliteStoresEachMessageOnce:
     ) -> None:
         db = tmp_path / 'runs.db'
         store = SqliteStepStore(database=db, media_store=None)
-        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
         conn = sqlite3.connect(db, isolation_level=None)
         try:
             conn.execute("DELETE FROM snapshot_messages WHERE message LIKE '%question 0%'")
@@ -906,7 +893,7 @@ class TestSqliteStoresEachMessageOnce:
     async def test_pruning_deletes_messages_no_snapshot_references(self, tmp_path: Path) -> None:
         db = tmp_path / 'runs.db'
         store = SqliteStepStore(database=db, media_store=None, max_snapshots_per_run=1)
-        original = _growing_histories(2)[-1]
+        original = growing_histories(2)[-1]
         compacted: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='summary of the conversation')]),
             original[-1],
@@ -950,7 +937,7 @@ class TestSqliteStoresEachMessageOnce:
                 store = SqliteStepStore(database=db, media_store=None)
             else:
                 store = SqliteStepStore(connection=conn, media_store=None)
-            first, second = _growing_histories(2)
+            first, second = growing_histories(2)
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first))
             admin = sqlite3.connect(db, isolation_level=None)
             try:
@@ -982,7 +969,7 @@ class TestSqliteStoresEachMessageOnce:
             conn.commit()
             conn.execute('CREATE TABLE app_state (value TEXT)')
             conn.execute("INSERT INTO app_state VALUES ('pending')")
-            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_growing_histories(1)[0]))
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
             assert conn.in_transaction
             conn.rollback()
             assert _count(db, 'snapshots') == 0
@@ -999,7 +986,7 @@ class TestSqliteStoresEachMessageOnce:
                 store = SqliteStepStore(connection=conn, media_store=None)
             else:
                 store = SqliteStepStore(database=db, media_store=None)
-            first, second = _growing_histories(2)
+            first, second = growing_histories(2)
             await store.save_snapshot(
                 ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='same-key')
             )
