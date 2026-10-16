@@ -39,3 +39,12 @@ composer) turns plugins on and off and edits their settings, saved and applied a
 `/plugins` does in the terminal. A plugin that declares its settings menu shows it there, sign-ins
 and `/keys` entries included, as dialogs in the page; any other plugin's own menu opens in the
 terminal.
+
+<!-- From #10319 -->
+
+```diff
+@@ -2384 +2384,2 @@ only from its settings menu or its `login` command, and Esc cancels the wait. Se
+-default, and opens its settings menu (`/plugins configure linear` reopens it). The
++default, and opens its settings menu (`/plugins configure linear` reopens it, and
++the web UI's plugins panel shows it too). The
+```
