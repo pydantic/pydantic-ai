@@ -19,6 +19,8 @@ The same agent can run inside applications with different authority. Evaluate a 
 
 See [UI adapters](docs/ui/overview.md), [realtime deployment](docs/realtime/deployment.md), [workspaces](docs/workspace.md), [CLAI 2](src/pydantic_clai2/README.md), and [durable execution](docs/durable_execution/overview.md).
 
+Examples and documentation snippets show how to use an API; they are not hardened deployments. A flaw in one is a documentation bug for a public issue or pull request, unless the library code it calls breaks a documented boundary.
+
 ## Assets and adversaries
 
 Review these assets:
