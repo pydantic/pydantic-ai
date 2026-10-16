@@ -464,8 +464,8 @@ class _AttemptBaseline:
             self.messages.pop()
 
     def restore(self, request_context: ModelRequestContext) -> None:
-        # Fresh containers, down to the lists, dicts and sets inside the settings and parameters, so a hook
-        # that edits them in place for one attempt doesn't change what the next attempt starts from. The
+        # Fresh containers, down to the lists, dicts and sets inside the settings and parameters at any depth, so
+        # a hook that edits them in place for one attempt doesn't change what the next attempt starts from. The
         # messages, tool definitions and other items they hold are shared, as `before_model_request` shares them.
         request_context.messages = list(self.messages)
         settings = self.settings_for(request_context.model)
@@ -488,8 +488,16 @@ class _AttemptBaseline:
 
 
 def _copy_container(value: T) -> T:
-    """A shallow copy of `value` if it's a list, dict or set, so it can be edited in place without sharing."""
+    """A copy of `value` if it's a list, dict or set, and of the lists, dicts and sets nested in it.
+
+    So it can be edited in place, at any depth, without sharing. Other values, like tool definitions, are shared.
+    """
+    if type(value) is dict:
+        return cast(T, {key: _copy_container(item) for key, item in cast(dict[Any, Any], value).items()})
+    if type(value) is list:
+        return cast(T, [_copy_container(item) for item in cast(list[Any], value)])
     if isinstance(value, list | dict | set):
+        # A subclass, or a set, whose items are hashable and so not edited in place: a copy of the same type.
         return cast(T, copy(value))  # pyright: ignore[reportUnknownArgumentType]
     return value
 

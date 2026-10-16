@@ -30,6 +30,7 @@ from pydantic_ai.capabilities import (
     Fallback,
     Instrumentation,
     SelectModel,
+    WrapModelRequestHandler,
     WrapperCapability,
 )
 from pydantic_ai.exceptions import (
@@ -1200,3 +1201,21 @@ async def test_callable_model_settings_resolve_once_per_step():
     assert (await agent.run('x')).output == 'hello'
     assert calls == [1]
     assert temperatures == [0.2, 0.2]
+
+
+async def test_a_streamed_request_a_wrapper_answers_without_calling_the_model():
+    """A `wrap_model_request` that answers without calling its handler still short-circuits a streamed request."""
+
+    @dataclass
+    class AnswerFromCache(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('cached')])
+
+    agent = Agent(
+        FunctionModel(stream_function=failure_stream),
+        capabilities=[AnswerFromCache(), Fallback(FunctionModel(stream_function=success_stream))],
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'cached'

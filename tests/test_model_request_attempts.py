@@ -539,3 +539,32 @@ async def test_a_recovered_response_does_not_count_a_rejected_attempts_usage_aga
     assert result.output == 'recovered'
     assert _attempt_outcomes(result.all_messages()[-1]) == [('rejected', None)]
     assert (result.usage.requests, result.usage.input_tokens, result.usage.output_tokens) == (1, 100, 10)
+
+
+async def test_nested_settings_edited_in_place_do_not_reach_the_next_attempt():
+    """Containers nested in a setting are copied for each attempt too, such as a provider's `extra_body`."""
+    seen: list[str] = []
+
+    class EditNestedInPlaceThenRetry(AbstractCapability[None]):
+        async def prepare_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            assert request_context.model_settings is not None
+            extra_body = request_context.model_settings['extra_body']
+            assert isinstance(extra_body, dict)
+            seen.append(repr(extra_body))
+            extra_body['nested']['x'] = 'edited'
+            extra_body['tags'].add('edited')
+            if request_context.attempt == 1:
+                raise RetryModelRequest(FunctionModel(success, model_name='other'))
+            return request_context
+
+    agent = Agent(
+        FunctionModel(failure),
+        deps_type=type(None),
+        model_settings={'extra_body': {'nested': {'x': 'original'}, 'tags': {'original'}}},
+        capabilities=[EditNestedInPlaceThenRetry()],
+    )
+    assert (await agent.run('x')).output == 'hello'
+    original = "{'nested': {'x': 'original'}, 'tags': {'original'}}"
+    assert seen == [original, original]
