@@ -630,7 +630,8 @@ any dependencies in CLAI's Python environment first. See
 [where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
 for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Plugins are trusted code running as you.
+reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`, and `d`
+configure, reload, and remove it. Plugins are trusted code running as you.
 
 Two built-in plugins connect to [Logfire](https://pydantic.dev/logfire): `observability`
 sends traces of your runs there, and the Logfire plugin (id `logfire_mcp`, command
