@@ -100,6 +100,33 @@ async def test_flush_submits_without_waiting() -> None:
     assert [batch.request_count for batch in wrapped.created] == [2]
 
 
+async def test_cancelling_a_flush_only_stops_its_caller_waiting() -> None:
+    submitting = asyncio.Event()
+    release = asyncio.Event()
+
+    class GatedBatchModel(SlowBatchTestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            submitting.set()
+            await release.wait()
+            return await super().batch_create(requests)
+
+    wrapped = GatedBatchModel()
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    agent = Agent(model)
+
+    runs = [asyncio.create_task(agent.run(f'Hello {i}')) for i in range(2)]
+    await wrapped.wait_until(lambda m: m.encoded == 2)
+    flush = asyncio.create_task(model.flush())
+    await submitting.wait()
+    flush.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await flush
+    release.set()
+
+    assert [result.output for result in await asyncio.gather(*runs)] == ['success (no tool calls)'] * 2
+    assert [batch.request_count for batch in wrapped.created] == [2]
+
+
 async def test_a_cancelled_request_leaves_the_queue_before_submission() -> None:
     wrapped = SlowBatchTestModel()
     model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})

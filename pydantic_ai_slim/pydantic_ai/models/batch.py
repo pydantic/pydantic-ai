@@ -19,11 +19,11 @@ from datetime import datetime, timedelta
 from types import TracebackType
 from typing import Any, Self
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import Literal, TypeAlias, TypedDict  # noqa: UP035
 
 from .._run_context import RunContext
-from .._utils import cancel_and_drain, is_str_dict
+from .._utils import cancel_and_drain
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
@@ -199,7 +199,6 @@ def _resolve_settings(
     return replace(resolved, max_requests=min(resolved.max_requests, provider_limit))
 
 
-_BATCH_ADAPTER = TypeAdapter(Batch)
 _TICKET_KEY = 'batch'
 _RESULTS_CACHE_SIZE = 32
 _EXITED_MESSAGE = '`BatchModel` exited while the request was waiting for its batch.'
@@ -209,8 +208,16 @@ class _Ticket(TypedDict):
     """What a pending batch response records about its request, under `provider_details['batch']`."""
 
     custom_id: str
-    batch: dict[str, Any]
+    batch: Batch
     polls: int
+
+
+_TICKET_ADAPTER = TypeAdapter(_Ticket)
+
+
+def _ticket_details(ticket: _Ticket) -> dict[str, Any]:
+    """`ticket` as stored in `provider_details`, which must survive serializing the message history."""
+    return {_TICKET_KEY: _TICKET_ADAPTER.dump_python(ticket, mode='json')}
 
 
 def _response_id(batch_id: str, custom_id: str) -> str:
@@ -221,15 +228,14 @@ def _pending_ticket(message: ModelMessage | None) -> _Ticket | None:
     """The ticket of a response that is still waiting for its batch result, if `message` is one."""
     if not (isinstance(message, ModelResponse) and message.state == 'suspended' and message.provider_details):
         return None
-    ticket = message.provider_details.get(_TICKET_KEY)
-    # A merged response can keep the ticket of a batch request it no longer waits for, so the ID decides.
-    if not (
-        is_str_dict(ticket)
-        and is_str_dict(batch := ticket.get('batch'))
-        and message.provider_response_id == _response_id(str(batch.get('id')), str(ticket.get('custom_id')))
-    ):
+    try:
+        ticket = _TICKET_ADAPTER.validate_python(message.provider_details.get(_TICKET_KEY))
+    except ValidationError:
         return None
-    return _Ticket(custom_id=str(ticket['custom_id']), batch=batch, polls=int(ticket.get('polls', 0)))
+    # A merged response can keep the ticket of a batch request it no longer waits for, so the ID decides.
+    if message.provider_response_id != _response_id(ticket['batch'].id, ticket['custom_id']):
+        return None
+    return ticket
 
 
 @dataclass
@@ -364,9 +370,7 @@ class BatchModel(WrapperModel):
             provider_name=self.wrapped.system,
             provider_url=self.wrapped.base_url,
             provider_response_id=_response_id(batch.id, custom_id),
-            provider_details={
-                _TICKET_KEY: _Ticket(custom_id=custom_id, batch=_BATCH_ADAPTER.dump_python(batch, mode='json'), polls=0)
-            },
+            provider_details=_ticket_details(_Ticket(custom_id=custom_id, batch=batch, polls=0)),
             state='suspended',
         )
 
@@ -391,7 +395,7 @@ class BatchModel(WrapperModel):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         if (ticket := _pending_ticket(response)) is None:
             return await self.wrapped.cancel_suspended_response(response)
-        batch = _BATCH_ADAPTER.validate_python(ticket['batch'])
+        batch = ticket['batch']
         abandoned = self._abandoned.setdefault(batch.id, set())
         abandoned.add(ticket['custom_id'])
         # A provider cancels whole batches, so only cancel once no request in it is still waiting. This process only
@@ -402,8 +406,23 @@ class BatchModel(WrapperModel):
 
     async def flush(self) -> None:
         """Submit every queued request now instead of waiting for a full batch or `max_wait`."""
-        queues = self._queues.get(asyncio.get_running_loop(), {})
-        await asyncio.gather(*(self._submit(_take(queues, group)) for group in list(queues)))
+        loop = asyncio.get_running_loop()
+        queues = self._queues.get(loop, {})
+        if submissions := [self._start_submission(loop, queues, group) for group in list(queues)]:
+            # Waits without cancelling the submissions, so cancelling the caller doesn't fail the queued requests.
+            await asyncio.wait(submissions)
+
+    def _start_submission(
+        self, loop: asyncio.AbstractEventLoop, queues: dict[str, _Queue], group: str
+    ) -> asyncio.Task[None]:
+        """Submit a group's queue in a task of its own, so cancelling whoever triggered it doesn't cancel the others.
+
+        The queue is taken off `queues` right away, so a request made before the submission runs starts the next batch.
+        """
+        task = loop.create_task(self._submit(_take(queues, group)))
+        self._submissions.add(task)
+        task.add_done_callback(self._submissions.discard)
+        return task
 
     async def _enqueue(self, encoded: EncodedBatchRequest) -> tuple[str, Batch]:
         """Queue a request, and return the ID it was given in the batch it was submitted in."""
@@ -421,11 +440,7 @@ class BatchModel(WrapperModel):
         queue.requests.append((encoded, future))
 
         def submit() -> None:
-            # Taken off the queues right away, so a request made before the submission runs starts the next batch. The
-            # submission is a task of its own, so cancelling the request that triggered it doesn't cancel the others.
-            task = loop.create_task(self._submit(_take(queues, encoded.group)))
-            self._submissions.add(task)
-            task.add_done_callback(self._submissions.discard)
+            self._start_submission(loop, queues, encoded.group)
 
         if len(queue.requests) >= self.max_requests:
             submit()
@@ -461,7 +476,7 @@ class BatchModel(WrapperModel):
                 future.cancel()
 
     async def _check(self, ticket: _Ticket, pending: ModelResponse, request: BatchRequest) -> ModelResponse:
-        batch, results = await self._poll(_BATCH_ADAPTER.validate_python(ticket['batch']))
+        batch, results = await self._poll(ticket['batch'])
         if results is None:
             # Unchanged apart from the poll count: the same `provider_response_id` makes the graph replace the pending
             # response with this one, so content the response accumulated before the batch is kept.
@@ -469,11 +484,7 @@ class BatchModel(WrapperModel):
                 pending,
                 provider_details={
                     **(pending.provider_details or {}),
-                    _TICKET_KEY: _Ticket(
-                        custom_id=ticket['custom_id'],
-                        batch=_BATCH_ADAPTER.dump_python(batch, mode='json'),
-                        polls=ticket['polls'] + 1,
-                    ),
+                    **_ticket_details(_Ticket(custom_id=ticket['custom_id'], batch=batch, polls=ticket['polls'] + 1)),
                 },
             )
         result = results.get(ticket['custom_id']) or BatchResult(custom_id=ticket['custom_id'], status='expired')

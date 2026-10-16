@@ -66,8 +66,6 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
         raise UserError(
             'Anthropic Message Batches do not support per-request `timeout`; configure the client timeout instead.'
         )
-    if settings.get('anthropic_speed') is not None:
-        raise UserError('Anthropic Message Batches do not support `anthropic_speed`.')
     prepared = await model._prepare_messages_create(request.messages, settings, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
     if set(prepared.extra_headers) != {'User-Agent'}:
         # A batch is created with one set of headers, so per-request ones can't be honored.
@@ -86,7 +84,9 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
         body.update(extra_body)
 
     if 'speed' in body or body.get('stream') is True or body.get('max_tokens') == 0:
-        raise UserError('Anthropic Message Batches do not support `speed`, `stream=True`, or `max_tokens=0`.')
+        raise UserError(
+            'Anthropic Message Batches do not support `speed` (or `anthropic_speed`), `stream=True`, or `max_tokens=0`.'
+        )
     return EncodedBatchRequest(
         custom_id=request.custom_id, group=_batch_group(model, prepared.initial_betas), body=to_json(body).decode()
     )
