@@ -60,10 +60,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import BrowserUse
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         BrowserUse(
-            llm='anthropic:claude-sonnet-4-6',
+            llm='{{ anthropic:medium }}',
             allowed_domains=['example.com'],
         )
     ],
@@ -134,7 +134,7 @@ from pydantic_ai_harness import BrowserUse
 from pydantic_ai_harness.browser_use import BrowserAgentSettings
 
 BrowserUse(
-    llm='anthropic:claude-sonnet-4-6',
+    llm='{{ anthropic:medium }}',
     agent_settings=BrowserAgentSettings(
         use_judge=False,  # skip the extra judge call per task
         step_timeout=60,
@@ -288,8 +288,8 @@ from pydantic_ai_harness import BrowserUse
 
 
 async def main():
-    async with BrowserUse(llm='anthropic:claude-sonnet-4-6', session_scope='agent') as browser:
-        agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[browser])
+    async with BrowserUse(llm='{{ anthropic:medium }}', session_scope='agent') as browser:
+        agent = Agent('{{ anthropic:medium }}', capabilities=[browser])
         first = await agent.run('Log in to app.example.com with the stored credentials.')
         await agent.run('Now open the latest report.', message_history=first.all_messages())
 ```
@@ -406,7 +406,7 @@ you have not seen.
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - BrowserUse:
       allowed_domains: [example.com]

@@ -12,6 +12,7 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
@@ -114,7 +115,8 @@ class WebPlugin(Plugin[WebSettings]):
             started = self.url is None
             url = await self.start()
             if self.settings.open_browser:
-                open_browser(self._launcher(url).as_uri())
+                # A `$BROWSER` command with `%s` runs in the foreground until the browser quits.
+                await to_thread.run_sync(open_browser, self._launcher(url).as_uri(), abandon_on_cancel=True)
             return f'Web UI {"running" if started else "already running"} at {url}' + (
                 '' if self.settings.host in LOOPBACK else '\nOther machines can reach it: keep the link private.'
             )

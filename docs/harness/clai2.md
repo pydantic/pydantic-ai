@@ -291,7 +291,7 @@ start, a built-in editor opens instead. Changes apply from your next prompt.
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
 not yet in your list is added and selected; CLAI does not check that it exists, so a
 mistyped name fails on the next prompt with the provider's error. Model names normally
-start with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+start with a provider (`{{ openai:medium }}`), so no real model is called `add` or `settings`.
 
 | Command | What it does |
 | --- | --- |
@@ -398,7 +398,7 @@ from pydantic_clai2 import open_stock_agent
 
 
 async def main() -> None:
-    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-opus-5-5') as agent:
+    async with open_stock_agent(workspace=Path.cwd(), model='{{ anthropic:large }}') as agent:
         result = await agent.run('Summarize this repository in one paragraph.')
         print(result.output)
 
