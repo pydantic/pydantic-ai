@@ -82,7 +82,7 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.output import OutputDataT
+from pydantic_ai.output import OutputDataT, ToolOutput
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -6226,7 +6226,7 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 
 
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
-    """Build the client tool history needed to round-trip tool-result metadata.
+    """Build the client tool history the reducer produces for one response's tool calls and results.
 
     The assistant message carries `content=''` because the stream announces it with a
     `TEXT_MESSAGE_START`, which the reducer materializes as `{id, role, content: ''}` before
@@ -6237,32 +6237,40 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
     `REASONING_ENCRYPTED_VALUE` branch then attaches `subtype='message'` data by message ID:
     https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
     """
-    start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
-    result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')
-    arguments = ''.join(
-        event['delta']
+    starts = [event for event in events if event['type'] == 'TOOL_CALL_START']
+    # All calls come from one model response, which the reducer resolves onto one assistant message.
+    parent_message_ids = {start['parentMessageId'] for start in starts}
+    assert len(parent_message_ids) == 1
+    tool_calls = [
+        ToolCall(
+            id=start['toolCallId'],
+            function=FunctionCall(
+                name=start['toolCallName'],
+                arguments=''.join(
+                    event['delta']
+                    for event in events
+                    if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
+                ),
+            ),
+        )
+        for start in starts
+    ]
+    tool_messages = [
+        ToolMessage(id=result['messageId'], tool_call_id=result['toolCallId'], content=result['content'])
+        for result in events
+        if result['type'] == 'TOOL_CALL_RESULT'
+    ]
+
+    encrypted_values = {
+        event['entityId']: event['encryptedValue']
         for event in events
-        if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
-    )
-    tool_call = ToolCall(
-        id=start['toolCallId'],
-        function=FunctionCall(name=start['toolCallName'], arguments=arguments),
-    )
-    tool_message = ToolMessage(
-        id=result['messageId'],
-        tool_call_id=result['toolCallId'],
-        content=result['content'],
-    )
+        if event['type'] == 'REASONING_ENCRYPTED_VALUE' and event['subtype'] == 'message'
+    }
+    for tool_message in tool_messages:
+        if tool_message.id in encrypted_values:
+            tool_message.encrypted_value = encrypted_values[tool_message.id]
 
-    for event in events:
-        if (
-            event['type'] == 'REASONING_ENCRYPTED_VALUE'
-            and event['subtype'] == 'message'
-            and event['entityId'] == tool_message.id
-        ):
-            tool_message.encrypted_value = event['encryptedValue']
-
-    return [AssistantMessage(id=start['parentMessageId'], content='', tool_calls=[tool_call]), tool_message]
+    return [AssistantMessage(id=parent_message_ids.pop(), content='', tool_calls=tool_calls), *tool_messages]
 
 
 @pytest.mark.parametrize(
@@ -6350,6 +6358,69 @@ async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
     tool_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert tool_return.content == 'Search unavailable'
     assert tool_return.outcome == expected_outcome
+
+
+@pytest.mark.parametrize('frontend_tool', [False, True])
+async def test_stream_skipped_tool_returns_roundtrip(frontend_tool: bool) -> None:
+    """Tool calls skipped because an output tool already produced the final result stream their returns.
+
+    Without a `TOOL_CALL_RESULT` for the skipped calls, the client history leaves them dangling and the
+    next request fills them with a different placeholder than the server recorded, changing the prompt
+    prefix. The skipped call is either a function tool under `end_strategy='early'`, or a frontend
+    (deferred) tool under any strategy.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"location": "Paris"}', tool_call_id='call-weather'),
+            1: DeltaToolCall(name='final_result', json_args='{"value": "done"}', tool_call_id='call-output'),
+        }
+
+    class Output(BaseModel):
+        value: str
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        output_type=[ToolOutput(Output), DeferredToolRequests] if frontend_tool else ToolOutput(Output),
+        end_strategy='early',
+    )
+    if not frontend_tool:
+
+        @agent.tool_plain(name='get_weather')
+        def weather(location: str) -> str:
+            # Skipped: an output tool already produced the final result.
+            raise NotImplementedError  # pragma: no cover
+
+    server_history: list[ModelMessage] = []
+
+    def on_complete(result: AgentRunResult[Any]) -> None:
+        server_history.extend(result.all_messages())
+
+    run_input = create_input(
+        UserMessage(id='msg-1', content='Weather?'), tools=[get_weather()] if frontend_tool else None
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=on_complete))
+    ]
+
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
+
+    def tool_returns(messages: list[ModelMessage]) -> list[tuple[str, Any]]:
+        return [
+            (part.tool_call_id, part.content) for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        ]
+
+    assert tool_returns(reloaded) == tool_returns(server_history)
+    assert tool_returns(server_history) == snapshot(
+        [
+            ('call-output', 'Final result processed.'),
+            ('call-weather', 'Tool not executed - a final result was already processed.'),
+        ]
+    )
 
 
 # region: Coverage — event_stream thinking version branches
