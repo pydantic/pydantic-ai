@@ -30,6 +30,8 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     SystemPromptPart,
@@ -188,15 +190,20 @@ def enqueued_messages_for_client(
 ) -> list[ModelMessage]:
     """The enqueued messages to stream to the frontend.
 
-    When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
-    frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
+    When the server owns the system prompt, enqueued `SystemPromptPart`s and instruction changes stay on the
+    server: the frontend's copy would be stripped on the way back in anyway, so sending it would only
+    disclose it.
     """
     if manage_system_prompt == 'client':
         return list(messages)
     kept: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            parts = [part for part in message.parts if not isinstance(part, SystemPromptPart)]
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart))
+            ]
             if not parts:
                 continue
             message = replace(message, parts=parts)
