@@ -101,13 +101,14 @@ async def test_output_is_captured_from_a_terminal(terminal: tuple[int, int], mon
     monkeypatch.setenv('PAGER', 'less')
     command = (
         '[ -t 0 ] && [ -t 1 ] && echo tty; : < /dev/tty && echo controlling; printf \'pager=%s\\n\' "$PAGER"; '
-        "printf '\\033[31mred\\033[0m\\r\\nline\\n'; printf err >&2"
+        "printf '\\033[31mred\\033[0m\\r\\nline\\n'; printf to-stderr >&2"
     )
     console = io.StringIO()
     context = await run_shell_command(command, console=Console(file=console), interrupts=Interrupts())
     stdout = 'tty\ncontrolling\npager=cat\nred\nline\n'
-    assert context == _captured(command, 'Exit code 0', stdout, 'err')
-    assert stdout in console.getvalue()
+    assert context == _captured(command, 'Exit code 0', stdout, 'to-stderr')
+    # stderr comes through a pipe of its own, not the terminal, so it is shown as it arrives: anywhere in stdout.
+    assert stdout in console.getvalue().replace('to-stderr', '')
     assert '\x1b' not in console.getvalue()
     # CLAI's terminal was raw while keys went to the command, and has its own modes back.
     assert termios.tcgetattr(clai)[3] & cooked == cooked
