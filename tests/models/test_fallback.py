@@ -1182,16 +1182,13 @@ async def test_streaming_stopped_early_closes_the_model_stream() -> None:
         nonlocal closed
         try:
             yield 'hello '
-            yield 'world'
         finally:
             closed = True
 
     async with FallbackModel(FunctionModel(stream_function=tracked_stream)).request_stream(
         [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
     ) as streamed_response:
-        async for event in streamed_response:
-            assert event == PartStartEvent(index=0, part=TextPart(content='hello '))
-            break
+        assert await anext(aiter(streamed_response)) == PartStartEvent(index=0, part=TextPart(content='hello '))
         assert not closed
 
     assert closed
