@@ -34,7 +34,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='coder',  # names the agent's Temporal activities
     capabilities=[LocalWorkspace('.'), Coder(), TemporalDurability()],
 )
@@ -77,7 +77,7 @@ dbos_config: DBOSConfig = {'name': 'coder', 'system_database_url': 'sqlite:///co
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='coder',
     capabilities=[LocalWorkspace('.'), Coder(), DBOSDurability()],
 )
@@ -109,7 +109,7 @@ from pydantic_ai.durable_exec.prefect import PrefectDurability
 from pydantic_ai_harness.coder import Coder
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     name='coder',
     capabilities=[LocalWorkspace('.'), Coder(), PrefectDurability()],
 )
