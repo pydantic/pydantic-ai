@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
 import { api, connect, interrupt, type Connection } from './api'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
@@ -11,9 +11,10 @@ import { PluginsPanel } from './components/PluginsPanel'
 import { DialogLayer } from './components/DialogLayer'
 import { MontyPanel } from './components/MontyPanel'
 import { NewSessionDialog } from './components/NewSessionDialog'
+import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
 import { WorkerView } from './components/WorkerView'
 import { SidebarIcon, TerminalIcon } from './components/icons'
-import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
+import type { PanelInfo, ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
 import { initial, reduce } from './state'
@@ -46,10 +47,19 @@ export function App() {
   const picked = useRef(0)
   const [toast, setToast] = useState<{ text: string; level: 'info' | 'error' } | null>(null)
   const [plugins, setPlugins] = useState(false)
+  // The plugin the plugins panel opens on, when a side panel asks to set its plugin up.
+  const [pluginFocus, setPluginFocus] = useState<string | null>(null)
+  const openPlugins = useCallback(() => {
+    setPluginFocus(null)
+    setPlugins(true)
+  }, [])
   // Asking where a new session runs, when each session runs in its own directory.
   const [choosing, setChoosing] = useState(false)
-  const openPlugins = useCallback(() => setPlugins(true), [])
   const closePlugins = useCallback(() => setPlugins(false), [])
+  const [panels, setPanels] = useState<PanelInfo[]>([])
+  // Which plugin side panel is open, and how wide, as this browser last left them.
+  const [sidePanel, setSidePanel] = useState(() => localStorage.getItem('clai-side-panel'))
+  const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem('clai-side-panel-width')) || 440)
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
   const [draft, setDraft] = useState('')
   const composer = useRef<ComposerHandle>(null)
@@ -82,6 +92,53 @@ export function App() {
   }, [])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
+  useEffect(() => {
+    if (sidePanel) localStorage.setItem('clai-side-panel', sidePanel)
+    else localStorage.removeItem('clai-side-panel')
+  }, [sidePanel])
+
+  // Panels follow the conversation: ask again on connecting, switching sessions, each turn's start and end, and
+  // every command, which may have changed a plugin; while a turn runs and one is shown, every few seconds too.
+  const panelRequest = useRef(0)
+  const panelsLoading = useRef(false)
+  const loadPanels = useCallback(async (poll = false) => {
+    if (poll && panelsLoading.current) return
+    // Only the latest answer is shown, however the requests resolve.
+    const request = ++panelRequest.current
+    panelsLoading.current = true
+    try {
+      const found = await api.panels()
+      if (request === panelRequest.current)
+        setPanels((current) => (JSON.stringify(current) === JSON.stringify(found) ? current : found))
+    } catch {
+      // Keep what is shown; the next turn or command asks again.
+    } finally {
+      if (request === panelRequest.current) panelsLoading.current = false
+    }
+  }, [])
+  const shownPanel = panels.find((panel) => panelKey(panel) === sidePanel) ?? null
+  const firstPanel = panels[0]
+  useEffect(() => {
+    if (connection === 'open') void loadPanels()
+  }, [connection, state.session?.id, state.running, state.pluginsVersion, loadPanels])
+  const panelShown = shownPanel !== null
+  useEffect(() => {
+    if (!state.running || panels.length === 0) return
+    const timer = window.setInterval(() => {
+      if (panelShown || following()) void loadPanels(true)
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [state.running, panels.length, panelShown, loadPanels])
+  useEffect(() => followWindows(panels), [panels])
+  // With no key, the shortcut: close the open panel, or open the first.
+  const shownKey = shownPanel ? panelKey(shownPanel) : null
+  const togglePanel = useCallback(
+    (key?: string) => {
+      if (key !== undefined) setSidePanel(shownKey === key ? null : key)
+      else setSidePanel(shownKey || !firstPanel ? null : panelKey(firstPanel))
+    },
+    [shownKey, firstPanel],
+  )
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -203,9 +260,12 @@ export function App() {
       } else if (mod && event.key === 'j') {
         event.preventDefault()
         setMonty((open) => !open)
+      } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
+        event.preventDefault()
+        togglePanel()
       } else if (mod && event.key === ',') {
         event.preventDefault()
-        setPlugins(true)
+        openPlugins()
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -221,7 +281,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.running, workerTask, showError, newSession])
+  }, [state.running, workerTask, showError, togglePanel, openPlugins, newSession])
 
   const status = state.status
   const title = workerTask
@@ -250,7 +310,10 @@ export function App() {
   )
 
   return (
-    <div className={`app ${sidebar ? '' : 'no-sidebar'} ${monty ? 'with-monty' : ''}`}>
+    <div
+      className={`app ${sidebar ? '' : 'no-sidebar'} ${monty ? 'with-monty' : ''} ${shownPanel ? 'with-side-panel' : ''}`}
+      style={{ '--side-panel-width': `min(${panelWidth}px, 70vw)` } as CSSProperties}
+    >
       {sidebar && (
         <Sidebar
           ref={sidebarRef}
@@ -296,6 +359,21 @@ export function App() {
               {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
             </div>
           )}
+          {panels.map((panel) => {
+            const key = panelKey(panel)
+            const active = shownKey === key
+            return (
+              <button
+                key={key}
+                className={`icon-button monty-toggle ${active ? 'active' : ''}`}
+                onClick={() => togglePanel(key)}
+                title={`${active ? 'Hide' : 'Show'} ${panel.title}${panel === firstPanel ? ` (${MOD}⇧L)` : ''}`}
+                aria-pressed={active}
+              >
+                <PanelGlyph panel={panel} size={16} />
+              </button>
+            )
+          })}
           <button
             className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
             onClick={() => setMonty(!monty)}
@@ -389,6 +467,7 @@ export function App() {
         <PluginsPanel
           version={state.pluginsVersion}
           running={state.running}
+          initial={pluginFocus}
           onClose={closePlugins}
           onError={showError}
           onNotice={showNotice}
@@ -400,6 +479,22 @@ export function App() {
           status={status}
           running={state.running}
           onClose={() => setMonty(false)}
+          onError={showError}
+        />
+      )}
+      {shownPanel && (
+        <SidePanel
+          panel={shownPanel}
+          width={panelWidth}
+          onResize={(width, done) => {
+            setPanelWidth(width)
+            if (done) localStorage.setItem('clai-side-panel-width', String(width))
+          }}
+          onClose={() => setSidePanel(null)}
+          onSettings={(plugin) => {
+            setPluginFocus(plugin)
+            setPlugins(true)
+          }}
           onError={showError}
         />
       )}

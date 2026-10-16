@@ -149,6 +149,14 @@ terminal.
 +  **Save & close** returns with changes already saved.
 ```
 
+<!-- From #10357 -->
+Plugins can add a panel on the right, toggled by its button at the top right or Cmd/Ctrl+Shift+L,
+resizable by its left edge, and remembered by the browser. The `observability` plugin's shows
+Logfire's live view of the current conversation, opened at the latest turn. Logfire does not let
+other sites show its pages inside theirs today, so the panel opens it in a window beside CLAI's
+instead, and points that window at each new turn. Without a Logfire project the panel says how to
+set one up.
+
 <!-- From #10359 -->
 When the agent delegates to sub-agents, a **Workers** tree appears under the current session:
 one row per worker, under the worker that started it, with its agent, model, elapsed time, and

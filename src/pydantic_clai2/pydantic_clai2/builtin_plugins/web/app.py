@@ -16,18 +16,20 @@ from typing import Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
     MenuEdited,
     MenuInfo,
+    PanelInfo,
     PluginRow,
     Project,
     TaskTranscript,
@@ -185,6 +187,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _sessions(app, remote)
     _plugins(app, remote)
     _tasks(app, remote)
+    _panels(app, remote)
     _events(app, remote)
     if (static / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
@@ -211,7 +214,9 @@ def _page(app: FastAPI, *, token: str, static: Path) -> None:
                 'Cache-Control': 'no-store',
                 'Content-Security-Policy': (
                     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                    # Side panels frame only pages whose own headers allow it, which the server checks first.
+                    f"connect-src 'self'; frame-src {FRAME_SOURCES}; "
+                    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
                 ),
                 'Referrer-Policy': 'no-referrer',
                 'X-Content-Type-Options': 'nosniff',
@@ -346,6 +351,15 @@ def _tasks(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/tasks/{task_id}/{action}', status_code=204)
     async def act(task_id: str, action: TaskAction) -> None:
         await _wait(remote.task_action(task_id, action))
+
+
+def _panels(app: FastAPI, remote: Remote) -> None:
+    """Plugins' side panels, as they are now; the page asks again when a turn starts or ends."""
+
+    @app.get('/api/panels')
+    async def panels(request: Request) -> list[PanelInfo]:
+        # `Guard` admitted only the server's own addresses, so `Host` names the origin this page came from.
+        return await remote.panels(origin=f'http://{request.headers["host"]}')
 
 
 def _events(app: FastAPI, remote: Remote) -> None:
