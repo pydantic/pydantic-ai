@@ -203,8 +203,9 @@ class ProcessPlugins(Generic[DepsT]):
         """Held by each `PluginCatalog` change and `remove`, which the panel and the terminal can run at once."""
         self._sessions: list[SessionPlugins[DepsT]] = []
         self._shared: dict[str, LoadedPlugin[DepsT]] = {}
-        # A process-scoped plugin unloaded while turns run ends after the last of them: pending turns, by `id`.
-        self._ending: dict[int, int] = {}
+        # A process-scoped plugin unloaded while turns run ends after the last of them: the plugin and its
+        # pending turns, by `id`. Holding the plugin keeps its `id` from being reused meanwhile.
+        self._ending: dict[int, tuple[LoadedPlugin[DepsT], int]] = {}
         self.live = _Live(lambda: [session.live_session for session in self._sessions])
         """The live sessions, as process-scoped plugins see them through `host.live`."""
 
@@ -306,18 +307,20 @@ class ProcessPlugins(Generic[DepsT]):
         return next((session for session in self._sessions if session.live_session is current), origin)
 
     async def change(
-        self, origin: 'SessionPlugins[DepsT]', name: str, apply: Callable[[], Awaitable[T]], *, again: bool
+        self, name: str, apply: Callable[[], Awaitable[T]], *, origin: 'SessionPlugins[DepsT]', again: bool
     ) -> T:
         """Apply a change to `name` in `origin` under the change lock, then have every other live session follow it.
 
+        They follow also when `origin` fails, since what it saved first, such as `enabled`, may load elsewhere.
         `again` loads it again where it stays loaded, as after new settings or a reload.
         """
         async with self.changing:
-            result = await apply()
-            await self.follow(origin, name, again=again)
-            return result
+            try:
+                return await apply()
+            finally:
+                await self.follow(name, origin=origin, again=again)
 
-    async def follow(self, origin: 'SessionPlugins[DepsT]', name: str, *, again: bool) -> None:
+    async def follow(self, name: str, *, origin: 'SessionPlugins[DepsT]', again: bool) -> None:
         """Have every live session but `origin` catch up with a change `origin` made to `name`."""
         for session in list(self._sessions):
             if session is not origin:
@@ -331,16 +334,18 @@ class ProcessPlugins(Generic[DepsT]):
         """Every loaded process-scoped plugin, in load order."""
         return list(self._shared.items())
 
-    def register_shared(self, name: str, loaded: LoadedPlugin[DepsT]) -> None:
+    def register_shared(self, name: str, *, loaded: LoadedPlugin[DepsT]) -> None:
         """Record a process-scoped plugin as it starts; `forget_shared` drops it if starting fails."""
         self._shared[name] = loaded
 
-    def forget_shared(self, name: str, loaded: LoadedPlugin[DepsT] | None) -> None:
-        """Drop a process-scoped plugin that failed to start."""
+    def forget_shared(self, name: str, *, loaded: LoadedPlugin[DepsT] | None) -> None:
+        """Drop a process-scoped plugin that failed to start, also from sessions that joined it meanwhile."""
         if loaded is not None and self._shared.get(name) is loaded:
             del self._shared[name]
+            for session in self._sessions:
+                session.detach(name, loaded)
 
-    async def share(self, origin: 'SessionPlugins[DepsT]', name: str, loaded: LoadedPlugin[DepsT]) -> None:
+    async def share(self, name: str, loaded: LoadedPlugin[DepsT], *, origin: 'SessionPlugins[DepsT]') -> None:
         """Join a process-scoped plugin `origin` just loaded to every other live session."""
         for session in list(self._sessions):
             if session is not origin:
@@ -355,17 +360,17 @@ class ProcessPlugins(Generic[DepsT]):
         if not waiting:
             await origin.end(name, loaded, reason=reason)
             return
-        self._ending[id(loaded)] = len(waiting)
+        self._ending[id(loaded)] = (loaded, len(waiting))
         for session in waiting:
-            session.retire(name, loaded, reason)
+            session.retire(name, loaded, reason=reason)
 
     def last_end(self, loaded: LoadedPlugin[DepsT]) -> bool:
         """Whether ending `loaded` now is due: not a process-scoped plugin another running turn still holds."""
-        pending = self._ending.get(id(loaded))
-        if pending is None:
+        ending = self._ending.get(id(loaded))
+        if ending is None:
             return True
-        if pending > 1:
-            self._ending[id(loaded)] = pending - 1
+        if ending[1] > 1:
+            self._ending[id(loaded)] = (loaded, ending[1] - 1)
             return False
         del self._ending[id(loaded)]
         return True

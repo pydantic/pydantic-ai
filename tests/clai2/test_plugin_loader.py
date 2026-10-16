@@ -1023,7 +1023,7 @@ class Shared(Plugin):
 
 
 def two_sessions(tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> tuple[Harness, Harness]:
-    """Two live sessions of one process, as `clai2 --web` holds them."""
+    """Two live sessions of one process, as a CLAI serving several sessions will hold them."""
     process = ProcessPlugins[None](store=SettingsStore(tmp_path / 'config.db'), builtin=builtin)
     return Harness(tmp_path, process=process, name='a'), Harness(tmp_path, process=process, name='b')
 
@@ -1048,6 +1048,23 @@ async def test_a_change_in_one_session_reaches_every_live_one(tmp_path: Path) ->
     assert [entry.status for entry in a.loader.entries()] == ['off']
 
 
+async def test_a_change_that_fails_in_its_session_still_reaches_the_others(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'picky.py').write_text(
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Picky(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
+        "        assert self.host.session_id != 'conversation-a', 'not here'\n"
+        "        self.host.console.print('picky started')\n"
+    )
+    await a.loader.load_all()
+    await b.loader.load_all()
+    await b.loader.disable('picky')
+    with pytest.raises(PluginError, match='not here'):
+        await a.loader.enable('picky')
+    assert b.text.count('picky started') == 2, 'saved as enabled, so the session it loads in loads it'
+
+
 async def test_another_session_keeps_its_plugins_until_its_turn_ends(tmp_path: Path) -> None:
     a, b = two_sessions(tmp_path)
     a.write('alpha')
@@ -1064,7 +1081,7 @@ async def test_another_session_keeps_its_plugins_until_its_turn_ends(tmp_path: P
 async def test_a_session_reports_its_own_failure_to_follow(tmp_path: Path) -> None:
     """Another session's failure to load is shown there, as at startup; plugins off there are left alone."""
     a, b = two_sessions(tmp_path)
-    c = Harness(tmp_path, process=a.loader._catalog, name='c')  # pyright: ignore[reportPrivateUsage]
+    c = Harness(tmp_path, process=a.loader.process, name='c')
     c.loader.enabled = False
     (a.store.plugins_dir / 'flaky.py').write_text(
         'from pydantic_clai2.plugins import Plugin\n'
@@ -1138,6 +1155,48 @@ async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) 
     await b.loader.load_all()
     assert 'no start' in a.text and 'no start' in b.text, 'each session tries it, as nothing is shared'
     assert 'shared' not in a.commands and 'shared' not in b.commands
+
+
+async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    starting, fail = anyio.Event(), anyio.Event()
+    module = ModuleType('fails_late')
+
+    class FailsLate(Plugin):
+        scope = 'process'
+
+        def get_commands(self) -> list[Command]:
+            return [Command(name='late', description='From a process plugin', handler=lambda _: 'ok')]
+
+        async def on_session_start(self, event: SessionStart) -> None:
+            starting.set()
+            await fail.wait()
+            raise RuntimeError('no start')
+
+    FailsLate.__module__ = module.__name__
+    module.__dict__['FailsLate'] = FailsLate
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    a, b = two_sessions(tmp_path, builtin=(PluginSettings(id='late', factory=module.__name__),))
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(a.loader.load_all)
+        await starting.wait()
+        await b.loader.load_all()
+        assert 'late' in b.commands, 'the second session joins the instance the first is starting'
+        fail.set()
+    assert 'no start' in a.text and b.text == ''
+    assert 'late' not in a.commands and 'late' not in b.commands
+    assert [entry.loaded for entry in b.loader.entries()] == [None]
+
+
+async def test_one_session_ends_its_own_plugins_before_the_process_ones(tmp_path: Path) -> None:
+    """Process-scoped plugins, such as `observability`, outlast every session plugin's `on_session_end`."""
+    harness = Harness(tmp_path)
+    harness.write('alpha')
+    (harness.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await harness.loader.load_all()
+    await harness.loader.close('exit')
+    assert harness.text.index('alpha stopped exit') < harness.text.index('shared stopped exit')
 
 
 async def test_a_process_plugin_follows_the_session_being_handled(
@@ -1244,7 +1303,7 @@ def test_a_session_joins_a_process_or_makes_its_own(tmp_path: Path) -> None:
 
 async def test_a_session_opened_later_joins_the_running_process_plugins(tmp_path: Path) -> None:
     a, b = two_sessions(tmp_path)
-    process = a.loader._catalog  # pyright: ignore[reportPrivateUsage]
+    process = a.loader.process
     (a.store.plugins_dir / 'shared.py').write_text(SHARED)
     await a.loader.load_all()
     later, off = Harness(tmp_path, process=process, name='later'), Harness(tmp_path, process=process, name='off')

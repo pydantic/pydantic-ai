@@ -15,7 +15,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import DepsT, SessionEndReason
-from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins.loader import SessionPlugins
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace, workspace_directory
@@ -82,7 +82,6 @@ async def run_web(
         loader=shell.loader,
         status=shell.status,
         settings=settings_for,
-        keep=WEB,
         busy=shell.background_running,
     ).attach(sessions=shell.sessions, commands=shell.commands)
     reason: SessionEndReason = 'error'
@@ -131,12 +130,12 @@ async def run_web(
         raise relaunch
 
 
-def _loaded_web(loader: PluginLoader[DepsT]) -> WebPlugin | None:
+def _loaded_web(loader: SessionPlugins[DepsT]) -> WebPlugin | None:
     loaded = next((entry.loaded for entry in loader.entries() if entry.name == WEB), None)
     return loaded.plugin if loaded is not None and isinstance(loaded.plugin, WebPlugin) else None
 
 
-def serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+def serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
     """The port and token of the web UI `loader`'s `web` plugin serves now; `None` while it serves none."""
     web = _loaded_web(loader)
     if web is None or web.server is None:
@@ -144,7 +143,7 @@ def serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
     return WebHandoff(port=web.server.port, token=web.token)
 
 
-async def serve_again(loader: PluginLoader[DepsT], handoff: WebHandoff) -> str:
+async def serve_again(loader: SessionPlugins[DepsT], handoff: WebHandoff) -> str:
     """Serve the web UI on the port and with the token CLAI used before `/update`, opening no browser."""
     web = _loaded_web(loader)
     if web is None:
