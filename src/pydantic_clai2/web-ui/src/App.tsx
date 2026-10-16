@@ -239,11 +239,9 @@ export function App() {
     else document.title = chat.session?.title ? `${chat.session.title} · CLAI` : 'CLAI'
   }, [chat.session?.title, pane])
 
-  // A switch of the shown session ends any read-only preview, and the wait for it if it is the one picked.
+  // The picked session showing ends the wait for it; `show` already closed any preview and worker.
   const sessionId = chat.session?.id
   useEffect(() => {
-    setPreview(null)
-    setWorker(null)
     setOpening((current) => (current?.id === sessionId ? null : current))
   }, [sessionId])
 
@@ -276,6 +274,8 @@ export function App() {
   const show = useCallback((id: string) => {
     // A session picked earlier and still opening loses to this one.
     picked.current++
+    // Its own spinner stays until it shows; one for a session picked before goes.
+    setOpening((current) => (current?.id === id ? current : null))
     setPane('session')
     setWorker(null)
     setPreview(null)
@@ -387,7 +387,13 @@ export function App() {
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
-      } else if (event.key === 'Escape' && running && (orchestrating || !workerTask) && !event.defaultPrevented && !event.isComposing) {
+      } else if (
+        event.key === 'Escape' &&
+        running &&
+        (orchestrating || (!workerTask && !preview)) &&
+        !event.defaultPrevented &&
+        !event.isComposing
+      ) {
         // Esc in the composer or on the page interrupts, as in the terminal; other fields keep it for themselves.
         const target = event.target as HTMLElement
         const field = target.closest('input, textarea, select')
@@ -399,7 +405,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, showError, togglePanel, openSettings, newSession])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession])
 
   const status = chat.status
   const title = workerTask
