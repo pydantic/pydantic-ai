@@ -543,8 +543,8 @@ targets one model and holds up to 50,000 requests.
 
 The Batch API is only available on OpenAI's own API: not with `OpenAIChatModel`, Azure OpenAI, or other providers
 that implement the Responses API. Through the [Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key.
-Batch requests can't use background mode or a [WebSocket connection](#websocket-mode), and per-request `timeout`
-and `extra_headers` are unsupported: configure them on the client instead.
+Batch requests can't use background mode, and per-request `timeout` and `extra_headers` are unsupported: configure
+them on the client instead.
 
 ## Chat Completions API
 
