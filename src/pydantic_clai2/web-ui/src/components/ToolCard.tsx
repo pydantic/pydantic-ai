@@ -5,6 +5,7 @@ import { highlight } from '../markdown'
 import type { Diff, Item } from '../protocol'
 import { DiffView, diffStats } from './DiffView'
 import { ChevronIcon, FileIcon, PencilIcon, QuestionIcon, SearchIcon, TerminalIcon, ToolIcon } from './icons'
+import { WorkerChips } from './WorkersTree'
 
 type Args = Record<string, unknown>
 
@@ -164,6 +165,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         {item.state === 'interrupted' && <span className="badge">interrupted</span>}
         <ChevronIcon size={12} className="chevron" />
       </button>
+      <WorkerChips item={raw} />
       {item.diffs.length > 0 && !open && (
         <div className="tool-diffs">
           {item.diffs.map((diff, index) => (
