@@ -1161,7 +1161,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Only [`restricting_settings`][pydantic_ai.native_tools.AbstractNativeTool.restricting_settings] count:
         a native tool with any of them is treated as unsupported for the request, so its local fallback is used
-        when one is provided, and [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+        when one is provided, it is left out when it is `optional`, and
+        [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
 
         Subclasses that send a native tool without one of its restricting settings should override this.
         The default is an empty set, meaning every restricting setting is applied.

@@ -124,8 +124,9 @@ class AbstractNativeTool(ABC):
 
         These are settings such as domain filters and usage limits, which are usually there for compliance or
         cost reasons. A model that can't apply one of them treats this instance as unsupported, so the request
-        uses the local fallback when one is provided and raises [`UserError`][pydantic_ai.exceptions.UserError]
-        otherwise. Settings that only tune results, such as a search context size, are not included.
+        uses the local fallback when one is provided, leaves the tool out when it is `optional`, and raises
+        [`UserError`][pydantic_ai.exceptions.UserError] otherwise. Settings that only tune results, such as a
+        search context size, are not included.
 
         Models report which of these they can't apply via
         [`Model.unsupported_native_tool_settings`][pydantic_ai.models.Model.unsupported_native_tool_settings].
@@ -160,7 +161,8 @@ class WebSearchTool(AbstractNativeTool):
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
     The restricting settings `allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` are
     the exception: on a model that can't apply one that is set, the tool is treated as unsupported, so the local
-    fallback runs if one is provided, and [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+    fallback runs if one is provided, the tool is left out if it is `optional`, and
+    [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
     OpenRouter uses its Beta web-search server tool, which lets the model decide whether to search and how often.
     It accepts the portable settings below, though their effect depends on OpenRouter's selected
     search engine and downstream provider.
@@ -422,7 +424,8 @@ class WebFetchTool(AbstractNativeTool):
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
     The restricting settings `allowed_domains`, `blocked_domains`, and `max_uses` are the exception: on a model that
     can't apply one that is set, the tool is treated as unsupported, so the local fallback runs if one is provided,
-    and [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+    the tool is left out if it is `optional`, and [`UserError`][pydantic_ai.exceptions.UserError] is raised
+    otherwise.
 
     Supported by:
 
