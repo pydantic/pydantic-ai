@@ -6,7 +6,7 @@ Claude Code and Codex sessions.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -80,8 +80,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
-        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
-        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
+        self.in_use: Callable[[str], bool] = lambda conversation_id: False
+        """Whether another live session of this CLAI holds, opens, or resumes a conversation."""
 
     @property
     def follows_workspace(self) -> bool:
@@ -96,7 +96,8 @@ class Sessions(Generic[DepsT, OutputT]):
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
         """
-        with self.claim(conversation_id):
+        # Held from before moving directory, so no other session resumes it meanwhile.
+        with self.session.claim(conversation_id):
             if self.relocate is not None and not allow_other_workspace:
                 workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
                 if workspace != self.session.workspace:
@@ -226,6 +227,7 @@ class Sessions(Generic[DepsT, OutputT]):
         """Delete a saved conversation, not the current one, with its Monty state; one running elsewhere is refused."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be deleted. Switch to another one first.')
+        self._refuse_live(conversation_id)
         source = (await self.store.get(conversation_id=conversation_id)).summary
         await self._delete(source)
 
@@ -248,12 +250,17 @@ class Sessions(Generic[DepsT, OutputT]):
         """Hide a saved conversation from listings, deleting nothing; not the current one, nor one running elsewhere."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be archived. Switch to another one first.')
+        self._refuse_live(conversation_id)
         source = (await self.store.get(conversation_id=conversation_id)).summary
         try:
             await run_sync(ensure_inactive, source)
         except ConversationConflict as busy:
             raise ValueError(f'{busy} A running session cannot be archived.') from busy
         return await self.store.set_archived(conversation_id=conversation_id, archived=True)
+
+    def _refuse_live(self, conversation_id: str) -> None:
+        if self.in_use(conversation_id):
+            raise ValueError('That session is open in another live session of this CLAI. Close it first.')
 
     async def unarchive(self, conversation_id: str) -> ConversationSummary:
         """List an archived conversation again."""
