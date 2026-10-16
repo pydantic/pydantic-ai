@@ -316,9 +316,12 @@ class ProcessPlugins(Generic[DepsT]):
         """
         async with self.changing:
             try:
-                return await apply()
-            finally:
+                result = await apply()
+            except Exception:
                 await self.follow(name, origin=origin, again=again)
+                raise
+            await self.follow(name, origin=origin, again=again)
+            return result
 
     async def follow(self, name: str, *, origin: 'SessionPlugins[DepsT]', again: bool) -> None:
         """Have every live session but `origin` catch up with a change `origin` made to `name`."""
