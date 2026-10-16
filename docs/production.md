@@ -304,7 +304,7 @@ Approvals for [deferred tools](#approval) travel over the same stream. The adapt
 
 An agent is a Python object in your process, so you deploy it the way you deploy the rest of your Python: there is nothing Pydantic-specific to host. Typical shapes:
 
-- **A web service**: run the agent inside your FastAPI, Starlette, Django or Flask handler, as [above](#frontend), and scale it like any other web app.
+- **A web service**: run the agent inside your FastAPI, Starlette, Django or Flask handler, as [above](#frontend), and scale it like any other web app. A conversation's state lives in what you [store](#state) or in the durable engine, not in the process, so any instance can continue any conversation, and health checks, graceful shutdown and autoscaling are your web framework's and platform's.
 - **A worker**: start runs from a queue or schedule; a durable engine's workers, such as [Temporal](durable_execution/temporal.md), [DBOS queues](durable_execution/dbos.md#durable-execution) or [Prefect deployments](durable_execution/prefect.md#deployments-and-scheduling), give you retries and recovery with it; [Render Workflows](harness/render-workflows.md) (Harness) run model requests and supported tool calls as separate tasks, each with its own retries, timeout and compute.
 - **A serverless function**: run on [AWS Lambda durable functions](harness/aws-lambda.md) so a timed-out or retried invocation resumes instead of starting over.
 - **A voice agent**: see [realtime deployment](realtime/deployment.md).
