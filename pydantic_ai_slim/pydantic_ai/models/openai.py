@@ -1264,10 +1264,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # ends without one (subclasses may also handle an empty one in `_validate_completion`), but that's not reported
         # as the provider's value.
         missing_finish_reason = False
-        if response.choices and not (choice := response.choices[0]).finish_reason:
-            missing_finish_reason = True
-            if choice.finish_reason is None:
-                choice.finish_reason = self._missing_finish_reason(choice)
+        unrecognized_finish_reason: str | None = None
+        if response.choices:
+            choice = response.choices[0]
+            if choice.finish_reason and choice.finish_reason not in _CHAT_FINISH_REASON_MAP:
+                # OpenAI-compatible providers can add new finish-reason values before
+                # this library releases support for them. Quarantine the unknown value
+                # for provider_details instead of rejecting the whole response.
+                unrecognized_finish_reason = cast(str, choice.finish_reason)
+                choice.finish_reason = None
+            elif not choice.finish_reason:
+                missing_finish_reason = True
+                if choice.finish_reason is None:
+                    choice.finish_reason = self._missing_finish_reason(choice)
 
         try:
             response = self._validate_completion(response)
@@ -1283,6 +1292,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # Moderation and service tier are top-level fields, so they're read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
         provider_details = self._process_provider_details(response) or {}
+        if unrecognized_finish_reason is not None:
+            provider_details['finish_reason'] = unrecognized_finish_reason
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
