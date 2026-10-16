@@ -4,7 +4,18 @@ import re
 
 import pytest
 
-from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    BinaryImage,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import FinishReason, ModelResponsePart
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -13,6 +24,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
+from .conftest import json_objects
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -587,3 +599,41 @@ async def test_zai_sensitive_without_content_raises_content_filter_error(allow_m
 
     with pytest.raises(ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'sensitive'")):
         await Agent(model).run('Tell me something.')
+
+
+def get_weather(city: str) -> str:
+    """Get the weather for a city."""
+    return 'rainy'  # pragma: no cover
+
+
+async def test_zai_field_mode_thinking_backfill(
+    allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture
+):
+    """Z.AI accepts the empty `reasoning_content` a thinking request sends on tool calls no step thought on.
+
+    `ZaiProvider` uses `'field'` mode. The history holds no `ThinkingPart`, and its tool calls sit before and
+    after the last user message, as a step that didn't think leaves them. With `thinking=True`, both go out
+    with `reasoning_content` empty; the run completing is Z.AI accepting the request.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris? Use the get_weather tool.')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_paris')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'sunny', tool_call_id='call_paris'),
+                UserPromptPart('And in London? Use the tool again, then answer for both in one short sentence.'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_london')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_london')]),
+    ]
+    provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
+    agent = Agent(ZaiModel('glm-5.1', provider=provider), tools=[get_weather])
+
+    result = await agent.run(message_history=history, model_settings=ZaiModelSettings(thinking=True))
+
+    assert result.output == snapshot("It's sunny in Paris and rainy in London.")
+    messages = request_capture.body('/chat/completions')['messages']
+    assert [
+        message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
+    ] == ['', '']

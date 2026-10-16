@@ -30,6 +30,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolDefinition,
+    ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
@@ -45,6 +46,7 @@ from pydantic_ai.profiles import ModelProfile
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, RequestCapture, message, try_import
+from .conftest import json_objects
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -2480,3 +2482,42 @@ async def test_eager_input_streaming_sent_to_openrouter(
     assert ('eager_input_streaming' in tool_param) is expected_eager_key
     if expected_eager_key:
         assert tool_param['eager_input_streaming'] is True
+
+
+def get_weather(city: str) -> str:
+    """Get the weather for a city."""
+    return 'rainy'  # pragma: no cover
+
+
+async def test_openrouter_field_mode_thinking_backfill(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+):
+    """OpenRouter accepts the empty `reasoning` a thinking request sends on tool calls no step thought on.
+
+    `OpenRouterModel` uses `'field'` mode. The history holds no `ThinkingPart`, and its tool calls sit before
+    and after the last user message, as a step that didn't think leaves them. With `thinking=True`, both go
+    out with `reasoning` empty; the run completing is OpenRouter accepting the request.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris? Use the get_weather tool.')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_paris')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'sunny', tool_call_id='call_paris'),
+                UserPromptPart('And in London? Use the tool again, then answer for both in one short sentence.'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_london')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_london')]),
+    ]
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    agent = Agent(OpenRouterModel('deepseek/deepseek-v4.1-flash', provider=provider), tools=[get_weather])
+
+    result = await agent.run(message_history=history, model_settings=OpenRouterModelSettings(thinking=True))
+
+    assert result.output == snapshot("It's sunny in Paris and rainy in London.")
+    messages = request_capture.body('/chat/completions')['messages']
+    assert [message.get('reasoning') for message in json_objects(messages) if message['role'] == 'assistant'] == [
+        '',
+        '',
+    ]

@@ -1,0 +1,117 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1043"
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    body:
+      type: json
+      content:
+        model: glm-5.1
+        stream: false
+        messages:
+        - role: user
+          content: What is the weather in Paris? Use the get_weather tool.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_paris
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+          reasoning_content: ""
+        - role: tool
+          tool_call_id: call_paris
+          content: sunny
+        - role: user
+          content: And in London? Use the tool again, then answer for both in one short sentence.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_london
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+          reasoning_content: ""
+        - role: tool
+          tool_call_id: call_london
+          content: rainy
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get the weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+        thinking:
+          type: enabled
+          clear_thinking: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - "620"
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 9b80217da10e78c8edbfbb04f0320cea
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            content: It's sunny in Paris and rainy in London.
+            reasoning_content: >-
+              The weather in Paris is sunny and the weather in London is rainy. I need to
+              combine both into one short sentence.
+            role: assistant
+        created: 1792179572
+        id: 202610170339294902354736aa45f5
+        model: glm-5.1
+        object: chat.completion
+        request_id: 202610170339294902354736aa45f5
+        usage:
+          completion_tokens: 36
+          completion_tokens_details:
+            reasoning_tokens: 25
+          prompt_tokens: 220
+          prompt_tokens_details:
+            cached_tokens: 0
+          total_tokens: 256
+  recorded_at: 2026-10-16T19:39:32.752804+00:00
