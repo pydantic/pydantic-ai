@@ -74,18 +74,20 @@ def issue_refund(order_id: str, amount: float) -> str:
 
 @DBOS.workflow()
 async def support_run(prompt: str) -> str:
+    await DBOS.set_event_async('state', {'status': 'running'})
     result = await agent.run(prompt)
     while isinstance(output := result.output, DeferredToolRequests):
         pending = {call.tool_call_id: call.args_as_dict() for call in output.approvals}
-        await DBOS.set_event_async('state', {'pending': pending})
+        await DBOS.set_event_async('state', {'status': 'awaiting_approval', 'pending': pending})
         approvals: dict[str, bool] | None = await DBOS.recv_async('approvals', timeout_seconds=7 * 24 * 3600)
         if approvals is None:  # nobody answered within a week
             approvals = {call_id: False for call_id in pending}
+        await DBOS.set_event_async('state', {'status': 'running'})
         result = await agent.run(
             conversation=result.conversation,
             deferred_tool_results=output.build_results(approvals=approvals),
         )
-    await DBOS.set_event_async('state', {'output': output})
+    await DBOS.set_event_async('state', {'status': 'done', 'output': output})
     return output
 
 
@@ -97,7 +99,7 @@ async def start_run(prompt: str) -> dict[str, str]:
 
 @app.get('/runs/{run_id}')
 async def get_run(run_id: str) -> dict[str, Any] | None:
-    return await DBOS.get_event_async(run_id, 'state', timeout_seconds=0)  # None while it works
+    return await DBOS.get_event_async(run_id, 'state', timeout_seconds=0)  # None until the workflow starts
 
 
 @app.post('/runs/{run_id}/approvals')
@@ -105,7 +107,7 @@ async def approve(run_id: str, approvals: dict[str, bool]) -> None:
     await DBOS.send_async(run_id, approvals, topic='approvals')
 ```
 
-Run it with `uvicorn production_service:app`, start a run with `POST /runs?prompt=...`, and approve or deny the pending refund with `POST /runs/{run_id}/approvals` and a body like `{"<tool_call_id>": true}`. Kill the server at any point and start it again: DBOS recovers the workflow, replays the model requests and tool calls that already finished from its database, and goes back to waiting for the approval if that is where it was. The HTTP requests only start, read and signal the workflow, so the run does not depend on any of them staying open. The sections below explain each piece and the alternatives.
+Run it with `uvicorn production_service:app`, start a run with `POST /runs?prompt=...`, read its status and any pending calls with `GET /runs/{run_id}`, and approve or deny the pending refund with `POST /runs/{run_id}/approvals` and a body like `{"<tool_call_id>": true}`. Kill the server at any point and start it again: DBOS recovers the workflow, replays the model requests and tool calls that already finished from its database, and goes back to waiting for the approval if that is where it was. The HTTP requests only start, read and signal the workflow, so the run does not depend on any of them staying open. The sections below explain each piece and the alternatives.
 
 ## What happens when the process crashes mid-run? {#crash}
 
@@ -290,4 +292,4 @@ An agent is a Python object in your process, so you deploy it the way you deploy
 - **A voice agent**: see [realtime deployment](realtime/deployment.md).
 - **An agent on a repository**: [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) run an agent on issues, pull requests or a schedule.
 
-Keep [model prices up to date](agent.md#keeping-model-prices-up-to-date) so cost limits and traces price new models, and pin your versions: Pydantic AI follows its [version policy](version-policy.md), and Pydantic AI Harness is on 0.x releases whose API may change between minor versions, with deprecation warnings and migration notes when it does.
+Keep [model prices up to date](agent.md#keeping-model-prices-up-to-date) so cost limits and traces price new models, and pin your versions: Pydantic AI follows its [version policy](version-policy.md), and Pydantic AI Harness is on [0.x releases](https://pydantic.dev/docs/ai/harness/#version-policy) whose API may change between minor versions.
