@@ -1259,6 +1259,16 @@ async def test_one_session_ends_its_own_plugins_before_the_process_ones(tmp_path
     assert harness.text.index('alpha stopped exit') < harness.text.index('shared stopped exit')
 
 
+async def test_the_last_session_closing_mid_turn_ends_process_plugins_after_it(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await harness.loader.load_all()
+    async with harness.loader.turn():
+        await harness.loader.close('exit')
+        assert 'shared stopped' not in harness.text, 'the running turn may still use it'
+    assert harness.text.count('shared stopped exit') == 1
+
+
 async def test_a_process_plugin_follows_the_session_being_handled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
