@@ -18,9 +18,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.messages import TextContent, UserPromptPart
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 
 _RECEIPT_MARKER = '[History before this point'
 """Prefix identifying a receipt part, for detection and de-accumulation across compactions."""

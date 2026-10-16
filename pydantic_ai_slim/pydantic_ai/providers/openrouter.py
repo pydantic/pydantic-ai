@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -204,6 +205,9 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 # `OpenRouterModel.supported_native_tools()` caps the effective set via the
                 # intersection in `Model.profile`.
                 supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                supports_cache=supports_cache_control,
+                # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
+                supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,
@@ -213,6 +217,11 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 # drops `reasoning` from the request and returns a response with no reasoning at all.
                 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
                 supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
+                # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
+                # writes. Other routed caches have no OpenRouter-level retention commitment.
+                # https://openrouter.ai/docs/features/prompt-caching
+                default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
         )
 

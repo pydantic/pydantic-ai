@@ -88,7 +88,8 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         del operation_id, cache_key
 
         bridge = current_bridge()
-        assert bridge is not None  # pragma: no cover - execution in a durable context guarantees a bridge
+        # Execution in a durable context guarantees a bridge.
+        assert bridge is not None
         return await bridge.run_step(name, body, config)
 
 

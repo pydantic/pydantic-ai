@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
-
-from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -43,7 +41,7 @@ except ImportError:  # pragma: no cover
     _api_key_sentinel = None
 
 
-_DEFAULT_VOICE_LIVE_API_VERSION = '2026-04-10'
+_DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
@@ -138,7 +136,11 @@ class AzureProvider(_OpenAICompatibleProvider):
                 is_mistral = profile_func is mistral_model_profile
                 break
         if base is None:
-            # OpenAI models are unprefixed.
+            # OpenAI models are unprefixed, and inherit their unset `default_cache_retention`: Azure
+            # retention likewise ranges from in-memory caching (typically 5-10 minutes, always within an
+            # hour) to 24-hour extended retention, which newer models use by default, so there is no
+            # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
+            # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
 
         # Azure Chat Completions API doesn't support document input.

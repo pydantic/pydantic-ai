@@ -10,12 +10,12 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import _cli, headless
 from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
-from pydantic_clai2.agent_import import import_agent
+from pydantic_clai2.cli import _cli, headless
+from pydantic_clai2.cli.agent_import import import_agent
 from pydantic_clai2.config import PluginSettings, Settings
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 
 _MODULE = 'clai_agent_flag_fixture'
 
@@ -128,7 +128,7 @@ def _plugin_sources(tmp_path: Path) -> tuple[SettingsStore, ProjectSettings]:
     store = SettingsStore(tmp_path / 'config.db')
     store.save_plugin(PluginSettings(id='saved', factory='clai_agent_flag_missing_plugin'))
     store.plugins_dir.mkdir(parents=True, exist_ok=True)
-    (store.plugins_dir / 'dropin.py').write_text('def activate(host):\n    raise RuntimeError("loaded")\n')
+    (store.plugins_dir / 'dropin.py').write_text('raise RuntimeError("loaded")\n')
     project = ProjectSettings(plugins=(PluginSettings(id='project', factory='clai_agent_flag_missing_project'),))
     return store, project
 

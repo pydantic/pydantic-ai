@@ -33,9 +33,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec, TypeVar
-
-from typing_extensions import Self
+from typing import Any, Literal, ParamSpec, Self, TypeVar
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import BinaryImage, ModelMessage, ToolReturn
@@ -47,7 +45,6 @@ from . import _invariants
 from ._invariants import SimulatedToolError
 from ._loop import SimulatedLoop, SimulationStuck
 from ._truth import GroundTruth
-from ._wire import SendFault
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -244,12 +241,6 @@ class Simulation(ABC):
         """What `usage.requests` should be, if not one per recorded response (a model reporting requests with usage)."""
         return None
 
-    @property
-    @abstractmethod
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        """`(frame, last frame read, fault)` for every send a fault failed."""
-        ...
-
     # --- lifecycle ------------------------------------------------------------------------------
 
     def start(self) -> Simulation:
@@ -314,12 +305,15 @@ class Simulation(ABC):
             self.consumer_error = e
         finally:
             self.receive_ended = True
+            self.receive_ended_at = self._now()
 
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.
 
     Usually with `consumer_error` set, but not when a send was the first to be told why it ended.
     """
+    receive_ended_at: int | None = None
+    """When the session's event stream ended, on the shared clock."""
 
     async def _play(self) -> None:
         assert self._player_wakeup is not None and self._view is not None
