@@ -2672,6 +2672,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
+            return self._process_response(response, settings, model_request_parameters)
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
@@ -2703,11 +2704,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 self._process_response(response, settings, model_request_parameters),
                 self._history_sha256_to_record(messages, settings),
             )
-
-        if isinstance(response, ModelResponse):
-            return response
-
-        return self._process_response(response, settings, model_request_parameters)
 
     def _history_sha256_to_record(
         self, messages: list[ModelRequest | ModelResponse] | list[ModelMessage], settings: OpenAIResponsesModelSettings
