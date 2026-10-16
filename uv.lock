@@ -4892,6 +4892,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/37/08c6d71d542b079364221fcbaee863ead900b53cd89db17f4bd0ec83f41a/openai-3.26.0-py3-none-any.whl", hash = "sha256:050597ff71ff4025177405a41fa4019d4f9feae5826645b63b8e35b6e9a3c88b", size = 2164504, upload-time = "2026-10-06T21:31:16.415Z" },
 ]
 
+[package.optional-dependencies]
+realtime = [
+    { name = "websockets" },
+]
+
 [[package]]
 name = "openapi-pydantic"
 version = "0.5.1"
@@ -6503,7 +6508,7 @@ openai-realtime = [
     { name = "websockets" },
 ]
 openai-responses-websocket = [
-    { name = "openai" },
+    { name = "openai", extra = ["realtime"] },
     { name = "tiktoken" },
     { name = "websockets" },
 ]
@@ -6602,6 +6607,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
+    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-responses-websocket'", specifier = ">=3.26.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
@@ -6631,7 +6637,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "websockets", marker = "extra == 'google-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
-    { name = "websockets", marker = "extra == 'openai-responses-websocket'", specifier = ">=14.0,<16" },
+    { name = "websockets", marker = "extra == 'openai-responses-websocket'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'xai-realtime'", specifier = ">=14.0" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },

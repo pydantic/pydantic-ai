@@ -2456,15 +2456,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         on the connection at a time; incomplete streams and cancellation close it.
 
         Install `pydantic-ai-slim[openai-responses-websocket]` to enable this method.
-        Standalone token counting and compaction continue to use HTTP. The extra pins
-        `websockets >=14,<16`, but it does not pin the openai SDK.
+        Standalone token counting and compaction continue to use HTTP.
 
         Args:
             extra_headers: Additional handshake headers, merged over the headers from
                 the model settings and the provider's client defaults.
             websocket_connection_options: Options for the underlying `websockets`
-                connection, typed against the openai SDK's `WebSocketConnectionOptions`
-                TypedDict; its shape can move with SDK releases.
+                connection, typed against the openai SDK's `WebSocketConnectionOptions` TypedDict.
 
         Returns:
             A clone of this model bound to the open WebSocket connection. The source
@@ -3101,22 +3099,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         expected_model_name: OpenAIModelName | None = None,
         expected_response_id: str | None = None,
-    ) -> StreamedResponse:
+    ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
             responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream
         ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            try:
-                first_chunk = await peekable_response.peek()
-            except ModelHTTPError as exc:
-                if self._websocket is not None and (
-                    model_response := _check_azure_content_filter(exc, self.client, self.system, self.model_name)
-                ):
-                    return _ModelResponseStreamedResponse(
-                        model_request_parameters=model_request_parameters, _model_response=model_response
-                    )
-                raise
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
@@ -3404,9 +3393,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
         profile = self.profile
-        span = current_model_request_span()
-        if span is not None:
-            span.set_attribute('pydantic_ai.transport', 'websocket' if self._websocket else 'http')
+        if self._websocket is not None and (span := current_model_request_span()) is not None:
+            span.set_attribute('pydantic_ai.transport', 'websocket')
 
         include = self._build_include(model_settings)
 

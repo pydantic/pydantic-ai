@@ -30,8 +30,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import SelectModel
-from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
@@ -51,7 +50,7 @@ from ..realtime.ws_cassettes import (
 with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
-    from openai import APIError, AsyncAzureOpenAI, AsyncOpenAI
+    from openai import APIError, AsyncOpenAI
     from openai._base_client import platform_headers
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
@@ -61,7 +60,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_codex import OpenAICodexModel
-    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
@@ -1036,7 +1034,7 @@ async def test_model_selection_uses_connected_model_at_the_selected_precedence(
         if span['attributes'].get('gen_ai.operation.name') == 'chat'
         and span['attributes'].get('gen_ai.request.model') == 'gpt-4o'
     ]
-    assert chat_transports == ['websocket', 'websocket', 'websocket', 'http']
+    assert chat_transports == ['websocket', 'websocket', 'websocket', None]
     caller_spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'caller span']
     assert len(caller_spans) == 1
     assert 'pydantic_ai.transport' not in caller_spans[0]['attributes']
@@ -1274,20 +1272,17 @@ async def test_failed_response_without_error(allow_model_requests: None, sockets
             await connected.request(messages, None, ModelRequestParameters())
 
 
-@pytest.mark.parametrize(
-    'provider_name,error_code', [('azure', 'content_filter'), ('openai', 'content_filter'), ('azure', 'invalid_test')]
-)
+@pytest.mark.parametrize('error_code', ['content_filter', 'invalid_test'])
 @pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize('api', ['agent', 'model'])
-async def test_content_filter(
+async def test_error_frame(
     allow_model_requests: None,
     sockets: SocketHarness,
-    provider_name: str,
     error_code: str,
     stream: bool,
     api: str,
 ):
-    """Azure prompt filtering preserves its response metadata and the agent's content-filter exception."""
+    """A WebSocket error frame keeps its HTTP status and provider body."""
     error: Frame = {
         'type': 'invalid_request_error',
         'code': error_code,
@@ -1301,26 +1296,10 @@ async def test_content_filter(
     socket.responses = deque([[{'type': 'error', 'status': 400, 'error': error}]])
     http_handler = Mock(return_value=httpx2.Response(401))
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler))
-    client: AsyncOpenAI
-    provider: AzureProvider | OpenAIProvider
-    if provider_name == 'azure':
-        azure_client = AsyncAzureOpenAI(
-            api_key='test',
-            api_version='2024-12-01-preview',
-            azure_endpoint='https://example.openai.azure.com/',
-            http_client=http_client,
-        )
-        client = azure_client
-        provider = AzureProvider(openai_client=azure_client)
-    else:
-        client = AsyncOpenAI(api_key='test', http_client=http_client)
-        provider = OpenAIProvider(openai_client=client)
-    source = OpenAIResponsesModel('gpt-4o', provider=provider)
-    filtered = provider_name == 'azure' and error_code == 'content_filter'
-    expected_error = (ContentFilterError if api == 'agent' else None) if filtered else ModelHTTPError
-    response: ModelResponse | None = None
+    client = AsyncOpenAI(api_key='test', http_client=http_client)
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
     async with client, source.connect() as connected:
-        with pytest.raises(expected_error) if expected_error is not None else nullcontext() as raised:
+        with pytest.raises(ModelHTTPError) as raised:
             if api == 'agent':
                 agent = Agent(connected)
                 if stream:
@@ -1334,29 +1313,10 @@ async def test_content_filter(
                     async with connected.request_stream(messages, None, ModelRequestParameters()) as streamed:
                         async for _ in streamed:
                             pass
-                        response = streamed.get()
                 else:
-                    response = await connected.request(messages, None, ModelRequestParameters())
-        if filtered:
-            if api == 'agent':
-                assert raised is not None and isinstance(raised.value, ContentFilterError)
-                assert raised.value.body is not None
-                message = ModelMessagesTypeAdapter.validate_json(raised.value.body)[-1]
-                assert isinstance(message, ModelResponse)
-                response = message
-            assert response is not None
-            assert response.parts == []
-            assert response.finish_reason == 'content_filter'
-            assert response.provider_name == 'azure'
-            assert response.provider_details == {
-                'finish_reason': 'content_filter',
-                'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
-                'transport': 'websocket',
-            }
-        else:
-            assert raised is not None and isinstance(raised.value, ModelHTTPError)
-            assert raised.value.status_code == 400
-            assert raised.value.body == error
+                    await connected.request(messages, None, ModelRequestParameters())
+        assert raised.value.status_code == 400
+        assert raised.value.body == error
         assert socket.close_count == 1
     assert socket.close_count == 1
     http_handler.assert_not_called()
