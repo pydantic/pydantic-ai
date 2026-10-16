@@ -7037,7 +7037,8 @@ The page the user is on.
         pytest.param('{"pydantic_ai": {"structured_content": {"0": "not a payload"}}}', id='not-a-payload'),
         pytest.param('{"pydantic_ai": {"structured_content": {"0": {"tag": "bad tag", "value": 1}}}}', id='invalid'),
         pytest.param(
-            '{"pydantic_ai": {"structured_content": {"x": {"value": 1}, "5": {"value": 1}}}}', id='no-such-item'
+            '{"pydantic_ai": {"structured_content": {"x": {"value": 1}, "\u00b2": {"value": 1}, "5": {"value": 1}}}}',
+            id='no-such-item',
         ),
     ],
 )

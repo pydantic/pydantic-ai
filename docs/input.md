@@ -194,7 +194,7 @@ print(UIStateContent(UIState(url='/products/42', cart_total=949.0)).content)
 
 `StructuredContent` is a [`TextContent`][pydantic_ai.TextContent], so code that reads the text of a prompt handles it like any other text. A [decision model](models/decision.md#structured-input) is the exception: it is sent the value itself when the prompt is a single `StructuredContent`. Code that rewrites the text of a prompt, such as a redaction step, should therefore replace the item with a plain `TextContent` holding the new text, as the harness's [guardrails](harness/guardrails.md) and [compaction](harness/compaction.md) do.
 
-The [Vercel AI](ui/vercel-ai.md#structured-content) and [AG-UI](ui/ag-ui.md#structured-content) adapters dump the item as ordinary text in the user message, which a frontend shows like any other user text, and carry its value in that message's metadata, so it loads back whole. The same goes for an item [enqueued mid-run](message-history.md#injecting-messages-mid-run) with `ctx.enqueue`, which accepts it like any other user content. Like `TextContent.metadata`, its `metadata` doesn't make the round-trip.
+The [Vercel AI](ui/vercel-ai.md#structured-content) and [AG-UI](ui/ag-ui.md#structured-content) adapters dump the item as ordinary text in the user message, which a frontend shows like any other user text, and carry its value in the metadata of that text part (Vercel AI) or message (AG-UI), so it loads back whole. The same goes for an item [enqueued mid-run](message-history.md#injecting-messages-mid-run) with `ctx.enqueue`, which accepts it like any other user content. Like `TextContent.metadata`, its `metadata` doesn't make the round-trip.
 
 
 ## User-side download vs. direct file URL

@@ -267,7 +267,7 @@ def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[int,
     entries = namespaced.get('structured_content') if namespaced is not None else None
     if not is_str_dict(entries):
         return {}
-    return {int(index): payload for index, payload in entries.items() if index.isdigit()}
+    return {int(index): payload for index, payload in entries.items() if index.isascii() and index.isdecimal()}
 
 
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
