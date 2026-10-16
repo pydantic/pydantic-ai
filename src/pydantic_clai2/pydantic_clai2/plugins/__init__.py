@@ -414,6 +414,25 @@ class TaskEvent:
     only the task changed, such as when it finished."""
 
 
+UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting']
+
+
+@dataclass(frozen=True, kw_only=True)
+class UpdateProgress:
+    """`/update` is installing a newer CLAI with uv.
+
+    `installing` comes first, then `output` for each line uv prints, then one of `failed` when uv fails,
+    `installed` when CLAI must be started again by hand, or `restarting` when CLAI is about to exit and
+    start the new build in its place.
+    """
+
+    stage: UpdateStage
+    target: str
+    """The version, or on the `main` channel the short commit, being installed."""
+    text: str = ''
+    """The line uv printed, for `output`."""
+
+
 @dataclass(kw_only=True)
 class PluginLoadFailed:
     """A plugin failed to load; delivered to loaded plugins after startup loading finishes."""
@@ -592,7 +611,15 @@ COMPLETION_LIMIT = 100
 """The most suggestions `PluginHost.complete` returns, as many as the editor shows."""
 
 HostEvent = (
-    SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | CommandEnd | PluginLoadFailed | TaskEvent
+    SessionStart
+    | SessionEnd
+    | TurnStart
+    | TurnEnd
+    | ConversationChanged
+    | CommandEnd
+    | PluginLoadFailed
+    | TaskEvent
+    | UpdateProgress
 )
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
@@ -981,6 +1008,9 @@ class Plugin(Generic[SettingsT, DepsT]):
         keep it cheap: the task waits for it.
         """
 
+    async def on_update_progress(self, event: UpdateProgress) -> None:
+        """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
+
     @property
     def has_configure(self) -> bool:
         """Whether this plugin offers a settings menu, by overriding `settings_menu` or `configure`."""
@@ -1007,6 +1037,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
     TaskEvent: 'on_task_event',
+    UpdateProgress: 'on_update_progress',
 }
 
 
