@@ -70,11 +70,26 @@ def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     return replace(tool_def, parameters_json_schema=schema)
 
 
-_Outcome = tuple[UserContent, ...] | BaseException
-"""What a finished background task hands to the run: the follow-up to deliver, or the error that ends the run."""
+_Outcome = tuple[UserContent, ...] | ToolRetryError | BaseException
+"""What a finished background task hands to the run: follow-up content, a retry, or an error."""
 
 
 def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
+    if isinstance(outcome, ToolRetryError):
+        tool_manager = ctx.tool_manager
+        if tool_manager is None:
+            raise outcome
+        tool_name = outcome.tool_retry.tool_name or ''
+        tool_def = tool_manager.get_tool_def(tool_name)
+        if tool_def is None:
+            raise outcome
+
+        # The issuing step may already have been replaced. Apply the retry budget to the
+        # current manager that will create the next model step.
+        tool_manager._check_max_retries(tool_def.name, tool_def.max_retries, outcome)
+        tool_manager.failed_tools.add(tool_def.name)
+        ctx.enqueue(outcome.tool_retry)
+        return
     if isinstance(outcome, BaseException):
         raise outcome
     ctx.enqueue(*outcome)
@@ -270,7 +285,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 await anyio.lowlevel.checkpoint_if_cancelled()
                 try:
                     result = await handler(args)
-                except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
+                except ToolRetryError as e:
+                    # A background tool can finish after the issuing run step has already
+                    # advanced. Preserve the structured retry so accounting is applied to
+                    # the current step when the outcome arrives.
+                    outcome = e
+                except (ApprovalRequired, CallDeferred, ToolFailedError) as e:
                     outcome = (
                         make_background_completion(
                             f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",
@@ -344,10 +364,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 result = await handler()
                 # Tasks still live after a deferred-tool pause or `run_stream()` are dropped.
                 self._task_group.cancel_scope.cancel()
-            # An error from a task that finished after the last node boundary still ends the run.
+            # A late retry still belongs to the current run's retry budget; other errors end the run.
             for outcome in self._arrived():
-                if isinstance(outcome, BaseException):
-                    raise outcome
+                _deliver(ctx, outcome)
         # `result` is bound: the group re-raises the run's own exception, and no task cancels the group.
         assert result is not None
         return result
