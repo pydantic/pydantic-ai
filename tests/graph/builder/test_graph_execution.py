@@ -653,6 +653,74 @@ async def test_reduce_first_value_discards_cancelled_siblings_intermediate_joins
     assert sorted(result) == [10, 11]
 
 
+async def test_join_waits_for_async_iterable_map_to_finish_streaming():
+    """A join whose parent fork is a map over an async iterable waits for every item, not just those streamed so far."""
+    g = GraphBuilder(output_type=list[int])
+    first_reduced = Event()
+
+    def reduce_and_signal(current: list[int], inputs: int) -> list[int]:
+        first_reduced.set()
+        return reduce_list_append(current, inputs)
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        async def items() -> AsyncIterator[int]:
+            yield 1
+            await first_reduced.wait()
+            yield 2
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    collect = g.join(reduce_and_signal, initial_factory=list[int], parent_fork_id='items')
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map(fork_id='items').to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert result == [1, 2]
+
+
+async def test_nested_empty_map_join_feeds_outer_join():
+    """The eagerly created join of an empty nested map still contributes its initial value to the outer join."""
+    g = GraphBuilder(output_type=list[list[int]])
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def inner(ctx: StepContext[None, None, int]) -> list[int]:
+        return [] if ctx.inputs == 2 else [ctx.inputs]
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    inner_join = g.join(reduce_list_append, initial_factory=list[int], parent_fork_id='inner_map')
+    outer_join = g.join(reduce_list_append, initial_factory=list[list[int]], parent_fork_id='outer_map')
+    g.add(
+        g.edge_from(g.start_node).to(outer),
+        g.edge_from(outer).map(fork_id='outer_map').to(inner),
+        g.edge_from(inner).map(fork_id='inner_map', downstream_join_id=inner_join.id).to(process),
+        g.edge_from(process).to(inner_join),
+        g.edge_from(inner_join).to(outer_join),
+        g.edge_from(outer_join).to(g.end_node),
+    )
+
+    result = await g.build().run()
+
+    assert sorted(result) == [[], [1]]
+
+
 async def test_independent_joins_finalize_while_other_tails_are_running():
     """Independent join tails can synchronize without blocking each other's finalization."""
     g = GraphBuilder(output_type=list[int])

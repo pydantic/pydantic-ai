@@ -746,16 +746,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     return
                                 await self._execute_overridden_tasks(join_tasks, maybe_overridden_result)
 
-                            if not self.active_tasks:  # pragma: no cover
+                            if not self.active_tasks:
                                 # if there are no active tasks, we'll be waiting forever for the next result..
                                 break
 
-                        # Defensive: a join's last input always comes from a task whose fork stack contains the
-                        # join's fork run, so the loop above finalizes it. If a join was somehow left behind with no
-                        # tasks running, finalize every join that isn't waiting on an intermediate join.
-                        while (join_tasks := self._pop_ready_join()) is not None:  # pragma: no cover
+                        # There are no active tasks, so finalize every join that isn't waiting on an intermediate
+                        # join. This catches joins that never received an item from a task in their fork run, like
+                        # the eagerly created join of an empty map.
+                        while (join_tasks := self._pop_ready_join()) is not None:
                             maybe_overridden_result = yield join_tasks
-                            if isinstance(maybe_overridden_result, EndMarker):
+                            if isinstance(maybe_overridden_result, EndMarker):  # pragma: no cover
+                                # Same handling as the mid-run join loop above, which is covered.
                                 if self.active_tasks:
                                     self.task_group.cancel_scope.cancel()
                                 return
@@ -1068,8 +1069,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             if fork_run_id in {x.node_run_id for x in t.fork_stack}:
                 if t.node_id in parent_fork.intermediate_nodes or t.node_id == join_id:
                     return False
-            else:
-                pass
+            elif t.node_id == parent_fork.fork_id:
+                # A map over an async iterable stays active while it streams items into its fork run.
+                return False
         return True
 
     async def _cancel_sibling_tasks(self, join_id: JoinID, parent_fork_id: ForkID, node_run_id: NodeRunID):
