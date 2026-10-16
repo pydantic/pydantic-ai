@@ -611,10 +611,9 @@ async def ask_agent(
                                     if event.args_valid is not None:
                                         pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result: a call that has to be retried would otherwise
-                                    # stay pending and pin its indicator for the rest of the run.
-                                    called = pending_calls.pop(event.tool_call_id, None) is not None
-                                    if called and event.part.outcome != 'retried':
+                                    # Pop on any result, a retried one included: it would otherwise stay
+                                    # pending and pin its indicator for the rest of the run.
+                                    if pending_calls.pop(event.tool_call_id, None) is not None:
                                         content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
                                 calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
                                 live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))

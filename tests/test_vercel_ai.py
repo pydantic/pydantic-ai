@@ -11853,7 +11853,7 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     loaded = reloaded.sanitize_messages(reloaded.messages)
     if manage_system_prompt == 'server':
         # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
-        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+        with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
             expected = sanitize_messages(server_history)
     else:
         expected = sanitize_messages(server_history, strip_system_prompts=False)
