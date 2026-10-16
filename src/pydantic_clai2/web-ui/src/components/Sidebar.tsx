@@ -6,6 +6,7 @@ import type { Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../p
 import { WorkersTree } from './WorkersTree'
 import { WorkspacesSection } from './WorkspacesSection'
 import {
+  ArchiveIcon,
   BranchIcon,
   ChevronIcon,
   ComposeIcon,
@@ -91,6 +92,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   ref,
 ) {
   const [query, setQuery] = useState('')
+  /** Whether archived sessions are listed too, muted, and searched. */
+  const [archived, setArchived] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [menu, setMenu] = useState<string | null>(null)
@@ -106,13 +109,13 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     // A search and the periodic refresh can overlap; only the latest request's answer is shown.
     const id = ++loading.current
     try {
-      const found = await api.sessions(query)
+      const found = await api.sessions(query, archived)
       if (id === loading.current) setProjects(found)
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
     }
-  }, [query, onError])
+  }, [query, archived, onError])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), query ? 150 : 0)
@@ -155,7 +158,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const row = (session: SessionEntry) => (
     <div
       key={session.id}
-      className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''}`}
+      className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
     >
       {renaming === session.id ? (
         <input
@@ -179,6 +182,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
           <span className={`state ${session.state}`} />
           <span className="session-title">{session.title}</span>
+          {session.archived && <span className="worktree-tag">archived</span>}
           {opening === session.id && <span className="spinner" aria-label="Opening" />}
           <span className="session-time">{session.state === 'running' ? '' : ago(session.updated_at)}</span>
         </button>
@@ -201,6 +205,17 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
           <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
           <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
+          {session.archived ? (
+            <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
+          ) : (
+            <button
+              disabled={session.current || session.state === 'running' || session.state === 'busy'}
+              title={session.current ? 'The open session cannot be archived' : 'Hide it; nothing is deleted'}
+              onClick={() => void act(() => api.archive(session.id))}
+            >
+              Archive
+            </button>
+          )}
           <button
             className="danger"
             disabled={session.current}
@@ -272,6 +287,18 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             }
           }}
         />
+        <button
+          className={`archived-toggle ${archived ? 'on' : ''}`}
+          onClick={(event) => {
+            event.preventDefault()
+            setArchived((on) => !on)
+          }}
+          title={archived ? 'Hide archived sessions' : 'Show and search archived sessions'}
+          aria-label="Archived"
+          aria-pressed={archived}
+        >
+          <ArchiveIcon size={14} />
+        </button>
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">

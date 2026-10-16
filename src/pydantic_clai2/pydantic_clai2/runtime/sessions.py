@@ -16,10 +16,12 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
+    ConversationConflict,
     ConversationSummary,
     SavedConversation,
     SqliteConversationStore,
     conversation_text,
+    ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
@@ -177,9 +179,11 @@ class Sessions(Generic[DepsT, OutputT]):
         self.session.check_workspace(imported.summary.workspace)
         return await save_import(self.store, imported)
 
-    async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
+    async def listing(
+        self, *, query: str = '', limit: int = 200, archived: bool | None = False
+    ) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
-        entries = await self.store.listing(query=query, limit=limit)
+        entries = await self.store.listing(query=query, limit=limit, archived=archived)
         self.namer.backfill(entries)
         return entries
 
@@ -224,6 +228,21 @@ class Sessions(Generic[DepsT, OutputT]):
             self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
         return copy
 
+    async def archive(self, conversation_id: str) -> ConversationSummary:
+        """Hide a saved conversation from listings, deleting nothing; not the current one, nor one running elsewhere."""
+        if conversation_id == self.session.conversation_id:
+            raise ValueError('The current session cannot be archived. Switch to another one first.')
+        source = (await self.store.get(conversation_id=conversation_id)).summary
+        try:
+            await run_sync(ensure_inactive, source)
+        except ConversationConflict as busy:
+            raise ValueError(f'{busy} A running session cannot be archived.') from busy
+        return await self.store.set_archived(conversation_id=conversation_id, archived=True)
+
+    async def unarchive(self, conversation_id: str) -> ConversationSummary:
+        """List an archived conversation again."""
+        return await self.store.set_archived(conversation_id=conversation_id, archived=False)
+
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.
 
@@ -240,7 +259,7 @@ class Sessions(Generic[DepsT, OutputT]):
 
     async def browse(self, source: ImportSource | None) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
-        entries: list[ConversationSummary] = [] if source else await self.store.listing()
+        entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=False)
         self.namer.backfill(entries)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
@@ -248,11 +267,18 @@ class Sessions(Generic[DepsT, OutputT]):
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
-        def listing(query: str, limit: int) -> list[ConversationSummary]:
-            saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
+        def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
+            saved: list[ConversationSummary] = (
+                []
+                if source
+                else apply(self.store.listing(query=query, limit=limit, archived=None if archived else False))
+            )
             return merge(saved, imports.listing(query, limit), limit=limit)
 
         retitled: dict[str, str] = {}
+
+        async def archive(source: ConversationSummary, archived: bool) -> None:
+            await (self.archive(source.id) if archived else self.unarchive(source.id))
 
         async def rename(source: ConversationSummary, title: str) -> None:
             await self._rename_saved(source, title)
@@ -268,6 +294,7 @@ class Sessions(Generic[DepsT, OutputT]):
                 preview=lambda session_id: apply(self._preview(session_id, imports=imports)),
                 delete=lambda source: apply(self._delete(source)),
                 rename=lambda source, title: apply(rename(source, title)),
+                archive=lambda source, archived: apply(archive(source, archived)),
                 # Saved sessions have a revision; one that is not yet imported has none.
                 importing=lambda entry: not entry.revision,
             ).run()

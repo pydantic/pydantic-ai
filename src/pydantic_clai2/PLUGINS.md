@@ -1218,7 +1218,9 @@ shell output, diffs), but not a background `/fork`'s, though it fires the turn m
 Command results come from `on_command_end` and history from `host.conversation`. The
 sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
 repository, then by checkout, with a session from a removed worktree under its repository by the
-checkout saved with it (`ConversationSummary.checkout`). Clicking a session sends `/resume ID`.
+checkout saved with it (`ConversationSummary.checkout`), archived ones left out unless its archive
+button is on (`GET /api/sessions?archived=true`; `POST /api/sessions/ID/archive` and `/unarchive`).
+Clicking a session sends `/resume ID`.
 Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
 directory (`host.sessions.follows_workspace`): `/resume ID` first changes CLAI's working directory
 to the one the session was saved in, reads that directory's `.clai/settings.json`, and loads every
@@ -1436,7 +1438,7 @@ The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the side
 **New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
 orchestrator is an agent of its own, separate from the session's: its own conversation, its own
 instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
-destroying one), and only the tools below plus `ask_user_question`. It has no shell, file, code
+destroying one, clean up saved sessions by archiving them), and only the tools below plus `ask_user_question`. It has no shell, file, code
 mode, or other CLAI tools, and the session's agent, in the terminal or the browser, gets none of
 these.
 
@@ -1460,6 +1462,13 @@ workspace has an **Open** link to its page, as the sidebar's Workspaces section 
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
+| `sessions_unarchive(ids)` | list them again |
+
+**Cleaning up sessions is archiving.** Archiving can be undone, so it needs no confirmation; the
+orchestrator is told to archive when asked to clean up or delete sessions, and that it cannot
+delete sessions or remove worktrees, which no tool does. Each change refreshes the sidebar.
 
 **Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
 orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
@@ -2500,9 +2509,12 @@ prompt the keyboard does:
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
   fails.
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
-  session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
+  session persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
-  refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
+  refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
+  from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
+  `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so does
+  resuming it. `listing(archived=True)` lists only archived sessions, `archived=None` both. As in `/resume`, a fork gets
   its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even

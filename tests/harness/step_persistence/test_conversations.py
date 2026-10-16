@@ -84,6 +84,43 @@ async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
         await store.delete(source=current)
 
 
+async def test_archiving_is_metadata_that_listing_filters(tmp_path: Path) -> None:
+    """Archiving keeps messages, revision, and activity time; a content save keeps the archive; it is reversible."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    kept = await store.save(summary=ConversationSummary(workspace='/a', title='Kept'), messages=[])
+    old = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Old'),
+        messages=[ModelRequest(parts=[UserPromptPart('old work')])],
+    )
+    archived = await store.set_archived(conversation_id=old.id, archived=True)
+    assert archived.archived_at is not None
+    assert replace(archived, archived_at=None) == old
+    assert (await store.set_archived(conversation_id=old.id, archived=True)) == archived, 'the first time is kept'
+    assert len((await store.get(conversation_id=old.id)).messages) == 1
+    assert [e.id for e in await store.listing(archived=False)] == [kept.id]
+    assert [e.id for e in await store.listing(archived=True)] == [old.id]
+    assert [e.id for e in await store.listing()] == [old.id, kept.id]
+    assert [e.id for e in await store.listing(query='old work', archived=True)] == [old.id]
+    # A writer holding the summary from before the archive does not take it back.
+    saved = await store.save(summary=old, messages=[])
+    assert saved.archived_at == archived.archived_at
+    restored = await store.set_archived(conversation_id=old.id, archived=False)
+    assert restored == replace(saved, archived_at=None)
+    assert [e.id for e in await store.listing(archived=False)] == [old.id, kept.id]
+    with pytest.raises(LookupError, match='No saved session'):
+        await store.set_archived(conversation_id='missing', archived=True)
+
+
+async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    with closing(sqlite3.connect(store.database)) as conn, conn:
+        conn.execute("UPDATE conversations SET metadata = json_remove(metadata, '$.archived_at')")
+    assert [e.id for e in await store.listing(archived=False)] == [saved.id]
+    assert await store.listing(archived=True) == []
+    assert (await store.get(conversation_id=saved.id)).summary == saved
+
+
 async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])

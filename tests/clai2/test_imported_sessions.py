@@ -543,10 +543,11 @@ def test_browser_marks_sessions_to_import() -> None:
         entries=entries,
         workspace='/w',
         active_id='',
-        refresh=lambda query, limit: entries,
+        refresh=lambda query, limit, archived: entries,
         preview=lambda session_id: '',
         delete=lambda entry: pytest.fail('not imported'),
         rename=lambda entry, title: pytest.fail('not imported'),
+        archive=lambda entry, archived: pytest.fail('not imported'),
         importing=lambda entry: True,
         output=StringIO(),
         key_source=lambda: next(keys),
@@ -559,6 +560,9 @@ def test_browser_marks_sessions_to_import() -> None:
     browser.notice = ''
     assert browser.handle_key('r') is None
     assert browser.mode == 'sessions' and browser.notice.startswith('Not imported yet.')
+    browser.notice = ''
+    assert browser.handle_key('a') is None
+    assert browser.notice.startswith('Not imported yet.')
     assert browser.handle_key(Key.ENTER) == 'claude'
 
 

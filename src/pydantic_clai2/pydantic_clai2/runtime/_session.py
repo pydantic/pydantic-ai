@@ -555,6 +555,10 @@ class Session(Generic[DepsT, OutputT]):
                 messages = interrupted_history(messages)
             summary = saved.summary
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if busy is None and summary.archived_at is not None:
+                # The session being worked in is listed again, so it is never hidden while open.
+                await self.conversations.set_archived(conversation_id=summary.id, archived=False)
+                summary = replace(summary, archived_at=None)
             if busy is not None:
                 summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
                 self._copy_repl(saved.summary.id, summary.id)

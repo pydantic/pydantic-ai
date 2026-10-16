@@ -1,7 +1,7 @@
 """The orchestrator: an agent of its own in the web UI, which runs workspaces for the user.
 
-It has its own conversation and only the tools in `workspace_tools`, plus `ask_user_question`, answered
-in its own chat. The session's agent gets none of them. Its conversation is one JSON file in CLAI's state
+It has its own conversation and only the tools in `workspace_tools` and `session_tools`, plus
+`ask_user_question`, answered in its own chat. The session's agent gets none of them. Its conversation is one JSON file in CLAI's state
 directory, so it survives a reload and a restart, and never shows among the saved sessions.
 """
 
@@ -172,16 +172,21 @@ class Orchestrator:
             self._send(message)
 
     def agent(self) -> Agent[None, str]:
-        """The orchestrator's agent, made on first use: the workspace tools and `ask_user_question`, nothing else."""
+        """The orchestrator's agent, made on first use: the workspace and session tools and `ask_user_question`."""
         if self._agent is None:
+            from pydantic_clai2.builtin_plugins.web import session_tools
             from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
 
             self._tools = WorkspaceTools(self.host)
+            sessions = session_tools.SessionTools(self.host, publish=self._publish)
             self._agent = Agent(
                 name='orchestrator',
                 deps_type=type(None),
-                instructions=INSTRUCTIONS,
-                capabilities=[Capability[None](tools=self._tools.tools()), AskUser[None](answerer=self.answerer)],
+                instructions=[INSTRUCTIONS, session_tools.INSTRUCTIONS],
+                capabilities=[
+                    Capability[None](tools=[*self._tools.tools(), *sessions.tools()]),
+                    AskUser[None](answerer=self.answerer),
+                ],
             )
         return self._agent
 

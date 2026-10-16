@@ -1964,6 +1964,12 @@ same name remain separate and use paths to distinguish them. Transcript previews
 keep the original saved path; resuming does not change directories or migrate
 saved data.
 
+In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
+the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
+marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
+session and one running in another CLAI cannot be archived. Resuming an archived
+session unarchives it.
+
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
 replacement immediately, even if you exit before another prompt. `/new` switches
