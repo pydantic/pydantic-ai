@@ -311,8 +311,12 @@ still propagate.
 
 ```python
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
-from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction import CannotSummarizeError
+from pydantic_ai_harness import (
+    CannotSummarizeError,
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+)
 
 fallback = FallbackCompaction(
     max_fraction=0.85,

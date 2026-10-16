@@ -119,7 +119,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[SummarizingCompaction(max_fraction=0.85, keep_tokens=50_000, keep_fraction=0.4)],
 )
 ```
@@ -262,8 +262,12 @@ Register it directly when summarization should fall back to deterministic trunca
 
 ```python
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
-from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction import CannotSummarizeError
+from pydantic_ai_harness import (
+    CannotSummarizeError,
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+)
 
 fallback = FallbackCompaction(
     max_fraction=0.85,
