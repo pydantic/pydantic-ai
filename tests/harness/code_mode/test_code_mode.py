@@ -2609,6 +2609,35 @@ class TestCodeMode:
         assert rv[1].data == image_bytes
         assert rv[2] == 'caption'
 
+    async def test_tool_return_content_is_preserved(self) -> None:
+        """ToolReturn.content must survive the CodeMode nesting boundary separately from return_value."""
+        image_bytes = b'\\x89PNG content'
+
+        def screenshot() -> Any:
+            return ToolReturnMsg(
+                return_value='screenshot-id',
+                content=[BinaryContent(data=image_bytes, media_type='image/png'), 'approval-context'],
+            )
+
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(screenshot))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+
+        result = await wrapper.call_tool(
+            'run_code',
+            {'code': 'await screenshot()'},
+            ctx,
+            tools['run_code'],
+        )
+
+        assert result.return_value == 'screenshot-id'
+        assert isinstance(result.content, list)
+        assert isinstance(result.content[0], BinaryContent)
+        assert result.content[0].data == image_bytes
+        assert result.content[1] == 'approval-context'
+
+
     async def test_tool_returning_tool_return_with_binary_content(self) -> None:
         """A tool that wraps a BinaryContent in a ToolReturn has the image properly unwrapped
         and returned as native multimodal content."""
