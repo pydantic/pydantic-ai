@@ -130,8 +130,10 @@ async def test_tool_round_and_followup_turn(
             if realtime_recording:  # pragma: no cover
                 await anyio.sleep(5)
             # The session counts a report into `usage` as it arrives, and into the window fraction just after, which
-            # has usually happened by now (so the wait is excluded from coverage).
-            while session.context_window_used != _TURN_TWO_CONTEXT_TOKENS / _CONTEXT_LIMIT_TOKENS:  # pragma: no cover
+            # may or may not have happened by now (so whether the wait runs is left to timing).
+            while (
+                session.context_window_used != _TURN_TWO_CONTEXT_TOKENS / _CONTEXT_LIMIT_TOKENS
+            ):  # pragma: lax no cover
                 await anyio.sleep(0.05)
 
     # No server-side rejection (a bad override or tool mismatch closes the socket with 1008 and
