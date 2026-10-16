@@ -301,6 +301,14 @@ Key by key:
   the form its [templating reference](https://github.github.com/gh-aw/reference/templating/)
   documents for prompts (`.title` and `.body` expose the two halves separately).
 
+**Skipping the agent from a step.** A `steps:` or `pre-agent-steps:` entry can decide that
+a run has nothing to do by appending `{"type":"noop","message":"..."}` to
+`$GH_AW_SAFE_OUTPUTS`. The engine reads that file before it starts CLAI 2 and exits with
+status 0 when it finds a `noop`, so no model request is made. gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. When a search query can express the condition, `skip-if-match` or
+`skip-if-no-match` also avoids scheduling the agent job.
+
 The compile error you get from a missing `imports:` line carries a tip naming
 `github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
 copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
