@@ -226,9 +226,13 @@ class WebService:
             return  # Counting a watcher tells the live sessions, which call `live_changed` again.
         self._following = True
         try:
-            held = {name: channel for channel in self.channels() for name in (channel.id, channel.shown)}
-            shown = {self._default_id()} if client.watching is None else client.watching
-            wanted = {held[name].session.id: held[name] for name in shown if name in held}
+            if client.watching is None:
+                wanted = {} if (default := self._default()) is None else {default.session.id: default}
+            else:
+                # By the conversation browsers were last shown: one a session switched to but this plugin
+                # has not heard of yet is followed after `conversation_changed`, which sends its snapshot.
+                held = {channel.shown: channel for channel in self.channels()}
+                wanted = {held[name].session.id: held[name] for name in client.watching if name in held}
             for live_id in client.unwatch.keys() - wanted.keys():
                 client.unwatch.pop(live_id)()
             for live_id, channel in wanted.items():

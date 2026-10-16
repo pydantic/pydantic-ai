@@ -391,12 +391,14 @@ def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
     history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')]), ModelResponse(parts=[TextPart('hello')])]
     summary = ConversationSummary(workspace=str(fleet.folder('saved')), title='Saved')
     saved = fleet.portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
-    with fleet.socket() as socket:
+    with fleet.socket() as socket, fleet.socket() as legacy:
         connected(socket)
+        connected(legacy)
         watch(socket, saved.id)  # Not live yet: followed once it opens.
         assert fleet.post(f'/api/sessions/{saved.id}/open').json() == {'id': saved.id}
         snapshot = messages(socket, until=snapshot_of(saved.id))[-1]
-        assert fleet.service.session(saved.id).session.watchers == 1
+        messages(legacy, until=snapshot_of(saved.id))  # It follows the default, now the opened one.
+        assert fleet.service.session(saved.id).session.watchers == 2
         assert [at(snapshot, 'items', index, 'text') for index in range(2)] == ['hi', 'hello'], (
             'the page follows what it opened'
         )
