@@ -501,8 +501,8 @@ class Remote:
         self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
     ) -> MenuEdited:
         """One edit, printed in the terminal too, after which every page reads the settings again."""
-        menu = await to_thread.run_sync(self._command_menu, name)
         async with self._command_edits:
+            menu = await to_thread.run_sync(self._command_menu, name)
             try:
                 messages = await edit(menu)
             finally:

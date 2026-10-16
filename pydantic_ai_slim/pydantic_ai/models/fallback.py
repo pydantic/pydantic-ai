@@ -33,14 +33,6 @@ from . import (
     StreamedResponse,
     infer_model,
 )
-from ._request_timeout import (
-    RequestDeadline,
-    carried_deadline,
-    carry_deadline,
-    enforce_request_deadline,
-    start_request_deadline,
-    stream_under_deadline,
-)
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponseStreamEvent
@@ -273,12 +265,10 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
             start = AttemptStart()
-            deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                with enforce_request_deadline(deadline):
-                    response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
+                response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if not await self._should_fallback(exc):
@@ -298,7 +288,6 @@ class FallbackModel(Model):
             else:
                 if response.state == 'suspended':
                     _stamp_continuation(response, pinned)
-                    carry_deadline(response, deadline)
                 self._set_span_attributes(pinned, prepared_parameters)
                 return response
 
@@ -309,9 +298,7 @@ class FallbackModel(Model):
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                deadline = start_request_deadline(model, model_settings)
-                with enforce_request_deadline(deadline):
-                    response = await model.request(prepared_messages, model_settings, model_request_parameters)
+                response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if await self._should_fallback(exc):
@@ -336,7 +323,6 @@ class FallbackModel(Model):
                 _stamp_replace_previous(response)
             if response.state == 'suspended':
                 _stamp_continuation(response, model)
-                carry_deadline(response, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -376,13 +362,12 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
                 start = AttemptStart()
-                deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         _request_stream_until_first_event(
-                            pinned, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+                            pinned, prepared_messages, model_settings, model_request_parameters, run_context
                         )
                     )
                 except Exception as exc:
@@ -408,7 +393,6 @@ class FallbackModel(Model):
                     # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
-                        carry_deadline(streamed_response, deadline)
                     return
 
         if self._response_handlers:
@@ -427,10 +411,9 @@ class FallbackModel(Model):
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                    deadline = start_request_deadline(model, model_settings)
                     streamed_response = await stack.enter_async_context(
                         _request_stream_until_first_event(
-                            model, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+                            model, prepared_messages, model_settings, model_request_parameters, run_context
                         )
                     )
                 except Exception as exc:
@@ -458,7 +441,6 @@ class FallbackModel(Model):
                 # caller has consumed the stream, so callers must call `get()` after the context exits.
                 if streamed_response.state == 'suspended':
                     _stamp_continuation(streamed_response, model)
-                    carry_deadline(streamed_response, deadline)
                 return
 
         _raise_fallback_exception_group(exceptions, [], attempts)
@@ -499,10 +481,6 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
-
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        # Each model it tries gets a fresh deadline of its own instead.
-        return None
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """A fallback model can't know which model will serve the request, so no retention is claimed."""
@@ -612,24 +590,9 @@ class FallbackModel(Model):
             )
 
 
-def _pinned_request_deadline(
-    suspended_response: ModelResponse, model: Model, model_settings: ModelSettings | None
-) -> RequestDeadline | None:
-    """The deadline of a continuation segment for the model the suspended response is pinned to.
-
-    What's left of the deadline that model got when it was picked carries over, so the continuation stays one request
-    to it. A nested `FallbackModel` gets none, as it carries over the deadline of the model it picked itself.
-    """
-    deadline = start_request_deadline(model, model_settings)
-    if deadline is not None and (expires_at := carried_deadline(suspended_response)) is not None:
-        return deadline.until(expires_at)
-    return deadline
-
-
 @asynccontextmanager
 async def _request_stream_until_first_event(
     model: Model,
-    deadline: RequestDeadline | None,
     messages: list[ModelMessage],
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
@@ -641,12 +604,9 @@ async def _request_stream_until_first_event(
     like an OpenAI Responses `response.failed` after `response.created`, or a Bedrock throttling
     error as the first stream event. Waiting for the first event means such an error is raised here,
     inside the candidate's own stream context, where `FallbackModel` can still move on to the next
-    model. The event is replayed to the consumer, so the stream it gets is unchanged. The stream is opened under
-    `deadline`, so waiting for the first event counts towards it like every event after it.
+    model. The event is replayed to the consumer, so the stream it gets is unchanged.
     """
-    async with stream_under_deadline(
-        deadline, model.request_stream(messages, model_settings, model_request_parameters, run_context)
-    ) as response:
+    async with model.request_stream(messages, model_settings, model_request_parameters, run_context) as response:
         events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
             PeekableAsyncStream(aiter(response))
         )

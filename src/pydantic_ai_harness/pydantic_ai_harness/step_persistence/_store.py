@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -27,7 +28,6 @@ from pydantic_ai_harness.media import (
     externalize_media,
     restore_media,
 )
-from pydantic_ai_harness.step_persistence._messages import keyed_messages
 from pydantic_ai_harness.step_persistence._types import (
     ContinuableSnapshot,
     EventKind,
@@ -350,12 +350,15 @@ _STORED_MESSAGES_ADAPTER: TypeAdapter[_StoredMessages] = TypeAdapter(_StoredMess
 
 def _store_messages(conn: sqlite3.Connection, snapshot_seq: int, messages: list[object]) -> None:
     """Store the messages `snapshot_messages` lacks and reference each from the snapshot, in order."""
-    keyed = keyed_messages(messages)
-    conn.executemany('INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', keyed)
-    conn.executemany(
-        'INSERT INTO snapshot_message_refs (snapshot_seq, position, sha256) VALUES (?, ?, ?)',
-        [(snapshot_seq, position, sha256) for position, (sha256, _) in enumerate(keyed)],
-    )
+    rows: list[tuple[str, str]] = []
+    refs: list[tuple[int, int, str]] = []
+    for position, message in enumerate(messages):
+        text = json.dumps(message, sort_keys=True, separators=(',', ':'))
+        sha256 = hashlib.sha256(text.encode()).hexdigest()
+        rows.append((sha256, text))
+        refs.append((snapshot_seq, position, sha256))
+    conn.executemany('INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', rows)
+    conn.executemany('INSERT INTO snapshot_message_refs (snapshot_seq, position, sha256) VALUES (?, ?, ?)', refs)
 
 
 @contextmanager

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { MenuField } from '../protocol'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, BrainIcon, PuzzleIcon, SlidersIcon } from './icons'
+import { BackIcon, BrainIcon, KeyIcon, PuzzleIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -37,7 +37,20 @@ export const SECTIONS = [
     hint: 'Turn plugins on and off and edit their settings, as /plugins does.',
     commands: [],
   },
+  {
+    id: 'keys',
+    label: 'Keys & accounts',
+    icon: KeyIcon,
+    hint: 'Saved API keys and signed-in accounts, as /keys and /accounts manage them. Secrets never leave CLAI.',
+    commands: ['keys', 'login', 'accounts'],
+  },
 ] as const satisfies readonly Section[]
+
+/** The Keys & accounts section's cards: each the declared menu of a command. */
+const KEYS_MENUS = [
+  { command: 'keys', title: 'API keys' },
+  { command: 'accounts', title: 'Accounts' },
+] as const
 
 export type SettingsSection = (typeof SECTIONS)[number]['id']
 
@@ -142,6 +155,23 @@ export function SettingsWindow({
               onError={onError}
               onNotice={onNotice}
             />
+          )}
+          {section === 'keys' && (
+            <div className="settings-groups">
+              {KEYS_MENUS.map(({ command, title }) => (
+                <section key={command} className="settings-group">
+                  <h3 className="settings-group-title">{title}</h3>
+                  <div className="settings-card">
+                    <MenuForm
+                      target={{ kind: 'commands', name: command }}
+                      version={settingsVersion}
+                      onError={onError}
+                      onNotice={onNotice}
+                    />
+                  </div>
+                </section>
+              ))}
+            </div>
           )}
           {section === 'plugins' && (
             <PluginsPanel

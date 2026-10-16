@@ -273,11 +273,13 @@ function Control({
 }) {
   const [other, setOther] = useState(false)
   if (field.action) {
+    // A row with nothing to show, such as one that adds something, opens rather than changes.
+    const verb = field.value || field.secret ? 'Change' : 'Open'
     return (
       <div className="setting-action">
         <span className="setting-current">{field.secret ? '' : label(field.value)}</span>
-        <button id={id} className="ghost small" disabled={disabled} onClick={onAction} aria-label={`Change ${field.label}`}>
-          Change…
+        <button id={id} className="ghost small" disabled={disabled} onClick={onAction} aria-label={`${verb} ${field.label}`}>
+          {verb}…
         </button>
       </div>
     )
