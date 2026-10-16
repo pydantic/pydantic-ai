@@ -443,6 +443,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsNow(tz=datetime.UTC),

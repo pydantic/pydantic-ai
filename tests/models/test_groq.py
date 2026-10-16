@@ -400,6 +400,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5385,6 +5386,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='validation_error',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5539,6 +5541,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='validation_error',
                     )
                 ],
                 timestamp=IsDatetime(),

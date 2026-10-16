@@ -828,6 +828,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='model_retry',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -913,6 +914,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='model_retry',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -996,6 +998,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='validation_error',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1084,6 +1087,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='model_retry',
                         )
                     ],
                     timestamp=IsDatetime(),

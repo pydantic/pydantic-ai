@@ -1703,6 +1703,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -1882,6 +1883,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2331,6 +2333,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 instructions='this is the system prompt',

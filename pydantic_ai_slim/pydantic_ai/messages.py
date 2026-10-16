@@ -1774,6 +1774,26 @@ class ToolReturnPart(BaseToolReturnPart):
 
     _: KW_ONLY
 
+    cause: Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None = None
+    """Why the call has to be made again, when `outcome` is `'retried'`; `None` for any other outcome.
+
+    - `'validation_error'`: the call's arguments, or an output tool's result, failed validation.
+    - `'model_retry'`: the tool, its `args_validator`, a tool hook, or a
+      [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler raised
+      [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the call timed out.
+    - `'unknown_tool'`: the model called a tool name that doesn't exist.
+    - `'unavailable_tool'`: the tool exists but can't be called at this step, e.g. it hasn't been
+      revealed by tool search or its capability hasn't been loaded.
+
+    The last two are rejected before the tool is resolved or run, so this is how to tell them apart
+    from a retry the tool itself asked for without matching on `content`. A retry loaded from a
+    history recorded before this field existed carries `None` unless its content says it was a
+    validation error.
+
+    Metadata for your code only: it is never sent to the model, so it doesn't change the request or
+    the provider's prompt cache.
+    """
+
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -2195,6 +2215,8 @@ def _translate_legacy_retry_part(
             tool_call_id=fields.get('tool_call_id') or _generate_tool_call_id(),
             timestamp=timestamp,
             outcome='retried',
+            # A message alone can't say whether the tool, a hook or the tool manager asked for the retry.
+            cause=None if isinstance(content, str) else 'validation_error',
         )
     return RetryFeedbackPart(
         content=content,

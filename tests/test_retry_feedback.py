@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    FunctionToolResultEvent,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -52,7 +53,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
@@ -60,7 +61,15 @@ from pydantic_ai.ui._adapter import retry_feedback_from_payload, retry_feedback_
 
 from ._inline_snapshot import snapshot
 from .cassette_utils import request_json
-from .conftest import IsDatetime, IsStr, RequestCapture, legacy_retry_prompt_part, message_part, try_import
+from .conftest import (
+    IsDatetime,
+    IsStr,
+    RequestCapture,
+    iter_message_parts,
+    legacy_retry_prompt_part,
+    message_part,
+    try_import,
+)
 from .models.conftest import json_objects
 
 with try_import() as openai_imports_successful:
@@ -491,6 +500,7 @@ async def test_a_legacy_retry_prompt_part_is_translated_to_the_part_it_always_me
                 tool_call_id='call_1',
                 timestamp=IsDatetime(),
                 outcome='retried',
+                cause='validation_error',
             ),
             SystemPromptPart(content='the answer has to be a number', timestamp=IsDatetime()),
             UserPromptPart(
@@ -524,6 +534,7 @@ Your previous response failed the application's validation (this is automated fe
                 tool_call_id='call_1',
                 timestamp=IsDatetime(),
                 outcome='retried',
+                cause='validation_error',
             ),
             UserPromptPart(content='<system>the answer has to be a number</system>', timestamp=IsDatetime()),
             UserPromptPart(
@@ -955,6 +966,7 @@ async def test_legacy_retry_prompt_part_handed_back_through_deferred_results():
                 tool_call_id='buy_pear',
                 timestamp=IsDatetime(),
                 outcome='retried',
+                cause='model_retry',
             )
         ]
     )
@@ -1492,6 +1504,7 @@ def test_a_stored_retry_prompt_part_loads_as_the_part_it_meant():
                 tool_call_id='call_1',
                 timestamp=IsDatetime(),
                 outcome='retried',
+                cause='validation_error',
             ),
             RetryFeedbackPart(
                 content='answer with the number spelled out', cause='model_retry', timestamp=IsDatetime()
@@ -1646,3 +1659,103 @@ async def test_a_retry_prompt_part_in_a_passed_history_reaches_the_model_transla
 
 
 # endregion
+
+
+_RETRY_CAUSE_CASES: dict[str, tuple[str, dict[str, Any]]] = {
+    'unknown_tool': ('ghost_tool', {}),
+    'unavailable_tool': ('hidden_tool', {}),
+    'validation_error': ('count_things', {'count': 'lots'}),
+    'model_retry': ('flaky_tool', {}),
+}
+
+
+@pytest.mark.parametrize('cause', list(_RETRY_CAUSE_CASES))
+async def test_a_retried_tool_return_records_why_it_was_retried(cause: str):
+    """Each way a tool call is retried is recorded on the retried return, in history and in the event stream.
+
+    The two the tool manager rejects before running anything, an unknown name and a tool that isn't
+    available yet, are the ones a capability can't see through any tool hook, so `cause` is how an
+    audit tells them apart from a retry the tool asked for.
+    """
+    tool_name, args = _RETRY_CAUSE_CASES[cause]
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, args, tool_call_id='call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        [part] = respond(messages, info).parts
+        if isinstance(part, TextPart):
+            yield part.content
+        else:
+            assert isinstance(part, ToolCallPart)
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id='call_1')}
+
+    agent = Agent(FunctionModel(respond, stream_function=stream))
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:
+        return 'secret'  # pragma: no cover
+
+    @agent.tool_plain
+    def count_things(count: int) -> int:
+        return count  # pragma: no cover
+
+    @agent.tool_plain
+    def flaky_tool() -> str:
+        raise ModelRetry('try again later')
+
+    result = await agent.run('go')
+    [retried] = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
+    assert (retried.tool_name, retried.cause) == (tool_name, cause)
+
+    async with agent.run_stream_events('go') as stream_events:
+        events = [event async for event in stream_events]
+    [result_event] = [event for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert isinstance(result_event.part, ToolReturnPart)
+    assert (result_event.part.outcome, result_event.part.cause) == ('retried', cause)
+
+
+async def test_a_successful_or_failed_tool_return_has_no_cause():
+    """`cause` is only set on a retry."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def works() -> str:
+        return 'ok'
+
+    result = await agent.run('go')
+    returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+    assert [(part.outcome, part.cause) for part in returns] == [('success', None)]
+
+
+@openai_installed
+async def test_a_retried_tool_returns_cause_never_reaches_the_model(allow_model_requests: None):
+    """`cause` is metadata for the application: the request bytes are the same with or without it."""
+
+    def sent(cause: Literal['unknown_tool'] | None) -> list[Any]:
+        return [
+            ModelRequest(parts=[UserPromptPart(content='go')]),
+            ModelResponse(parts=[ToolCallPart('ghost_tool', {}, tool_call_id='c1')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        'ghost_tool', 'Unknown tool name.', tool_call_id='c1', outcome='retried', cause=cause
+                    )
+                ]
+            ),
+        ]
+
+    bodies: list[Any] = []
+    for cause in ('unknown_tool', None):
+        mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+        await model.request(model.prepare_messages(sent(cause)), None, ModelRequestParameters())
+        bodies.append(get_mock_chat_completion_kwargs(mock_client)[0]['messages'])
+
+    assert bodies[0] == bodies[1]

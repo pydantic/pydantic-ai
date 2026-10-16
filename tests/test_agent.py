@@ -383,6 +383,7 @@ def test_result_pydantic_model_retry():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='validation_error',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -503,6 +504,7 @@ def test_output_validator():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -682,6 +684,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -710,6 +713,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -738,6 +742,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -766,6 +771,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -794,6 +800,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -909,6 +916,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -937,6 +945,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -965,6 +974,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -993,6 +1003,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1885,6 +1896,7 @@ def test_output_type_function_with_retry():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4467,6 +4479,7 @@ def test_unknown_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='unknown_tool',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4568,6 +4581,7 @@ def test_unknown_tool_fix():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='unknown_tool',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4621,6 +4635,7 @@ def test_unknown_tool_multiple_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='unknown_tool',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4643,6 +4658,7 @@ def test_unknown_tool_multiple_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='unknown_tool',
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -6168,6 +6184,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
+                            cause='unknown_tool',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -6289,6 +6306,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
+                            cause='unknown_tool',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -6456,6 +6474,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
+                            cause='model_retry',
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
@@ -6631,6 +6650,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
+                            cause='model_retry',
                         ),
                     ],
                     timestamp=IsNow(tz=UTC),
@@ -6797,6 +6817,7 @@ class TestMultipleToolCalls:
                             tool_call_id='first',
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='validation_error',
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
@@ -6983,6 +7004,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='model_retry',
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
@@ -7088,6 +7110,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
+                            cause='model_retry',
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
@@ -9388,6 +9411,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'metadata': None,
                     'timestamp': IsStr(),
                     'outcome': 'retried',
+                    'cause': 'validation_error',
                     'part_kind': 'tool-return',
                 }
             ],

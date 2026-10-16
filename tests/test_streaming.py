@@ -3673,6 +3673,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
+                            cause='unknown_tool',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3789,6 +3790,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
+                            cause='unknown_tool',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -4116,6 +4118,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
+                            cause='model_retry',
                         ),
                     ],
                     timestamp=IsNow(tz=datetime.UTC),
@@ -4840,6 +4843,7 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
+                    cause='unknown_tool',
                 ),
             ),
             FunctionToolResultEvent(
@@ -4951,6 +4955,7 @@ async def test_output_tool_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
+                    cause='validation_error',
                 )
             ),
             OutputToolCallEvent(
@@ -6084,6 +6089,7 @@ async def test_args_validator_failure_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
+                    cause='model_retry',
                 ),
             ),
             PartStartEvent(

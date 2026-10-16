@@ -112,6 +112,7 @@ try:
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
+        parse_encrypted_retry_cause,
         parse_encrypted_retry_feedback,
         parse_encrypted_tool_kind,
         rehydrate_tool_return_content,
@@ -581,8 +582,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
                     )
+                    cause = None
                     if encrypted_outcome is not None:
                         outcome = encrypted_outcome
+                        if outcome == 'retried':
+                            cause = parse_encrypted_retry_cause(tool_msg.encrypted_value)
                     elif tool_msg.error is not None:
                         outcome = 'failed'
                     else:
@@ -615,6 +619,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
                                 outcome=outcome,
+                                cause=cause,
                             )
                         )
 
@@ -810,7 +815,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied'
                         else None,
                         **tool_kind_encrypted_value_kwargs(
-                            part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
+                            part.tool_kind, outcome=part.outcome, cause=part.cause, supported=use_encrypted_value
                         ),
                     )
                 )
@@ -854,7 +859,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_call_id=translated.tool_call_id,
                             error=translated.model_response_str(wrap_if_error=False),
                             **tool_kind_encrypted_value_kwargs(
-                                translated.tool_kind, outcome=translated.outcome, supported=use_encrypted_value
+                                translated.tool_kind,
+                                outcome=translated.outcome,
+                                cause=translated.cause,
+                                supported=use_encrypted_value,
                             ),
                         )
                     )

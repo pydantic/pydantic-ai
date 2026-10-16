@@ -100,11 +100,20 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+class _UnknownTool(ModelRetry):
+    """A `ModelRetry` refusing a call to a tool name that doesn't exist.
+
+    A distinct type only so the retried result can record `cause='unknown_tool'`; it reaches the
+    model as an ordinary retry, exactly like the `ModelRetry` it replaced.
+    """
+
+
 class _ToolUnavailable(ModelRetry):
     """A `ModelRetry` refusing a call because the tool is not available yet.
 
-    A distinct type only so `_make_validation_failure` can recognise it. It
-    reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+    A distinct type only so `_make_validation_failure` can recognise it and the retried result can
+    record `cause='unavailable_tool'`. It reaches the model as an ordinary retry, exactly like the
+    `ModelRetry` it replaced.
 
     Carries the tool it refused: the refusal is raised while resolving, before the caller has
     bound the resolved tool, and the budget this failure is charged against is the tool's own
@@ -315,7 +324,16 @@ class ToolManager(Generic[AgentDepsT]):
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
-        return ToolRetryError(build_retried_tool_return(error, tool_name=name, tool_call_id=call.tool_call_id))
+        cause = (
+            'unknown_tool'
+            if isinstance(error, _UnknownTool)
+            else 'unavailable_tool'
+            if isinstance(error, _ToolUnavailable)
+            else None
+        )
+        return ToolRetryError(
+            build_retried_tool_return(error, tool_name=name, tool_call_id=call.tool_call_id, cause=cause)
+        )
 
     @staticmethod
     def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
@@ -561,7 +579,7 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
-            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+            raise _UnknownTool(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
             raise _ToolUnavailable(unavailable, tool)
         return name, tool

@@ -1180,6 +1180,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4867,6 +4868,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),

@@ -445,6 +445,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),

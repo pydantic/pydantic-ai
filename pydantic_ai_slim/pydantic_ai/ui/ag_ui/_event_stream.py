@@ -547,7 +547,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # `ToolCallResultEvent` cannot express an outcome. This is the only standard event whose
         # reducer can attach continuity data to the resulting `ToolMessage`; it must follow the
         # result event because the reducer does not queue metadata for an entity that does not exist.
-        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome)):
+        cause = part.cause if isinstance(part, ToolReturnPart) else None
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome, cause)):
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)

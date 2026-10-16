@@ -2855,6 +2855,60 @@ def test_dump_load_roundtrip_non_success_outcome(
     assert old_return.outcome == old_outcome
 
 
+@requires_ag_ui('0.1.11')
+def test_dump_load_roundtrip_retried_tool_return_cause() -> None:
+    """A retried return's `cause` rides `encrypted_value` with its outcome, so an audit survives a round-trip."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='ghost_tool', tool_call_id='c1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='ghost_tool',
+                    tool_call_id='c1',
+                    content="Unknown tool name: 'ghost_tool'.",
+                    outcome='retried',
+                    cause='unknown_tool',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
+    tool_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage))
+    assert tool_msg.encrypted_value == snapshot('{"pydantic_ai": {"outcome": "retried", "cause": "unknown_tool"}}')
+
+    reloaded_return = next(iter_message_parts(AGUIAdapter.load_messages(ag_ui_msgs), ModelRequest, ToolReturnPart))
+    assert (reloaded_return.outcome, reloaded_return.cause) == ('retried', 'unknown_tool')
+
+    forged = tool_msg.model_copy(update={'encrypted_value': '{"pydantic_ai": {"outcome": "retried", "cause": "nope"}}'})
+    forged_return = next(
+        iter_message_parts(AGUIAdapter.load_messages([ag_ui_msgs[0], forged]), ModelRequest, ToolReturnPart)
+    )
+    assert (forged_return.outcome, forged_return.cause) == ('retried', None)
+
+
+@requires_ag_ui('0.1.11')
+async def test_stream_retried_tool_return_cause_roundtrip() -> None:
+    """A live unknown-tool retry keeps its `cause` through the event -> client history -> load round-trip."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='ghost_tool', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'acknowledged'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+    events = await run_and_collect_events(
+        agent, create_input(UserMessage(id='msg-1', content='Run the tool')), ag_ui_version='0.1.11'
+    )
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
+
+    tool_return = next(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert (tool_return.outcome, tool_return.cause) == ('retried', 'unknown_tool')
+
+
 def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
     """A native tool return's non-`'success'` outcome also rides the `encrypted_value` carrier.
 

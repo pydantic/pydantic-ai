@@ -6576,6 +6576,38 @@ async def test_adapter_dump_messages_with_retry():
     )
 
 
+async def test_retried_tool_return_cause_survives_dump_and_load():
+    """A retried return's `cause` rides the call's provider metadata with its outcome, and a forged one degrades."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='hidden_tool',
+                    content="Tool 'hidden_tool' is not available yet.",
+                    tool_call_id='c1',
+                    outcome='retried',
+                    cause='unavailable_tool',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    [tool_part] = [part for msg in ui_messages for part in msg.parts if isinstance(part, ToolOutputErrorPart)]
+    assert tool_part.call_provider_metadata == snapshot(
+        {'pydantic_ai': {'outcome': 'retried', 'cause': 'unavailable_tool'}}
+    )
+
+    reloaded = message_part(VercelAIAdapter.load_messages(ui_messages), ToolReturnPart, message_index=2)
+    assert (reloaded.outcome, reloaded.cause) == ('retried', 'unavailable_tool')
+
+    tool_part.call_provider_metadata = {'pydantic_ai': {'outcome': 'retried', 'cause': 'forged'}}
+    forged = message_part(VercelAIAdapter.load_messages(ui_messages), ToolReturnPart, message_index=2)
+    assert (forged.outcome, forged.cause) == ('retried', None)
+
+
 async def test_adapter_dump_messages_with_retry_no_tool_name():
     """Test dumping messages with retry prompts without tool_name (e.g., output validation errors)."""
     messages = [
@@ -12349,7 +12381,7 @@ async def test_retried_tool_return_error_text_carries_no_instruction_framing():
     ui_messages = VercelAIAdapter.dump_messages(result.all_messages())
     error_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, ToolOutputErrorPart)]
     assert [(part.error_text, part.call_provider_metadata) for part in error_parts] == snapshot(
-        [('the fruit has to be in season', {'pydantic_ai': {'outcome': 'retried'}})]
+        [('the fruit has to be in season', {'pydantic_ai': {'outcome': 'retried', 'cause': 'model_retry'}})]
     )
 
     reloaded = message_part(VercelAIAdapter.load_messages(ui_messages), ToolReturnPart, message_index=2)

@@ -123,7 +123,11 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 
 def build_retried_tool_return(
-    error: ValidationError | ModelRetry, *, tool_name: str, tool_call_id: str | None = None
+    error: ValidationError | ModelRetry,
+    *,
+    tool_name: str,
+    tool_call_id: str | None = None,
+    cause: Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None = None,
 ) -> _messages.ToolReturnPart:
     """Build the result a tool call that has to be retried is answered with.
 
@@ -134,6 +138,10 @@ def build_retried_tool_return(
     [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]'s are, so the two channels show the
     model the same JSON: `ctx` is dropped by `include_context=False`, and `input` is kept once per
     distinct value.
+
+    `cause` defaults to what the error says: `'validation_error'` for a `ValidationError`,
+    `'model_retry'` for a `ModelRetry`. The tool manager passes its own for a call it rejects before
+    the tool runs.
     """
     content: list[dict[str, Any]] | str
     if isinstance(error, ValidationError):
@@ -142,8 +150,10 @@ def build_retried_tool_return(
         )
     else:
         content = error.message
+    if cause is None:
+        cause = 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
 
-    part = _messages.ToolReturnPart(tool_name=tool_name, content=content, outcome='retried')
+    part = _messages.ToolReturnPart(tool_name=tool_name, content=content, outcome='retried', cause=cause)
     if tool_call_id:
         part.tool_call_id = tool_call_id
     return part
@@ -168,6 +178,7 @@ def retried_return_from_legacy(
         content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
         tool_call_id=tool_call_id,
         outcome='retried',
+        cause='model_retry' if isinstance(content, str) else 'validation_error',
     )
 
 

@@ -544,6 +544,68 @@ Because retries stay in the history, [reusing that history](message-history.md) 
 
 [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] records the same kind of part with `outcome='failed'` instead, and does **not** consume the retry budget, so repeated failures are bounded by [`UsageLimits`][pydantic_ai.usage.UsageLimits] rather than by a retry count. The outcome is the whole difference: `'retried'` asks the model to correct the call, `'failed'` tells it to adapt. See [Reporting a Failed Tool Result](tools-advanced.md#tool-failed).
 
+### Auditing rejected tool calls
+
+A retried result also records why the call has to be made again, in its [`cause`][pydantic_ai.messages.ToolReturnPart.cause]: `'validation_error'`, `'model_retry'`, or, for a call the framework rejects before any tool runs, `'unknown_tool'` (the model invented the name) or `'unavailable_tool'` (the tool exists but can't be called at this step). No tool hook sees those last two, since there's no resolved tool to hand it, so match the recorded part instead. `cause` is never sent to the model, so recording it doesn't change the request.
+
+A capability can collect them from each request the run builds in [`after_node_run`](capabilities/custom.md#hooking-into-the-lifecycle), which doesn't move the run onto the streaming path the way [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] does:
+
+```python {title="audit_rejected_calls.py"}
+from dataclasses import dataclass, field
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequestNode,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@dataclass
+class AuditRejectedCalls(AbstractCapability[object]):
+    rejected: list[tuple[str, str | None]] = field(default_factory=list)
+
+    async def after_node_run(
+        self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+    ) -> NodeResult[object]:
+        if isinstance(result, ModelRequestNode):
+            for part in result.request.parts:
+                if isinstance(part, ToolReturnPart) and part.outcome == 'retried':
+                    self.rejected.append((part.tool_name, part.cause))
+        return result
+
+
+def call_a_made_up_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('lookup_customer', {'id': 7})])
+    return ModelResponse(parts=[TextPart('I can only look up orders.')])
+
+
+audit = AuditRejectedCalls()
+agent = Agent(FunctionModel(call_a_made_up_tool), capabilities=[audit])
+
+
+@agent.tool_plain
+def lookup_order(id: int) -> str:
+    return f'Order {id}: shipped'
+
+
+agent.run_sync('Who is customer 7?')
+print(audit.rejected)
+#> [('lookup_customer', 'unknown_tool')]
+```
+
+_(This example is complete, it can be run "as is")_
+
+When a tool's retry budget runs out, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] instead of recording another retried result, so that last rejection is only visible as the exception.
+
+
 ## Output retries
 
 The output budget is separate from the tool budget, and how it's enforced depends on how the model returns its final answer. [How output retries are enforced](agent.md#how-output-retries-are-enforced) covers both paths; the difference that matters for message history is:

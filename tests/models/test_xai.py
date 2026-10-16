@@ -955,6 +955,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',

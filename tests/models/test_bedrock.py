@@ -1252,6 +1252,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 instructions='You are a helpful chatbot.',

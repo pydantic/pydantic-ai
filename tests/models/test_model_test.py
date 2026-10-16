@@ -368,6 +368,7 @@ def test_tool_retry():
                         timestamp=IsNow(tz=UTC),
                         tool_call_id=IsStr(),
                         outcome='retried',
+                        cause='model_retry',
                     )
                 ],
                 timestamp=IsDatetime(),
