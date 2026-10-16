@@ -430,7 +430,7 @@ value orphans recorded operations for in-flight workflows, so keep it fixed once
 
 ## `WarnNearLimits`: warn instead of rewrite
 
-`WarnNearLimits` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one.
+`WarnNearLimits` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one. They are recognized by metadata on the part, not by their text, so a user prompt that quotes a warning is never removed.
 
 ```python
 from pydantic_ai import Agent

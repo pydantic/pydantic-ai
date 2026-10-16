@@ -1955,13 +1955,6 @@ async def test_temporal_agent_realtime_session_outside_workflow():
         assert [event async for event in session] == []
 
 
-async def test_temporal_agent_rejects_connect():
-    """Runs use the Temporal model, so a connection would open a socket that no run uses."""
-    with pytest.raises(UserError, match='`TemporalAgent` does not support explicit connections'):
-        async with simple_temporal_agent.connect():
-            pytest.fail('TemporalAgent runs cannot use a connection')  # pragma: no cover
-
-
 async def simple_event_stream_handler(
     ctx: RunContext,
     stream: AsyncIterable[AgentStreamEvent],

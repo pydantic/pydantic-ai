@@ -1,7 +1,7 @@
 """The built-in `compaction` plugin, loaded with `load_plugin` and driven through one `chat()` run."""
 
 import io
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
 from pydantic_ai.messages import (
@@ -35,7 +36,6 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
-from pydantic_clai2.builtin_plugins import compaction as compaction_plugin
 from pydantic_clai2.builtin_plugins.compaction import (
     CompactionPlugin,
     CompactionSettings,
@@ -47,6 +47,8 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, Transcript, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus import dialogs
+from tests.clai2.menu_script import Script, pick, typed
 from tests.clai2.test_app_edges import inputs
 
 
@@ -389,16 +391,31 @@ async def test_configure_outside_a_terminal_explains_how() -> None:
     assert 'from a terminal' in await make_plugin().plugin.configure()
 
 
-@pytest.mark.parametrize('messages', [['Saved Threshold.'], []])
-async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, messages: list[str]) -> None:
-    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
+@pytest.mark.parametrize(
+    ('script', 'shown', 'saves'),
+    [
+        (
+            Script([pick('threshold'), MenuResult(cancelled=True)], [], [typed('0.5')]),
+            'Saved Threshold.',
+            [{'threshold': 0.5}],
+        ),
+        (Script([MenuResult(cancelled=True)], [], []), 'Compaction settings: nothing changed.', []),
+    ],
+)
+async def test_configure_shows_the_settings_menu(
+    monkeypatch: pytest.MonkeyPatch, script: Script, shown: str, saves: list[dict[str, JsonValue]]
+) -> None:
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='compaction',
+        console=Console(file=io.StringIO(), force_terminal=True),
+        settings={},
+        save_settings=saved.append,
+    )
     plugin = load_plugin(CompactionPlugin, host).plugin
-
-    async def run_worker(work: Callable[[], list[str]]) -> list[str]:
-        return messages
-
-    monkeypatch.setattr(compaction_plugin, 'run_worker', run_worker)
-    assert await plugin.configure() == ('\n'.join(messages) or 'No compaction settings changed.')
+    monkeypatch.setattr(dialogs, 'RUNNERS', script.runners)
+    assert await plugin.configure() == shown
+    assert saved == saves
 
 
 async def test_configured_settings_rebuild_the_chain_for_the_next_turn(

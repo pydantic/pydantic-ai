@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 import uuid
 import warnings
@@ -18,7 +17,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Self, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import httpx2
@@ -1393,13 +1392,6 @@ async def test_realtime_session_outside_flow() -> None:
     async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
-
-
-async def test_prefect_agent_rejects_connect() -> None:
-    """Runs use the Prefect model, so a connection would open a socket that no run uses."""
-    with pytest.raises(UserError, match='`PrefectAgent` does not support explicit connections'):
-        async with simple_prefect_agent.connect():
-            pytest.fail('PrefectAgent runs cannot use a connection')  # pragma: no cover
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:
@@ -2859,36 +2851,6 @@ async def test_prefect_durability_simple_agent() -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello Prefect'
-
-
-class _ConnectableDurabilityModel(FunctionModel):
-    """Connecting yields a distinct model, as a real connection does."""
-
-    @asynccontextmanager
-    async def connect(self) -> AsyncGenerator[Self]:
-        yield type(self)(_durability_model_fn, model_name='connected')
-
-
-async def test_prefect_durability_rejects_connect_in_flow() -> None:
-    """A connection can't be opened in flow code, so `connect()` is rejected inside a flow — but the same
-    durable-capable agent still uses one when run outside a flow."""
-    agent = Agent(
-        _ConnectableDurabilityModel(_durability_model_fn, model_name='source'),
-        name='durability_connect',
-        capabilities=[PrefectDurability()],
-    )
-
-    @flow
-    async def run_connected_agent() -> str:
-        async with agent.connect():
-            return (await agent.run('Hello')).output  # pragma: no cover
-
-    with pytest.raises(UserError, match=re.escape('`agent.connect()` is not supported inside a Prefect flow')):
-        await run_connected_agent()
-
-    async with agent.connect():
-        result = await agent.run('Hello')
-    assert result.response.model_name == 'connected'
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:

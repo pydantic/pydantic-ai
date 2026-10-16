@@ -82,7 +82,7 @@ SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id
 
 Once a recorded response spends a window, `SpendLimits` refuses the next request.
 
-Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller abandons part-way never reaches the accounting hook, so its tokens are billed by the provider and invisible here. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
+Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller stops part-way is charged for the usage the provider had reported by then, which can fall short of what it bills, since many providers report output tokens only with a stream's last event. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
 
 ## Reading the numbers
 
