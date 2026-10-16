@@ -61,7 +61,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.code_mode._parts import RunCodeArgs, RunCodeCallPart
+from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
 if TYPE_CHECKING:
@@ -1036,7 +1036,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                 sequential=True,
-                tool_kind=RunCodeCallPart,
+                tool_kind=RUN_CODE_KIND,
                 capability_id=self._capability_id(ctx),
             ),
             max_retries=self.max_retries,

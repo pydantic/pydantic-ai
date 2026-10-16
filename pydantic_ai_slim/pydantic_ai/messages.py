@@ -23,11 +23,13 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
-    Self,
     TypeAlias,
     TypeGuard,
     assert_never,
     cast,
+    final,
+    get_args,
+    get_origin,
     overload,
 )
 from urllib.parse import unquote_to_bytes, urlparse
@@ -1410,32 +1412,197 @@ typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
 
 
 ToolPartKind: TypeAlias = str
-"""What a tool is, independent of its name: the `tool_kind` of a typed call/return-part subclass.
+"""What a tool is, independent of its name: the [`id`][pydantic_ai.messages.ToolKind.id] of a [`ToolKind`][pydantic_ai.messages.ToolKind].
 
 Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
 [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind], and
-[`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. A kind is registered by
-defining a typed subclass of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] or
-[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (or their native counterparts) with
-`namespace` and `tool_kind` class arguments: `class LookupCallPart(ToolCallPart, namespace='inventory',
-tool_kind='lookup')` registers `'inventory.lookup'`. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
-Core's `'tool-search'` and `'capability-load'` are the only kinds without a namespace.
+[`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. A user-defined kind is
+`'{namespace}.{name}'`, as in `'inventory.lookup'`; core's `'tool-search'` and `'capability-load'` are the
+only kinds without a namespace. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
 
-A part may carry a kind that isn't registered in the current process, for example when it was
-recorded by a process that imported the defining module. It then stays a base part that keeps its
-`tool_kind`, so it round-trips and is promoted wherever the kind is registered.
+A part may carry a kind that isn't defined in the current process, for example when it was recorded
+by a process that imported the defining module. It then stays a base part that keeps its `tool_kind`,
+so it round-trips and is promoted wherever the kind is defined.
 
-Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
+Distinct from [`ToolDefinitionKind`][pydantic_ai.tools.ToolDefinitionKind] (invocation semantics —
 `'function'`, `'output'`, `'external'`, `'unapproved'`).
 """
 
 
-ToolKindLike: TypeAlias = 'ToolPartKind | type[BaseToolCallPart | BaseToolReturnPart]'
-"""How a tool declares its [`ToolPartKind`][pydantic_ai.messages.ToolPartKind]: the kind itself, or a typed tool part class that registers it.
+ArgsT_co = TypeVar('ArgsT_co', covariant=True, default=Any)
+"""The arguments shape of a [`ToolKind`][pydantic_ai.messages.ToolKind] and of the typed call parts registered for it."""
 
-Accepted by `tool_kind` on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], [`Tool`][pydantic_ai.tools.Tool]
-and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
-"""
+ContentT_co = TypeVar('ContentT_co', covariant=True, default=Any)
+"""The result shape of a [`ToolKind`][pydantic_ai.messages.ToolKind] and of the typed return parts registered for it."""
+
+
+_TOOL_KINDS: dict[str, ToolKind] = {}
+"""Registry: kind id → the [`ToolKind`][pydantic_ai.messages.ToolKind] defined with it."""
+
+
+_CoreArgsT = TypeVar('_CoreArgsT')
+_CoreContentT = TypeVar('_CoreContentT')
+
+
+@final
+class ToolKind(Generic[ArgsT_co, ContentT_co]):
+    """What a tool is, independent of its name, and the shapes of its arguments and result.
+
+    A kind is the one place a tool's typed identity is declared. Give it to a tool with `tool_kind=`, and
+    register typed call and return parts for it with the `kind` class argument; the tool's parts are then
+    promoted to those subclasses, so code can recognize the tool with `isinstance` even when it has been
+    renamed or prefixed:
+
+    ```python {test="skip" lint="skip"}
+    lookup = ToolKind('inventory', 'lookup', args=LookupArgs, content=LookupResult)
+
+
+    class LookupCallPart(ToolCallPart[LookupArgs], kind=lookup): ...
+
+
+    class LookupReturnPart(ToolReturnPart[LookupResult], kind=lookup): ...
+    ```
+
+    The kind is stored in every message history as its [`id`][pydantic_ai.messages.ToolKind.id],
+    `'{namespace}.{name}'`, so it can't be renamed later. The namespace keeps kinds from different packages
+    apart. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+    """
+
+    def __init__(
+        self,
+        namespace: str,
+        name: str,
+        *,
+        args: type[ArgsT_co] | None = None,
+        content: type[ContentT_co] | None = None,
+    ) -> None:
+        """Define a tool kind.
+
+        Args:
+            namespace: The package or capability defining the kind, like `'inventory'`. Dotted names are allowed.
+            name: The kind's name within its namespace, like `'lookup'`.
+            args: The shape of the tool's arguments, typically a `TypedDict`. A tool of this kind must have
+                parameters that fit it, and its call parts are only promoted when their arguments validate against it.
+            content: The shape of the tool's result, typically a `TypedDict`. A tool of this kind must have a
+                return type that fits it, and its successful return parts are only promoted when their content
+                validates against it.
+        """
+        if not namespace or not all(namespace.split('.')):
+            raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
+        if not name:
+            raise UserError(f'Tool kind in namespace {namespace!r} has an empty name.')
+        self._define(namespace, name, args, content)
+
+    def _define(self, namespace: str | None, name: str, args: type[Any] | None, content: type[Any] | None) -> None:
+        self._namespace = namespace
+        self._name = name
+        self._id = f'{namespace}.{name}' if namespace is not None else name
+        self._args = args
+        self._content = content
+        existing = _TOOL_KINDS.get(self._id)
+        if existing is not None and not (_same_shape(existing._args, args) and _same_shape(existing._content, content)):
+            raise UserError(f'Tool kind {self._id!r} is already defined as {existing!r}.')
+        # A Temporal workflow sandbox re-executes application modules; its copy must not displace the host's.
+        if existing is None or not _keeps_canonical_registration():
+            _TOOL_KINDS[self._id] = self
+
+    @property
+    def namespace(self) -> str | None:
+        """The package or capability defining the kind; `None` only for core's own kinds."""
+        return self._namespace
+
+    @property
+    def name(self) -> str:
+        """The kind's name within its namespace."""
+        return self._name
+
+    @property
+    def id(self) -> ToolPartKind:
+        """The kind as stored on parts and tool definitions: `'{namespace}.{name}'`."""
+        return self._id
+
+    @property
+    def args(self) -> type[ArgsT_co] | None:
+        """The shape of the tool's arguments, or `None` if the kind doesn't declare one."""
+        return self._args
+
+    @property
+    def content(self) -> type[ContentT_co] | None:
+        """The shape of the tool's result, or `None` if the kind doesn't declare one."""
+        return self._content
+
+    def __repr__(self) -> str:
+        shapes = ''.join(
+            f', {label}={_shape_name(shape)}'
+            for label, shape in (('args', self._args), ('content', self._content))
+            if shape is not None
+        )
+        if self._namespace is None:
+            return f'ToolKind({self._name!r}{shapes})'
+        return f'ToolKind({self._namespace!r}, {self._name!r}{shapes})'
+
+    @classmethod
+    def _core(
+        cls, name: str, *, args: type[_CoreArgsT], content: type[_CoreContentT]
+    ) -> ToolKind[_CoreArgsT, _CoreContentT]:
+        """Define one of core's own kinds, which predate namespaces and stay un-namespaced."""
+        kind: ToolKind[_CoreArgsT, _CoreContentT] = object.__new__(ToolKind)
+        kind._define(None, name, args, content)
+        return kind
+
+    @cached_property
+    def _args_adapter(self) -> pydantic.TypeAdapter[Any]:
+        return pydantic.TypeAdapter(self._args if self._args is not None else dict[str, Any])
+
+    @cached_property
+    def _content_adapter(self) -> pydantic.TypeAdapter[Any] | None:
+        return pydantic.TypeAdapter(self._content) if self._content is not None else None
+
+    def _validate_args(self, args: str | Mapping[str, Any] | None) -> ArgsT_co | None:
+        """`args` validated against the declared shape (a dictionary without one), or `None` if incomplete or not fitting."""
+        return _validate_args(self._args_adapter, args)
+
+    def _validate_content(self, content: Any) -> ContentT_co | None:
+        """`content` validated against the declared shape (as is without one), or `None` if it doesn't fit.
+
+        Content that doesn't validate as it is but is a JSON string is parsed and validated again.
+        """
+        adapter = self._content_adapter
+        if adapter is None:
+            return content
+        try:
+            return adapter.validate_python(content)
+        except pydantic.ValidationError:
+            pass
+        if isinstance(content, str):
+            try:
+                return adapter.validate_json(content)
+            except pydantic.ValidationError:
+                pass
+        return None
+
+
+def _validate_args(adapter: pydantic.TypeAdapter[Any], args: str | Mapping[str, Any] | None) -> Any:
+    try:
+        if isinstance(args, str) and args:
+            return adapter.validate_json(args)
+        return adapter.validate_python(args or {})
+    except pydantic.ValidationError:
+        return None
+
+
+_DICT_ARGS_TA = pydantic.TypeAdapter(dict[str, Any])
+
+
+def _same_shape(a: type[Any] | None, b: type[Any] | None) -> bool:
+    """Whether two declared shapes are the same type, or the same class defined again (see `is_redefinition`)."""
+    if a is b or a == b:
+        return True
+    return isinstance(a, type) and isinstance(b, type) and _is_redefinition(a, b)
+
+
+def _shape_name(shape: Any) -> str:
+    return shape.__qualname__ if isinstance(shape, type) else repr(shape)
 
 
 _ToolPartClass: TypeAlias = 'type[ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart]'
@@ -1455,54 +1622,35 @@ _TYPED_RETURN_PARTS: dict[tuple[str, str], type[ToolReturnPart | NativeToolRetur
 Populated by `_register_typed_tool_part` from the `__init_subclass__` of the two return part classes.
 """
 
-_REGISTERED_TOOL_KINDS: set[str] = set()
-"""Every `tool_kind` some typed part registered, for cheap membership checks."""
-
 
 def _register_typed_tool_part(
     cls: type[_ToolPartT],
     base: type[_ToolPartT],
     registry: dict[tuple[str, str], type[_ToolPartT]],
     payload_field: Literal['args', 'content'],
-    *,
-    namespace: str | None,
-    tool_kind: str | None,
-    core: bool,
-) -> str | None:
-    """Register `cls` as the typed subclass for `'{namespace}.{tool_kind}'`, the way capability events register.
+    kind: ToolKind | None,
+) -> None:
+    """Register `cls` as the typed subclass for `kind`, the way capability events register.
 
-    The kind is a class argument (`class LookupCallPart(ToolCallPart, namespace='inventory',
-    tool_kind='lookup')`). The namespace is required, so kinds from different packages can't collide;
-    they are stored in every history, so they can't be renamed later either. The class is made a
-    dataclass here with the kind as its `tool_kind` default, so it needs no decorator. Core's own kinds
-    (`core=True`) predate this and stay un-namespaced, declared by the class body's `tool_kind` default
-    on a class decorated as usual. A subclass with no kind (an intermediate base, or a subclass of a
-    typed part) registers nothing. Returns the kind registered, if any.
+    The kind is a class argument (`class LookupCallPart(ToolCallPart[LookupArgs], kind=lookup)`). The
+    class is made a dataclass here with the kind's id as its `tool_kind` default, so it needs no
+    decorator. Core's own (un-namespaced) kinds instead declare their `tool_kind` default in the class
+    body, on a class decorated as usual. A subclass with no kind (an intermediate base, or a subclass of
+    a typed part) registers nothing.
     """
-    recreated: str | None = (
-        cls.__dict__.get('_registered_tool_kind') if namespace is None and tool_kind is None and not core else None
-    )
+    recreated: ToolKind | None = cls.__dict__.get('_kind') if kind is None else None
     if recreated is not None:
         # `@dataclass(slots=True)` recreates the class, re-invoking this without the class arguments.
         kind = recreated
-    elif core:
-        kind = cls.__dict__['tool_kind']
-    elif tool_kind is not None:
-        if not namespace or not all(namespace.split('.')):
+    elif kind is None:
+        if isinstance(cls.__dict__.get('tool_kind'), str):
             raise UserError(
-                f'Typed tool part {cls.__qualname__} needs a namespace, e.g. '
-                f"`class {cls.__name__}({base.__name__}, namespace='my_capability', tool_kind={tool_kind!r})`."
+                f'Typed tool part {cls.__qualname__} must declare its kind with the `kind` class argument, e.g. '
+                f"`class {cls.__name__}({base.__name__}, kind=ToolKind('my_capability', 'my_tool'))`."
             )
-        if not tool_kind:
-            raise UserError(f'Typed tool part {cls.__qualname__} has an empty `tool_kind`.')
-        kind = f'{namespace}.{tool_kind}'
+        return
     else:
-        if namespace is not None or isinstance(cls.__dict__.get('tool_kind'), str):
-            raise UserError(
-                f'Typed tool part {cls.__qualname__} must declare its kind with class arguments, e.g. '
-                f"`class {cls.__name__}({base.__name__}, namespace='my_capability', tool_kind='my_tool')`."
-            )
-        return None
+        _check_declared_shape(cls, base, kind, payload_field)
     base_fields = {f.name for f in dataclasses.fields(base)}
     # `cls` isn't a dataclass yet, so its own fields come from its annotations; fields it inherits
     # from dataclasses between it and `base` are already built.
@@ -1521,24 +1669,48 @@ def _register_typed_tool_part(
     if added:
         raise UserError(
             f'Typed tool part {cls.__qualname__} adds the field(s) {", ".join(added)} to {base.__name__}. '
-            f'It may only declare the shape of its `{payload_field}` and add properties, so that it loses nothing '
-            'when it falls back to the base part because its kind is not registered.'
+            f'Its kind declares the shape of its `{payload_field}`, and it may only add properties, so that it '
+            'loses nothing when it falls back to the base part because its kind is not defined.'
         )
-    key = (base.part_kind, kind)
+    key = (base.part_kind, kind.id)
     existing = registry.get(key)
     if existing is not None and recreated is None and not _is_redefinition(existing, cls):
         raise UserError(
-            f'Tool kind {kind!r} is already registered for {base.__name__} by '
+            f'Tool kind {kind.id!r} already has a typed {base.__name__} subclass: '
             f'{existing.__module__}.{existing.__qualname__}.'
         )
     # A Temporal workflow sandbox re-executes application modules; its copy must not displace the
     # host's class, or the host would promote parts to a class its own `isinstance` checks don't match.
     if existing is None or not _keeps_canonical_registration():
         registry[key] = cls
-        _REGISTERED_TOOL_KINDS.add(kind)
-    if not core and recreated is None:
-        _make_typed_part_dataclass(cls, kind)
-    return kind
+    cls._kind = kind  # pyright: ignore[reportPrivateUsage]
+    if kind.namespace is not None and recreated is None:
+        _make_typed_part_dataclass(cls, kind.id)
+
+
+def _check_declared_shape(
+    cls: _ToolPartClass, base: _ToolPartClass, kind: ToolKind, payload_field: Literal['args', 'content']
+) -> None:
+    """Refuse a typed part whose base is parameterized with a shape other than its kind's.
+
+    Type checkers already catch this through `__init_subclass__`'s signature; this catches it at runtime too.
+    """
+    shape = kind.args if payload_field == 'args' else kind.content
+    for orig_base in cls.__dict__.get('__orig_bases__', ()):
+        origin = get_origin(orig_base)
+        if not (isinstance(origin, type) and issubclass(origin, base)):
+            continue
+        declared = get_args(orig_base)
+        if len(declared) != 1 or isinstance(declared[0], TypeVar):
+            continue
+        (declared_shape,) = declared
+        if declared_shape is Any if shape is None else _same_shape(declared_shape, shape):
+            continue
+        raise UserError(
+            f'Typed tool part {cls.__qualname__} parameterizes {base.__name__} with '
+            f'{_shape_name(declared_shape)}, but its kind {kind.id!r} declares '
+            f'`{payload_field}={_shape_name(shape) if shape is not None else None}`.'
+        )
 
 
 def _make_typed_part_dataclass(cls: _ToolPartClass, kind: str) -> None:
@@ -1553,14 +1725,14 @@ def _make_typed_part_dataclass(cls: _ToolPartClass, kind: str) -> None:
 
 
 def parse_tool_kind(value: str) -> ToolPartKind | None:
-    """Return `value` if it's a registered [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
+    """Return `value` if it's the id of a defined [`ToolKind`][pydantic_ai.messages.ToolKind], else `None`.
 
     UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
     string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
-    bogus discriminator. A run uses it to refuse a tool with an unregistered kind when it collects its
+    bogus discriminator. A run uses it to refuse a tool with an undefined kind when it collects its
     tools; a stored [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] with one still loads.
     """
-    return value if value in _REGISTERED_TOOL_KINDS else None
+    return value if value in _TOOL_KINDS else None
 
 
 INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
@@ -1594,111 +1766,13 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
     )
 
 
-_ArgsT_co = TypeVar('_ArgsT_co', covariant=True)
-_ContentT_co = TypeVar('_ContentT_co', covariant=True)
-
-
-class TypedArgs(Generic[_ArgsT_co]):
-    """Declares the arguments shape of a typed tool call part, and reads the part's arguments as that shape.
-
-    A [typed tool part](../tools-advanced.md#typed-tool-parts) assigns it to `typed_args` in its class
-    body, which is the one place the shape is declared:
-
-    ```python {test="skip" lint="skip"}
-    class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup'):
-        typed_args = TypedArgs(LookupArgs)
-    ```
-
-    A part whose arguments are already a dictionary is only promoted to the subclass when they validate
-    against the shape; arguments still held as a JSON string are promoted as is and only validated when
-    `typed_args` is read. `part.typed_args` returns them validated (a `LookupArgs` here), or `None` while
-    they are still streaming in or when they don't validate, so check for `None` even on a finalized
-    response. `args` itself keeps the base type, as it may still hold the raw JSON string.
-    """
-
-    def __init__(self, args_type: type[_ArgsT_co]) -> None:
-        self.args_type = args_type
-        """The declared shape, typically a `TypedDict`."""
-
-    @cached_property
-    def _adapter(self) -> pydantic.TypeAdapter[_ArgsT_co]:
-        return pydantic.TypeAdapter(self.args_type)
-
-    def validate(self, args: str | Mapping[str, Any] | None) -> _ArgsT_co | None:
-        """Return `args` validated against the declared shape, or `None` if they are incomplete or don't fit."""
-        try:
-            if isinstance(args, str) and args:
-                return self._adapter.validate_json(args)
-            return self._adapter.validate_python(args or {})
-        except pydantic.ValidationError:
-            return None
-
-    @overload
-    def __get__(self, obj: None, owner: type[Any]) -> Self: ...
-
-    @overload
-    def __get__(self, obj: BaseToolCallPart, owner: type[Any]) -> _ArgsT_co | None: ...
-
-    def __get__(self, obj: BaseToolCallPart | None, owner: type[Any]) -> Self | _ArgsT_co | None:
-        return self if obj is None else self.validate(obj.args)
-
-
-class TypedContent(Generic[_ContentT_co]):
-    """Declares the content shape of a typed tool return part, and reads the part's content as that shape.
-
-    A [typed tool part](../tools-advanced.md#typed-tool-parts) assigns it to `typed_content` in its class
-    body, which is the one place the shape is declared:
-
-    ```python {test="skip" lint="skip"}
-    class LookupReturnPart(ToolReturnPart, namespace='inventory', tool_kind='lookup'):
-        typed_content = TypedContent(LookupResult)
-    ```
-
-    A return part is only promoted to the subclass when its `outcome` is `'success'` and its content
-    (parsed first if it's a JSON string) validates against the shape. `part.typed_content` returns the
-    content validated (a `LookupResult` here), or `None` when it doesn't fit or the return isn't a
-    success. `content` itself keeps the base type.
-    """
-
-    def __init__(self, content_type: type[_ContentT_co]) -> None:
-        self.content_type = content_type
-        """The declared shape, typically a `TypedDict`."""
-
-    @cached_property
-    def _adapter(self) -> pydantic.TypeAdapter[_ContentT_co]:
-        return pydantic.TypeAdapter(self.content_type)
-
-    def validate(self, content: Any) -> _ContentT_co | None:
-        """Return `content` validated against the declared shape, or `None` if it doesn't fit.
-
-        Content that doesn't validate as it is but is a JSON string is parsed and validated again.
-        """
-        try:
-            return self._adapter.validate_python(content)
-        except pydantic.ValidationError:
-            pass
-        if isinstance(content, str):
-            try:
-                return self._adapter.validate_json(content)
-            except pydantic.ValidationError:
-                pass
-        return None
-
-    @overload
-    def __get__(self, obj: None, owner: type[Any]) -> Self: ...
-
-    @overload
-    def __get__(self, obj: BaseToolReturnPart, owner: type[Any]) -> _ContentT_co | None: ...
-
-    def __get__(self, obj: BaseToolReturnPart | None, owner: type[Any]) -> Self | _ContentT_co | None:
-        if obj is None:
-            return self
-        return self.validate(obj.content) if obj.outcome == 'success' else None
-
-
 @dataclass(repr=False)
-class BaseToolReturnPart:
-    """Base class for tool return parts."""
+class BaseToolReturnPart(Generic[ContentT_co]):
+    """Base class for tool return parts.
+
+    Generic in the shape of [`typed_content`][pydantic_ai.messages.BaseToolReturnPart.typed_content], which a
+    [typed tool part](../tools-advanced.md#typed-tool-parts) declares through its kind.
+    """
 
     tool_name: str
     """The name of the tool that was called."""
@@ -1748,15 +1822,22 @@ class BaseToolReturnPart:
     content tells the model what happened without suggesting a transient tool failure.
     """
 
-    _registered_tool_kind: ClassVar[str | None] = None
-    """The kind a typed subclass registered; `None` on the base classes and on subclasses without a kind."""
+    _kind: ClassVar[ToolKind | None] = None
+    """The kind a typed subclass registered for; `None` on the base classes and on subclasses without a kind."""
 
-    typed_content = TypedContent[ToolReturnContent](object)
-    """The content validated against the shape a typed subclass declares, or `None` if it doesn't fit.
+    @property
+    def typed_content(self) -> ContentT_co | None:
+        """The content validated against the shape the part's kind declares, or `None` if it doesn't fit.
 
-    A typed subclass declares the shape with [`TypedContent`][pydantic_ai.messages.TypedContent]. On a
-    base part it is the content as is, and `None` if the return isn't a success.
-    """
+        `None` too when the return isn't a success: its content is then an error, not the tool's result. On a
+        base part, or one whose kind declares no content shape, it is the content as is.
+        """
+        if self.outcome != 'success':
+            return None
+        kind = self._kind
+        if kind is None:
+            return cast(ContentT_co, self.content)
+        return kind._validate_content(self.content)  # pyright: ignore[reportPrivateUsage]
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
         """Split content into non-file and file parts.
@@ -1980,7 +2061,7 @@ class BaseToolReturnPart:
 
 
 @dataclass(repr=False)
-class ToolReturnPart(BaseToolReturnPart):
+class ToolReturnPart(BaseToolReturnPart[ContentT_co]):
     """A tool return message, this encodes the result of running a tool."""
 
     _: KW_ONLY
@@ -1988,23 +2069,10 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def __init_subclass__(
-        cls, *, namespace: str | None = None, tool_kind: str | None = None, _core: bool = False, **kwargs: Any
-    ) -> None:
-        """Register a typed `ToolReturnPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
+    def __init_subclass__(cls, *, kind: ToolKind[Any, ContentT_co] | None = None, **kwargs: Any) -> None:
+        """Register a typed `ToolReturnPart` for `kind`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        if (
-            kind := _register_typed_tool_part(
-                cls,
-                ToolReturnPart,
-                _TYPED_RETURN_PARTS,
-                'content',
-                namespace=namespace,
-                tool_kind=tool_kind,
-                core=_core,
-            )
-        ) is not None:
-            cls._registered_tool_kind = kind
+        _register_typed_tool_part(cls, ToolReturnPart, _TYPED_RETURN_PARTS, 'content', kind)
 
     @staticmethod
     def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
@@ -2022,7 +2090,7 @@ class ToolReturnPart(BaseToolReturnPart):
 
 
 @dataclass(repr=False)
-class NativeToolReturnPart(BaseToolReturnPart):
+class NativeToolReturnPart(BaseToolReturnPart[ContentT_co]):
     """A tool return message from a native tool.
 
     For native tools with a stable cross-provider shape (currently `tool_search`), a
@@ -2048,23 +2116,10 @@ class NativeToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def __init_subclass__(
-        cls, *, namespace: str | None = None, tool_kind: str | None = None, _core: bool = False, **kwargs: Any
-    ) -> None:
-        """Register a typed `NativeToolReturnPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
+    def __init_subclass__(cls, *, kind: ToolKind[Any, ContentT_co] | None = None, **kwargs: Any) -> None:
+        """Register a typed `NativeToolReturnPart` for `kind`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        if (
-            kind := _register_typed_tool_part(
-                cls,
-                NativeToolReturnPart,
-                _TYPED_RETURN_PARTS,
-                'content',
-                namespace=namespace,
-                tool_kind=tool_kind,
-                core=_core,
-            )
-        ) is not None:
-            cls._registered_tool_kind = kind
+        _register_typed_tool_part(cls, NativeToolReturnPart, _TYPED_RETURN_PARTS, 'content', kind)
 
     @staticmethod
     def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
@@ -2732,7 +2787,7 @@ class SpeechPart:
 
 
 @dataclass(repr=False)
-class BaseToolCallPart:
+class BaseToolCallPart(Generic[ArgsT_co]):
     """A tool call from a model."""
 
     tool_name: str
@@ -2787,16 +2842,22 @@ class BaseToolCallPart:
         # equality, repr, Pydantic JSON schema, and serialization.
         self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
 
-    _registered_tool_kind: ClassVar[str | None] = None
-    """The kind a typed subclass registered; `None` on the base classes and on subclasses without a kind."""
+    _kind: ClassVar[ToolKind | None] = None
+    """The kind a typed subclass registered for; `None` on the base classes and on subclasses without a kind."""
 
-    typed_args = TypedArgs[Mapping[str, Any]](dict)
-    """The arguments validated against the shape a typed subclass declares, or `None` if they don't fit yet.
+    @property
+    def typed_args(self) -> ArgsT_co | None:
+        """The arguments validated against the shape the part's kind declares, or `None` if they don't fit yet.
 
-    A typed subclass declares the shape with [`TypedArgs`][pydantic_ai.messages.TypedArgs]. On a base
-    part it is the arguments as a dictionary. `None` means the arguments are incomplete (still
-    streaming in) or don't validate.
-    """
+        `None` means the arguments are incomplete (still streaming in) or don't validate: arguments given as a
+        JSON string aren't validated until this is read, so check for `None` even on a finalized response.
+        On a base part, or one whose kind declares no arguments shape, it is the arguments as a dictionary.
+        `args` itself keeps the base type, as it may still hold the raw JSON string.
+        """
+        kind = self._kind
+        if kind is None:
+            return _validate_args(_DICT_ARGS_TA, self.args)
+        return kind._validate_args(self.args)  # pyright: ignore[reportPrivateUsage]
 
     def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -2853,7 +2914,7 @@ class BaseToolCallPart:
 
 
 @dataclass(repr=False)
-class ToolCallPart(BaseToolCallPart):
+class ToolCallPart(BaseToolCallPart[ArgsT_co]):
     """A tool call from a model."""
 
     _: KW_ONLY
@@ -2861,17 +2922,10 @@ class ToolCallPart(BaseToolCallPart):
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
-    def __init_subclass__(
-        cls, *, namespace: str | None = None, tool_kind: str | None = None, _core: bool = False, **kwargs: Any
-    ) -> None:
-        """Register a typed `ToolCallPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
+    def __init_subclass__(cls, *, kind: ToolKind[ArgsT_co, Any] | None = None, **kwargs: Any) -> None:
+        """Register a typed `ToolCallPart` for `kind`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        if (
-            kind := _register_typed_tool_part(
-                cls, ToolCallPart, _TYPED_CALL_PARTS, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
-            )
-        ) is not None:
-            cls._registered_tool_kind = kind
+        _register_typed_tool_part(cls, ToolCallPart, _TYPED_CALL_PARTS, 'args', kind)
 
     @staticmethod
     def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
@@ -2887,7 +2941,7 @@ class ToolCallPart(BaseToolCallPart):
 
 
 @dataclass(repr=False)
-class NativeToolCallPart(BaseToolCallPart):
+class NativeToolCallPart(BaseToolCallPart[ArgsT_co]):
     """A tool call to a native tool.
 
     For native tools with a stable cross-provider shape (currently `tool_search`), this base
@@ -2899,14 +2953,13 @@ class NativeToolCallPart(BaseToolCallPart):
     a worked example):
 
     1. Add a sibling `pydantic_ai/_<name>.py` module that defines the cross-provider
-       `TypedDict`s and the `NativeToolCallPart` / `NativeToolReturnPart` subclasses.
-       Each subclass passes `_core=True` and declares `tool_kind: Literal['<emitter>'] = '<emitter>'`
-       to match the emitting
-       [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind]. It declares
-       its shape with `typed_args = TypedArgs(...)` / `typed_content = TypedContent(...)`, and also
-       shadows `args` / `content` with the narrower type, as it's in the deserialization union;
-       `_core=True` registers that un-namespaced kind. (A kind defined outside core uses the
-       namespaced `namespace=` / `tool_kind=` class arguments, and declares only its shape.)
+       `TypedDict`s, the kind (with `_core_tool_kind('<emitter>', args=..., content=...)`, matching
+       the emitting [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind]),
+       and the `NativeToolCallPart[Args]` / `NativeToolReturnPart[Content]` subclasses that pass it
+       as their `kind` class argument. As core kinds are in the deserialization union, each subclass
+       also declares `tool_kind: Literal['<emitter>'] = '<emitter>'` and shadows `args` / `content`
+       with the narrower type. (A kind defined outside core is a namespaced
+       [`ToolKind`][pydantic_ai.messages.ToolKind], and its parts declare nothing but properties.)
     2. Late-import the new module from this file (alongside the existing tool-search
        import) so registration runs whenever `pydantic_ai.messages` is imported.
     3. Optionally, add the subclass to `ModelResponsePart`'s discriminated union and its
@@ -2932,17 +2985,10 @@ class NativeToolCallPart(BaseToolCallPart):
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def __init_subclass__(
-        cls, *, namespace: str | None = None, tool_kind: str | None = None, _core: bool = False, **kwargs: Any
-    ) -> None:
-        """Register a typed `NativeToolCallPart`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
+    def __init_subclass__(cls, *, kind: ToolKind[ArgsT_co, Any] | None = None, **kwargs: Any) -> None:
+        """Register a typed `NativeToolCallPart` for `kind`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
-        if (
-            kind := _register_typed_tool_part(
-                cls, NativeToolCallPart, _TYPED_CALL_PARTS, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
-            )
-        ) is not None:
-            cls._registered_tool_kind = kind
+        _register_typed_tool_part(cls, NativeToolCallPart, _TYPED_CALL_PARTS, 'args', kind)
 
     @staticmethod
     def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
@@ -2982,9 +3028,9 @@ def _narrow_call(part: _CallPartT, tool_kind: ToolPartKind | None) -> _CallPartT
     assert kind is not None
     # Arguments still arriving as a JSON string are left to `typed_args`; a dictionary has to fit. The
     # arguments are kept exactly as the model sent them.
-    typed_args = typed.typed_args
-    if isinstance(part.args, dict) and typed_args is not BaseToolCallPart.typed_args:
-        if typed_args.validate(part.args) is None:
+    declared = typed._kind  # pyright: ignore[reportPrivateUsage]
+    if isinstance(part.args, dict) and declared is not None and declared.args is not None:
+        if declared._validate_args(part.args) is None:  # pyright: ignore[reportPrivateUsage]
             return _unsubstantiated(part, kind)
     return _utils.copy_dataclass_fields(part, typed, tool_kind=kind)
 
@@ -3037,13 +3083,13 @@ def _narrow_return(part: _ReturnPartT, tool_kind: ToolPartKind | None) -> _Retur
     if typed is None or isinstance(part, typed) or part.outcome != 'success':
         return part
     assert kind is not None
-    typed_content = typed.typed_content
-    if typed_content is BaseToolReturnPart.typed_content:
+    declared = typed._kind  # pyright: ignore[reportPrivateUsage]
+    if declared is None or declared.content is None:
         return _utils.copy_dataclass_fields(part, typed, tool_kind=kind)
     # Content that arrived as a JSON string is parsed before it's validated against the declared shape.
     structured = part.structured_content()
     content = structured if structured is not None else part.content
-    if typed_content.validate(content) is None:
+    if declared._validate_content(content) is None:  # pyright: ignore[reportPrivateUsage]
         return _unsubstantiated(part, kind)
     return _utils.copy_dataclass_fields(part, typed, content=content, tool_kind=kind)
 

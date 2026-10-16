@@ -1,8 +1,8 @@
-"""Typed tool part for `CodeMode`'s `run_code` tool.
+"""Tool kind and typed tool part for `CodeMode`'s `run_code` tool.
 
-Defining the part registers the `'code_mode.run_code'` tool kind, which `CodeModeToolset` sets on
-the `run_code` tool definition. Its call parts are then promoted to `RunCodeCallPart`, so hooks and
-history processors can recognize `run_code` with `isinstance` instead of matching its name.
+`CodeModeToolset` gives the `run_code` tool definition the `'code_mode.run_code'` kind. Its call parts
+are then promoted to `RunCodeCallPart`, so hooks and history processors can recognize `run_code` with
+`isinstance` instead of matching its name.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Annotated, NotRequired
 from pydantic import Field
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import ToolCallPart, TypedArgs
+from pydantic_ai.messages import ToolCallPart, ToolKind
 
 
 class RunCodeArgs(TypedDict):
@@ -32,16 +32,17 @@ class RunCodeArgs(TypedDict):
     """Whether to reset the REPL state before running `code`."""
 
 
-class RunCodeCallPart(ToolCallPart, namespace='code_mode', tool_kind='run_code'):
+RUN_CODE_KIND = ToolKind('code_mode', 'run_code', args=RunCodeArgs)
+"""The kind of `CodeMode`'s `run_code` tool."""
+
+
+class RunCodeCallPart(ToolCallPart[RunCodeArgs], kind=RUN_CODE_KIND):
     """Typed [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for `CodeMode`'s `run_code` tool.
 
     A `run_code` call is promoted to this class through its `'code_mode.run_code'` kind, whatever
     the tool is called (for example after [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]),
     so `isinstance(part, RunCodeCallPart)` recognizes it in hooks and history processors.
     """
-
-    typed_args = TypedArgs(RunCodeArgs)
-    """The validated arguments, or `None` if they are incomplete (still streaming) or don't match `RunCodeArgs`."""
 
     @property
     def code(self) -> str | None:

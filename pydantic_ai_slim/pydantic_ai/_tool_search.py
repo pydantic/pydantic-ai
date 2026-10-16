@@ -38,9 +38,8 @@ from .messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     ToolCallPart,
+    ToolKind,
     ToolReturnPart,
-    TypedArgs,
-    TypedContent,
 )
 from .usage import RequestUsage
 
@@ -113,8 +112,14 @@ class ToolSearchReturnContent(TypedDict):
     """
 
 
+TOOL_SEARCH_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
+    'tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent
+)
+"""The kind of tool search, run natively by the provider or locally by the `search_tools` tool."""
+
+
 @dataclass(repr=False)
-class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
+class NativeToolSearchCallPart(NativeToolCallPart[ToolSearchArgs], kind=TOOL_SEARCH_KIND):
     """Typed view of a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
@@ -147,16 +152,6 @@ class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
-    typed_args = TypedArgs(ToolSearchArgs)
-    """Typed view of the validated tool-search arguments, or `None` if they don't validate.
-
-    Returns `None` in streaming-partial state, where `args` is still an
-    in-progress JSON string the model hasn't finished emitting, or when they don't validate:
-    `args` given as a JSON string aren't validated until this is read, even on a finalized
-    [`ModelResponse`][pydantic_ai.messages.ModelResponse].
-    For raw string-tolerant access, use the inherited `args_as_dict()`.
-    """
-
     @property
     def queries(self) -> list[str]:
         """Subfield accessor for `typed_args['queries']`.
@@ -171,7 +166,7 @@ class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
 
 
 @dataclass(repr=False)
-class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
+class NativeToolSearchReturnPart(NativeToolReturnPart[ToolSearchReturnContent], kind=TOOL_SEARCH_KIND):
     """Typed view of a [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
@@ -205,9 +200,6 @@ class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
 
-    typed_content = TypedContent(ToolSearchReturnContent)
-    """The validated tool-search result, or `None` if it doesn't fit."""
-
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:
         """Subfield accessor for `content['discovered_tools']`."""
@@ -225,7 +217,7 @@ class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
 
 
 @dataclass(repr=False)
-class ToolSearchCallPart(ToolCallPart, _core=True):
+class ToolSearchCallPart(ToolCallPart[ToolSearchArgs], kind=TOOL_SEARCH_KIND):
     """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the local `search_tools` function call.
 
     Used on the local-fallback path (and as the synthetic-injection target on
@@ -259,16 +251,6 @@ class ToolSearchCallPart(ToolCallPart, _core=True):
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
-    typed_args = TypedArgs(ToolSearchArgs)
-    """Typed view of the validated tool-search arguments, or `None` if they don't validate.
-
-    Returns `None` in streaming-partial state, where `args` is still an
-    in-progress JSON string the model hasn't finished emitting, or when they don't validate:
-    `args` given as a JSON string aren't validated until this is read, even on a finalized
-    [`ModelResponse`][pydantic_ai.messages.ModelResponse].
-    For raw string-tolerant access, use the inherited `args_as_dict()`.
-    """
-
     @property
     def queries(self) -> list[str]:
         """Subfield accessor for `typed_args['queries']`.
@@ -283,7 +265,7 @@ class ToolSearchCallPart(ToolCallPart, _core=True):
 
 
 @dataclass(repr=False)
-class ToolSearchReturnPart(ToolReturnPart, _core=True):
+class ToolSearchReturnPart(ToolReturnPart[ToolSearchReturnContent], kind=TOOL_SEARCH_KIND):
     """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the local `search_tools` function return.
 
     Used on the local-fallback path (and as the synthetic-injection target on
@@ -317,9 +299,6 @@ class ToolSearchReturnPart(ToolReturnPart, _core=True):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
-
-    typed_content = TypedContent(ToolSearchReturnContent)
-    """The validated tool-search result, or `None` if it doesn't fit."""
 
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:

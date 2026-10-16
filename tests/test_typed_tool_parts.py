@@ -1,4 +1,4 @@
-"""Tool kinds registered by defining typed tool parts, and how parts with unregistered kinds behave."""
+"""Tool kinds, the typed tool parts registered for them, and how parts with undefined kinds behave."""
 
 from __future__ import annotations
 
@@ -7,14 +7,15 @@ import sys
 import textwrap
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import Any, ClassVar, Literal, NotRequired
+from typing import Any, ClassVar, Generic, Literal, NotRequired, TypeVar
 
 import pytest
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext, Tool, TypedArgs, TypedContent
+from pydantic_ai import Agent, RunContext, Tool, ToolKind
 from pydantic_ai._event_registry import set_replay_isolation_guard
+from pydantic_ai._tool_search import TOOL_SEARCH_KIND
 from pydantic_ai.capabilities import AbstractCapability, Capability, ValidatedToolArgs, WrapToolExecuteHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -31,6 +32,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -55,9 +57,16 @@ class LookupResult(TypedDict):
     in_stock: bool
 
 
-class LookupCallPart(ToolCallPart, namespace='test', tool_kind='lookup'):
-    typed_args = TypedArgs(LookupArgs)
+class ImageResult(TypedDict):
+    image: ImageUrl
 
+
+lookup_kind = ToolKind('test', 'lookup', args=LookupArgs, content=LookupResult)
+audit_kind = ToolKind('test', 'audit')
+image_kind = ToolKind('test', 'image', content=ImageResult)
+
+
+class LookupCallPart(ToolCallPart[LookupArgs], kind=lookup_kind):
     label: ClassVar[str] = 'a ClassVar is not a stored field'
 
     @property
@@ -66,28 +75,24 @@ class LookupCallPart(ToolCallPart, namespace='test', tool_kind='lookup'):
         return typed['sku'] if typed is not None else None
 
 
-class LookupReturnPart(ToolReturnPart, namespace='test', tool_kind='lookup'):
-    typed_content = TypedContent(LookupResult)
+class LookupReturnPart(ToolReturnPart[LookupResult], kind=lookup_kind):
+    pass
 
 
-class NativeLookupCallPart(NativeToolCallPart, namespace='test', tool_kind='lookup'):
-    typed_args = TypedArgs(LookupArgs)
+class NativeLookupCallPart(NativeToolCallPart[LookupArgs], kind=lookup_kind):
+    pass
 
 
-class AuditCallPart(ToolCallPart, namespace='test', tool_kind='audit'):
+class AuditCallPart(ToolCallPart, kind=audit_kind):
     """A kind that declares no arguments shape, so any arguments fit."""
 
 
-class AuditReturnPart(ToolReturnPart, namespace='test', tool_kind='audit'):
+class AuditReturnPart(ToolReturnPart, kind=audit_kind):
     """Declares no content shape, so any successful content fits."""
 
 
-class ImageResult(TypedDict):
-    image: ImageUrl
-
-
-class ImageReturnPart(ToolReturnPart, namespace='test', tool_kind='image'):
-    typed_content = TypedContent(ImageResult)
+class ImageReturnPart(ToolReturnPart[ImageResult], kind=image_kind):
+    pass
 
 
 @dataclass(repr=False)
@@ -109,7 +114,18 @@ def _round_trip(messages: list[ModelMessage]) -> list[ModelMessage]:
     return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
 
-def test_the_kind_is_namespaced_and_becomes_the_default() -> None:
+def test_a_kind_is_namespaced_and_carries_its_shapes() -> None:
+    assert (lookup_kind.namespace, lookup_kind.name, lookup_kind.id) == ('test', 'lookup', 'test.lookup')
+    assert (lookup_kind.args, lookup_kind.content) == (LookupArgs, LookupResult)
+    assert (audit_kind.args, audit_kind.content) == (None, None)
+    assert repr(lookup_kind) == "ToolKind('test', 'lookup', args=LookupArgs, content=LookupResult)"
+    assert repr(audit_kind) == "ToolKind('test', 'audit')"
+    assert (TOOL_SEARCH_KIND.namespace, TOOL_SEARCH_KIND.id) == (None, 'tool-search')
+    assert repr(TOOL_SEARCH_KIND) == "ToolKind('tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent)"
+    assert repr(ToolKind('test', 'list-args', args=list[int])) == "ToolKind('test', 'list-args', args=list[int])"
+
+
+def test_the_kind_becomes_the_default() -> None:
     assert LookupCallPart('lookup_v2', {'sku': 'A-1'}).tool_kind == 'test.lookup'
     assert LookupReturnPart('lookup_v2', {'in_stock': True}).tool_kind == 'test.lookup'
     # As with capability events, the class carries its kind as the field's default.
@@ -127,8 +143,8 @@ def test_a_typed_part_needs_no_decorator_and_keeps_the_base_signature() -> None:
 
 def test_a_decorated_typed_part_keeps_its_kind_keyword_only() -> None:
     @dataclass(repr=False)
-    class DecoratedCallPart(ToolCallPart, namespace='test', tool_kind='decorated'):
-        typed_args = TypedArgs(LookupArgs)
+    class DecoratedCallPart(ToolCallPart[LookupArgs], kind=ToolKind('test', 'decorated', args=LookupArgs)):
+        pass
 
     part = DecoratedCallPart('lookup', {'sku': 'A-1'}, 'c1')
     assert part.tool_kind == 'test.decorated'
@@ -144,7 +160,6 @@ def test_typed_args_validates_complete_arguments_only() -> None:
     assert LookupCallPart('lookup', {'quantity': 2}).typed_args is None
     assert LookupCallPart('lookup', '[1]').typed_args is None
     assert LookupCallPart('lookup').typed_args is None
-    assert LookupCallPart.typed_args.args_type is LookupArgs
 
 
 def test_typed_args_on_a_base_part_is_the_arguments_dictionary() -> None:
@@ -163,7 +178,7 @@ def test_typed_content_validates_successful_content_only() -> None:
     assert LookupReturnPart('lookup', {'in_stock': True}, outcome='failed').typed_content is None
     assert ToolReturnPart('t', 'plain').typed_content == 'plain'
     assert ToolReturnPart('t', 'boom', outcome='denied').typed_content is None
-    assert LookupReturnPart.typed_content.content_type is LookupResult
+    assert AuditReturnPart('audit', 'plain').typed_content == 'plain'
 
 
 def test_a_registered_kind_is_promoted_and_survives_a_round_trip() -> None:
@@ -339,24 +354,27 @@ def test_existing_histories_and_pickles_still_load() -> None:
         ModelResponse(parts=[ToolCallPart('lookup', {'sku': 'A-1'}, tool_kind='test.lookup')]),
     ]
     assert pickle.loads(pickle.dumps(messages)) == messages
-    tool_def = ToolDefinition(name='lookup', tool_kind=LookupCallPart)
+    tool_def = ToolDefinition(name='lookup', tool_kind=lookup_kind)
     assert pickle.loads(pickle.dumps(tool_def)) == tool_def
 
 
-def test_a_kind_needs_a_namespace() -> None:
+def test_a_kind_needs_a_namespace_and_a_name() -> None:
     with pytest.raises(UserError, match='needs a namespace'):
-
-        class Unnamespaced(ToolCallPart, tool_kind='lookup'):  # pyright: ignore[reportUnusedClass]
-            pass
-
-    with pytest.raises(UserError, match='has an empty `tool_kind`'):
-
-        class EmptyKind(ToolCallPart, namespace='test', tool_kind=''):  # pyright: ignore[reportUnusedClass]
-            pass
+        ToolKind('', 'lookup')
+    with pytest.raises(UserError, match='needs a namespace'):
+        ToolKind('test..nested', 'lookup')
+    with pytest.raises(UserError, match="Tool kind in namespace 'test' has an empty name"):
+        ToolKind('test', '')
 
 
-def test_a_kind_must_be_declared_with_class_arguments() -> None:
-    with pytest.raises(UserError, match='must declare its kind with class arguments'):
+def test_a_kind_defined_again_must_keep_its_shapes() -> None:
+    assert ToolKind('test', 'lookup', args=LookupArgs, content=LookupResult).id == 'test.lookup'
+    with pytest.raises(UserError, match=r"Tool kind 'test\.lookup' is already defined as ToolKind\('test', 'lookup', "):
+        ToolKind('test', 'lookup', args=ImageResult)
+
+
+def test_a_kind_must_be_declared_with_the_kind_class_argument() -> None:
+    with pytest.raises(UserError, match='must declare its kind with the `kind` class argument'):
 
         @dataclass(repr=False)
         class BodyDefault(ToolCallPart):
@@ -364,22 +382,54 @@ def test_a_kind_must_be_declared_with_class_arguments() -> None:
 
             tool_kind: Literal['test.body'] = 'test.body'  # pyright: ignore[reportIncompatibleVariableOverride]
 
-    with pytest.raises(UserError, match='must declare its kind with class arguments'):
-
-        class NamespaceOnly(ToolCallPart, namespace='test'):  # pyright: ignore[reportUnusedClass]
-            pass
-
 
 def test_a_kind_registered_twice_is_an_error() -> None:
-    with pytest.raises(UserError, match=r"Tool kind 'test\.lookup' is already registered for ToolCallPart"):
+    with pytest.raises(UserError, match=r"Tool kind 'test\.lookup' already has a typed ToolCallPart subclass"):
 
-        class OtherLookupCallPart(ToolCallPart, namespace='test', tool_kind='lookup'):  # pyright: ignore[reportUnusedClass]
+        class OtherLookupCallPart(ToolCallPart[LookupArgs], kind=lookup_kind):  # pyright: ignore[reportUnusedClass]
             pass
+
+
+_T = TypeVar('_T')
+
+
+def test_the_parameterized_base_must_match_the_kind() -> None:
+    with pytest.raises(
+        UserError,
+        match=r"MismatchedCallPart parameterizes ToolCallPart with ImageResult, but its kind 'test\.lookup' declares `args=LookupArgs`",
+    ):
+
+        class MismatchedCallPart(ToolCallPart[ImageResult], kind=lookup_kind):  # pyright: ignore[reportUnusedClass,reportGeneralTypeIssues,reportArgumentType]
+            pass
+
+    with pytest.raises(
+        UserError,
+        match=r"ShapelessReturnPart parameterizes ToolReturnPart with LookupResult, but its kind 'test\.audit' declares `content=None`",
+    ):
+
+        class ShapelessReturnPart(ToolReturnPart[LookupResult], kind=audit_kind):  # pyright: ignore[reportUnusedClass]
+            pass
+
+    class AnyCallPart(ToolCallPart[Any], kind=ToolKind('test', 'any-shape')):
+        pass
+
+    class GenericCallPart(ToolCallPart[_T], Generic[_T]):
+        pass
+
+    class ViaGenericCallPart(GenericCallPart[LookupArgs], kind=ToolKind('test', 'via-generic', args=LookupArgs)):
+        pass
+
+    class OpenCallPart(ToolCallPart[_T], Generic[_T], kind=ToolKind('test', 'open', args=LookupArgs)):
+        pass
+
+    assert AnyCallPart('t').tool_kind == 'test.any-shape'
+    assert ViaGenericCallPart('t', {'sku': 'A-1'}).typed_args == {'sku': 'A-1'}
+    assert OpenCallPart('t').tool_kind == 'test.open'
 
 
 def test_redefining_the_same_class_replaces_its_registration() -> None:
     def define() -> type[ToolCallPart]:
-        class RedefinedCallPart(ToolCallPart, namespace='test', tool_kind='redefined'):
+        class RedefinedCallPart(ToolCallPart, kind=ToolKind('test', 'redefined')):
             pass
 
         return RedefinedCallPart
@@ -394,7 +444,7 @@ def test_a_re_executed_copy_keeps_the_host_registration() -> None:
     """A Temporal workflow sandbox re-executes app modules; its copy must not displace the host's class."""
 
     def define() -> type[ToolCallPart]:
-        class SandboxedCallPart(ToolCallPart, namespace='test', tool_kind='sandboxed'):
+        class SandboxedCallPart(ToolCallPart, kind=ToolKind('test', 'sandboxed')):
             pass
 
         return SandboxedCallPart
@@ -412,7 +462,7 @@ def test_a_re_executed_copy_keeps_the_host_registration() -> None:
 def test_a_typed_part_may_not_add_fields() -> None:
     with pytest.raises(UserError, match='WithExtraField adds the field\\(s\\) extra to ToolReturnPart'):
 
-        class WithExtraField(ToolReturnPart, namespace='test', tool_kind='extra-field'):  # pyright: ignore[reportUnusedClass]
+        class WithExtraField(ToolReturnPart, kind=ToolKind('test', 'extra-field')):  # pyright: ignore[reportUnusedClass]
             extra: int = 0
 
 
@@ -425,7 +475,7 @@ def test_a_field_inherited_from_an_intermediate_dataclass_is_rejected() -> None:
 
     with pytest.raises(UserError, match='InheritsField adds the field\\(s\\) extra to ToolCallPart'):
 
-        class InheritsField(WithField, namespace='test', tool_kind='inherits-field'):  # pyright: ignore[reportUnusedClass]
+        class InheritsField(WithField, kind=ToolKind('test', 'inherits-field')):  # pyright: ignore[reportUnusedClass]
             pass
 
 
@@ -433,8 +483,8 @@ def test_a_shape_defined_in_a_function_works() -> None:
     class LocalArgs(TypedDict):
         name: str
 
-    class LocalCallPart(ToolCallPart, namespace='test', tool_kind='local-args'):
-        typed_args = TypedArgs(LocalArgs)
+    class LocalCallPart(ToolCallPart[LocalArgs], kind=ToolKind('test', 'local-args', args=LocalArgs)):
+        pass
 
     (call,) = ModelResponse(parts=[ToolCallPart('t', {'name': 'x'}, tool_kind='test.local-args')]).parts
     assert isinstance(call, LocalCallPart) and call.typed_args == {'name': 'x'}
@@ -445,13 +495,17 @@ def test_a_typed_part_with_lazy_annotations() -> None:
 
     The class is built from source, as this module's annotations are strings; before 3.14 they're eager.
     """
-    namespace: dict[str, Any] = {'ToolCallPart': ToolCallPart, 'ClassVar': ClassVar}
+    namespace: dict[str, Any] = {
+        'ToolCallPart': ToolCallPart,
+        'ClassVar': ClassVar,
+        'lazy_kind': ToolKind('test', 'lazy'),
+    }
     source = textwrap.dedent(
         """
         class Label:
             pass
 
-        class LazyCallPart(ToolCallPart, namespace='test', tool_kind='lazy'):
+        class LazyCallPart(ToolCallPart, kind=lazy_kind):
             label: ClassVar[Label]
         """
     )
@@ -475,15 +529,12 @@ def test_a_stored_tool_definition_with_an_unregistered_kind_loads() -> None:
     }
 
 
-def test_a_tool_definition_takes_the_typed_part_class() -> None:
-    tool_def = ToolDefinition(name='lookup', tool_kind=LookupCallPart)
+def test_a_tool_definition_takes_the_kind_or_its_id() -> None:
+    tool_def = ToolDefinition(name='lookup', tool_kind=lookup_kind)
     assert tool_def.tool_kind == 'test.lookup'
-    assert replace(tool_def, tool_kind=LookupReturnPart).tool_kind == 'test.lookup'
+    assert replace(tool_def, tool_kind='test.audit').tool_kind == 'test.audit'
     assert replace(tool_def, tool_kind=None).tool_kind is None
-    assert ToolDefinition(name='search_tools', tool_kind=ToolSearchCallPart).tool_kind == 'tool-search'
     assert ToolDefinition(name='lookup').tool_kind is None
-    with pytest.raises(UserError, match='`ToolCallPart` registers no tool kind'):
-        ToolDefinition(name='lookup', tool_kind=ToolCallPart)
 
 
 async def test_a_run_refuses_a_tool_with_an_unregistered_kind() -> None:
@@ -494,26 +545,32 @@ async def test_a_run_refuses_a_tool_with_an_unregistered_kind() -> None:
         return sku  # pragma: no cover
 
     agent = Agent(TestModel(), tools=[Tool(lookup, prepare=mark_kind)])
-    with pytest.raises(
-        UserError, match=r"declares `tool_kind='test\.unknown'`, which no typed tool part has registered"
-    ):
+    with pytest.raises(UserError, match=r"declares `tool_kind='test\.unknown'`, which is not a defined `ToolKind`"):
         await agent.run('go')
 
 
-def _missing_sku(code: str) -> str:
-    return code  # pragma: no cover
+class _OtherArgs(TypedDict):
+    code: str
 
 
-def _optional_sku(sku: str = '') -> str:
-    return sku  # pragma: no cover
+def _missing_sku(code: str) -> LookupResult:
+    return _lookup(code)  # pragma: no cover
 
 
-def _numeric_sku(sku: int) -> str:
-    return str(sku)  # pragma: no cover
+def _optional_sku(sku: str = '') -> LookupResult:
+    return _lookup(sku)  # pragma: no cover
 
 
-def _string_quantity(sku: str | None, quantity: str) -> str:
-    return f'{sku} {quantity}'  # pragma: no cover
+def _numeric_sku(sku: int) -> LookupResult:
+    return _lookup(str(sku))  # pragma: no cover
+
+
+def _string_quantity(sku: str | None, quantity: str) -> LookupResult:
+    return _lookup(f'{sku} {quantity}')  # pragma: no cover
+
+
+def _other_args(args: _OtherArgs) -> LookupResult:
+    return _lookup(args['code'])  # pragma: no cover
 
 
 @pytest.mark.parametrize(
@@ -523,16 +580,17 @@ def _string_quantity(sku: str | None, quantity: str) -> str:
         (_optional_sku, "its 'sku' parameter is not required"),
         (_numeric_sku, "its 'sku' parameter is of type integer, not string"),
         (_string_quantity, "its 'quantity' parameter is of type string, not integer"),
+        (_other_args, "it has no 'sku' parameter"),
     ],
 )
 async def test_a_run_refuses_a_tool_whose_parameters_do_not_fit_its_kind(function: Any, problem: str) -> None:
-    agent = Agent(TestModel(), tools=[Tool(function, name='lookup', tool_kind=LookupCallPart)])
+    agent = Agent(TestModel(), tools=[Tool(function, name='lookup', tool_kind=lookup_kind)])
     with pytest.raises(UserError) as exc_info:
         await agent.run('go')
     message = str(exc_info.value)
     assert message.startswith(
         "Tool 'lookup' declares `tool_kind='test.lookup'`, but its parameters don't fit the arguments "
-        '`LookupCallPart` declares (LookupArgs): '
+        'the kind declares (LookupArgs): '
     )
     assert problem in message
 
@@ -541,7 +599,7 @@ async def test_a_numeric_parameter_fits_an_integer_field() -> None:
     def lookup(sku: str, quantity: float = 1) -> LookupResult:
         return _lookup(sku)
 
-    agent = Agent(TestModel(), tools=[Tool(lookup, tool_kind=LookupCallPart)])
+    agent = Agent(TestModel(), tools=[Tool(lookup, tool_kind=lookup_kind)])
     result = await agent.run('go')
     assert isinstance(result.all_messages()[1].parts[0], LookupCallPart)
 
@@ -550,7 +608,7 @@ async def test_a_kind_without_a_declared_shape_accepts_any_parameters() -> None:
     def audit(entry: int) -> str:
         return str(entry)
 
-    agent = Agent(TestModel(), tools=[Tool(audit, tool_kind=AuditCallPart)])
+    agent = Agent(TestModel(), tools=[Tool(audit, tool_kind=audit_kind)])
     result = await agent.run('go')
     assert isinstance(result.all_messages()[1].parts[0], AuditCallPart)
 
@@ -575,7 +633,7 @@ class _RecordExecutedCalls(AbstractCapability[None]):
 async def test_a_call_built_without_its_kind_reaches_hooks_typed() -> None:
     """A dispatcher (like code mode's sandbox) that builds a bare call still hands hooks the typed part."""
     executed: list[ToolCallPart] = []
-    toolset = FunctionToolset[None]([Tool(_lookup, name='lookup', tool_kind=LookupCallPart)])
+    toolset = FunctionToolset[None]([Tool(_lookup, name='lookup', tool_kind=lookup_kind)])
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     manager = await ToolManager[None](toolset=toolset, root_capability=_RecordExecutedCalls(executed)).for_run_step(ctx)
 
@@ -586,14 +644,16 @@ async def test_a_call_built_without_its_kind_reaches_hooks_typed() -> None:
     assert isinstance(call, LookupCallPart) and call.sku == 'A-1'
 
 
-async def test_a_kind_registered_only_by_a_return_part_is_not_checked() -> None:
-    class ReportReturnPart(ToolReturnPart, namespace='test', tool_kind='report'):
-        typed_content = TypedContent(LookupResult)
+async def test_a_kind_without_an_arguments_shape_checks_only_the_return_type() -> None:
+    report_kind = ToolKind('test', 'report', content=LookupResult)
+
+    class ReportReturnPart(ToolReturnPart[LookupResult], kind=report_kind):
+        pass
 
     def report(sku: str) -> LookupResult:
         return {'in_stock': sku == 'a'}
 
-    agent = Agent(TestModel(), tools=[Tool(report, tool_kind=ReportReturnPart)])
+    agent = Agent(TestModel(), tools=[Tool(report, tool_kind=report_kind)])
     result = await agent.run('go')
     tool_return = result.all_messages()[2].parts[0]
     assert isinstance(tool_return, ReportReturnPart) and tool_return.typed_content == {'in_stock': True}
@@ -622,7 +682,7 @@ def test_an_intermediate_subclass_registers_nothing() -> None:
 def test_a_slotted_typed_part_registers_the_recreated_class() -> None:
     # `@dataclass(slots=True)` builds a new class, re-running registration without the class arguments.
     @dataclass(repr=False, slots=True)
-    class SlottedCallPart(ToolCallPart, namespace='test', tool_kind='slotted'):
+    class SlottedCallPart(ToolCallPart, kind=ToolKind('test', 'slotted')):
         pass
 
     promoted = ToolCallPart.narrow_type(ToolCallPart('t', {}, tool_kind='test.slotted'))
@@ -672,14 +732,14 @@ async def _tool_kinds_sent(agent: Agent[Any, str]) -> dict[str, str | None]:
 
 async def test_a_tool_declares_its_kind_with_the_part_class() -> None:
     await _assert_typed_lookup_parts(
-        Agent(FunctionModel(stream_function=_respond), tools=[Tool(_lookup, name='lookup', tool_kind=LookupCallPart)])
+        Agent(FunctionModel(stream_function=_respond), tools=[Tool(_lookup, name='lookup', tool_kind=lookup_kind)])
     )
 
 
 async def test_agent_decorators_declare_a_kind() -> None:
     agent = Agent(FunctionModel(stream_function=_respond))
 
-    @agent.tool_plain(tool_kind=LookupCallPart)
+    @agent.tool_plain(tool_kind=lookup_kind)
     def lookup(sku: str) -> LookupResult:
         return _lookup(sku)
 
@@ -695,11 +755,11 @@ async def test_agent_decorators_declare_a_kind() -> None:
 async def test_toolset_and_capability_decorators_declare_a_kind() -> None:
     toolset = FunctionToolset[None]()
 
-    @toolset.tool_plain(tool_kind=LookupCallPart)
+    @toolset.tool_plain(tool_kind=lookup_kind)
     def lookup(sku: str) -> LookupResult:
         return _lookup(sku)
 
-    @toolset.tool(tool_kind=LookupCallPart)
+    @toolset.tool(tool_kind=lookup_kind)
     def lookup_with_ctx(ctx: RunContext[None], sku: str) -> LookupResult:
         return _lookup(sku)  # pragma: no cover
 
@@ -708,11 +768,11 @@ async def test_toolset_and_capability_decorators_declare_a_kind() -> None:
 
     capability: Capability[None] = Capability()
 
-    @capability.tool_plain(tool_kind=LookupCallPart)
+    @capability.tool_plain(tool_kind=lookup_kind)
     def lookup_from_capability(sku: str) -> LookupResult:
         return _lookup(sku)  # pragma: no cover
 
-    @capability.tool(tool_kind=LookupCallPart)
+    @capability.tool(tool_kind=lookup_kind)
     def lookup_from_capability_with_ctx(ctx: RunContext[None], sku: str) -> LookupResult:
         return _lookup(sku)  # pragma: no cover
 
@@ -724,7 +784,7 @@ async def test_toolset_and_capability_decorators_declare_a_kind() -> None:
 
 async def test_an_agent_tool_with_a_kind_set_in_prepare_produces_typed_parts() -> None:
     async def mark_kind(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, tool_kind=LookupCallPart)
+        return replace(tool_def, tool_kind=lookup_kind)
 
     await _assert_typed_lookup_parts(
         Agent(FunctionModel(stream_function=_respond), tools=[Tool(_lookup, name='lookup', prepare=mark_kind)])
@@ -784,3 +844,138 @@ def test_a_typed_return_whose_sanitized_content_no_longer_fits_falls_back_to_the
             ToolReturnPart('image', {'image': ImageUrl('s3://bucket/a.png')}, 'c1', tool_kind='test.image')
         )
     assert (type(dropped), dropped.tool_kind, dropped.content) == (ToolReturnPart, 'test.image', {})
+
+
+class _UnstockedResult(TypedDict):
+    stock: int
+
+
+class _MaybeStockedResult(TypedDict):
+    in_stock: NotRequired[bool]
+
+
+class _TextStockResult(TypedDict):
+    in_stock: str
+
+
+def _returns_text(sku: str) -> str:
+    return sku  # pragma: no cover
+
+
+def _returns_unstocked(sku: str) -> _UnstockedResult:
+    return {'stock': 0}  # pragma: no cover
+
+
+def _returns_maybe_stocked(sku: str) -> _MaybeStockedResult:
+    return {}  # pragma: no cover
+
+
+def _returns_text_stock(sku: str) -> _TextStockResult:
+    return {'in_stock': 'yes'}  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'function,problem',
+    [
+        (_returns_text, 'it returns string, not object'),
+        (_returns_unstocked, "its return value has no 'in_stock' field"),
+        (_returns_maybe_stocked, "its return value's 'in_stock' field is not required"),
+        (_returns_text_stock, "its return value's 'in_stock' field is of type string, not boolean"),
+    ],
+)
+async def test_a_run_refuses_a_tool_whose_return_type_does_not_fit_its_kind(function: Any, problem: str) -> None:
+    agent = Agent(TestModel(), tools=[Tool(function, name='lookup', tool_kind=lookup_kind)])
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('go')
+    message = str(exc_info.value)
+    assert message.startswith(
+        "Tool 'lookup' declares `tool_kind='test.lookup'`, but its return type doesn't fit the content "
+        'the kind declares (LookupResult): '
+    )
+    assert problem in message
+
+
+class _StockTree(TypedDict):
+    in_stock: bool
+    parts: list[_StockTree]
+
+
+def _returns_untyped(sku: str):
+    return _lookup(sku)
+
+
+def _returns_optional(sku: str) -> LookupResult | None:
+    return _lookup(sku)
+
+
+def _returns_tool_return(sku: str) -> ToolReturn[LookupResult]:
+    return ToolReturn(_lookup(sku))
+
+
+def _returns_tree(sku: str) -> _StockTree:
+    return {'in_stock': sku == 'A-1', 'parts': []}
+
+
+@pytest.mark.parametrize('function', [_returns_untyped, _returns_optional, _returns_tool_return, _returns_tree])
+async def test_return_types_that_fit_or_cannot_be_checked_are_accepted(function: Any) -> None:
+    agent = Agent(TestModel(), tools=[Tool(function, name='lookup', tool_kind=lookup_kind)])
+    result = await agent.run('go')
+    assert isinstance(result.all_messages()[2].parts[0], LookupReturnPart)
+
+
+async def test_a_tool_can_take_the_kinds_arguments_as_one_parameter() -> None:
+    received: list[LookupArgs] = []
+    tool_defs: list[ToolDefinition] = []
+    agent = Agent(FunctionModel(stream_function=_respond))
+
+    @agent.tool_plain(tool_kind=lookup_kind)
+    def lookup(args: LookupArgs) -> LookupResult:
+        """Check whether an item is in stock."""
+        received.append(args)
+        return _lookup(args['sku'])
+
+    await _assert_typed_lookup_parts(agent)
+    assert received == [{'sku': 'A-1'}]
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_defs.extend(info.function_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    await agent.run('go', model=FunctionModel(record))
+    (tool_def,) = tool_defs
+    assert tool_def.description == 'Check whether an item is in stock.'
+    assert tool_def.parameters_json_schema == {
+        'properties': {'sku': {'type': 'string'}, 'quantity': {'type': 'integer'}},
+        'required': ['sku'],
+        'title': 'LookupArgs',
+        'type': 'object',
+    }
+
+
+async def test_a_context_tool_can_take_the_kinds_arguments_as_one_parameter() -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('lookup', {'sku': 'A-1'}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), deps_type=str)
+
+    @agent.tool(tool_kind=lookup_kind)
+    async def lookup(ctx: RunContext[str], args: LookupArgs) -> LookupResult:
+        return _lookup(ctx.deps if args['sku'] == 'A-1' else args['sku'])
+
+    result = await agent.run('Is A-1 in stock?', deps='A-1')
+    call = result.all_messages()[1].parts[0]
+    assert isinstance(call, LookupCallPart) and call.typed_args == {'sku': 'A-1'}
+    tool_return = result.all_messages()[2].parts[0]
+    assert isinstance(tool_return, LookupReturnPart) and tool_return.typed_content == {'in_stock': True}
+
+
+def test_the_old_tool_definition_kind_alias_is_deprecated() -> None:
+    from pydantic_ai import tools
+    from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `ToolDefinitionKind`'):
+        assert tools.ToolKind is tools.ToolDefinitionKind
+    with pytest.raises(AttributeError, match="has no attribute 'Missing'"):
+        tools.Missing

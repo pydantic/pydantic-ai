@@ -34,13 +34,10 @@ from .exceptions import (
     UserError,
 )
 from .messages import (
-    _TYPED_CALL_PARTS,  # pyright: ignore[reportPrivateUsage]
-    BaseToolCallPart,
+    _TOOL_KINDS,  # pyright: ignore[reportPrivateUsage]
     RetryPromptPart,
     ToolCallPart,
     ToolReturn,
-    TypedArgs,
-    parse_tool_kind,
 )
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -68,71 +65,96 @@ ToolValidationHandler = Callable[[bool], Awaitable[None]]
 
 
 def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
-    """Refuse a tool whose `tool_kind` isn't registered, or whose parameters don't fit its kind's arguments.
+    """Refuse a tool whose `tool_kind` isn't defined, or whose parameters or return type don't fit its kind's shapes.
 
     Checked when a run collects its tools rather than on `ToolDefinition` itself, so a definition
-    stored by durable execution still loads after the module registering its kind is gone.
+    stored by durable execution still loads after the module defining its kind is gone.
     """
     for tool in tools.values():
         tool_def = tool.tool_def
-        kind = tool_def.tool_kind
+        kind_id = tool_def.tool_kind
+        if kind_id is None:
+            continue
+        kind = _TOOL_KINDS.get(kind_id)
         if kind is None:
-            continue
-        if parse_tool_kind(kind) is None:
             raise UserError(
-                f'Tool {tool_def.name!r} declares `tool_kind={kind!r}`, which no typed tool part has registered. '
-                'Define a typed `ToolCallPart` / `ToolReturnPart` subclass with this kind, and import its module '
-                'before running the agent.'
+                f'Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, which is not a defined `ToolKind`. '
+                'Import the module that defines the kind before running the agent.'
             )
-        part_cls = _TYPED_CALL_PARTS.get(('tool-call', kind))
-        if part_cls is None:
-            continue
-        typed_args = part_cls.typed_args
-        if typed_args is BaseToolCallPart.typed_args:
-            # The call part doesn't declare an arguments shape, so there is nothing to check.
-            continue
-        problems = _args_schema_mismatch(typed_args, pydantic_core.to_json(tool_def.parameters_json_schema))
-        if problems:
-            raise UserError(
-                f"Tool {tool_def.name!r} declares `tool_kind={kind!r}`, but its parameters don't fit the arguments "
-                f'`{part_cls.__qualname__}` declares ({typed_args.args_type.__qualname__}): {"; ".join(problems)}.'
-            )
+        if kind.args is not None:
+            problems = _shape_mismatch(kind.args, pydantic_core.to_json(tool_def.parameters_json_schema), 'args')
+            if problems:
+                raise UserError(
+                    f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its parameters don't fit the "
+                    f'arguments the kind declares ({_shape_name(kind.args)}): {"; ".join(problems)}.'
+                )
+        if kind.content is not None and tool_def.return_schema:
+            problems = _shape_mismatch(kind.content, pydantic_core.to_json(tool_def.return_schema), 'content')
+            if problems:
+                raise UserError(
+                    f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
+                    f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
+                )
+
+
+def _shape_name(shape: Any) -> str:
+    return shape.__qualname__ if isinstance(shape, type) else repr(shape)
 
 
 @lru_cache(maxsize=256)
-def _args_schema_mismatch(typed_args: TypedArgs[Any], parameters_json_schema: bytes) -> tuple[str, ...]:
-    """How a tool's parameters JSON schema fails to fit the arguments its kind's call part declares.
+def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'content']) -> tuple[str, ...]:
+    """How a tool's parameters or return JSON schema fails to fit the shape its kind declares.
 
-    Deliberately not full JSON Schema subsumption: every field the declared arguments require must be a
-    required parameter of the tool, and where both give a field a JSON `type`, the types must overlap.
-    Cached per arguments shape and serialized schema, as tools are collected on every step.
+    Deliberately not full JSON Schema subsumption: every field the declared shape requires must be a
+    required field of the tool's, and where both give a field a JSON `type`, the types must overlap. A
+    return schema whose top-level type rules out the shape's is reported as such; one that isn't an
+    object with properties (a union, say) isn't checked field by field. Cached per shape and serialized
+    schema, as tools are collected on every step.
     """
-    declared = pydantic.TypeAdapter(typed_args.args_type).json_schema()
-    schema = pydantic_core.from_json(parameters_json_schema)
+    declared = pydantic.TypeAdapter(shape).json_schema()
+    schema: dict[str, Any] = pydantic_core.from_json(json_schema)
+    if payload == 'content':
+        ref = schema.get('$ref')
+        if isinstance(ref, str) and ref.startswith('#/$defs/'):
+            schema = schema.get('$defs', {}).get(ref.removeprefix('#/$defs/'), schema)
+        expected, actual = _json_types(declared), _json_types(schema)
+        if expected and actual and expected.isdisjoint(actual):
+            return (f'it returns {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}',)
+        if 'properties' not in schema:
+            return ()
     properties: dict[str, Any] = schema.get('properties') or {}
     required: list[str] = schema.get('required') or []
+    field = 'parameter' if payload == 'args' else 'field'
+    owner = 'its' if payload == 'args' else "its return value's"
     problems: list[str] = []
     for name in declared.get('required', []):
         if name not in properties:
-            problems.append(f'it has no {name!r} parameter')
+            problems.append(
+                f'it has no {name!r} parameter' if payload == 'args' else f'its return value has no {name!r} field'
+            )
         elif name not in required:
-            problems.append(f'its {name!r} parameter is not required')
+            problems.append(f'{owner} {name!r} {field} is not required')
     for name, declared_property in declared.get('properties', {}).items():
         if name in properties:
             expected, actual = _json_types(declared_property), _json_types(properties[name])
             if expected and actual and expected.isdisjoint(actual):
                 problems.append(
-                    f'its {name!r} parameter is of type {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}'
+                    f'{owner} {name!r} {field} is of type {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}'
                 )
     return tuple(problems)
 
 
 def _json_types(property_schema: dict[str, Any]) -> set[str]:
-    """The JSON types a property schema names at its top level or in a top-level `anyOf`; empty if unknown."""
+    """The JSON types a property schema names at its top level or across a top-level `anyOf`; empty if unknown.
+
+    An `anyOf` option without a `type` (a reference to a model, say) makes the types unknown.
+    """
     types: set[str] = set()
-    for option in [property_schema, *property_schema.get('anyOf', [])]:
+    for option in property_schema.get('anyOf') or [property_schema]:
         type_ = option.get('type')
-        types.update([type_] if isinstance(type_, str) else type_ or [])
+        if not type_:
+            return set()
+        types.update([type_] if isinstance(type_, str) else type_)
     if 'number' in types:
         types.add('integer')
     return types

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition, ToolKind
 from pydantic_ai.capabilities import (
     AbstractCapability,
     HandleDeferredToolCalls,
@@ -31,8 +31,10 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import RunCodeCallPart
 
+lookup_kind = ToolKind('code_mode_test', 'lookup')
 
-class LookupCallPart(ToolCallPart, namespace='code_mode_test', tool_kind='lookup'):
+
+class LookupCallPart(ToolCallPart, kind=lookup_kind):
     """Registers a non-core kind, like a capability's typed tool part would."""
 
 
@@ -91,7 +93,7 @@ class TestRunCodeCallPart:
         """Hooks see the same typed part for a sandboxed call as for a direct one, so kind-keyed guards apply."""
 
         async def with_lookup_kind(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
-            return replace(tool_def, tool_kind=LookupCallPart.tool_kind)
+            return replace(tool_def, tool_kind=lookup_kind)
 
         def lookup(item: str) -> str:
             """Look up an item."""
@@ -130,7 +132,7 @@ class TestRunCodeCallPart:
         (nested_call,) = tool_return.metadata['tool_calls'].values()
         assert isinstance(nested_call, LookupCallPart)
         (nested_return,) = tool_return.metadata['tool_returns'].values()
-        assert nested_return.tool_kind == LookupCallPart.tool_kind
+        assert nested_return.tool_kind == lookup_kind.id
 
     async def test_approval_inside_the_sandbox_sees_the_typed_part(self) -> None:
         def lookup(item: str) -> str:
@@ -147,7 +149,7 @@ class TestRunCodeCallPart:
 
         agent = Agent(
             FunctionModel(_run_code_then_answer("await lookup(item='widget')")),
-            tools=[Tool(lookup, requires_approval=True, tool_kind=LookupCallPart.tool_kind)],
+            tools=[Tool(lookup, requires_approval=True, tool_kind=lookup_kind)],
             capabilities=[CodeMode[object](), HandleDeferredToolCalls(handler=deny_all)],
         )
         await agent.run('hi')

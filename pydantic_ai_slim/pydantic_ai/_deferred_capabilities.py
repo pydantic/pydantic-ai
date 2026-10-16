@@ -14,9 +14,8 @@ from .messages import (
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
     ToolCallPart,
+    ToolKind,
     ToolReturnPart,
-    TypedArgs,
-    TypedContent,
 )
 
 if TYPE_CHECKING:
@@ -42,8 +41,14 @@ class LoadCapabilityReturn(TypedDict):
     """Instructions for the loaded capability."""
 
 
+CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
+    'capability-load', args=LoadCapabilityArgs, content=LoadCapabilityReturn
+)
+"""The kind of the `load_capability` tool."""
+
+
 @dataclass(repr=False)
-class LoadCapabilityCallPart(ToolCallPart, _core=True):
+class LoadCapabilityCallPart(ToolCallPart[LoadCapabilityArgs], kind=CAPABILITY_LOAD_KIND):
     """Typed `ToolCallPart` for the `load_capability` tool."""
 
     _: KW_ONLY
@@ -57,9 +62,6 @@ class LoadCapabilityCallPart(ToolCallPart, _core=True):
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass."""
 
-    typed_args = TypedArgs(LoadCapabilityArgs)
-    """The validated load-capability arguments, or `None` while they stream in or if they don't fit."""
-
     @property
     def capability_id(self) -> str | None:
         """Capability id from the parsed args, if available."""
@@ -70,7 +72,7 @@ class LoadCapabilityCallPart(ToolCallPart, _core=True):
 
 
 @dataclass(repr=False)
-class LoadCapabilityReturnPart(ToolReturnPart, _core=True):
+class LoadCapabilityReturnPart(ToolReturnPart[LoadCapabilityReturn], kind=CAPABILITY_LOAD_KIND):
     """Typed `ToolReturnPart` for the `load_capability` tool."""
 
     _: KW_ONLY
@@ -86,9 +88,6 @@ class LoadCapabilityReturnPart(ToolReturnPart, _core=True):
 
     tool_kind: Literal['capability-load'] = 'capability-load'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass."""
-
-    typed_content = TypedContent(LoadCapabilityReturn)
-    """The validated load-capability return value, or `None` if it doesn't fit."""
 
     @property
     def instructions(self) -> str | None:
