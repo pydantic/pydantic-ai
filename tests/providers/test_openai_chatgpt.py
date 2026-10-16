@@ -170,6 +170,12 @@ def test_extra_params_cannot_override_what_the_exchange_relies_on(param: str):
         'https://127.0.0.1:1455/auth/callback',
         'http://127.0.0.1:1455/callback',
         'http://127.0.0.1/auth/callback',
+        'http://127.0.0.1:0/auth/callback',
+        'http://127.0.0.1:abc/auth/callback',
+        'http://127.0.0.1:99999/auth/callback',
+        'http://user:pass@127.0.0.1:1455/auth/callback',
+        'http://127.0.0.1:1455/auth/callback?x=1',
+        'http://127.0.0.1:1455/auth/callback#x',
     ],
 )
 def test_redirect_uri_must_be_the_loopback_callback(redirect_uri: str):

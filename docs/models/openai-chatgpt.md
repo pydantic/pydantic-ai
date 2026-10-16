@@ -123,9 +123,11 @@ async def sign_in_again(saved: OpenAIChatGPTCredentials, host_id: str) -> OpenAI
 
 With `id_token_hint`, the sign-in fails if the user completes it with a different ChatGPT account. The authorization URL then carries the ID token, so keep it out of logs.
 
+A provider checks plan usage before every request and keeps refusing credentials without it, so after a new sign-in, give the new credentials to a new provider.
+
 ## Errors
 
-A sign-in the token endpoint rejects, or whose ID token fails validation, raises [`CredentialsRefreshError`][pydantic_ai.providers.openai_chatgpt.CredentialsRefreshError]; start the sign-in again. A sign-in that completes for a different account than `id_token_hint` names raises [`UserError`][pydantic_ai.exceptions.UserError], and its credentials are discarded.
+A sign-in the token endpoint rejects, or whose ID token fails validation, raises [`CredentialsRefreshError`][pydantic_ai.providers.openai_chatgpt.CredentialsRefreshError]. Start the sign-in again with a new flow, passing `client_id=flow.client_id`: the failed flow keeps the client id issued for it, so the retry reuses that registration instead of creating another. A sign-in that completes for a different account than `id_token_hint` names raises [`UserError`][pydantic_ai.exceptions.UserError], and its credentials are discarded.
 
 When the user's plan can't serve a request, the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] whose body carries an error code such as `subscription_sharing_usage_limit_exceeded`. OpenAI never moves the request to another billing method. [Errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery) lists the codes and what to tell the user; for usage limits, point them to [ChatGPT settings](https://chatgpt.com/settings/usage).
 
