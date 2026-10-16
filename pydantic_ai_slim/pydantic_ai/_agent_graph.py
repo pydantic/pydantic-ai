@@ -394,13 +394,29 @@ class _AttemptBaseline:
     messages: list[_messages.ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: models.ModelRequestParameters
+    model: models.Model
+    """The model `before_model_request` left the request to."""
+    model_own_settings: dict[str, Any]
+    """The settings in `model_settings` that only came from the step model's own `settings`."""
 
     @classmethod
-    def capture(cls, request_context: ModelRequestContext) -> _AttemptBaseline:
+    def capture(
+        cls,
+        request_context: ModelRequestContext,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        run_context: RunContext[Any],
+    ) -> _AttemptBaseline:
+        """Capture the request as `before_model_request` left it, for the model the step's settings were built on."""
+        layer_keys = ctx.deps.model_settings_layer_keys
+        # The step's settings were built on the run context's model's own (see `get_model_settings`).
+        step_model = run_context.model
+        step_settings = step_model.settings if isinstance(step_model, models.Model) else None
         return cls(
             messages=list(request_context.messages),
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
+            model=request_context.model,
+            model_own_settings={key: value for key, value in (step_settings or {}).items() if key not in layer_keys},
         )
 
     def rewind_suspended(self) -> None:
@@ -423,6 +439,17 @@ class _AttemptBaseline:
         # messages, tool definitions and other items they hold are shared, as `before_model_request` shares them.
         request_context.messages = list(self.messages)
         settings = self.model_settings
+        if settings is not None and request_context.model is not self.model:
+            # The step's settings include the step model's own, which aren't another model's: that model
+            # merges its own `settings` in when it prepares the request, as each `FallbackModel` candidate does.
+            settings = cast(
+                ModelSettings,
+                {
+                    key: value
+                    for key, value in settings.items()
+                    if not (key in self.model_own_settings and value is self.model_own_settings[key])
+                },
+            )
         request_context.model_settings = (
             cast(ModelSettings, {key: _copy_container(value) for key, value in settings.items()})
             if settings is not None
@@ -643,6 +670,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     ]
     enter_model: Callable[[models.Model], Awaitable[None]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
+    model_settings_layer_keys: set[str] = dataclasses.field(default_factory=set[str])
+    """The keys of the latest `get_model_settings` result that came from the agent, capabilities or run, rather
+    than from the step model's own `settings` alone."""
     usage_limits: _usage.UsageLimits
     max_output_retries: int
     end_strategy: EndStrategy
@@ -1779,7 +1809,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
             _handler_request_context = req_ctx
-            baseline = _AttemptBaseline.capture(req_ctx)
+            baseline = _AttemptBaseline.capture(req_ctx, ctx, run_context)
             try:
                 async with AsyncExitStack() as stream_stack:
                     sr, req_ctx, request_start = await self._open_stream(
@@ -2120,7 +2150,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         starts empty: a response a hook rejected must not survive into history, though its usage, already
         committed at the provider boundary, stays counted.
         """
-        baseline = _AttemptBaseline.capture(request_context)
+        baseline = _AttemptBaseline.capture(request_context, ctx, run_context)
         failed = _FailedAttempts()
         state.described_attempts = failed.log.attempts
         while True:

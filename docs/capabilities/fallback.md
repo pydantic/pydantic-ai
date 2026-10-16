@@ -39,7 +39,9 @@ Handlers may be sync or async. A handler whose first parameter is annotated as [
 When every model has failed or been rejected, `Fallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] with every exception, plus a [`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] counting any rejected responses.
 
 !!! note
-    Provider SDKs often retry failed requests themselves before raising, which delays falling back. See [The layers](../retries.md#the-layers) in the retries guide for how to turn those retries off.
+    Provider SDKs often retry failed requests themselves before raising, which delays falling back. Set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. As with `FallbackModel`, a candidate's own `settings` apply only to that candidate, and settings on the agent or run apply to every candidate. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
+
+A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted.
 
 ## How attempts work
 

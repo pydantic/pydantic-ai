@@ -6,6 +6,7 @@ The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tes
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -36,6 +37,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelRetry,
     RetryModelRequest,
+    RunTimedOut,
     UsageLimitExceeded,
     UserError,
 )
@@ -1092,3 +1094,44 @@ async def test_the_step_model_another_capability_already_retried_is_not_attempte
     result = await agent.run(message_history=_suspended_history(pinned.model_id))
     assert result.output == 'hello'
     assert step_calls == 1
+
+
+async def test_a_run_timeout_is_not_fallen_back_from():
+    """A run that times out while a candidate is answering ends with `RunTimedOut`; the next candidate isn't tried."""
+    fallback_calls: list[bool] = []
+
+    async def hangs(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        await asyncio.sleep(10)
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        fallback_calls.append(True)  # pragma: no cover
+        return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(hangs), capabilities=[Fallback(FunctionModel(fallback), fallback_on=(Exception,))])
+    with pytest.raises(RunTimedOut):
+        await agent.run('x', timeout=0.05)
+    assert fallback_calls == []
+
+
+async def test_each_candidate_gets_its_own_max_retries():
+    """`max_retries` set on a candidate applies to that candidate only, as under `FallbackModel`."""
+    seen: list[tuple[str, int | None]] = []
+
+    def respond(name: str, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append((name, (info.model_settings or {}).get('max_retries')))
+            if fail:
+                raise ModelAPIError(model_name=name, message='boom')
+            return ModelResponse(parts=[TextPart('hello')])
+
+        return FunctionModel(fn, model_name=name, settings={'max_retries': 0} if fail else None)
+
+    agent = Agent(respond('first', fail=True), capabilities=[Fallback(respond('last', fail=False))])
+    assert (await agent.run('x')).output == 'hello'
+    assert seen == [('first', 0), ('last', None)]
+
+    # Set on the agent, it applies to every candidate and takes precedence over their own.
+    seen.clear()
+    assert (await agent.run('x', model_settings={'max_retries': 1})).output == 'hello'
+    assert seen == [('first', 1), ('last', 1)]
