@@ -2482,6 +2482,23 @@ async def test_connect_seed_skips_compaction_parts() -> None:
     assert [part.text for turn in turns for part in turn.parts] == ['the answer']
 
 
+async def test_connect_seed_marks_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    session = _RecordingSession()
+    history = [
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='It leaves at')], state='interrupted'),
+    ]
+    async with _connect(_model(session), 'x', messages=history):
+        pass
+    turns = session.client_content[0]['turns']
+    assert [part.text for turn in turns for part in turn.parts] == snapshot(
+        ['Sure, the morning flight\n[Interrupted after 640 ms]', 'It leaves at\n[Interrupted]']
+    )
+
+
 async def test_connect_reconnect_auto_enables_session_resumption() -> None:
     # A `reconnect` policy alone (here a model-level default via `settings=`) is enough: session
     # resumption is requested automatically, so the server restores state when the connection re-dials.

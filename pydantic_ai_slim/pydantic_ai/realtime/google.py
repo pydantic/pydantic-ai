@@ -59,6 +59,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -87,6 +88,7 @@ from ..models import (
     ModelRequestParameters,
     download_item,
 )
+from ..models._speech import assistant_speech_text
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -589,7 +591,7 @@ async def _seed_turns(
             )
             role = 'user'
         else:
-            parts = _seed_response_parts(message.parts, provider_name=provider_name, function_parts=function_parts)
+            parts = _seed_response_parts(message, provider_name=provider_name, function_parts=function_parts)
             role = 'model'
         if parts:
             turns.append(genai_types.Content(role=role, parts=parts))
@@ -670,11 +672,9 @@ async def _seed_request_parts(
     return parts
 
 
-def _seed_response_parts(
-    message_parts: Sequence[ModelResponsePart], *, provider_name: str, function_parts: bool
-) -> list[genai_types.Part]:
+def _seed_response_parts(message: ModelResponse, *, provider_name: str, function_parts: bool) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
-    for part in message_parts:
+    for index, part in enumerate(message.parts):
         if isinstance(part, TextPart):
             if part.content:
                 parts.append(genai_types.Part(text=part.content))
@@ -698,10 +698,10 @@ def _seed_response_parts(
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
-            # Assistant audio can't be replayed on any provider; the typed result is a transcript string.
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
-            if content:
-                parts.append(genai_types.Part(text=content))
+            # Assistant audio can't be replayed on any provider, so it's seeded as its transcript, marked where a
+            # barge-in cut it off: the model never heard what came after.
+            if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
+                parts.append(genai_types.Part(text=assistant_speech_text(message, index)))
         elif isinstance(part, CompactionPart):
             # Provider-session-bound compaction state can't round-trip into another session; classic
             # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.

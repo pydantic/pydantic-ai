@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import itertools
 import json
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -404,6 +405,39 @@ def test_seeding_projects_history_to_text() -> None:
             {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Fourteen degrees.'}]},
             {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Thanks!'}]},
             {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Any time.'}]},
+        ]
+    )
+
+
+def test_seeding_marks_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Book me a flight.')]),
+        # Cut off where the listener stopped hearing it.
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        # Interrupted with no offset reported: the last speech part is marked.
+        ModelResponse(
+            parts=[
+                SpeechPart(speaker='assistant', transcript='Let me check.'),
+                SpeechPart(speaker='assistant', transcript='It leaves at'),
+            ],
+            state='interrupted',
+        ),
+        # Nothing was transcribed, so there is still nothing to seed.
+        ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=0)], state='interrupted'),
+    ]
+
+    assert seed_input_items(history, provider_name='openai') == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Book me a flight.'}]},
+            {
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, the morning flight\n[Interrupted after 640 ms]'}],
+            },
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Let me check.'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'It leaves at\n[Interrupted]'}]},
         ]
     )
 
@@ -3509,8 +3543,11 @@ def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
     assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_the_idle_pump_carries_on_to_the_replacement_socket() -> None:
+async def test_the_idle_pump_carries_on_to_the_replacement_socket(monkeypatch: pytest.MonkeyPatch) -> None:
     """A drop the connection can redial doesn't stop the pump: the silence that follows goes to the new socket."""
+    # A clock a second further on at each look: each frame of silence is due by the time the pump asks, so the test
+    # waits on no real quiet gap.
+    monkeypatch.setattr(live_module, '_pump_clock', itertools.count(0.0, 1.0).__next__)
 
     class _DeadSocket(_FakeWebSocket):
         def __init__(self) -> None:
@@ -3638,3 +3675,13 @@ async def test_closing_after_a_reconnect_ends_the_replacement_session(model: Ope
     assert [report.usage.audio_seconds for report in reports] == [6]
     assert [json.loads(frame)['type'] for frame in first.sent if json.loads(frame)['type'] == 'session.close'] == []
     assert [json.loads(frame)['type'] for frame in second.sent[1:]] == ['session.close']
+
+
+async def test_a_redial_with_nothing_to_replay_doesnt_load_the_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loading it takes seconds on first use, which a session with no history to replay shouldn't wait out."""
+
+    def get_encoding(name: str) -> Any:  # pragma: no cover
+        raise AssertionError('the tokenizer was loaded')
+
+    monkeypatch.setattr(live_module.tiktoken, 'get_encoding', get_encoding)
+    assert await live_module.replay_input_items([], provider_name='openai') == []

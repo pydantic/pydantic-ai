@@ -63,7 +63,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    ModelResponsePart,
+    ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeInputSpeechEndEvent,
@@ -84,6 +84,7 @@ from ..messages import (
     UserPromptPart,
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
+from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
@@ -580,7 +581,7 @@ async def seed_items(
         else:
             items.extend(
                 _seed_response_items(
-                    message.parts,
+                    message,
                     provider_name=provider_name,
                     call_ids=call_ids,
                     seeded_calls=seeded_calls,
@@ -654,14 +655,14 @@ async def _seed_request_items(
 
 
 def _seed_response_items(
-    parts: Sequence[ModelResponsePart],
+    message: ModelResponse,
     *,
     provider_name: str,
     call_ids: dict[str, str],
     seeded_calls: set[str],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for part in parts:
+    for index, part in enumerate(message.parts):
         if isinstance(part, TextPart):
             if part.content:
                 items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
@@ -684,11 +685,12 @@ def _seed_response_items(
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
-            # Assistant audio can't be replayed on any provider, so the audio-seeding capability
-            # doesn't apply here and the typed result is always a transcript string.
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
-            if content:
-                items.append(_message_item('assistant', [_text_content('output_text', content)]))
+            # Assistant audio can't be replayed on any provider, so the audio-seeding capability doesn't apply
+            # here: it's seeded as its transcript, marked where a barge-in cut it off, as the model never heard
+            # what came after.
+            if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
+                text = assistant_speech_text(message, index)
+                items.append(_message_item('assistant', [_text_content('output_text', text)]))
         elif isinstance(part, CompactionPart):
             # Provider-session-bound compaction state can't round-trip into another session; classic
             # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
