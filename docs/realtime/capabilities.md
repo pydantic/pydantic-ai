@@ -82,3 +82,8 @@ when it opens (OpenAI and xAI accept a mid-session tool update;
 [`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting it would silently
 provide less than requested. Loading those tools on providers that accept the update is tracked in
 [#7191](https://github.com/pydantic/pydantic-ai/issues/7191).
+
+Loading a capability from code with
+[`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability] isn't supported in a
+session: it raises [`UserError`][pydantic_ai.exceptions.UserError] (see
+[Loading a capability from code](../capabilities/on-demand.md#loading-from-code)).
