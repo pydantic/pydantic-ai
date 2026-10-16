@@ -1,11 +1,9 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
-from typing import Literal, Never
+from typing import Literal
 
 from typing_extensions import override
 
-from ..exceptions import UserError
 from ..messages import ModelRequest, ModelResponse
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -13,7 +11,6 @@ from ..settings import ModelSettings
 
 try:
     from openai import AsyncOpenAI
-    from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     from .openai import OpenAIModelName, OpenAIResponsesModel, OpenAIResponsesModelSettings
 except ImportError as _import_error:  # pragma: no cover
@@ -60,22 +57,6 @@ class OpenAICodexModel(OpenAIResponsesModel):
     def batch_max_requests(self) -> None:
         """Codex has no batch API, and its session headers depend on each conversation."""
         return None
-
-    @override
-    def connect(
-        self,
-        *,
-        extra_headers: Mapping[str, str] | None = None,
-        websocket_connection_options: WebSocketConnectionOptions | None = None,
-    ) -> Never:
-        """Reject persistent connections before opening a socket.
-
-        Codex session headers depend on the conversation, which is resolved when a request starts.
-        """
-        raise UserError(
-            '`OpenAICodexModel` does not support explicit connections: '
-            'its session headers depend on each conversation. Use ordinary agent runs.'
-        )
 
     @override
     def _prepare_responses_settings(

@@ -8,7 +8,6 @@ from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
 
-from .. import _utils
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import ModelMessage, ModelResponse
@@ -56,12 +55,6 @@ class WrapperModel(Model):
         exc_tb: TracebackType | None,
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
-
-    @asynccontextmanager
-    async def connect(self) -> AsyncGenerator[Self]:
-        """Connect the wrapped model while preserving this wrapper's behavior."""
-        async with self.wrapped.connect() as connected:
-            yield _utils.replace_no_init(self, wrapped=connected)
 
     async def request(
         self,

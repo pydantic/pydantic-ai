@@ -233,13 +233,6 @@ async def test_batch_encode_rejects_what_a_batch_cannot_honor(settings: dict[str
         await _model().batch_encode(_request(**settings))
 
 
-async def test_batch_encode_rejects_a_websocket_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = _model()
-    monkeypatch.setattr(model, '_websocket', object())
-    with pytest.raises(UserError, match=r'outside `model.connect\(\)`'):
-        await model.batch_encode(_request())
-
-
 async def test_batch_requires_a_static_api_key() -> None:
     """A key callback could choose a different credential per request, while a batch is submitted and polled with one."""
 

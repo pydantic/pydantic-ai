@@ -13,12 +13,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Required, cast
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, Omit
 from openai.types import Batch as OpenAIBatch, responses
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
+from .._utils import is_str_dict
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
@@ -88,8 +89,6 @@ class _InputLine(BaseModel):
 
 async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> EncodedBatchRequest:
     group = _batch_group(model)
-    if model._websocket is not None:  # pyright: ignore[reportPrivateUsage]
-        raise UserError('Send batch requests with an HTTP model, outside `model.connect()`.')
     prepared_settings, model_request_parameters = model.prepare_request(
         request.model_settings, request.model_request_parameters
     )
@@ -104,9 +103,13 @@ async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> En
     if settings.get('extra_headers'):
         # A batch is created with one set of headers, so per-request ones can't be honored.
         raise UserError('The OpenAI Batch API does not support per-request `extra_headers`; set them on the client.')
-    body = model._responses_body(  # pyright: ignore[reportPrivateUsage]
-        create_params, settings.get('extra_body'), 'OpenAI Batch API'
-    )
+    # Merged as the SDK merges `extra_body` into the body of a create call.
+    body: dict[str, object] = dict(create_params)
+    if (extra_body := settings.get('extra_body')) is not None:
+        if not is_str_dict(extra_body):
+            raise UserError('OpenAI Batch API `extra_body` must be a mapping with string keys.')
+        body.update(extra_body)
+    body = {key: value for key, value in body.items() if not isinstance(value, Omit)}
     if body.get('stream') or body.get('background'):
         raise UserError('The OpenAI Batch API does not support `stream` or `background`.')
     return EncodedBatchRequest(custom_id=request.custom_id, group=group, body=to_json(body).decode())
