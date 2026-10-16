@@ -221,7 +221,7 @@ async def chat(
                 ):
                     try:
                         async with create_task_group() as workers:
-                            workers.start_soon(shell.sessions.namer.run)
+                            workers.start_soon(shell.process.namer.run)
                             try:
                                 with transcript.capture(console):
                                     # Apply launch options first, so plugins start with the conversation they
