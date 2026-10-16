@@ -42,18 +42,20 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
-    _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, RequestCapture, try_import
-from .conftest import cache_breakpoints
+from .conftest import cache_breakpoints, message_shape
 
 if TYPE_CHECKING:
     from .conftest import AnthropicModelFactory
@@ -684,6 +686,20 @@ def tool_loop_history() -> list[ModelMessage]:
 
 REMINDER_ONLY: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('Reminder.', scope='turn')])]
 
+WEATHER_PARAMETERS = ModelRequestParameters(
+    function_tools=[
+        ToolDefinition(
+            name='get_weather',
+            parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        )
+    ]
+)
+
+
+async def send(model: Model, history: list[ModelMessage], settings: ModelSettings | None = None) -> None:
+    """Send `history` as one request through the model's public path, as the agent graph does."""
+    await model.request(model.prepare_messages(history, WEATHER_PARAMETERS), settings, WEATHER_PARAMETERS)
+
 
 def test_current_turn_scoped_prompts_move_to_the_last_request():
     """Turn-scoped prompts anywhere in the current turn go to the end of its last request.
@@ -715,15 +731,15 @@ def test_current_turn_scoped_prompts_move_to_the_last_request():
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_turn_scoped_opt_out_through_the_profile():
+async def test_anthropic_turn_scoped_opt_out_through_the_profile(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
     """Setting the profile flag to `False` on a model that has it opts out of the beta.
 
     For an account without access to it: the reminder is then sent only while it's current, as an
     ordinary `system` entry (the model still takes the role), without `clear_at` or the beta header.
-    A unit test, not a recording: the claim is about the request, which the recorded tests already
-    show the API accepting in both shapes.
     """
-    provider = AnthropicProvider(api_key='not-used')
+    provider = AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
     model = AnthropicModel(
         'claude-opus-5-5', provider=provider, profile=AnthropicModelProfile(supports_turn_scoped_system_prompts=False)
     )
@@ -737,27 +753,33 @@ async def test_anthropic_turn_scoped_opt_out_through_the_profile():
     # Microsoft Foundry serves no `system` role, so it can't serve a turn-scoped one either.
     assert foundry.profile.get('supports_turn_scoped_system_prompts') is False
 
-    prepared = model.prepare_messages(tool_loop_history(), ModelRequestParameters())
-    _, anthropic_messages = await model._map_message(prepared, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    await send(model, tool_loop_history())
 
-    assert [message['role'] for message in anthropic_messages] == snapshot(
-        ['user', 'assistant', 'user', 'assistant', 'user', 'system']
+    body = request_capture.body('/v1/messages')
+    assert message_shape(body) == snapshot(
+        [
+            ('user', ['text']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+            ('system', ['text']),
+        ]
     )
-    assert anthropic_messages[-1] == {'role': 'system', 'content': [{'text': 'Reminder 2.', 'type': 'text'}]}
-    betas, _ = model._get_betas_and_extra_headers(  # pyright: ignore[reportPrivateUsage]
-        {}, model.profile, prepared, ModelRequestParameters(), {}
-    )
-    assert _TURN_SCOPED_BETA not in betas
+    messages = cast(list[dict[str, Any]], body['messages'])
+    assert messages[-1] == {'role': 'system', 'content': [{'text': 'Reminder 2.', 'type': 'text'}]}
+    assert _TURN_SCOPED_BETA not in request_capture.headers[0].get('anthropic-beta', '')
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted():
+async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
     """A turn-scoped prompt opening the first request is not part of the standing system prompt.
 
     The top-level `system` parameter goes out with every request, so hoisting it there would make it
-    permanent; it's sent as a `clear_at` entry after the user turn instead.
+    permanent; it's sent as a `clear_at` entry after the user turn instead, with the beta header.
     """
-    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='not-used'))
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -768,13 +790,11 @@ async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted():
         )
     ]
 
-    prepared = model.prepare_messages(messages, ModelRequestParameters())
-    system_prompt, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        prepared, ModelRequestParameters(), {}
-    )
+    await send(anthropic_model('claude-opus-5-5', capture=True), messages)
 
-    assert system_prompt == 'You are terse.'
-    assert anthropic_messages == snapshot(
+    body = request_capture.body('/v1/messages')
+    assert body['system'] == 'You are terse.'
+    assert body['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]},
             {
@@ -784,6 +804,7 @@ async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted():
             },
         ]
     )
+    assert _TURN_SCOPED_BETA in request_capture.headers[0].get('anthropic-beta', '')
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
@@ -820,23 +841,26 @@ async def test_bedrock_message_cache_point_goes_before_the_turn_scoped_prompt():
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_openrouter_message_cache_control_goes_before_the_turn_scoped_prompt():
+async def test_openrouter_message_cache_control_goes_before_the_turn_scoped_prompt(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+):
     """`openrouter_cache_messages` marks the message before the reminder, not the reminder.
 
     OpenRouter takes no `system` entries mid-conversation, so the reminder is its own `<system>`-tagged
-    user message at the end, and it's gone from the next request. A unit test because the claim is
-    which message the adapter marks, which a recording replayed by URL wouldn't catch.
+    user message at the end, and it's gone from the next request. With nothing ahead of the reminder,
+    nothing is marked.
     """
-    model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(api_key='not-used'))
+    model = OpenRouterModel(
+        'anthropic/claude-haiku-4.5',
+        provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+    )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
 
-    prepared = model.prepare_messages(tool_loop_history(), ModelRequestParameters())
-    openai_messages = await model._map_messages(prepared, ModelRequestParameters(), model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    await send(model, tool_loop_history(), settings)
+    await send(model, REMINDER_ONLY, settings)
 
-    only_reminder = model.prepare_messages(REMINDER_ONLY, ModelRequestParameters())
-    only_reminder_messages = await model._map_messages(only_reminder, ModelRequestParameters(), model_settings=settings)  # pyright: ignore[reportPrivateUsage]
-    assert only_reminder_messages == snapshot([{'role': 'user', 'content': '<system>Reminder.</system>'}])
-    assert openai_messages[-2:] == snapshot(
+    tool_loop, only_reminder = request_capture.bodies('/chat/completions')
+    assert cast(list[dict[str, Any]], tool_loop['messages'])[-2:] == snapshot(
         [
             {
                 'role': 'tool',
@@ -846,6 +870,7 @@ async def test_openrouter_message_cache_control_goes_before_the_turn_scoped_prom
             {'role': 'user', 'content': '<system>Reminder 2.</system>'},
         ]
     )
+    assert only_reminder['messages'] == snapshot([{'role': 'user', 'content': '<system>Reminder.</system>'}])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -892,6 +917,9 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_turn_scoped_entry():
 
     The previous request put its breakpoint on the block before its turn-scoped entry (`cache_control` on one is a
     400), so that's the block the lookback breakpoint goes on, with the entry's blocks counted toward the lookback.
+    Driven through the placement method on hand-built wire messages, as the existing lookback test in
+    `test_anthropic.py` is: the property is about the previous request, which one request can't show, and the Bedrock
+    client is a mock.
     """
     model = AnthropicModel(
         'claude-opus-5-5',
@@ -941,29 +969,34 @@ def duplicate_text_history() -> list[ModelMessage]:
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic():
-    """Only the reminder ending the request is skipped: lasting text with the same content gets the breakpoint."""
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='not-used'))
+async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Only the reminder ending the request is skipped: lasting text with the same content gets the breakpoint.
 
-    prepared = model.prepare_messages(duplicate_text_history(), ModelRequestParameters())
-    _, anthropic_messages = await model._map_message(prepared, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
-    model._apply_message_cache_control(anthropic_messages, '5m', _turn_scoped_tail_texts(prepared))  # pyright: ignore[reportPrivateUsage]
+    With nothing ahead of the reminder, there's nothing to cache up to.
+    """
+    model = anthropic_model('claude-haiku-4-5', capture=True)
+    settings: AnthropicModelSettings = {'anthropic_cache_messages': True}
 
-    blocks = [block for message in anthropic_messages for block in cast(list[dict[str, Any]], message['content'])]
-    texts = [index for index, block in enumerate(blocks) if block.get('text') == '<system>Reminder.</system>']
-    assert len(texts) == 2
-    assert [index for index, block in enumerate(blocks) if 'cache_control' in block] == [texts[0]]
+    await send(model, duplicate_text_history(), settings)
+    await send(model, REMINDER_ONLY, settings)
 
-    # With nothing ahead of the reminder, there's nothing to cache up to.
-    only_reminder = model.prepare_messages(REMINDER_ONLY, ModelRequestParameters())
-    _, anthropic_messages = await model._map_message(only_reminder, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
-    model._apply_message_cache_control(anthropic_messages, '5m', _turn_scoped_tail_texts(only_reminder))  # pyright: ignore[reportPrivateUsage]
-    assert 'cache_control' not in str(anthropic_messages)
+    duplicate, only_reminder = request_capture.bodies('/v1/messages')
+    assert message_shape(duplicate) == snapshot(
+        [('user', ['text']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text']), ('user', ['text'])]
+    )
+    assert cache_breakpoints(duplicate) == snapshot((None, ['messages[2].content[1]']))
+    assert cache_breakpoints(only_reminder) == snapshot((None, []))
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
 async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock():
-    """Only the reminder ending the request is skipped: lasting text with the same content stays ahead of the cache point."""
+    """Only the reminder ending the request is skipped: lasting text with the same content stays ahead of the cache point.
+
+    Through the adapter's message mapping, as the other Bedrock tests here: Bedrock goes through boto, not httpx, so
+    there's no request capture for it.
+    """
     model = BedrockConverseModel(
         'us.anthropic.claude-haiku-4-5-20251001-v1:0',
         provider=BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x'),
@@ -982,17 +1015,21 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock():
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrouter():
+async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrouter(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+):
     """Only the reminder message ending the request is skipped: a lasting one with the same content is marked."""
-    model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(api_key='not-used'))
+    model = OpenRouterModel(
+        'anthropic/claude-haiku-4.5',
+        provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+    )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
 
-    prepared = model.prepare_messages(duplicate_text_history(), ModelRequestParameters())
-    openai_messages = await model._map_messages(prepared, ModelRequestParameters(), model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    await send(model, duplicate_text_history(), settings)
 
-    marked = [message for message in openai_messages if 'cache_control' in str(message)]
-    assert marked == [openai_messages[-2]]
-    assert openai_messages[-1] == {'role': 'user', 'content': '<system>Reminder.</system>'}
+    messages = cast(list[dict[str, Any]], request_capture.body('/chat/completions')['messages'])
+    assert [index for index, message in enumerate(messages) if 'cache_control' in str(message)] == [len(messages) - 2]
+    assert messages[-1] == {'role': 'user', 'content': '<system>Reminder.</system>'}
 
 
 def ui_history() -> list[ModelMessage]:
