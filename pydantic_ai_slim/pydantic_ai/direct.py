@@ -125,7 +125,9 @@ async def model_request_batch(
 
     Batch APIs cost less, typically half, but can take up to a day to finish. The requests are submitted in as few
     batches as the provider accepts, or `max_requests` allows, and each batch is checked on with a
-    growing interval until it ends. Cancelling the call cancels the batches that haven't ended.
+    growing interval until it ends. Cancelling the call, for example with `asyncio.timeout`, cancels the batches that
+    haven't ended. A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError],
+    since one request in a batch can't be timed out separately.
 
     ```py title="model_request_batch_example.py"
     from pydantic_ai import ModelRequest
@@ -161,9 +163,6 @@ async def model_request_batch(
         poll_interval: How long to wait before first checking a batch. The interval grows by half after every check,
             up to `max_poll_interval`.
         max_poll_interval: The longest wait between checks of a batch.
-
-    A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError]. To limit how
-    long the call waits, cancel it, for example with `asyncio.timeout`: that cancels the batches that haven't ended.
 
     Returns:
         One item per request, in the same order: the request's response, or the

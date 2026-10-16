@@ -41,7 +41,7 @@ Tools, structured output, output validation and retries all work as usual; each 
 
 A batch is submitted when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`BatchModel.flush()`][pydantic_ai.models.batch.BatchModel.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
 
-A [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] in the model settings covers the whole wait, from submission to result: when it passes, the run raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] and the request is withdrawn, which cancels its batch if no other request is waiting on it.
+A [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] in the model settings covers the whole wait, from when the request is queued until its result arrives: when it passes, the run raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] and the request is withdrawn, which cancels its batch if no other request is waiting on it.
 
 Streaming isn't supported: a batch result arrives all at once. `BatchModel` needs an `asyncio` event loop, so it doesn't run under Trio.
 

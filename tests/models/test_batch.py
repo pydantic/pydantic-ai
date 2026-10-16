@@ -319,8 +319,8 @@ async def test_cancelling_a_run_from_an_anyio_scope_cancels_its_batch() -> None:
 
 async def test_request_timeout_covers_the_wait_for_the_batch() -> None:
     """The deadline spans the submission and every check, so the run stops waiting at it and cancels the batch."""
-    wrapped = SlowBatchTestModel(pending_checks=1000)
-    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS), model_settings={'request_timeout': 0.05})
+    wrapped = SlowBatchTestModel(pending_checks=100_000)
+    agent = Agent(BatchModel(wrapped, **FAST_BATCH_SETTINGS), model_settings={'request_timeout': 0.5})
 
     with pytest.raises(ModelRequestTimeout):
         await agent.run('Hello')
