@@ -232,7 +232,7 @@ print(result.output)
 #> True
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this interacts with Pydantic AI's own retries.
+To change only the count for a model, agent or run, set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) instead. The request then uses the SDK's default `RetryPolicy` with that count, in place of the client's. See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this interacts with Pydantic AI's own retries.
 
 ## Model settings
 

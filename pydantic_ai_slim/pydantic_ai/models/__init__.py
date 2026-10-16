@@ -13,7 +13,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
@@ -100,6 +100,8 @@ from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
+from ._request_timeout import RequestDeadline
+from ._speech import assistant_speech_text
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -409,8 +411,9 @@ class ModelRequestContext:
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
         """The model responses whose usage was counted for this request.
 
-        Empty until the model responds. It includes responses a hook later replaced, and can hold more
-        than one response when a continued response was partly billed before an error hook recovered.
+        Empty until the model responds. It includes responses a hook later replaced and the partial response
+        of a stream the consumer stopped, and can hold more than one response when a continued response was
+        partly billed before an error hook recovered.
         Request contexts copied with `dataclasses.replace()` see the same responses.
 
         Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
@@ -562,15 +565,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
-    def connect(self) -> AbstractAsyncContextManager[Self]:
-        """Open a persistent connection and yield a model bound to it.
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client the provider created if it can't be used on the running event loop.
 
-        The context owns the connection and closes it on exit. The source model remains unchanged.
-        Models that do not implement explicit connections raise [`UserError`][pydantic_ai.exceptions.UserError].
-        See [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]
-        for Responses WebSocket support.
+        An agent calls this at the start of each run, so that a model the run uses without entering it gets a new
+        client when the run is on a different event loop than the client was last used on. See
+        [`Provider`][pydantic_ai.providers.Provider]. A model that wraps others calls it on each of them.
         """
-        raise UserError(f'`{type(self).__name__}` does not support explicit connections.')
+        if (provider := self.provider) is not None:
+            provider._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
 
     @property
     def settings(self) -> ModelSettings | None:
@@ -624,6 +627,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+
+        A model that makes its requests through other models, each under a deadline of its own, overrides this to
+        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        """
+        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -995,7 +1006,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume.
+        `TextPart`s that any model can consume, and puts the tool results in each request in the
+        order of the calls they answer, so the request bytes (and the provider's prompt cache)
+        don't depend on the order a history happened to store them in.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1074,7 +1087,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
-        return messages
+        return _order_tool_results_by_call(messages)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -1127,6 +1140,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return resolve_request_tools(
             params,
             self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS),
+            unsupported_settings=self.unsupported_native_tool_settings,
             can_withhold_tool_schemas=self._can_withhold_tool_schemas,
             tool_addition_mode=self.tool_addition_mode,
         )
@@ -1151,6 +1165,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
+        """
+        return frozenset()
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return the names of the settings set on `native_tool` that this model can't apply.
+
+        Only [`restricting_settings`][pydantic_ai.native_tools.AbstractNativeTool.restricting_settings] count:
+        a native tool with any of them is treated as unsupported for the request, so its local fallback is used
+        when one is provided, it is left out when it is `optional`, and
+        [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+
+        Subclasses that send a native tool without one of its restricting settings should override this.
+        The default is an empty set, meaning every restricting setting is applied.
         """
         return frozenset()
 
@@ -1281,6 +1308,10 @@ class StreamedResponse(ABC):
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
+    _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
+    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+
+    Set before iteration starts by whoever opened the stream under that deadline."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1389,10 +1420,16 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            self._event_iterator = iterator_with_cancel_guard(
-                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
-            )
+            events = self._get_event_iterator()
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
+        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
+        self._request_deadline = deadline
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.
@@ -2177,14 +2214,84 @@ def _customize_output_object(
     )
 
 
+def _supported_native_tools(
+    params: ModelRequestParameters,
+    supported_types: frozenset[type[AbstractNativeTool]],
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None,
+) -> list[AbstractNativeTool]:
+    """Return the native tools this model supports, raising for an unsupported one with no local fallback.
+
+    An unsupported tool that has a local fallback or is `optional` is left out without raising.
+    """
+    supported_natives: list[AbstractNativeTool] = []
+    unsupported_natives: list[AbstractNativeTool] = []
+    unapplied_settings: dict[str, frozenset[str]] = {}
+    for native_tool in params.native_tools:
+        if not isinstance(native_tool, tuple(supported_types)):
+            unsupported_natives.append(native_tool)
+        elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
+            unsupported_natives.append(native_tool)
+            unapplied_settings[native_tool.unique_id] = settings
+        else:
+            supported_natives.append(native_tool)
+
+    unsupported_ids = {t.unique_id for t in unsupported_natives}
+    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+    without_fallback = unsupported_ids - fallback_ids - optional_ids
+    if without_fallback - unapplied_settings.keys():
+        unsupported_names = [
+            type(t).__name__
+            for t in unsupported_natives
+            if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
+        ]
+        supported_names = [t.__name__ for t in supported_types]
+        raise UserError(
+            f'Native tool(s) {unsupported_names} not supported by this model. '
+            f'Supported: {supported_names}. '
+            f'To use these tools with this model, provide a local fallback via '
+            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+            f'MCP(local=True), ImageGeneration(local=my_func)). '
+            f'Some capabilities require an optional install group for the local fallback '
+            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+        )
+    if without_fallback:
+        unapplied = ', '.join(
+            f'`{type(t).__name__}.{name}`'
+            for t in unsupported_natives
+            if t.unique_id in without_fallback
+            for name in sorted(unapplied_settings[t.unique_id])
+        )
+        raise UserError(
+            f'Native tool setting(s) {unapplied} not supported by this model. '
+            f'Sending the tool without them would drop the restriction they set. '
+            f'Remove the settings, use a model that supports them, or provide a local fallback that applies them '
+            "itself (e.g. `WebFetch(allowed_domains=[...], local=True)`). `WebSearch`'s own constraint fields "
+            'disable its `local` fallback, '
+            'so for a search fallback put them on the native tool: '
+            '`WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`.'
+        )
+
+    return supported_natives
+
+
 def resolve_request_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
     *,
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None = None,
     can_withhold_tool_schemas: Callable[[Sequence[AbstractNativeTool]], bool] | None = None,
     tool_addition_mode: ToolAdditionMode | None = None,
 ) -> ModelRequestParameters:
     """Resolve native tools, their local fallbacks, and deferred-tool visibility for the given supported-native-tool set.
+
+    A native tool is supported when it is an instance of one of `supported_types` and
+    `unsupported_settings` (the model's `unsupported_native_tool_settings`) returns no setting
+    for it. A tool whose restricting settings the model can't apply is handled like a tool of an
+    unsupported type: its local fallback runs instead, or the request is rejected naming the
+    settings, rather than sending the tool with a domain filter or usage limit the provider would ignore.
 
     Three rules drive the per-tool filter:
 
@@ -2214,28 +2321,7 @@ def resolve_request_tools(
     `_can_withhold_tool_schemas` and `tool_addition_mode`) and the realtime session path can
     share it — `RealtimeModel` is not a `Model` subclass.
     """
-    supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-    unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
-
-    supported_ids = {t.unique_id for t in supported_natives}
-    unsupported_ids = {t.unique_id for t in unsupported_natives}
-    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
-    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
-
-    without_fallback = unsupported_ids - fallback_ids - optional_ids
-    if without_fallback:
-        unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
-        supported_names = [t.__name__ for t in supported_types]
-        raise UserError(
-            f'Native tool(s) {unsupported_names} not supported by this model. '
-            f'Supported: {supported_names}. '
-            f'To use these tools with this model, provide a local fallback via '
-            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
-            f'MCP(local=True), ImageGeneration(local=my_func)). '
-            f'Some capabilities require an optional install group for the local fallback '
-            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
-        )
+    supported_natives = _supported_native_tools(params, supported_types, unsupported_settings)
 
     # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
     # the searchable deferred tools as corpus members, so a run whose deferred tools are all
@@ -2248,8 +2334,8 @@ def resolve_request_tools(
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
 
-    # Recomputed after the two steps above so it names the native tools this request really
-    # sends: rule 1 must not drop a local fallback for a native tool that just left.
+    # Computed after the drop above so it names the native tools this request really sends:
+    # rule 1 must not drop a local fallback for a native tool that just left.
     supported_ids = {t.unique_id for t in supported_natives}
 
     can_defer = can_withhold_tool_schemas(supported_natives) if can_withhold_tool_schemas is not None else False
@@ -2390,25 +2476,12 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if request_parts:
                 new_messages.append(replace(message, parts=request_parts))
         else:
-            # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
-            # short. Without an inline `[Interrupted]` marker, a standard model reads the fragment as a
-            # complete utterance and may repeat itself. The marker is written here, on the way to the
-            # model, and never persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
-            last_speech = max(
-                (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
-                default=None,
-            )
             response_parts: list[ModelResponsePart] = []
             for index, part in enumerate(message.parts):
                 if isinstance(part, SpeechPart):
-                    lines = [part.transcript] if part.transcript else []
-                    if part.interrupted_at_ms is not None:
-                        lines.append(f'[Interrupted after {part.interrupted_at_ms} ms]')
-                    elif message.state == 'interrupted' and index == last_speech:
-                        # The provider reported the interruption without an offset.
-                        lines.append('[Interrupted]')
-                    if lines:
-                        response_parts.append(TextPart(content='\n'.join(lines)))
+                    # The transcript, marked where a barge-in cut it off (see `assistant_speech_text`).
+                    if text := assistant_speech_text(message, index):
+                        response_parts.append(TextPart(content=text))
                     # Assistant audio without a transcript has nothing to send.
                 else:
                     response_parts.append(part)
@@ -2561,6 +2634,47 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             changed = True
         else:
             new_messages.append(msg)
+
+    return new_messages if changed else messages
+
+
+def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Order the tool results in each request by the order of the calls they answer.
+
+    The order results are stored in depends on how they were produced: `end_strategy='early'` stores output
+    tool results first, and a UI client such as AG-UI rebuilds them in the order the tools completed. The
+    provider's prompt cache is keyed on the bytes sent, so the same exchange has to render the same way
+    whichever path built the history. Only the positions holding a `ToolReturnPart` or `RetryPromptPart` that
+    answers a call in the immediately preceding `ModelResponse` are refilled, in call order; every other part
+    keeps its position, and results answering the same call keep their relative order.
+
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    previous: ModelMessage | None = None
+    for message in messages:
+        if isinstance(message, ModelRequest) and isinstance(previous, ModelResponse):
+            call_order: dict[str, int] = {}
+            for part in previous.parts:
+                if isinstance(part, ToolCallPart):
+                    call_order.setdefault(part.tool_call_id, len(call_order))
+            answers = [
+                (index, part)
+                for index, part in enumerate(message.parts)
+                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_call_id in call_order
+            ]
+            slots = [index for index, _ in answers]
+            results = sorted((part for _, part in answers), key=lambda part: call_order[part.tool_call_id])
+            if any(message.parts[index] is not result for index, result in zip(slots, results)):
+                parts = list(message.parts)
+                for index, result in zip(slots, results):
+                    parts[index] = result
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+        previous = message
 
     return new_messages if changed else messages
 

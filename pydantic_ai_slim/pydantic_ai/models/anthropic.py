@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
+from .._thinking_part import render_replayed_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
@@ -70,7 +71,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..output import StructuredOutputMode
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -106,6 +107,7 @@ from ._prompt_cache import (
     raise_earlier_cache_ttls,
     split_cache_setting,
 )
+from ._sdk_retries import with_max_retries
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 from ._transport_errors import transport_error_message
 
@@ -220,6 +222,7 @@ try:
         BetaRequestDocumentBlockParam,
         BetaRequestMCPServerToolConfigurationParam,
         BetaRequestMCPServerURLDefinitionParam,
+        BetaRequestMCPToolResultBlockParam,
         BetaServerToolCaller,
         BetaServerToolCaller20260120,
         BetaServerToolUseBlock,
@@ -380,6 +383,15 @@ _ERROR_TYPE_STATUS_CODES = {
 }
 
 
+def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
+    """The client to send one request with, carrying `ModelSettings['max_retries']` when it's set."""
+    if model_settings.get('max_retries') is None or not isinstance(client, AsyncAnthropicBedrock):
+        return with_max_retries(client, model_settings)
+    # `AsyncAnthropicBedrock.with_options()` doesn't copy `aws_profile`, so its copy would sign requests with
+    # the default AWS credential chain instead of the profile the client was built with.
+    return with_max_retries(client, model_settings, carry_over={'aws_profile': client.aws_profile})
+
+
 def _error_status_code(error: APIStatusError) -> int:
     """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
 
@@ -483,9 +495,11 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
 # `tool_addition` accepted and honored verified live on `claude-opus-4-8`: a boundary on the block
 # writes and reads back the full prefix. It can end a mid-conversation `system` entry, where a
-# terminal `CachePoint`'s boundary lands on the entry's final block.
+# terminal `CachePoint`'s boundary lands on the entry's final block. `mcp_tool_result` verified the
+# same way on `claude-opus-4-8` and `claude-sonnet-4-5`: a replayed MCP tool result can end the
+# cached prefix, which is where a `CachePoint` opening the next user message puts its boundary.
 _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
-    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document', 'tool_addition'}
+    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document', 'tool_addition', 'mcp_tool_result'}
 )
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
@@ -1127,6 +1141,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool, AdvisorTool}
         )
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that Anthropic's web tools don't take: `external_web_access=False`."""
+        if isinstance(native_tool, WebSearchTool | WebFetchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'max_uses'}
+        return frozenset()
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -1370,6 +1390,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 compaction_boundary=compaction_boundary,
             )
         )
+        client = _with_max_retries(self.client, model_settings)
 
         async def create(
             container_param: BetaContainerParams | str | None,
@@ -1380,7 +1401,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-                return await self.client.beta.messages.create(
+                return await client.beta.messages.create(
                     max_tokens=max_tokens,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
@@ -1754,6 +1775,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 include_count_tokens_recovery=True,
             )
         )
+        client = _with_max_retries(self.client, model_settings)
 
         async def count(
             thinking: BetaThinkingConfigParam | Omit,
@@ -1765,11 +1787,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if thinking_override is not None
                 else model_settings.get('extra_body')
             )
-            if isinstance(self.client, AsyncAnthropicBedrock):
+            if isinstance(client, AsyncAnthropicBedrock):
                 from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
 
                 return await count_tokens_via_bedrock(
-                    self.client,
+                    client,
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
@@ -1790,7 +1812,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_body=extra_body,
                 )
 
-            return await self.client.beta.messages.count_tokens(
+            return await client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
@@ -2485,9 +2507,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
-                    | BetaMCPToolResultBlock
+                    | BetaRequestMCPToolResultBlockParam
                     | BetaCompactionBlockParam
                 ] = []
+                carried_thinking_params: list[BetaTextBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
@@ -2520,12 +2543,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 )
                         elif response_part.content:  # pragma: no branch
-                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            assistant_content_params.append(
-                                BetaTextBlockParam(
-                                    text='\n'.join([start_tag, response_part.content, end_tag]), type='text'
-                                )
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(
+                                response_part.content, self.profile, m
                             )
+                            thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
+                            if carry_in_user_turn:
+                                carried_thinking_params.append(thinking_param)
+                            else:
+                                assistant_content_params.append(thinking_param)
                     elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
@@ -2725,10 +2750,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                 )
                                 assistant_content_params.append(
-                                    BetaMCPToolResultBlock(
+                                    BetaRequestMCPToolResultBlockParam(
+                                        content=mcp_content['content'],
+                                        is_error=mcp_content['is_error'],
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **mcp_content,
                                     )
                                 )
                     elif isinstance(response_part, CompactionPart):
@@ -2752,6 +2778,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(response_part)
+                if carried_thinking_params:
+                    # Reasoning replayed in an assistant turn teaches a model that imitates assistant
+                    # formatting to write `<thinking>` tags into its visible answers
+                    # (https://github.com/pydantic/pydantic-ai/issues/5869), so it gets a user turn of its
+                    # own, built here so its position is fixed while mapping. It goes *ahead* of any
+                    # `system` entry this request emitted, so that entry has no user turn to hop and keeps
+                    # the cache boundary it was authored with (see `_place_system_messages_before_generation`).
+                    insert_at = len(anthropic_messages)
+                    while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
+                        insert_at -= 1
+                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
                 if len(assistant_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
@@ -4043,7 +4080,7 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
-def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
+def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:
     """Drop native tool calls that Anthropic will reject without a rendered result.
 
     A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
@@ -4056,9 +4093,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
         content = message['content']
         assert isinstance(content, list)
         for block in content:
-            if isinstance(block, BetaMCPToolResultBlock):
-                returned_native_tool_call_ids.add(block.tool_use_id)
-            elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
+            if is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
                 returned_native_tool_call_ids.add(tool_use_id)
 
     suffix_is_tool_result_only = True
@@ -4070,9 +4105,8 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
         for block in content:
             # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
             block_param = block
-            if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
-                kept.append(block_param)
-                continue
+            # Every block `_map_message` emits is a request param TypedDict.
+            assert is_str_dict(block)
 
             unpaired = (
                 block['type'] in ('server_tool_use', 'mcp_tool_use')

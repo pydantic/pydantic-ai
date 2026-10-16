@@ -68,7 +68,9 @@ documents, uploaded-file references, and model-generated files cannot be seeded.
 
 Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
 audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
-at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check
+at the model's input sample rate. Assistant speech always needs a transcript for seeding, and an
+interrupted one is seeded with the same interruption note a [text handoff](#handing-off-to-a-text-agent)
+gets, so the model knows the user didn't hear all of it. Check
 `supports_session_seeding`, `supports_seeding_images`, and `supports_seeding_audio` on the
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
 [Provider support](overview.md#provider-support) for how profiles resolve) before constructing
@@ -102,8 +104,9 @@ async def main():
 
 Retained user audio is forwarded to standard models whose profile supports audio input; other models
 receive the transcript. Assistant speech is always handed off as transcript text. Interrupted
-assistant turns receive a readable interruption note when Pydantic AI prepares the text-model
-request.
+assistant turns receive a readable interruption note (such as `[Interrupted after 1200 ms]`) when Pydantic
+AI prepares the text-model request, and when they are seeded into a realtime session or replayed into one
+after a reconnect.
 
 For structured work that must finish while the call remains open, expose a delegated text agent as
 a [realtime function tool](tools.md#delegating-work-during-a-call).
@@ -161,8 +164,8 @@ delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.message
 waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
 their part's audio until they are consumed.
 
-On OpenAI, Azure OpenAI, and xAI, retained audio is kept in the history
-[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns. The conversation a
+Retained audio is kept in the history
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns, on every provider. The conversation a
 tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input recorded on
 each response's [span](observability.md), carry transcripts without that audio for now; the events and
 the response a span records keep it.
@@ -206,18 +209,18 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn (on Gemini Live, until that
-response ends: see below).
+even when they arrive after that turn's response or overlap the following turn (on Gemini Live and
+GPT-Live, until that response ends: see below).
 
-On OpenAI, Azure OpenAI, xAI, and Gemini Live, history follows the order of the provider's own conversation:
+History follows the order of the provider's own conversation:
 
 - A spoken turn sits where the provider added it, and text, images, and tool results where they reached
   it. A turn the user started while the model was still answering, but which the provider only committed
-  after that answer ended, is recorded after the answer. Gemini Live doesn't say where an input joined its
-  conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and something
-  sent while a reply is owed (requested, or already being spoken) is recorded after that reply. Gemini Live
-  rarely marks a transcript finished either, so a spoken turn's transcript is complete when the reply to it
-  ends, and words transcribed after that are recorded as a turn of their own, after the reply.
+  after that answer ended, is recorded after the answer. Gemini Live and GPT-Live don't say where an input
+  joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and
+  something sent while a reply is owed (requested, or already being spoken) is recorded after that reply. On
+  them, a spoken turn's transcript is complete when the reply to it ends, and words transcribed after that are
+  recorded as a turn of their own, after the reply.
 - A message appears in `all_messages()` once everything before it is final. On OpenAI, Azure OpenAI, and
   xAI, a reply waits for the transcript of the spoken turn before it, which can arrive after the reply
   itself is done, for up to 30 seconds after that; past that, the turn is recorded with the transcript it
@@ -225,17 +228,15 @@ On OpenAI, Azure OpenAI, xAI, and Gemini Live, history follows the order of the 
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
   The one exception is a tool's return, which always directly follows the response that called it: a tool
   that finishes after later messages were recorded has its return inserted ahead of them.
+- A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
+  at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
+  interrupted copy (on models that support output truncation), and a speech part whose
+  [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
+  the latest snapshot rather than appending only the messages past the ones you stored.
 
 - Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
   records [text phases](../models/openai.md#text-phases).
-
-On GPT-Live, a turn the user starts while the model is still answering, whether they
-[barge in](turns.md#barge-in) or push to talk over it, is recorded after that answer. Such a turn joins
-history once the provider ends the answer it cut off, or after a few seconds if the provider never does.
-In that fallback the turn is recorded where history stands, so it lands before the answer it interrupted,
-and ahead of anything sent with [`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was
-still in flight.
 
 If a reported speech segment never receives a transcript, the session still records its retained audio or
 a content-less `SpeechPart`, at the latest when the session closes.
