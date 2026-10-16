@@ -1,0 +1,393 @@
+"""The web UI over several live sessions in one CLAI: each browser watches some, by conversation ID."""
+
+import io
+import json
+import os
+from collections.abc import AsyncIterator, Callable, Iterator
+from concurrent.futures import Future
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import anyio
+import httpx2
+import pytest
+from anyio.from_thread import BlockingPortal, start_blocking_portal
+from pydantic import JsonValue
+from rich.console import Console
+from starlette.testclient import TestClient, WebSocketTestSession
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.builtin_plugins.web import WebPlugin
+from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
+from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
+from pydantic_clai2.builtin_plugins.web.service import WebService
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+
+from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
+
+GLOBAL = {'snapshot', 'orchestrator', 'live', 'sessions', 'plugins', 'settings', 'theme', 'update'}
+"""Message types every browser gets, without a `session`."""
+WEB = PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings={'open_browser': False})
+
+
+class Gate:
+    """A model whose turns stream once released: `started` is set as a turn asks it, `release` lets it answer."""
+
+    def __init__(self, portal: BlockingPortal, name: str) -> None:
+        self.name = name
+        self.started: anyio.Event = portal.call(anyio.Event)
+        self.release: anyio.Event = portal.call(anyio.Event)
+        self.calls = 0
+
+    def agent(self) -> Agent[None, str]:
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            self.calls += 1
+            self.started.set()
+            await self.release.wait()
+            yield f'{self.name} answered'
+
+        return Agent(FunctionModel(stream_function=stream), deps_type=type(None))
+
+
+@dataclass
+class Fleet:
+    """`clai2 --web` in-process: a launch session serving the web UI, which opens more in their own folders."""
+
+    root: Path
+    portal: BlockingPortal
+    agents: dict[str, Agent[None, str]]
+    launch: SessionRuntime[None, str] = field(init=False)
+    client: TestClient = field(init=False)
+    runtimes: dict[str, SessionRuntime[None, str]] = field(default_factory=dict[str, SessionRuntime[None, str]])
+    """By folder name."""
+    running: Future[None] | None = None
+
+    def __post_init__(self) -> None:
+        self.launch = self._build(self.folder('home'))
+        self.launch.process.live.build = lambda directory: self._build(directory or self.folder('home'))
+        self.portal.call(self.launch.loader.load_all)
+        [plugin] = [entry.loaded.plugin for entry in self.launch.loader.entries() if entry.name == 'web' and entry.loaded]
+        assert isinstance(plugin, WebPlugin)
+        self.plugin = plugin
+        app = create_app(service=plugin.service, token=TOKEN, hosts=HOSTS, static=static_dir(self.root))
+        self.client = TestClient(app)
+        self.client.portal = self.portal
+
+        async def serve() -> None:
+            async with self.launch.process.live.serving():
+                await self.launch.run()
+
+        self.running = self.portal.start_task_soon(serve)
+
+    def folder(self, name: str) -> Path:
+        directory = self.root / name
+        directory.mkdir(exist_ok=True)
+        return directory.resolve()
+
+    def _build(self, directory: Path) -> SessionRuntime[None, str]:
+        joined = getattr(self, 'launch', None)
+        runtime = create_shell(
+            self.agents.get(directory.name) or Agent(TestModel()),
+            deps=None,
+            plugins=(),
+            usage_limits=None,
+            console=Console(file=io.StringIO(), width=100),
+            settings=None,
+            store=SettingsStore(self.root / 'config.db') if joined is None else None,
+            builtin_plugins=[WEB] if joined is None else (),
+            project=ProjectSettings(),
+            headless=True,
+            workspace=directory,
+            process=None if joined is None else joined.process,
+            signals=joined is None,
+        )
+        self.runtimes[directory.name] = runtime
+        return runtime
+
+    @property
+    def service(self) -> WebService:
+        return self.plugin.service
+
+    def post(self, path: str, body: object = None) -> httpx2.Response:
+        return self.client.post(path, json=body, headers={HEADER: TOKEN})
+
+    def get(self, path: str) -> httpx2.Response:
+        return self.client.get(path, headers={HEADER: TOKEN})
+
+    def socket(self) -> WebSocketTestSession:
+        return self.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'})
+
+    def new(self, name: str) -> str:
+        """Start a live session in folder `name`; its conversation ID."""
+        response = self.post('/api/sessions/new', {'workspace': str(self.folder(name))})
+        assert response.status_code == 200, response.text
+        return response.json()['id']
+
+    def close(self) -> None:
+        self.launch.send_input('/exit') if self.running and not self.running.done() else None
+        if self.running is not None:
+            self.running.result(timeout=10)
+
+
+MakeFleet = Callable[..., Fleet]
+
+
+@pytest.fixture
+def make_fleet(tmp_path: Path) -> Iterator[MakeFleet]:
+    with start_blocking_portal() as portal:
+        made: list[Fleet] = []
+
+        def make(agents: Callable[[BlockingPortal], dict[str, Agent[None, str]]] = lambda _: {}) -> Fleet:
+            made.append(Fleet(root=tmp_path, portal=portal, agents=agents(portal)))
+            return made[-1]
+
+        yield make
+        for fleet in made:
+            portal.call(lambda: fleet.launch.send_input('/exit'))
+            assert fleet.running is not None
+            fleet.running.result(timeout=10)
+
+
+def messages(socket: WebSocketTestSession, *, until: Callable[[dict[str, JsonValue]], bool]) -> list[dict[str, JsonValue]]:
+    """Raw messages from the WebSocket up to and including the first `until` accepts."""
+    received: list[dict[str, JsonValue]] = []
+    while True:
+        message = json.loads(socket.receive_text())
+        received.append(message)
+        if until(message):
+            return received
+
+
+def kind(name: str, **fields: JsonValue) -> Callable[[dict[str, JsonValue]], bool]:
+    return lambda message: message['type'] == name and all(message.get(key) == value for key, value in fields.items())
+
+
+def connected(socket: WebSocketTestSession) -> dict[str, JsonValue]:
+    """The default session's snapshot, after reading the orchestrator's state and `live`, as the page gets them."""
+    snapshot = json.loads(socket.receive_text())
+    assert [json.loads(socket.receive_text())['type'] for _ in range(2)] == ['orchestrator', 'live']
+    return snapshot
+
+
+def watch(socket: WebSocketTestSession, *sessions: str) -> None:
+    socket.send_text(json.dumps({'type': 'watch', 'sessions': list(sessions)}))
+
+
+def live_states(message: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    sessions = message['sessions']
+    assert isinstance(sessions, list)
+    return {entry['id']: entry['state'] for entry in sessions if isinstance(entry, dict) and isinstance(entry['id'], str)}
+
+
+def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -> None:
+    """Two turns stream at once in two folders; each browser sees only its session, every message naming it."""
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates.update({name: Gate(portal, name) for name in ('home', 'b')})
+        return {name: gate.agent() for name, gate in gates.items()}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    launched_in = Path.cwd()
+    with fleet.socket() as one, fleet.socket() as two:
+        connected(one)
+        connected(two)
+        b = fleet.new('b')
+        assert b != a and fleet.new('c') not in (a, b)
+        watch(one, a)
+        watch(two, b)
+        assert messages(one, until=kind('snapshot'))[-1]['session'] == {'id': a, 'title': None, 'workspace': str(fleet.folder('home'))}
+        snapshot = messages(two, until=kind('snapshot'))[-1]
+        assert snapshot['session'] == {'id': b, 'title': None, 'workspace': str(fleet.folder('b'))}
+        assert fleet.post(f'/api/sessions/{a}/input', {'text': 'go'}).json() == {'menu': None}
+        assert fleet.post(f'/api/sessions/{b}/input', {'text': 'go'}).json() == {'menu': None}
+        fleet.portal.call(gates['home'].started.wait)
+        fleet.portal.call(gates['b'].started.wait)
+        # Both run at once, and input sent to one meanwhile waits behind its turn.
+        assert fleet.post(f'/api/sessions/{b}/input', {'text': 'and then'}).status_code == 200
+        states = live_states(messages(one, until=lambda m: m['type'] == 'live' and live_states(m).get(b) == 'queued')[-1])
+        assert (states[a], states[b]) == ('running', 'queued')
+        sidebar = {
+            entry['id']: entry['state']
+            for project in fleet.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+        assert (sidebar[a], sidebar[b]) == ('running', 'running'), 'live turns are running, never busy elsewhere'
+        fleet.portal.call(gates['home'].release.set)
+        first = messages(one, until=kind('turn_end', session=a))
+        fleet.portal.call(gates['b'].release.set)
+        second = messages(two, until=lambda m: m['type'] == 'turn_end' and gates['b'].calls == 2)
+        second += messages(two, until=kind('turn_end', session=b))
+    for received, mine, answer in ((first, a, 'home answered'), (second, b, 'b answered')):
+        scoped = [message for message in received if message['type'] not in GLOBAL]
+        assert scoped and {message['session'] for message in scoped} == {mine}
+        assert not any(message['type'] in GLOBAL and 'session' in message for message in received if message['type'] != 'snapshot')
+        texts = ''.join(str(message.get('text', '')) for message in scoped)
+        assert answer in texts and ('b answered' if mine == a else 'home answered') not in texts
+    assert Path.cwd() == launched_in
+
+
+def test_watching_switches_sessions_and_keeps_them_open(make_fleet: MakeFleet) -> None:
+    """`watch` sends a snapshot of each newly watched live session, counts the browser as a watcher, and ignores IDs not live."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    with fleet.socket() as socket:
+        assert connected(socket)['session']['id'] == b, 'a browser that never watched follows the newest session'
+        watch(socket, a, 'not-live')
+        assert messages(socket, until=kind('snapshot'))[-1]['session']['id'] == a
+        assert session_b.watchers == 0
+        watch(socket, a, b)
+        assert messages(socket, until=kind('snapshot'))[-1]['session']['id'] == b, 'only b is new'
+        assert session_b.watchers == 1
+        watch(socket, a)
+        fleet.post(f'/api/sessions/{a}/input', {'text': '/cost'})
+        notice = messages(socket, until=kind('notice'))[-1]
+        assert notice['session'] == a and session_b.watchers == 0
+        watch(socket, b)
+        messages(socket, until=kind('snapshot'))
+        assert session_b.watchers == 1
+        socket.send_text('not a watch')  # Ignored, as anything else an older or newer page sends.
+        socket.send_text(json.dumps({'type': 'watch'}))
+    fleet.portal.call(anyio.wait_all_tasks_blocked)
+    assert session_b.watchers == 0, 'a browser that leaves stops watching'
+
+
+def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: MakeFleet) -> None:
+    """`/new` typed in a live session sends its watchers the new conversation's snapshot, and `live` names it."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, b)
+        messages(socket, until=kind('snapshot'))
+        fleet.post(f'/api/sessions/{b}/input', {'text': '/new'})
+        snapshot = messages(socket, until=kind('snapshot'))[-1]
+        renamed = snapshot['session']['id']
+        assert renamed != b and snapshot['items'] == []
+        assert renamed in live_states(messages(socket, until=lambda m: m['type'] == 'live' and renamed in live_states(m))[-1])
+        assert fleet.get(f'/api/sessions/{b}/state').status_code == 404
+        assert fleet.get(f'/api/sessions/{renamed}/state').json()['session']['workspace'] == str(fleet.folder('b'))
+        fleet.post(f'/api/sessions/{renamed}/input', {'text': '/cost'})
+        assert messages(socket, until=kind('notice'))[-1]['session'] == renamed
+
+
+def test_session_routes(make_fleet: MakeFleet) -> None:
+    """Each route acts on the session it names, 404 when none is live; the legacy ones on the default session."""
+    gate: list[Gate] = []
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gate.append(Gate(portal, 'b'))
+        return {'b': gate[0].agent(), 'q': Agent(QuestionModel(), deps_type=type(None))}
+
+    fleet = make_fleet(agents)
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    for method, path in (
+        ('GET', 'state'),
+        ('POST', 'input'),
+        ('POST', 'interrupt'),
+        ('GET', 'complete?text=/he'),
+        ('POST', 'model'),
+        ('POST', 'switch'),
+        ('POST', 'questions/x'),
+        ('POST', 'dialogs/x'),
+    ):
+        body = {'text': 'hi', 'name': 'test', 'key': 'run.code_mode', 'on': True, 'answers': None, 'value': None}
+        response = fleet.client.request(method, f'/api/sessions/nope/{path}', json=body, headers={HEADER: TOKEN})
+        assert response.status_code == 404, (path, response.text)
+    assert fleet.get('/api/state').json()['session']['id'] == b, 'the legacy routes drive the default session'
+    assert '/help' in [completion['text'] for completion in fleet.get(f'/api/sessions/{a}/complete?text=/he').json()]
+    assert fleet.post(f'/api/sessions/{a}/dialogs/none', {'value': None}).status_code == 404
+    with fleet.socket() as socket:
+        connected(socket)
+        watch(socket, a, b)
+        assert fleet.post(f'/api/sessions/{a}/switch', {'key': 'run.code_mode', 'on': True}).status_code == 204
+        assert messages(socket, until=kind('notice', session=a))[-1]['command'] == '/set run.code_mode true'
+        assert fleet.post(f'/api/sessions/{a}/model', {'name': 'test'}).status_code == 204
+        assert messages(socket, until=kind('notice', session=a))[-1]['command'] == '/model test'
+        fleet.post(f'/api/sessions/{b}/input', {'text': 'go'})
+        fleet.portal.call(gate[0].started.wait)
+        assert fleet.post(f'/api/sessions/{a}/interrupt').json() == {'interrupted': False}
+        assert fleet.post(f'/api/sessions/{b}/interrupt').json() == {'interrupted': True}
+        ended = messages(socket, until=kind('turn_end', session=b))[-1]
+        assert ended['outcome'] == 'cancelled'
+
+        q = fleet.new('q')
+        watch(socket, a, b, q)
+        messages(socket, until=kind('snapshot'))
+        fleet.post(f'/api/sessions/{q}/input', {'text': 'ask me'})
+        asked = messages(socket, until=kind('question', session=q))[-1]
+        request = asked['questions']['id']
+        assert live_states(messages(socket, until=lambda m: m['type'] == 'live' and live_states(m).get(q) == 'asking')[-1])[q] == 'asking'
+        assert fleet.get(f'/api/sessions/{q}/state').json()['questions'][0]['id'] == request
+        assert fleet.get(f'/api/sessions/{a}/state').json()['questions'] == []
+        answers = {'answers': [{'header': 'Colour', 'selected': ['Red']}]}
+        assert fleet.post(f'/api/sessions/{a}/questions/{request}', answers).status_code == 404, "another session's"
+        assert fleet.post(f'/api/sessions/{q}/questions/{request}', answers).status_code == 204
+        assert messages(socket, until=kind('question_closed', session=q))[-1]['id'] == request
+        messages(socket, until=kind('turn_end', session=q))
+
+
+def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
+    """Opening a saved session resumes it in its own folder, once; the legacy routes then drive it."""
+    fleet = make_fleet()
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')]), ModelResponse(parts=[TextPart('hello')])]
+    summary = ConversationSummary(workspace=str(fleet.folder('saved')), title='Saved')
+    saved = fleet.portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
+    with fleet.socket() as socket:
+        connected(socket)
+        assert fleet.post(f'/api/sessions/{saved.id}/open').json() == {'id': saved.id}
+        snapshot = messages(socket, until=kind('snapshot'))[-1]
+        assert (snapshot['session']['id'], [item['text'] for item in snapshot['items']]) == (saved.id, ['hi', 'hello'])
+        assert fleet.post(f'/api/sessions/{saved.id}/open').json() == {'id': saved.id}
+    assert [runtime for runtime in fleet.runtimes] == ['home', 'saved']
+    assert fleet.get('/api/state').json()['session']['id'] == saved.id
+    assert fleet.runtimes['saved'].session.workspace == str(fleet.folder('saved'))
+    assert fleet.post('/api/sessions/unknown/open').status_code == 404
+
+
+def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:
+    """Not one session's choice: the saved `model` setting, else the agent's own."""
+    fleet = make_fleet()
+    host = fleet.plugin.host
+    assert fleet.portal.call(host.default_model) is fleet.launch.agent.model
+    fleet.launch.context.store.set('model', 'test')
+    assert fleet.portal.call(host.default_model) == 'test'
+    assert fleet.portal.call(PluginHost[None](name='bare', console=Console(), settings={}).default_model) is None
+
+
+def test_a_host_outside_the_loader_is_its_one_session() -> None:
+    """A `web` plugin built on a bare host, as in a test, shows that host as its only live session."""
+    host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
+    live = HostSessions(host)
+    [session] = live.listing()
+    assert live.get(session.id) is session and live.current() is None
+    with pytest.raises(LookupError):
+        live.get('other')
+    for opening in (lambda: live.open('x'), live.new, lambda: live.close(session.id)):
+        with pytest.raises(RuntimeError, match='opens no other'):
+            anyio.run(opening)
+    live.subscribe(lambda: None)()
+    unwatch = session.watch()
+    unwatch()
+    assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
+    assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
+    assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
+    assert anyio.run(session.complete, '/') == []
+    with pytest.raises(KeyError):
+        session.setting('run.code_mode')
+    service = WebService(host=host)
+    assert service.live_message().sessions[0].state == 'idle'
+    assert os.getpid() > 0
