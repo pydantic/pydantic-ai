@@ -160,3 +160,19 @@ async def test_deleting_a_conversation_keeps_the_entries_a_fork_still_uses() -> 
     assert _entry_count(store) == 1
     await store.delete(fork.conversation_id)
     assert _entry_count(store) == 0
+
+
+async def test_a_saved_request_a_run_sends_is_stored_again_with_its_run_metadata() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('queued')])])
+    await store.save(conversation)
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+
+    result = await Agent(TestModel()).run(conversation=loaded)
+    await store.save(result.conversation)
+
+    # The run fills in the request's `run_id`, so the save branches off before it.
+    assert result.conversation.messages[0] != conversation.messages[0]
+    assert _entry_count(store) == 3
+    assert await store.load(conversation.conversation_id) == result.conversation
