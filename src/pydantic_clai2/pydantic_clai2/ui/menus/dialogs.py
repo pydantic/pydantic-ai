@@ -161,16 +161,26 @@ async def run_settings_menu(menu: SettingsMenu, runners: Runners | None = None) 
     nothing paints between one dialog and the next, even while an action awaits something.
     """
     runners = runners or RUNNERS
-    dialogs = TerminalDialogs(runners)
+    with full_terminal():
+        return await _run_menu(menu, runners, TerminalDialogs(runners))
 
-    def opens(action: Action) -> Callable[[], Awaitable[Sequence[str]]]:
+
+async def _run_menu(menu: SettingsMenu, runners: Runners, dialogs: TerminalDialogs) -> list[str]:
+    """One menu's list; a row that opens another menu shows it, then this list again."""
+
+    def acts(action: Action) -> Callable[[], Awaitable[Sequence[str]]]:
         return lambda: action(dialogs)
 
-    with full_terminal():
-        # Building the list reads the rows, which may read the keyring or `/keys`: off the loop, as each step is.
-        fields = await to_thread.run_sync(partial(FieldMenu, menu.source, searchable=menu.searchable))
-        return await run_flow_async(
-            fields,
-            runners,
-            submenus={key: opens(action) for key, action in menu.actions.items()},
-        )
+    def opens(build: Callable[[], SettingsMenu]) -> Callable[[], Awaitable[Sequence[str]]]:
+        return lambda: _run_menu(build(), runners, dialogs)
+
+    # Building the list reads the rows, which may read the keyring or `/keys`: off the loop, as each step is.
+    fields = await to_thread.run_sync(partial(FieldMenu, menu.source, searchable=menu.searchable))
+    return await run_flow_async(
+        fields,
+        runners,
+        submenus={
+            **{key: acts(action) for key, action in menu.actions.items()},
+            **{key: opens(build) for key, build in menu.menus.items()},
+        },
+    )

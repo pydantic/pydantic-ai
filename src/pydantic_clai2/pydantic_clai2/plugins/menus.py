@@ -138,5 +138,7 @@ class SettingsMenu:
     source: FieldSource
     actions: Mapping[str, Action] = field(default_factory=dict[str, Action])
     """Row key to what choosing that row does, instead of editing its value."""
+    menus: 'Mapping[str, Callable[[], SettingsMenu]]' = field(default_factory=dict[str, 'Callable[[], SettingsMenu]'])
+    """Row key to the menu choosing that row opens, built when it opens; leaving it returns to this one."""
     searchable: bool = True
     """Whether typing filters the terminal list. A short menu may prefer single-key shortcuts instead."""
