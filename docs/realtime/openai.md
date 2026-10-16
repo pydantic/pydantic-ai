@@ -407,8 +407,9 @@ Neither family streams readable reasoning as [`ThinkingPart`][pydantic_ai.messag
 GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
 continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. To have that
 reasoning carry readable text, request a summary with `openai_live_delegation={'reasoning_summary': ...}`
-(`'auto'`, `'concise'`, or `'detailed'`), as `openai_reasoning_summary` does on a direct Responses
-request. The backend summarizes only some of its reasoning, so some of these parts can still be empty.
+(`'auto'`, `'concise'`, or `'detailed'`), as
+[`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+does on a direct Responses request. The backend summarizes only some of its reasoning, so some of these parts can still be empty.
 
 ## Browser WebRTC
 

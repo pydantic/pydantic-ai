@@ -354,8 +354,9 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     setting, which otherwise sets the backend's effort the way it would on a direct Responses request to
     that model."""
     reasoning_summary: Literal['detailed', 'concise', 'auto']
-    """A summary of the backend model's reasoning, as `openai_reasoning_summary` requests on a direct
-    Responses request.
+    """A summary of the backend model's reasoning, as
+    [`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+    requests on a direct Responses request.
 
     The reasoning recorded ahead of a web search the backend runs then carries the summary, where the
     backend wrote one, as its [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] content. Check the
