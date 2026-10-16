@@ -421,6 +421,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # call is taken to start the next step.
                 pending_returns: list[ToolReturnPart] = []
                 # Enqueued messages were delivered after the step's tool returns, so they wait with them.
+                # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
                 pending_enqueued: list[ModelMessage] = []
                 has_steps = any(isinstance(part, StepStartUIPart) for part in msg.parts)
                 for part in msg.parts:
@@ -1356,6 +1357,8 @@ def _metadata_target(
 
     Enqueued messages loaded from a `data-enqueued-messages` part are appended whole and carry their own id
     and metadata, so they're never the target, even when one lands before the message's own parts.
+
+    `_modified_since` is private on purpose, so custom adapters don't depend on it yet.
     """
     return next(
         (
