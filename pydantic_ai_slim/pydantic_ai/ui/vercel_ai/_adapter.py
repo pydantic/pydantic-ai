@@ -454,7 +454,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # response. Streamed messages mark steps with `step-start` parts; without them (as
                 # `dump_messages` writes, one response per message) content after a completed tool
                 # call is taken to start the next step.
-                pending_returns: list[ToolReturnPart] = []
+                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart] = []
                 # Enqueued messages were delivered after the step's tool returns, so they wait with them.
                 # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
                 pending_enqueued: list[ModelMessage] = []
@@ -521,6 +521,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and (compaction_part := compaction_part_from_payload(part.data)) is not None
                         ):
                             builder.add(compaction_part)
+                        elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
+                            # The event stream emits the delta after the tool result that caused it, so
+                            # the AI SDK attaches it to the assistant message. Adding it here lands it on
+                            # the request carrying that tool return, matching the server-side history. It waits
+                            # with the step's held-back tool returns so it follows the return that caused it.
+                            pending_returns.append(tool_availability_delta_from_payload(part.data))
                         elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
                             # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                             loaded = cls.load_messages(_enqueued_ui_messages(part.data))

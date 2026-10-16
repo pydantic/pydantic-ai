@@ -29,7 +29,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and
-  host.sessions lists, reads, renames, forks, and deletes the saved sessions /resume shows.
+  host.sessions lists, reads, renames, forks, archives, and deletes the saved sessions /resume shows.
   host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
   shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
   host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, or resumes them;
