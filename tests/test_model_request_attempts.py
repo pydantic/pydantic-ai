@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
@@ -549,9 +550,7 @@ async def test_nested_settings_edited_in_place_do_not_reach_the_next_attempt():
         async def prepare_model_request(
             self, ctx: RunContext[None], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            assert request_context.model_settings is not None
-            extra_body = request_context.model_settings['extra_body']
-            assert isinstance(extra_body, dict)
+            extra_body = cast(dict[str, Any], (request_context.model_settings or {}).get('extra_body'))
             seen.append(repr(extra_body))
             extra_body['nested']['x'] = 'edited'
             extra_body['tags'].add('edited')
