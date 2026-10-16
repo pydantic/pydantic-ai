@@ -196,7 +196,7 @@ async def handle(prompt: str) -> str:
 
 Cost is best-effort: a model [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for isn't counted (with a `cost_limit`, a run that can't be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning]), so keep `request_limit` alongside `cost_limit`; see [usage limits](agent.md#usage-limits). Keep [model prices up to date](agent.md#keeping-model-prices-up-to-date) so cost limits and traces price new models.
 
-For budgets longer than one run, such as a daily ceiling, a monthly one or a per-tenant share, [`SpendLimits`](harness/spend.md) (Harness) prices every response and refuses the next request once a budget is spent, with a counter that several worker processes can share. Its USD budgets have the same gap: an unpriced response counts as free unless you set `on_unpriced='raise'` or supply your own `price`, while its token budgets still hold. The [Gateway](gateway.md) adds spending caps per project, user and key on the provider side. [Timeouts](timeouts.md) bound each model request, tool call and hook, [cancellation](agent.md#cancelling-a-run) stops a run from a stop button or a timer, and [`max_concurrency`](agent.md#concurrency-limiting) caps how many runs an agent executes at once.
+For budgets longer than one run, such as a daily ceiling, a monthly one or a per-tenant share, [`SpendLimits`](harness/spend.md) (Harness) prices every response and refuses the next request once a budget is spent, with a counter that several worker processes can share. Its USD budgets have the same gap: an unpriced response counts as free unless you set `on_unpriced='raise'` or supply your own `price`, while its token budgets still hold. The [Gateway](gateway.md) enforces its own daily, weekly and monthly spending caps per project, user and API key before a request reaches the provider. [Timeouts](timeouts.md) bound each model request, tool call and hook, [cancellation](agent.md#cancelling-a-run) stops a run from a stop button or a timer, and [`max_concurrency`](agent.md#concurrency-limiting) caps how many runs an agent executes at once.
 
 ## What happens when a provider is down? {#outages}
 
@@ -282,7 +282,7 @@ async def chat(request: Request) -> Response:
     return await VercelAIAdapter.dispatch_request(request, agent=agent)
 ```
 
-Approvals for [deferred tools](#approval) travel over the same stream. For a durable run, the endpoint starts a workflow and streams its events back, as [Temporal](durable_execution/temporal.md#streaming-events-to-a-frontend-with-workflow-streams) shows. [Interfaces](interfaces.md) lists every other surface: a built-in [web chat UI](web.md), the [CLI](cli.md), editors over ACP, other agents over A2A, [voice](realtime/overview.md) and GitHub.
+Approvals for [deferred tools](#approval) travel over the same stream. For a durable run, the endpoint starts a workflow and streams its events back, as [Temporal](durable_execution/temporal.md#streaming-events-to-a-frontend-with-workflow-streams) shows. [Interfaces](interfaces.md) lists every other way to serve an agent.
 
 ## How do I deploy it? {#deploy}
 
