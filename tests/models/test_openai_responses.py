@@ -4858,24 +4858,29 @@ async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_
     assert 'previous_response_id' not in other_key
 
 
-async def test_openai_previous_response_id_concrete_seed_is_not_used_past_a_changed_history(openai_api_key: str):
+async def test_openai_previous_response_id_concrete_seed_is_not_used_past_a_changed_history(
+    allow_model_requests: None,
+):
     """A stale chain in the history also rules out the seed, which only applies before the first response."""
-    response = ModelResponse(
-        parts=[TextPart(content='A1')],
-        provider_name='openai',
-        provider_response_id='resp_1',
-        history_digest='from a different history',
-    )
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Q')]),
-        response,
-        ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            provider_name='openai',
+            provider_response_id='resp_1',
+            history_digest='from a different history',
+        ),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed', history)  # pyright: ignore[reportPrivateUsage]
-    assert previous_response_id is None
-    assert messages is history
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed')).run(
+        'Follow-up', message_history=history
+    )
+
+    (request,) = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in request
+    assert [item.get('content') for item in request['input']] == snapshot(['Q', 'A1', 'Follow-up'])
 
 
 async def test_openai_previous_response_id_records_the_history_on_a_streamed_response(allow_model_requests: None):

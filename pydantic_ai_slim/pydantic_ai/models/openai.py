@@ -3075,6 +3075,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
+            _history_digest=history_digest,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
         )
         if tool_call_ids_are_response_scoped:
@@ -3087,7 +3088,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else expected_response_id
             )
         streamed_response.state = initial_state
-        streamed_response._history_digest = history_digest  # pyright: ignore[reportPrivateUsage]
         if background:
             # Stamp the background marker up front so the retry-delay gate (and `cancel_suspended_response`)
             # can tell a resumable background job from a foreground stream before any event is consumed;
@@ -4890,7 +4890,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
-    _history_digest: str | None = field(default=None, init=False)
+    _history_digest: str | None = None
     """The digest of the history this response was created from, recorded on it as `ModelResponse.history_digest`."""
 
     def get(self) -> ModelResponse:

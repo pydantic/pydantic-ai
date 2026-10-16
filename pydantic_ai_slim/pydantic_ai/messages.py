@@ -2984,7 +2984,13 @@ class ModelResponse:
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
     can use to test guesses at content that was redacted from it later, such as a PIN or an account
-    number. If you redact history after it was sent, clear this field too, or give the model a key.
+    number. If you redact history after it was sent, give the model a key. Don't just clear this
+    field: a response without one is trusted and continued from, and the provider still holds the
+    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
+    nothing continues from them.
+
+    Computing it serializes the whole history before the response on every request that continues
+    server-side state, so it costs local work proportional to the conversation's length.
     """
 
     failed_attempts: list[ModelRequestAttempt] | None = None
