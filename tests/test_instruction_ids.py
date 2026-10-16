@@ -1156,7 +1156,7 @@ async def test_deferred_capability_instructions_stay_hidden():
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - deferred
 </context>
-A later <context> element with the same id replaces this one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             dynamic=True,
             on_change='append',

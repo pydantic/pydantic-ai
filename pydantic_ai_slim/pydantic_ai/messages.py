@@ -2199,26 +2199,33 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     return f'<context-diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context-diff>'
 
 
-def _render_instruction_baseline(part: InstructionPart, *, inline_system: bool) -> InstructionPart:  # pyright: ignore[reportUnusedFunction]
-    """Render an append-mode block's initial value as it appears in the request prefix.
+_SUPERSESSION_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
 
-    The sentence after the element tells the model that a later
-    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] replaces it, and which sentence
-    depends on how that update arrives. A model that receives mid-conversation system content natively
-    gets a neutral one, since the update itself arrives as system content. A model that gets the update
-    `<system>`-wrapped in a user turn is also told that the update stays in effect, which it needs to keep
-    following the update on later turns.
 
-    History stores only the content, so each model renders its own prefix, and renders it identically
-    on every request.
+def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
+    """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
+
+    Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
+    one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]
+    with the same id replaces it and stays in effect, which models need to keep following an update on later
+    turns, whether it arrives as system content or `<system>`-wrapped in a user turn. Other parts go out as
+    written: agent history never holds an unaddressable append-mode part (it is downgraded to `'rewrite'` with
+    a warning), but a `before_model_request` hook or a direct caller can still supply one.
+
+    History stores only the content, so each model renders its own prefix, and renders it identically on
+    every request.
     """
-    assert part.id is not None
-    sentence = (
-        'A later <context> element with the same id replaces this one.'
-        if inline_system
-        else 'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
-    )
-    return replace(part, content=f'{_context_element(part.id, part.content)}\n{sentence}')
+    tagged = [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+    rendered = list(parts)
+    for index in tagged:
+        part = parts[index]
+        content = _context_element(part.id, part.content)
+        if index == tagged[-1]:
+            content = f'{content}\n{_SUPERSESSION_SENTENCE}'
+        rendered[index] = replace(part, content=content)
+    return rendered
 
 
 @dataclass(repr=False, kw_only=True)
@@ -2263,25 +2270,76 @@ class ToolAvailabilityDeltaPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class InstructionDigest:
+    """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
+
+    Only what decides whether the block is unchanged: a later request can keep its window's prefix only if
+    every rewrite-mode block is still the same, in the same place.
+    """
+
+    id: SerializedInstructionId = None
+    """The block's [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id], if it has one."""
+
+    dynamic: bool = False
+    """The block's [`InstructionPart.dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which decides its cache placement."""
+
+    content_hash: str
+    """The SHA-256 hex digest of the block's content."""
+
+    part_kind: Literal['instruction-digest'] = 'instruction-digest'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    @classmethod
+    def of(cls, part: InstructionPart) -> InstructionDigest:
+        """The digest of a rewrite-mode `part`."""
+        return cls(id=part.id, dynamic=part.dynamic, content_hash=_instruction_text_hash(part.content))
+
+    def matches(self, part: InstructionPart) -> bool:
+        """Whether `part` is a rewrite-mode block this digest records unchanged."""
+        return part.on_change != 'append' and self == InstructionDigest.of(part)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _baseline_block_kind(value: Any) -> str:
+    """Discriminate an `InstructionBaselinePart` block; an `InstructionPart` may be serialized without `part_kind`."""
+    kind = (
+        cast(dict[str, Any], value).get('part_kind') if isinstance(value, dict) else getattr(value, 'part_kind', None)
+    )
+    return 'instruction-digest' if kind == 'instruction-digest' else 'instruction'
+
+
+@dataclass(repr=False, kw_only=True)
 class InstructionBaselinePart:
     """The instructions a request was sent with, recorded where a run of `on_change='append'` requests starts.
 
     A request records this when it opens a window: the first request with an
     [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change] block, and each request whose
     prefix has to change anyway (a rewritten block changed, a block's policy changed, compaction). Every
-    request in the window is sent this prefix, with each append-mode block at its value here, followed in
+    request in the window is sent the same prefix, with each append-mode block at its value here, followed in
     history by the [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s since. An empty
     `instructions` list ends the window, so earlier changes stop applying.
 
     It's never sent to a model: it records what the request's
-    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] were made of, so a later request,
-    a resumed turn and every model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] can
-    render the same prefix. Like a system prompt, it's trusted operator content, so
-    `sanitize_messages(strip_system_prompts=True)` strips it.
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] were made of, so a later request can
+    tell whether it can keep the prefix and what its append-mode blocks said. Like a system prompt, it's
+    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
     """
 
-    instructions: list[InstructionPart]
-    """The request's instruction parts, in order, each with its id and `on_change` policy."""
+    instructions: list[
+        Annotated[
+            Annotated[InstructionPart, pydantic.Tag('instruction')]
+            | Annotated[InstructionDigest, pydantic.Tag('instruction-digest')],
+            pydantic.Discriminator(_baseline_block_kind),
+        ]
+    ]
+    """The request's instruction parts, in order.
+
+    Append-mode blocks are recorded in full, since their changes are computed against them. Rewrite-mode
+    blocks are recorded as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest], which is enough
+    to tell whether one changed, so a long block that is rewritten on every request isn't stored again each
+    time.
+    """
 
     part_kind: Literal['instruction-baseline'] = 'instruction-baseline'
     """Part type identifier, used as a discriminator for deserialization."""

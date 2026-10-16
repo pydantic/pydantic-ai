@@ -382,8 +382,8 @@ async def test_append_instruction_baseline_is_tagged_like_its_updates():
 <context id="agent:state">
 A
 </context>
-A later <context> element with the same id replaces this one and stays in effect until replaced again.<context id="agent:state">
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.<context id="agent:state">
 A
 </context>
-A later <context> element with the same id replaces this one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)

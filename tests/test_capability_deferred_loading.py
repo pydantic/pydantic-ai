@@ -12,7 +12,13 @@ from typing import Any, cast
 
 import pytest
 
-from pydantic_ai import CapabilityInstructionSource, InstructionBaselinePart, InstructionId, InstructionPart
+from pydantic_ai import (
+    CapabilityInstructionSource,
+    InstructionBaselinePart,
+    InstructionDigest,
+    InstructionId,
+    InstructionPart,
+)
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
@@ -1095,9 +1101,9 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
                     UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime()),
                     InstructionBaselinePart(
                         instructions=[
-                            InstructionPart(
-                                content='Visible billing instructions.',
+                            InstructionDigest(
                                 id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                                content_hash='97321e5185a6577bd855abec078319a0b556019f94499fd828a05d24bd9d9a5e',
                             ),
                             InstructionPart(
                                 content="""\

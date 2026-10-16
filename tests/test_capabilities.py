@@ -2520,7 +2520,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
         '<context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
         '- refunds: Refund policy tools.\n</context>\n'
-        'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 

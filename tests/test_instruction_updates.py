@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    InstructionDigest,
     InstructionId,
     InstructionPart,
     ModelMessage,
@@ -80,10 +81,17 @@ pytestmark = pytest.mark.anyio
 STATE_ID = InstructionId(AgentInstructionSource(), name='state')
 
 
-def baseline_of(message: ModelMessage) -> list[InstructionPart] | None:
+def baseline_of(message: ModelMessage) -> list[InstructionPart | InstructionDigest] | None:
     """The instructions a request recorded as its window's baseline, if it opened or ended a window."""
     assert isinstance(message, ModelRequest)
     return next((part.instructions for part in message.parts if isinstance(part, InstructionBaselinePart)), None)
+
+
+def recorded(blocks: list[InstructionPart | InstructionDigest] | None) -> list[str] | None:
+    """A baseline's blocks as text: an append-mode block's content, or a rewrite-mode block's content hash."""
+    if blocks is None:
+        return None
+    return [block.content if isinstance(block, InstructionPart) else f'sha256:{block.content_hash}' for block in blocks]
 
 
 @dataclass(frozen=True)
@@ -166,7 +174,7 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
         # History keeps the content; only the request the model receives carries the rendering.
         assert [part.content for part in info.model_request_parameters.instruction_parts or []] == [
             '<context id="agent:state">\nA\n</context>\n'
-            'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
+            'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
         ]
         assert [part.content for part in request.parts if isinstance(part, UserPromptPart)][:2] == [
             'Continue.',
@@ -206,7 +214,7 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
 <context id="agent:state">
 A
 </context>
-A later <context> element with the same id replaces this one and stays in effect until replaced again.\
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     assert prefixes == [prefixes[0]] * 4
     for previous, current in zip(captured, captured[1:]):
@@ -369,12 +377,19 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
     requests = [message for message in history if isinstance(message, ModelRequest)]
     assert [
         (
-            [part.content for part in baseline] if (baseline := baseline_of(request)) is not None else None,
+            recorded(baseline_of(request)),
             [part.content for part in request.parts if isinstance(part, InstructionDeltaPart)],
         )
         for request in requests
-    ] == [(['Terse.', 'A'], []), (None, ['B']), (['Chatty.', 'C'], []), (None, ['D'])]
-    sentence = 'A later <context> element with the same id replaces this one.'
+    ] == [
+        ([f'sha256:{_sha256("Terse.")}', 'A'], []),
+        (None, ['B']),
+        ([f'sha256:{_sha256("Chatty.")}', 'C'], []),
+        (None, ['D']),
+    ]
+    sentence = (
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    )
     assert prefixes == [
         f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
         f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
@@ -382,10 +397,53 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
     ]
     assert isinstance(agent.model, Model)
-    projected = agent.model.prepare_messages(history)
-    # The change from the earlier window is superseded, and each request's instructions are what it was sent.
+    current_parts = [
+        InstructionPart(content='Chatty.', dynamic=True),
+        InstructionPart(content='C', dynamic=True, on_change='append', name='state', id=STATE_ID),
+    ]
+    projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
+    # The change from the earlier window is superseded. The current window's requests were all sent the
+    # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
     assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
-    assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == prefixes
+    assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
+        'Terse.\n\nA',
+        'Terse.\n\nA',
+        *prefixes[2:],
+    ]
+
+
+async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests():
+    """A long rewrite-mode block that changes on every request isn't stored again in each baseline it opens."""
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=Settings)
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    history: list[ModelMessage] = []
+    for turn in range(4):
+        long_block = f'Turn {turn}: ' + 'x' * 10_000
+        result = await agent.run('Continue.', deps=Settings(long_block, 'A'), message_history=history)
+        history = result.all_messages()
+
+    baselines = [
+        part
+        for message in history
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionBaselinePart)
+    ]
+    # Each request opened a window, since the rewrite-mode block changed, but recorded only its digest.
+    assert len(baselines) == 4
+    serialized = ModelMessagesTypeAdapter.dump_json([ModelRequest(parts=baselines)])
+    assert len(serialized) < 2_000
+    assert [recorded(baseline.instructions) for baseline in baselines] == [
+        [f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}', 'A'] for turn in range(4)
+    ]
 
 
 async def test_instruction_updates_initial_absence_and_independent_conversations():
@@ -407,7 +465,7 @@ async def test_instruction_updates_initial_absence_and_independent_conversations
     assert len(fresh_request.parts) == 2
     assert isinstance(fresh_request.parts[0], UserPromptPart)
     assert fresh_request.parts[0].content == 'Continue.'
-    assert [part.content for part in baseline_of(fresh_request) or []] == ['Stable.', 'B']
+    assert recorded(baseline_of(fresh_request)) == [f'sha256:{_sha256("Stable.")}', 'B']
     assert fresh_request.instructions is not None and fresh_request.instructions.endswith('\n\nB')
 
 
@@ -443,7 +501,7 @@ async def test_instruction_updates_whitespace_means_absence(toolset: bool):
     request = first.new_messages()[0]
     assert isinstance(request, ModelRequest)
     assert request.instructions is None
-    assert [part.content for part in baseline_of(request) or []] == ['']
+    assert recorded(baseline_of(request)) == ['']
 
 
 async def test_instruction_updates_enqueue_preserves_request_part():
@@ -506,7 +564,7 @@ async def test_instruction_updates_unaddressable_change_opens_a_new_window(addre
     )
     result = await agent.run('Continue.', message_history=history)
     request = result.new_messages()[0]
-    assert [part.content for part in baseline_of(request) or []] == ['B']
+    assert recorded(baseline_of(request)) == ['B']
     assert isinstance(agent.model, Model)
     assert 'Unknown' not in str(agent.model.prepare_messages(result.all_messages()))
 
@@ -731,7 +789,7 @@ async def test_instruction_updates_resumed_request_keeps_baseline():
     result = await agent.run(deps='B', message_history=history)
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert [(str(part.id), part.content) for part in baseline_of(request) or []] == [('agent:state', 'A')]
+    assert [(str(part.id), recorded([part])) for part in baseline_of(request) or []] == [('agent:state', ['A'])]
     assert [part.content for part in request.parts if isinstance(part, InstructionDeltaPart)] == ['B']
     assert prefixes == [prefixes[0]] * 2
 
@@ -771,7 +829,12 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         responses=[scripted_response(texts=['done'], provider_response_id='complete', input_tokens=1, output_tokens=1)]
     )
     model.profile = ModelProfile(supports_inline_system_prompts=inline)
-    expected_parts = baseline_of(history[0])
+    # The prefix the turn was sent: the rewrite-mode block as the agent resolves it, the append-mode one at
+    # its baseline value.
+    expected_parts: list[InstructionPart] = [
+        InstructionPart(content='Stable.', id=InstructionId(AgentInstructionSource())),
+        InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+    ]
 
     async def rewrite_parts(ctx: RunContext[State], request: ModelRequestContext) -> ModelRequestContext:
         return replace(
@@ -1193,7 +1256,7 @@ def context_statements(messages: list[ModelMessage]) -> list[str]:
 RENDERINGS: dict[bool, tuple[str, list[str]]] = {
     True: (
         'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
-        'A later <context> element with the same id replaces this one.',
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.',
         [
             '<context id="agent:state">\nB\n</context>',
             '<context id="agent:state">\nThis context has been withdrawn.\n</context>',
@@ -1201,7 +1264,7 @@ RENDERINGS: dict[bool, tuple[str, list[str]]] = {
     ),
     False: (
         'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
-        'A later <context> element with the same id replaces this one and stays in effect until replaced again.',
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.',
         [
             '<system><context id="agent:state">\nB\n</context></system>',
             '<system><context id="agent:state">\n'
@@ -1333,9 +1396,11 @@ WIRE_CASES: list[ParameterSet] = [
 ]
 
 
-NEUTRAL_SENTENCE = 'A later <context> element with the same id replaces this one.'
+NEUTRAL_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
 PERSISTENCE_SENTENCE = (
-    'A later <context> element with the same id replaces this one and stays in effect until replaced again.'
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
 )
 
 

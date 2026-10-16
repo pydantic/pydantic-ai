@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     InstructionBaselinePart,
     InstructionChangePolicy,
     InstructionDeltaPart,
+    InstructionDigest,
     InstructionId,
     InstructionPart,
     InstructionSource,
@@ -305,9 +306,19 @@ def instruction_window_start(messages: Sequence[ModelMessage]) -> int:
     return max((index for index, message in enumerate(messages) if _opens_instruction_window(message)), default=0)
 
 
-def window_prefix(baseline: InstructionBaselinePart) -> list[InstructionPart]:
-    """The instruction parts every request in `baseline`'s window was sent: the baseline, minus empty blocks."""
-    return [part for part in baseline.instructions if part.content]
+def window_prefix(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> list[InstructionPart]:
+    """The instruction parts a request continuing `baseline`'s window is sent.
+
+    The append-mode blocks at their baseline values, in their baseline positions, minus empty ones, with the
+    rewrite-mode blocks from `current`, which [`continues_window`][pydantic_ai._instructions.continues_window]
+    has checked are the ones the baseline records.
+    """
+    rewritten = iter(part for part in current if part.on_change != 'append')
+    return [
+        block if isinstance(block, InstructionPart) else next(rewritten)
+        for block in baseline.instructions
+        if not isinstance(block, InstructionPart) or block.content
+    ]
 
 
 @dataclass
@@ -323,7 +334,7 @@ class InstructionValues:
             {
                 part.id: part.content or None
                 for part in (baseline.instructions if baseline is not None else [])
-                if part.on_change == 'append' and part.id is not None
+                if isinstance(part, InstructionPart) and part.id is not None
             }
         )
 
@@ -356,18 +367,19 @@ def _recorded_instruction_values(
     return values.values
 
 
-def _continues_window(baseline: InstructionBaselinePart, current: list[InstructionPart]) -> bool:
+def continues_window(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> bool:
     """Whether `current` can be sent with `baseline`'s prefix, appending changes to its append-mode blocks.
 
-    Rewrite-mode blocks are sent as they are, so they must be unchanged, in the same order; a block whose
-    policy changed is one of them. An append-mode block whose id didn't survive deserialization (a source
-    namespace this version doesn't know) can't be tagged, so it can't anchor a window either.
+    Rewrite-mode blocks are sent as they are, so they must be unchanged, in the same order, per the baseline's
+    digests; a block whose policy changed is one of them. An append-mode block whose id didn't survive
+    deserialization (a source namespace this version doesn't know) can't be tagged, so it can't anchor a
+    window either.
     """
-    if any(part.on_change == 'append' and part.id is None for part in baseline.instructions):
+    if any(isinstance(block, InstructionPart) and block.id is None for block in baseline.instructions):
         return False
-    return [part for part in baseline.instructions if part.on_change != 'append'] == [
-        part for part in current if part.on_change != 'append'
-    ]
+    digests = [block for block in baseline.instructions if isinstance(block, InstructionDigest)]
+    rewritten = [part for part in current if part.on_change != 'append']
+    return len(digests) == len(rewritten) and all(map(InstructionDigest.matches, digests, rewritten))
 
 
 def update_instruction_history(
@@ -393,7 +405,7 @@ def update_instruction_history(
             _record_baseline(targets, [])
         return None
     recorded = _recorded_instruction_values(messages, baseline) if baseline is not None else None
-    if baseline is not None and (recorded is None or not _continues_window(baseline, normalized)):
+    if baseline is not None and (recorded is None or not continues_window(baseline, normalized)):
         baseline = None
         if not any(part.on_change == 'append' for part in normalized):
             # Nothing appends any more, so only end the window its blocks' old changes belong to.
@@ -415,17 +427,35 @@ def update_instruction_history(
             for target in targets:
                 target.parts = [*target.parts, *changes]
 
-    # Parts keep only their content: each model renders the append-mode ones for its own delivery path in
-    # `Model.prepare_request`.
-    prefix = window_prefix(baseline)
+    # Parts keep only their content: each model renders the append-mode ones in `Model.prepare_request`.
+    prefix = window_prefix(baseline, normalized)
     for target in targets:
         target.instructions = InstructionPart.join(prefix)
     return prefix
 
 
+def continued_prefix(
+    messages: Sequence[ModelMessage], instructions: list[InstructionPart] | None
+) -> list[InstructionPart] | None:
+    """The prefix a request ending `messages` is sent if `instructions` continue its window, else `None`.
+
+    Unlike `update_instruction_history`, this records nothing: it's for a request that repeats one already in
+    history, such as a resumed turn.
+    """
+    baseline = instruction_window(messages)
+    normalized = _normalize_append_parts(instructions or [])
+    if baseline is None or not baseline.instructions or not continues_window(baseline, normalized):
+        return None
+    return window_prefix(baseline, normalized)
+
+
 def _record_baseline(targets: Sequence[ModelRequest], instructions: list[InstructionPart]) -> InstructionBaselinePart:
     """Open a window at this request, or close the current one when `instructions` is empty."""
-    baseline = InstructionBaselinePart(instructions=[replace(part) for part in instructions])
+    baseline = InstructionBaselinePart(
+        instructions=[
+            replace(part) if part.on_change == 'append' else InstructionDigest.of(part) for part in instructions
+        ]
+    )
     for target in targets:
         target.parts = [*target.parts, baseline]
     return baseline

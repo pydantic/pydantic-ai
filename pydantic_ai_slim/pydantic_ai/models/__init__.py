@@ -39,7 +39,6 @@ from .._instructions import (
     InstructionValues,
     advance_instruction_window,
     instruction_window_start,
-    window_prefix,
 )
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -86,7 +85,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
-    _render_instruction_baseline,  # pyright: ignore[reportPrivateUsage]
+    _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -948,7 +947,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
             )
 
-        params = _render_append_blocks(params, inline_system=self.profile.get('supports_inline_system_prompts', False))
+        params = _render_append_blocks(params)
 
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
@@ -1033,7 +1032,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
             messages = _project_instruction_state(
-                messages, inline_system=self.profile.get('supports_inline_system_prompts', False)
+                messages,
+                inline_system=self.profile.get('supports_inline_system_prompts', False),
+                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
@@ -2590,32 +2591,18 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
     return new_messages if changed else messages
 
 
-def _render_append_blocks(params: ModelRequestParameters, *, inline_system: bool) -> ModelRequestParameters:
-    """Render the prefix statement of each append-mode block for the model's delivery path.
-
-    History holds only the blocks' content, so each model renders its own path here, the same one its
-    later updates take in `prepare_messages`. A part without an id has nothing to tag and goes out as
-    written: agent history never holds one (it is downgraded to `'rewrite'` with a warning), but a
-    `before_model_request` hook or a direct caller can still supply one.
-    """
+def _render_append_blocks(params: ModelRequestParameters) -> ModelRequestParameters:
+    """Render the prefix's append-mode blocks, which history holds only the content of; see `_render_append_parts`."""
     if not (parts := params.instruction_parts):
         return params
-    rendered = _render_append_parts(parts, inline_system=inline_system)
+    rendered = _render_append_parts(parts)
     return replace(params, instruction_parts=rendered) if rendered != parts else params
 
 
-def _render_append_parts(parts: list[InstructionPart], *, inline_system: bool) -> list[InstructionPart]:
-    """Render each addressable append-mode part's prefix statement, leaving other parts as written."""
-    return [
-        _render_instruction_baseline(part, inline_system=inline_system)
-        if part.on_change == 'append' and part.id is not None
-        else part
-        for part in parts
-    ]
-
-
-def _project_instruction_state(messages: Sequence[ModelMessage], *, inline_system: bool) -> list[ModelMessage]:
-    """Render instruction changes as `SystemPromptPart`s, and each request's instructions as it was sent.
+def _project_instruction_state(
+    messages: Sequence[ModelMessage], *, inline_system: bool, prefix: list[InstructionPart] | None
+) -> list[ModelMessage]:
+    """Render instruction changes as `SystemPromptPart`s, and the current window's instructions as they're sent.
 
     Only the changes in the current window are rendered: a window opens at an
     [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] or a compaction, and the
@@ -2624,11 +2611,13 @@ def _project_instruction_state(messages: Sequence[ModelMessage], *, inline_syste
     for its block; only text earlier in `messages` goes into that fold, so each change renders the same on
     every later request.
 
-    The baseline parts themselves are dropped, and each request recorded in a window gets its
-    `instructions` rendered with that window's append-mode blocks tagged, for the adapters that read a
-    request's instructions from history rather than from the request parameters.
+    The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
+    `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
+    tagged, for the adapters that read a request's instructions from history rather than from the request
+    parameters.
     """
     current_start = instruction_window_start(messages)
+    rendered_prefix = InstructionPart.join(_render_append_parts(prefix)) if prefix else None
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     projected: list[ModelMessage] = []
@@ -2650,9 +2639,14 @@ def _project_instruction_state(messages: Sequence[ModelMessage], *, inline_syste
             elif not isinstance(part, InstructionBaselinePart):
                 parts.append(part)
         instructions = message.instructions
-        prefix = window_prefix(window) if window is not None else []
-        if prefix and instructions == InstructionPart.join(prefix):
-            instructions = InstructionPart.join(_render_append_parts(prefix, inline_system=inline_system))
+        if (
+            window is not None
+            and index >= current_start
+            and prefix
+            and instructions is not None
+            and instructions == InstructionPart.join(prefix)
+        ):
+            instructions = rendered_prefix
         if parts != list(message.parts) or instructions != message.instructions:
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
