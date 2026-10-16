@@ -49,7 +49,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. A binary file up to 5 MB in a format Pydantic AI can send to a model (image, audio, video or document such as PDF) is returned as the file itself; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -253,17 +253,15 @@ applies the same rule to absolute symlink targets.
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
 - **Binary detection.** `read_file` does not decode binary bytes into the model
-  context. It returns a file in any format Pydantic AI's `BinaryContent` can
-  send to a model (image, audio, video or document) as `BinaryContent`, which
-  Pydantic AI sends
-  [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
-  depending on the model. Images and PDFs are recognized by their leading bytes,
-  other formats by extension. If the model can't take that kind of file (audio on
-  Anthropic, say, or a PDF on Groq), Pydantic AI raises when it builds the next
-  request, which ends the run
-  ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)). A file over 5 MB, the strictest
-  mainstream per-image limit, is described instead, as is a binary file in a
-  format `BinaryContent` does not know.
+  context. It returns an image (PNG, JPEG, GIF, WebP) or PDF as `BinaryContent`,
+  recognized by its leading bytes rather than its extension, which Pydantic AI
+  sends [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
+  depending on the model. If the model can't take that kind of file (an image on
+  a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
+  the next request, which ends the run
+  ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
+  A file over 5 MB, the strictest mainstream per-image limit, is described
+  instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.

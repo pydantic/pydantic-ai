@@ -823,29 +823,6 @@ class TestReadFile:
             BinaryContent(data=data, media_type=media_type),
         ]
 
-    @pytest.mark.parametrize(
-        ('name', 'media_type'),
-        [
-            ('song.mp3', 'audio/mpeg'),
-            # The platform's `mimetypes` name for WAV differs from core's; the file goes out under core's.
-            ('clip.wav', 'audio/wav'),
-            ('movie.mp4', 'video/mp4'),
-            ('report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-        ],
-    )
-    async def test_read_other_model_readable_file_returns_the_file(
-        self, tmp_path: Path, name: str, media_type: str
-    ) -> None:
-        # Formats without a signature check are recognized by extension.
-        data = b'\x00\x01binary'
-        (tmp_path / name).write_bytes(data)
-        toolset = _unhashed_toolset()
-        result = await toolset.read_file(name, workspace=LocalWorkspaceBackend(tmp_path))
-        assert result == [
-            f'[{name} | {media_type} | {len(data)} bytes]\n',
-            BinaryContent(data=data, media_type=media_type),
-        ]
-
     async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
         (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
         toolset = _unhashed_toolset()

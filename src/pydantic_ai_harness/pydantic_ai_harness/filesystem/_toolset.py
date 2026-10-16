@@ -357,7 +357,7 @@ def _is_binary(data: bytes, sample_size: int = 8192) -> bool:
 
 
 _MAX_MEDIA_BYTES = 5_000_000
-"""Largest file `read_file` returns as file content.
+"""Largest image or PDF `read_file` returns as file content.
 
 File content bypasses the textual `max_read_chars` budget, and 5 MB is the
 strictest per-image limit among mainstream providers. A larger file gets the
@@ -365,15 +365,16 @@ text description instead of content that would fail the next model request.
 """
 
 _HEX_PREVIEW_BYTES = 64
-"""Leading bytes of a binary file in an unknown format, shown as hex."""
+"""Leading bytes of a non-media binary file shown as hex."""
 
 
 def _sniff_media_type(data: bytes) -> str | None:
     """The media type of an image or PDF, read from its leading bytes.
 
-    These are the formats most often met under a wrong or missing extension, so
-    their bytes decide over the extension and a misnamed file is not sent under
-    the wrong media type. Other formats are recognized by extension.
+    Only images and PDFs are returned as files: most models with file input take
+    them, while audio, video and office documents fail on several default
+    providers until a model can report which files it accepts. The bytes decide,
+    not the extension, so a misnamed file is not sent under the wrong media type.
 
     The image signatures duplicate core's `image_media_type_from_bytes`
     (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
@@ -390,30 +391,6 @@ def _sniff_media_type(data: bytes) -> str | None:
     if data.startswith(b'%PDF-'):
         return 'application/pdf'
     return None
-
-
-_CORE_MEDIA_TYPES = {
-    'audio/x-wav': 'audio/wav',
-    'audio/vnd.wave': 'audio/wav',
-    'audio/x-aiff': 'audio/aiff',
-    'audio/x-aac': 'audio/aac',
-    'video/matroska': 'video/x-matroska',
-}
-"""Names the platform's `mimetypes` tables use where core's `BinaryContent` formats use another."""
-
-
-def _guess_media_type(path: str) -> str | None:
-    """The media type for `path`'s extension, under the name core's `BinaryContent` formats use."""
-    media_type = mimetypes.guess_type(path)[0]
-    return _CORE_MEDIA_TYPES.get(media_type, media_type) if media_type is not None else None
-
-
-def _is_sendable(content: BinaryContent) -> bool:
-    """Whether core knows how to send `content` to a model: an image, audio, video or document format."""
-    try:
-        return bool(content.format)
-    except ValueError:
-        return False
 
 
 _HEX_ROW_CHARS = 58
@@ -923,8 +900,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
-        A binary file in a format a model can be sent (image, audio, video or
-        document) comes back as its header followed by a `BinaryContent`;
+        An image or PDF comes back as its header followed by a `BinaryContent`;
         everything else is text.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
@@ -932,7 +908,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        """Read a text file with line numbers, or view an image, audio, video or document file.
+        """Read a text file with line numbers, or view an image or PDF.
 
         Args:
             ctx: The current agent run context.
@@ -941,9 +917,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return (default: 2000).
 
         Returns:
-            File content with line numbers, plus metadata header. An image, audio,
-            video or document file is returned as the file itself; other binary
-            files as their size, media type and leading bytes in hex.
+            File content with line numbers, plus metadata header. An image or PDF
+            is returned as the file itself; other binary files as their size,
+            media type and leading bytes in hex.
         """
         return await self._read_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit
@@ -993,16 +969,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """A file core can send to a model as file content when it fits `_MAX_MEDIA_BYTES`, others described."""
+        """An image or PDF as file content when it fits `_MAX_MEDIA_BYTES`, anything else described in text."""
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
-        media_type = media_type or _guess_media_type(path) or 'application/octet-stream'
-        header = f'[{self._path_label(path)} | {media_type} | {len(raw)} bytes{hash_suffix}]\n'
-        content = BinaryContent(data=raw, media_type=media_type)
-        if not _is_sendable(content):
+        shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
+        header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
+        if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + _hex_preview(raw, self._body_budget(header + intro))
         if len(raw) <= _MAX_MEDIA_BYTES:
-            return [header, content]
+            return [header, BinaryContent(data=raw, media_type=media_type)]
         return f'{header}Too large to view: the limit is {_MAX_MEDIA_BYTES} bytes.\n'
 
     def _path_label(self, path: str) -> str:
