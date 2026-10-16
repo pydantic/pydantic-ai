@@ -42,7 +42,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 [Pydantic Evals](evals.md) grades an agent's final outputs and [tool-call trajectories](evals/evaluators/agentic.md), on datasets or [live production traffic](evals/online-evaluation.md), and [Pydantic Graph](graph.md) gives you typed control flow when one agent loop is not enough. Both are separate open-source packages, and so are [genai-prices](https://github.com/pydantic/genai-prices), which keeps model pricing current, and [Monty](https://github.com/pydantic/monty), the sandboxed Python interpreter that runs model-written code.
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](gateway.md) is one key for every model with real-time cost monitoring and budget control; our [instrumentation](logfire.md) is plain OpenTelemetry, so any backend you already run works.
+[Pydantic Logfire](https://pydantic.dev/logfire) is the AI engineering platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](gateway.md) is one key for every model with real-time cost monitoring and budget control; our [instrumentation](logfire.md) is plain OpenTelemetry, so any backend you already run works.
 
 ## What are you building?
 
