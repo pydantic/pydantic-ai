@@ -736,10 +736,16 @@ class SessionCore:
         """A call settled without its result reaching the provider.
 
         A connection that answers a response's results with one reply, once it has all of them, gives none for that
-        response's calls then.
+        response's calls then: not for the results already out, nor for those still to go (see `_input_sent`).
         """
-        if self._answers_per_response and (response := self._call_response.get(call_id)) is not None:
-            self._unanswered_responses.add(response.id)
+        if (
+            not self._answers_per_response
+            or (response := self._call_response.get(call_id)) is None
+            or response.id in self._unanswered_responses
+        ):
+            return
+        self._unanswered_responses.add(response.id)
+        self._settle([self._result_input[call] for call in response.tool_calls if call in self._result_input], 'void')
 
     def _result_unanswered(self, call_id: str) -> bool:
         return (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
@@ -1273,12 +1279,7 @@ class SessionCore:
         together, and none once one of that response's calls settled without its result going out.
         """
         under_way = sum(1 for response in self._responses.values() if response.status is None and not response.refused)
-        replies = {
-            reply
-            for input_id, outcome in self._obligations.items()
-            if outcome == 'pending'
-            if (reply := self._reply_for(input_id)) is not None
-        }
+        replies = {self._reply_for(input_id) for input_id, outcome in self._obligations.items() if outcome == 'pending'}
         return under_way + len(replies)
 
     def result_asks_reply(self, call_id: str) -> bool:
@@ -1292,18 +1293,15 @@ class SessionCore:
             for input_id, outcome in self._obligations.items()
         )
 
-    def _reply_for(self, input_id: InputId) -> InputId | str | None:
-        """What answers an input that asked for a reply: its own reply, or the one for its calling response's results.
-
-        `None` if no reply will come for it (see `requests_ahead`).
-        """
+    def _reply_for(self, input_id: InputId) -> InputId | str:
+        """What answers an input that asked for a reply: its own reply, or the one for its calling response's results."""
         if (
             not self._answers_per_response
             or (call_id := self._result_call.get(input_id)) is None
             or (response := self._call_response.get(call_id)) is None
         ):
             return input_id
-        return None if response.id in self._unanswered_responses else response.id
+        return response.id
 
     def response_unasked(self, response_id: str) -> bool:
         """Whether a response answers nothing the session asked for (server-side voice activity detection started it)."""

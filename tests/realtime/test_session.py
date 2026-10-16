@@ -11615,7 +11615,10 @@ async def test_connection_answering_each_result_keeps_a_reply_per_result() -> No
 
 
 async def test_provider_cancelled_call_leaves_no_reply_owed() -> None:
-    """A call the provider cancels (a barge-in) means its batch won't be answered: no reply is owed."""
+    """A call the provider cancels (a barge-in) means its batch won't be answered: no reply is owed or waited for.
+
+    Not for the result that already went out either.
+    """
     conn = _ToolBatchConnection()
     conn.close_response.set()
     conn.after_close = [ToolCallCancelled(tool_call_ids=['c2'])]
@@ -11625,7 +11628,10 @@ async def test_provider_cancelled_call_leaves_no_reply_owed() -> None:
         await _until(lambda: bool(conn.results()) and 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
         for _ in range(10):
             await asyncio.sleep(0)
+        assert conn.results() == [ToolResult(tool_call_id='c1', output='fast result')]
         assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
         await session.close()
         events.cancel()
 

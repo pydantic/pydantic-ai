@@ -4031,7 +4031,8 @@ class RealtimeSession:
                 try:
                     await self._dispatch_tool_call(event)
                 except UsageLimitExceeded:
-                    # Tripped before the call joined the response, so it never runs or reaches history.
+                    # Tripped before the call ran: it is refused, so it stays out of history (or, if its response is
+                    # recorded already, gets an interrupted return).
                     self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
                     raise
             return False
