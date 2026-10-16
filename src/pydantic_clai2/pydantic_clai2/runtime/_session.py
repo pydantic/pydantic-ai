@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
@@ -359,6 +359,8 @@ class Session(Generic[DepsT, OutputT]):
         """The Git checkout `workspace` is in, read once, when a session is first saved here."""
         self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
+        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
         self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
@@ -532,11 +534,13 @@ class Session(Generic[DepsT, OutputT]):
 
         `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
         startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
-        archived session archived, for a restore that continues in a fork of it.
+        archived session archived, for a restore that continues in a fork of it. One another live session
+        of this CLAI holds raises `ValueError`.
         """
-        notice = await self._restore(
-            conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
-        )
+        with self.claim(conversation_id):
+            notice = await self._restore(
+                conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
+            )
         await self._publish()
         return notice
 

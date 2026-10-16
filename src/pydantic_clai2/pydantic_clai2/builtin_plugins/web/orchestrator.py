@@ -115,7 +115,7 @@ class Orchestrator:
     def __init__(self, *, host: PluginHost[None], publish: Callable[[ServerMessage], None]) -> None:
         self.host = host
         self._publish = publish
-        self.answerer = BrowserAnswerer(publish=self._send, terminal=None)
+        self.answerer = BrowserAnswerer(publish=lambda message, _session: self._send(message), terminal=None)
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
         self._turn = ItemLog()
@@ -218,9 +218,10 @@ class Orchestrator:
         error: str | None = None
         usage: RunUsage | None = None
         try:
-            model = await self.host.conversation.resolved_model()
+            # The saved default, as a new session starts with, never one session's own choice.
+            model = await self.host.default_model()
             if model is None:
-                raise RuntimeError('Choose a model for this session first.')
+                raise RuntimeError('Choose a model with /model first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:
                 try:
                     async for node in run:

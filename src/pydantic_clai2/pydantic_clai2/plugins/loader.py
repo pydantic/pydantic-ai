@@ -19,6 +19,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
+from pydantic_ai.models import Model
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -194,7 +195,9 @@ class SessionPlugins(Generic[DepsT]):
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
         workspace: Callable[[], Path] = Path.cwd,
         running: Callable[[], bool] = lambda: False,
+        queued: Callable[[], int] = lambda: 0,
         live_id: str | None = None,
+        default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
     ) -> None:
         """Join `process`, the plugins every live session of this CLAI shares.
 
@@ -206,8 +209,9 @@ class SessionPlugins(Generic[DepsT]):
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
-        `workspace`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
-        says whether a turn runs, and `live_id` names the session in `host.live`, by default a new ID.
+        `workspace`, `default_model`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
+        says whether a turn runs, `queued` how much input waits for it, and `live_id` names the session in
+        `host.live`, by default a new ID.
         """
         if process is None:
             if store is None:
@@ -215,7 +219,7 @@ class SessionPlugins(Generic[DepsT]):
             process = ProcessPlugins[DepsT](store=store, builtin=builtin)
         elif store is not None or builtin:
             raise TypeError('A joined process holds the settings store and built-in plugins; pass them to it.')
-        self._catalog = process
+        self._process = process
         self._console = console
         self._commands = commands
         self._session_start = session_start
@@ -230,6 +234,7 @@ class SessionPlugins(Generic[DepsT]):
         self._setting = setting
         self._tasks = tasks
         self._workspace = workspace
+        self._default_model = default_model
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
@@ -259,21 +264,31 @@ class SessionPlugins(Generic[DepsT]):
             tasks=tasks,
             workspace=workspace,
         )
-        self.live_session = LiveRuntime(live_id=live_id or uuid4().hex, host=self._base, running=running)
-        """This session as `host.live` lists it to process-scoped plugins."""
-        process.join(self)
+        self.live_session = LiveRuntime(
+            live_id=live_id or uuid4().hex,
+            host=self._base,
+            running=running,
+            queued=queued,
+            changed=lambda: self._process.live.changed(self.live_session),
+        )
+        """This session as `host.live` lists it to process-scoped plugins; it joins the process as it loads."""
+
+    @property
+    def process(self) -> ProcessPlugins[DepsT]:
+        """The plugins every live session of this CLAI shares."""
+        return self._process
 
     @property
     def plugins_dir(self) -> Path:
         """Folder scanned for drop-in plugin files."""
-        return self._catalog.plugins_dir
+        return self._process.plugins_dir
 
     def entries(self) -> list[PluginEntry[DepsT]]:
         """Saved declarations plus drop-in files, keeping the loaded state of each."""
         if not self.enabled:
             return []
-        declared = self._catalog.declared(self._project, console=self._console)
-        builtin = self._catalog.builtin
+        declared = self._process.declared(self._project, console=self._console)
+        builtin = self._process.builtin
         refreshed: dict[str, PluginEntry[DepsT]] = {}
         for name in sorted(declared):
             previous = self._entries.get(name)
@@ -302,7 +317,7 @@ class SessionPlugins(Generic[DepsT]):
 
     def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
         """The stored declaration as it is now, without refreshing `entries()` mid-load."""
-        return self._catalog.stored(entry.name) or entry.declaration
+        return self._process.stored(entry.name) or entry.declaration
 
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
@@ -313,7 +328,7 @@ class SessionPlugins(Generic[DepsT]):
         as shipped, so a replaced declaration keeps its position.
         """
         entries = self.entries()
-        order = {name: index for index, name in enumerate(self._catalog.builtin)}
+        order = {name: index for index, name in enumerate(self._process.builtin)}
         shipped = sorted((entry for entry in entries if entry.name in order), key=lambda entry: order[entry.name])
         return [*shipped, *(entry for entry in entries if entry.name not in order)]
 
@@ -401,8 +416,8 @@ class SessionPlugins(Generic[DepsT]):
         with `/plugins enable`, `add`, or `reload` still raises.
         """
         if self.enabled:
-            self._catalog.ensure_plugins_dir(self._console)
-        self._catalog.join(self)
+            self._process.ensure_plugins_dir(self._console)
+        self._process.join(self)
         failures: list[PluginLoadFailed] = []
         for entry in self._registration_order():
             # Read afresh: a plugin loaded earlier in this loop may include this one.
@@ -419,8 +434,11 @@ class SessionPlugins(Generic[DepsT]):
                 if ignored is not None:
                     _LOGGER.debug('%s', ignored)
         # A process-scoped plugin loaded for this launch alone, as `--web` loads `web`, joins every session.
-        for name, loaded in self._catalog.shared_plugins():
-            await self.attach(name, loaded)
+        for name, loaded in self._process.shared_plugins():
+            # After it has started: one that fails to start is not joined.
+            async with self._process.loading(name):
+                if self._process.shared(name) is loaded:
+                    await self.attach(name, loaded)
         # Observers can load after a failing plugin, so report only once startup loading finishes.
         for failure in failures:
             await self.fire(failure)
@@ -432,12 +450,17 @@ class SessionPlugins(Generic[DepsT]):
         process-scoped plugin is built once: it joins every live session, and loading it where it
         was already built only joins it there.
         """
+        self._process.join(self)
+        # One load of a name at a time across sessions, so a process-scoped plugin is built once.
+        async with self._process.loading(name):
+            await self._load_one(name, fresh=fresh)
+
+    async def _load_one(self, name: str, *, fresh: bool) -> None:
         entry = self._entry(name)
         if entry.loaded is not None:
             return
         _check_not_included(entry)
-        self._catalog.join(self)
-        if (shared := self._catalog.shared(name)) is not None:
+        if (shared := self._process.shared(name)) is not None:
             await self.attach(name, shared)
             return
         declaration, ignored = self._applied(entry)
@@ -446,7 +469,7 @@ class SessionPlugins(Generic[DepsT]):
         plugin: Plugin[BaseModel, DepsT] | None = None
         loaded: LoadedPlugin[DepsT] | None = None
         try:
-            module = self._catalog.import_module(name, entry.declaration, fresh=fresh)
+            module = self._process.import_module(name, entry.declaration, fresh=fresh)
             activating = True
             process = scope(module, declaration) == 'process'
             plugin = build(module, declaration, self._host(entry, declaration, process=process))
@@ -460,7 +483,7 @@ class SessionPlugins(Generic[DepsT]):
             entry.loaded = loaded
             self._loaded[name] = loaded
             if process:
-                self._catalog.register_shared(name, loaded)
+                self._process.register_shared(name, loaded=loaded)
             with handling(self.live_session):
                 await loaded.dispatch(self._session_start())
         except asyncio.CancelledError:
@@ -475,7 +498,7 @@ class SessionPlugins(Generic[DepsT]):
         entry.error = None
         await self._unload_included(entry, loaded)
         if process:
-            await self._catalog.share(self, name, loaded)
+            await self._process.share(name, loaded, origin=self)
 
     def _host(self, entry: PluginEntry[DepsT], declaration: PluginSettings, *, process: bool) -> PluginHost[DepsT]:
         """The plugin's host. A process-scoped plugin's follows the session being handled, else this one."""
@@ -486,7 +509,7 @@ class SessionPlugins(Generic[DepsT]):
             self._save(entry, host, settings)
 
         def here() -> PluginHost[None]:
-            return self._catalog.here(self)._base
+            return self._process.here(self)._base
 
         submit_prompt, send_input, setting = self._submit_prompt, self._send_input, self._setting
         host = PluginHost[DepsT](
@@ -505,10 +528,11 @@ class SessionPlugins(Generic[DepsT]):
             commands=self._commands,
             sessions=self._sessions,
             setting=(lambda key: here().setting(key)) if process and setting else setting,
-            plugins=self,
+            plugins=_HerePlugins(lambda: self._process.here(self)) if process else self,
             tasks=(lambda: here().tasks) if process else self._tasks,
             workspace=(lambda: here().workspace) if process else self._workspace,
-            live=self._catalog.live if process else None,
+            live=self._process.live if process else None,
+            default_model=self._default_model,
         )
         return host
 
@@ -541,9 +565,13 @@ class SessionPlugins(Generic[DepsT]):
         self._loaded[name] = loaded
         await self._unload_included(entry, loaded)
 
+    def holds(self, name: str, loaded: LoadedPlugin[DepsT]) -> bool:
+        """Whether this session has `loaded` as its plugin `name`."""
+        return self._loaded.get(name) is loaded
+
     def detach(self, name: str, loaded: LoadedPlugin[DepsT]) -> None:
         """Take a process-scoped plugin out of this session without ending it."""
-        if self._loaded.get(name) is loaded:
+        if self.holds(name, loaded):
             self._drop(self._entries[name])
 
     def _applied(self, entry: PluginEntry[DepsT]) -> tuple[PluginSettings, str | None]:
@@ -553,11 +581,11 @@ class SessionPlugins(Generic[DepsT]):
         and staged declarations are this build's own or the user's just now, so they are taken as they are.
         """
         saved = entry.declaration
-        if entry.name in self._catalog.staged or entry.shipped or not saved.settings:
+        if entry.name in self._process.staged or entry.shipped or not saved.settings:
             return saved, None
-        shipped = self._project.get(entry.name) or self._catalog.builtin.get(entry.name)
+        shipped = self._project.get(entry.name) or self._process.builtin.get(entry.name)
         defaults = shipped.settings if shipped is not None and shipped.factory == saved.factory else {}
-        requirements = stored_requirements(self._catalog.store.plugin_requirements(entry.name), saved.settings)
+        requirements = stored_requirements(self._process.store.plugin_requirements(entry.name), saved.settings)
         applied = apply_requirements(saved.settings, requirements, defaults=defaults)
         if not applied.ignored:
             return saved, None
@@ -571,13 +599,13 @@ class SessionPlugins(Generic[DepsT]):
         Saved values this build ignored are written back unchanged, with their tags: it cannot judge them.
         """
         update: dict[str, object] = {'settings': settings, 'enabled': True}
-        store = self._catalog.store
-        staged = self._catalog.staged.get(entry.name)
+        store = self._process.store
+        staged = self._process.staged.get(entry.name)
         if staged is not None:
-            self._catalog.staged[entry.name] = staged.model_copy(update=update)
+            self._process.staged[entry.name] = staged.model_copy(update=update)
             return
         # The declaration saved now, not at load: another CLAI process may have replaced it since.
-        stored = self._catalog.stored(entry.name)
+        stored = self._process.stored(entry.name)
         if stored is None:
             store.save_plugin(entry.declaration.model_copy(update=update), requires=host.requirements)
             return
@@ -600,7 +628,8 @@ class SessionPlugins(Generic[DepsT]):
                 # Its own task keeps the handler's `CancelledError` apart from ours: the former is
                 # reported, the latter propagates. The shield defers scope cancellation until cleanup
                 # finishes; the `checkpoint()` below delivers it.
-                cleanup = asyncio.create_task(_end_failed_session(plugin))
+                with handling(self.live_session):  # The task copies the context: this session's end.
+                    cleanup = asyncio.create_task(_end_failed_session(plugin))
                 try:
                     with CancelScope(shield=True):
                         await asyncio.wait({cleanup})
@@ -612,7 +641,7 @@ class SessionPlugins(Generic[DepsT]):
                     self._report(entry.name, error, SessionEnd)
         finally:
             self._drop(entry)
-            self._catalog.forget_shared(entry.name, loaded)
+            self._process.forget_shared(entry.name, loaded=loaded)
         await checkpoint()
 
     async def unload(self, name: str, *, reason: SessionEndReason = 'exit') -> None:
@@ -626,15 +655,15 @@ class SessionPlugins(Generic[DepsT]):
         loaded = entry.loaded
         if loaded is None:
             return
-        if loaded is self._catalog.shared(name):
-            await self._catalog.unload_shared(name, reason=reason, origin=self)
+        if loaded is self._process.shared(name):
+            await self._process.unload_shared(name, reason=reason, origin=self)
             return
         # Dropped first, so a concurrent unload finds nothing left to end.
         self._drop(entry)
-        if not self.retire(name, loaded, reason):
+        if not self.retire(name, loaded, reason=reason):
             await self.end(name, loaded, reason=reason)
 
-    def retire(self, name: str, loaded: LoadedPlugin[DepsT], reason: SessionEndReason) -> bool:
+    def retire(self, name: str, loaded: LoadedPlugin[DepsT], *, reason: SessionEndReason) -> bool:
         """Hold back the end of an unloaded plugin until the running turn is over; `False` between turns."""
         if self._retired is None:
             return False
@@ -643,7 +672,7 @@ class SessionPlugins(Generic[DepsT]):
 
     async def end(self, name: str, loaded: LoadedPlugin[DepsT], *, reason: SessionEndReason) -> None:
         """Fire `session_end` on an unloaded plugin, reporting a failure, unless another session's turn still holds it."""
-        if not self._catalog.last_end(loaded):
+        if not self._process.last_end(loaded):
             return
         try:
             with handling(self.live_session):
@@ -666,8 +695,7 @@ class SessionPlugins(Generic[DepsT]):
         """
         self._retired = []
         try:
-            with handling(self.live_session):
-                yield
+            yield
         finally:
             retired, self._retired = self._retired, None
             with CancelScope(shield=True):
@@ -683,14 +711,15 @@ class SessionPlugins(Generic[DepsT]):
         self._from_settings.pop(entry.name, None)
         self._guards.pop(entry.name, None)
 
-    async def restart(self, *, project: Sequence[PluginSettings], keep: str) -> None:
-        """Load every plugin but `keep` again, with `project` as the project file's declarations.
+    async def restart(self, *, project: Sequence[PluginSettings]) -> None:
+        """Load every session-scoped plugin again, with `project` as the project file's declarations.
 
         As CLAI starting in another directory would: what a plugin read from `host.workspace`
-        is read again. `keep` and process-scoped plugins, which no session's directory decides,
-        stay loaded, and their capabilities come after the others'.
+        is read again. Process-scoped plugins, which no session's directory decides, stay loaded
+        (so `web` keeps its page, and `observability` what it read at launch, such as the Git email),
+        and their capabilities come after the others'.
         """
-        kept = [name for name in self._loaded if name == keep or self._shared(name)]
+        kept = [name for name in self._loaded if self._is_shared(name)]
         for name in reversed(list(self._loaded)):
             if name not in kept:
                 await self.unload(name)
@@ -699,10 +728,10 @@ class SessionPlugins(Generic[DepsT]):
         for name in [name for name in self._loaded if name in kept]:
             self._loaded[name] = self._loaded.pop(name)
 
-    def _shared(self, name: str) -> bool:
+    def _is_shared(self, name: str) -> bool:
         """Whether this session's `name` is a process-scoped plugin."""
         loaded = self._loaded.get(name)
-        return loaded is not None and loaded is self._catalog.shared(name)
+        return loaded is not None and loaded is self._process.shared(name)
 
     async def close(self, reason: SessionEndReason) -> None:
         """Unload every plugin, last loaded first, as the session ends; process-scoped ones only leave it.
@@ -710,13 +739,13 @@ class SessionPlugins(Generic[DepsT]):
         Once no live session remains, the process-scoped plugins end too.
         """
         for name in reversed(list(self._loaded)):
-            if self._shared(name):
+            if self._is_shared(name):
                 self.detach(name, self._loaded[name])
             else:
                 await self.unload(name, reason=reason)
-        self._catalog.leave(self)
-        if not self._catalog.sessions:
-            await self._catalog.close(reason, origin=self)
+        self._process.leave(self)
+        if not self._process.sessions:
+            await self._process.close(reason, origin=self)
 
     def handles(self, event: type[HostEvent]) -> bool:
         """Whether a loaded plugin handles `event`, so a caller can skip building one that nothing reads."""
@@ -743,7 +772,7 @@ class SessionPlugins(Generic[DepsT]):
         turn keeps what it bound, as for a change made in this session.
         """
         entry = next((entry for entry in self.entries() if entry.name == name), None)
-        if entry is None or self._shared(name):
+        if entry is None or self._is_shared(name):
             return
         try:
             if entry.loaded is not None and (again or not entry.declaration.enabled):
@@ -762,14 +791,14 @@ class SessionPlugins(Generic[DepsT]):
 
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now, in every live session."""
-        await self._catalog.change(self, name, lambda: self._enable(name), again=False)
+        await self._process.change(name, lambda: self._enable(name), origin=self, again=False)
 
     async def _enable(self, name: str) -> None:
         entry = self._entry(name)
         _check_not_included(entry)
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
-        self._catalog.store.save_plugin(declaration, requires=self._requirements(entry))
+        self._process.store.save_plugin(declaration, requires=self._requirements(entry))
         await self._load_enabled(entry)
 
     async def _load_enabled(self, entry: PluginEntry[DepsT]) -> None:
@@ -779,23 +808,23 @@ class SessionPlugins(Generic[DepsT]):
         loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
-            self._catalog.store.save_plugin(self._saved(entry), requires=host.requirements)
+            self._process.store.save_plugin(self._saved(entry), requires=host.requirements)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now, in every live session, and remember it as disabled."""
-        await self._catalog.change(self, name, lambda: self._disable(name), again=False)
+        await self._process.change(name, lambda: self._disable(name), origin=self, again=False)
 
     async def _disable(self, name: str) -> None:
         entry = self._entry(name)
         _requested('disable', name)
         requires = self._requirements(entry)
         await self.unload(name)
-        self._catalog.store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+        self._process.store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
         await self._load_released(entry)
 
     async def remove(self, name: str) -> str:
         """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
-        return await self._catalog.change(self, name, lambda: self._remove(name), again=True)
+        return await self._process.change(name, lambda: self._remove(name), origin=self, again=True)
 
     async def _remove(self, name: str) -> str:
         entry = self._entry(name)
@@ -813,13 +842,13 @@ class SessionPlugins(Generic[DepsT]):
                     f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'
                 )
             else:
-                self._catalog.store.save_plugin(
+                self._process.store.save_plugin(
                     entry.declaration.model_copy(update={'enabled': False}), requires=requires
                 )
                 await self._load_released(entry)
                 return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
-        self._catalog.store.delete_plugin(name)
-        shipped = self._project.get(name) or self._catalog.builtin.get(name)
+        self._process.store.delete_plugin(name)
+        shipped = self._project.get(name) or self._process.builtin.get(name)
         if shipped is not None and shipped.enabled and self._entry(name).included_in is None:
             await self.load(name)
         else:
@@ -844,7 +873,7 @@ class SessionPlugins(Generic[DepsT]):
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again, in every live session."""
-        await self._catalog.change(self, name, lambda: self._reload(name), again=True)
+        await self._process.change(name, lambda: self._reload(name), origin=self, again=True)
 
     async def _reload(self, name: str) -> None:
         if not self._entry(name).declaration.enabled:
@@ -877,7 +906,7 @@ class SessionPlugins(Generic[DepsT]):
         loaded = entry.loaded
         if loaded is None:
             raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
-        editing = self._catalog.editing
+        editing = self._process.editing
         if name in editing:
             raise ValueError(f'The settings menu of {name} is already open; finish there first.')
         editing.add(name)
@@ -889,7 +918,7 @@ class SessionPlugins(Generic[DepsT]):
             # Also when the menu fails after saving, so the running plugin matches what is saved.
             if self._entry(name).declaration.settings != before:
                 await self._load_again(name)
-                await self._catalog.follow(self, name, again=True)
+                await self._process.follow(name, origin=self, again=True)
 
     def listing(self) -> list[PluginInfo]:
         """Every plugin as `/plugins` shows it, for `host.plugins`; see `PluginCatalog`."""
@@ -897,7 +926,7 @@ class SessionPlugins(Generic[DepsT]):
 
     async def save_settings(self, name: str, settings: BaseModel) -> None:
         """Save a loaded plugin's settings through its host, then load it again if they changed, as `configure` does."""
-        async with self._catalog.changing, self._settings_open(name) as loaded:
+        async with self._process.changing, self._settings_open(name) as loaded:
             model = loaded.plugin.settings_type
             if model is NoSettings:
                 raise ValueError(f'Plugin {name} takes no settings.')
@@ -945,7 +974,7 @@ class SessionPlugins(Generic[DepsT]):
         loaded = existing is not None and existing.loaded is not None
         # Settings are plaintext, so they are saved only once the plugin accepts them: settings it
         # rejects, perhaps a pasted secret, never reach the store.
-        staged, store = self._catalog.staged, self._catalog.store
+        staged, store = self._process.staged, self._process.store
         staged[name] = declaration
         try:
             # Like `enable`, refuse an included plugin before unloading anything, and save nothing.
@@ -969,7 +998,7 @@ class SessionPlugins(Generic[DepsT]):
         requires = self._requirements(self._entry(name))
         store.save_plugin(staged.pop(name), requires=requires)
         _requested('add', name)
-        await self._catalog.follow(self, name, again=True)
+        await self._process.follow(name, origin=self, again=True)
         if existing is None:
             return await self._configure_new(name, f'Added and loaded {name}.')
         kind = 'project' if existing.project else 'built-in'
@@ -1001,10 +1030,10 @@ class SessionPlugins(Generic[DepsT]):
             ) as declaration:
                 if any(entry.name == declaration.id for entry in self.entries()):
                     raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
-                self._catalog.store.save_plugin(declaration, overwrite=False)
+                self._process.store.save_plugin(declaration, overwrite=False)
             _requested('add', declaration.id)
             await self._load_enabled(self._entry(declaration.id))
-            await self._catalog.follow(self, declaration.id, again=False)
+            await self._process.follow(declaration.id, origin=self, again=False)
             return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
         if rest:
             rest[0] = canonical_plugin_id(rest[0])
@@ -1041,7 +1070,38 @@ class SessionPlugins(Generic[DepsT]):
 
 
 PluginLoader = SessionPlugins
-"""The former name of `SessionPlugins`, which tests and hosts with one session still use."""
+"""The former name of `SessionPlugins`, which tests still use."""
+
+
+class _HerePlugins(Generic[DepsT]):
+    """A process-scoped plugin's `host.plugins`: the `PluginCatalog` of the session being handled."""
+
+    def __init__(self, here: Callable[[], SessionPlugins[DepsT]]) -> None:
+        self._here = here
+
+    def listing(self) -> list[PluginInfo]:
+        return self._here().listing()
+
+    async def enable(self, name: str) -> None:
+        await self._here().enable(name)
+
+    async def disable(self, name: str) -> None:
+        await self._here().disable(name)
+
+    async def reload(self, name: str) -> None:
+        await self._here().reload(name)
+
+    async def save_settings(self, name: str, settings: BaseModel) -> None:
+        await self._here().save_settings(name, settings)
+
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        return self._here().settings_menu(name)
+
+    def side_panels(self) -> dict[str, tuple[SidePanel, ...]]:
+        return self._here().side_panels()
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        return await self._here().edit_settings(name, edit)
 
 
 def _binds(capability: AbstractCapability[DepsT], kind: Binds) -> bool:

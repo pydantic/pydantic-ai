@@ -253,9 +253,10 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   `queued` means input waits while that session's turn runs; `asking` means a question its turn
   asked waits for the user.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
-  watches. The server answers with a `snapshot` for each newly watched live session; IDs that are not
-  live are ignored. A connection that never sends `watch` (an older page, `web/client.py`) watches
-  the default session, as before. A watched session is never closed for being idle.
+  watches. The server answers with a `snapshot` for each newly watched live session. An ID that is not
+  live yet stays watched: its `snapshot` comes once it opens. A connection that never sends `watch`
+  (an older page, `web/client.py`) watches the default session, as before, and gets its `snapshot`
+  when another session becomes the default. A watched session is never closed for being idle.
 - When a live session switches conversation (`/new` or `/resume` typed in it), its watchers get a
   `snapshot` for the new ID, and `live` changes.
 
@@ -268,16 +269,20 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
+| `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
 | `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
 | `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer a settings menu's dialog, as `/api/dialogs/…` |
 
 `POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
 optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
-the same `{"id": "<conversation id>"}`. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
+opens no other sessions (`/web` from a terminal), both switch the one session instead, with `/resume`
+or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
-`/api/switch`, `/api/questions/…`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the
-default session: the one the terminal is attached to, else the most recently opened. `web/client.py`
-and the orchestrators of other CLAI versions use them.
+`/api/switch`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the default session: the
+one this page last opened or started while it stays live, else the most recently opened.
+`/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
+orchestrators of other CLAI versions use them.

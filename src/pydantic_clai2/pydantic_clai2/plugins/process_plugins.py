@@ -9,6 +9,7 @@ live session; `on_session_start` and `on_session_end` reach it once. `LiveSessio
 """
 
 import importlib
+import logging
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,6 +18,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from anyio import Lock
+from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui.completion import Completion
 
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
     from pydantic_clai2.plugins.loader import SessionPlugins
 
 T = TypeVar('T')
+_LOGGER = logging.getLogger(__name__)
 
 # Local settings databases from before the package move, or from before plugins were declared as
 # `Plugin` classes, can still name the old factories.
@@ -91,11 +94,25 @@ def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> 
 class LiveRuntime:
     """A live session as `PluginHost.live` lists it, read through the host its session plugins get."""
 
-    def __init__(self, *, live_id: str, host: PluginHost[None], running: Callable[[], bool]) -> None:
-        """`host` carries the session's context; `running` says whether a turn runs in it."""
+    def __init__(
+        self,
+        *,
+        live_id: str,
+        host: PluginHost[None],
+        running: Callable[[], bool],
+        queued: Callable[[], int] = lambda: 0,
+        changed: Callable[[], None] = lambda: None,
+    ) -> None:
+        """`host` carries the session's context; `running` says whether a turn runs in it.
+
+        `queued` says how much input waits, and `changed` tells the process's `LiveSessions` that its state may have changed.
+        """
         self._id = live_id
         self._host = host
         self._running = running
+        self._queued = queued
+        self._changed = changed
+        self._watchers = 0
 
     @property
     def id(self) -> str:
@@ -137,6 +154,39 @@ class LiveRuntime:
         """Whether a turn runs in the session now."""
         return self._running()
 
+    def setting(self, key: str, /) -> JsonValue:
+        """The effective value of a CLAI setting in the session."""
+        return self._host.setting(key)
+
+    @property
+    def queued(self) -> int:
+        """How many inputs wait for the session's running turn or command to end."""
+        return self._queued()
+
+    @property
+    def watchers(self) -> int:
+        """How many `watch` calls have not stopped watching yet."""
+        return self._watchers
+
+    def watch(self) -> Callable[[], None]:
+        """Count a watcher, such as a browser showing the session, until the returned function is called."""
+        self._watchers += 1
+        self.changed()
+        watching = True
+
+        def unwatch() -> None:
+            nonlocal watching
+            if watching:
+                watching = False
+                self._watchers -= 1
+                self.changed()
+
+        return unwatch
+
+    def changed(self) -> None:
+        """Tell the listeners of the process's live sessions that this one's state may have changed."""
+        self._changed()
+
     def send_input(self, text: str, /) -> None:
         """Enter `text` at the session's prompt."""
         self._host.send_input(text)
@@ -164,11 +214,15 @@ def handling(session: LiveRuntime) -> Generator[None]:
         _CURRENT.reset(token)
 
 
-class _Live:
-    """`LiveSessions` over the sessions joined to one `ProcessPlugins`."""
+class JoinedSessions:
+    """`LiveSessions` over a list of sessions, by default those joined to one `ProcessPlugins`.
+
+    It opens and closes none: a `ClaiProcess` replaces it with its `LiveRuntimes`, which do.
+    """
 
     def __init__(self, sessions: Callable[[], list[LiveRuntime]]) -> None:
         self._sessions = sessions
+        self._listeners: list[Callable[[], None]] = []
 
     def listing(self) -> list[LiveSession]:
         return list(self._sessions())
@@ -182,6 +236,36 @@ class _Live:
     def current(self) -> LiveSession | None:
         current = _CURRENT.get()
         return current if any(session is current for session in self._sessions()) else None
+
+    async def open(self, conversation_id: str, /) -> LiveSession:
+        raise RuntimeError(_OPENS_NONE)
+
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
+        raise RuntimeError(_OPENS_NONE)
+
+    async def close(self, live_id: str, /) -> None:
+        raise RuntimeError(_OPENS_NONE)
+
+    def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return unsubscribe
+
+    def changed(self, session: LiveRuntime) -> None:
+        """Call every listener: `session`, or the listing, may have changed. A failing listener is logged."""
+        for listener in list(self._listeners):
+            try:
+                listener()
+            except Exception:
+                # Called from a session's own loop, which a plugin's listener must not end.
+                _LOGGER.exception('A live sessions listener failed')
+
+
+_OPENS_NONE = 'This CLAI opens no other live sessions.'
 
 
 class ProcessPlugins(Generic[DepsT]):
@@ -202,11 +286,13 @@ class ProcessPlugins(Generic[DepsT]):
         self.changing = Lock()
         """Held by each `PluginCatalog` change and `remove`, which the panel and the terminal can run at once."""
         self._sessions: list[SessionPlugins[DepsT]] = []
+        self._loading: dict[str, Lock] = {}
         self._shared: dict[str, LoadedPlugin[DepsT]] = {}
-        # A process-scoped plugin unloaded while turns run ends after the last of them: pending turns, by `id`.
-        self._ending: dict[int, int] = {}
-        self.live = _Live(lambda: [session.live_session for session in self._sessions])
-        """The live sessions, as process-scoped plugins see them through `host.live`."""
+        # A process-scoped plugin unloaded while turns run ends after the last of them: the plugin and its
+        # pending turns, by `id`. Holding the plugin keeps its `id` from being reused meanwhile.
+        self._ending: dict[int, tuple[LoadedPlugin[DepsT], int]] = {}
+        self.live: JoinedSessions = JoinedSessions(lambda: [session.live_session for session in self._sessions])
+        """The live sessions, as process-scoped plugins see them through `host.live`; `ClaiProcess` sets its own."""
 
     @property
     def plugins_dir(self) -> Path:
@@ -300,24 +386,39 @@ class ProcessPlugins(Generic[DepsT]):
         """Stop counting `session` among the live ones."""
         self._sessions = [joined for joined in self._sessions if joined is not session]
 
+    def loading(self, name: str) -> Lock:
+        """Held while a session loads `name`, so sessions load it one at a time and build a process plugin once."""
+        return self._loading.setdefault(name, Lock())
+
     def here(self, origin: 'SessionPlugins[DepsT]') -> 'SessionPlugins[DepsT]':
-        """The session being handled now, if it is live here; else `origin`, the one that loaded a plugin."""
+        """The session being handled now, if it is live here; else `origin`, the one that loaded a plugin.
+
+        Once `origin` has left, the oldest live session stands in for it, so a closed one never joins again.
+        """
         current = _CURRENT.get()
-        return next((session for session in self._sessions if session.live_session is current), origin)
+        found = next((session for session in self._sessions if session.live_session is current), None)
+        if found is not None or origin in self._sessions:
+            return found if found is not None else origin
+        return self._sessions[0] if self._sessions else origin
 
     async def change(
-        self, origin: 'SessionPlugins[DepsT]', name: str, apply: Callable[[], Awaitable[T]], *, again: bool
+        self, name: str, apply: Callable[[], Awaitable[T]], *, origin: 'SessionPlugins[DepsT]', again: bool
     ) -> T:
         """Apply a change to `name` in `origin` under the change lock, then have every other live session follow it.
 
+        They follow also when `origin` fails, since what it saved first, such as `enabled`, may load elsewhere.
         `again` loads it again where it stays loaded, as after new settings or a reload.
         """
         async with self.changing:
-            result = await apply()
-            await self.follow(origin, name, again=again)
+            try:
+                result = await apply()
+            except Exception:
+                await self.follow(name, origin=origin, again=again)
+                raise
+            await self.follow(name, origin=origin, again=again)
             return result
 
-    async def follow(self, origin: 'SessionPlugins[DepsT]', name: str, *, again: bool) -> None:
+    async def follow(self, name: str, *, origin: 'SessionPlugins[DepsT]', again: bool) -> None:
         """Have every live session but `origin` catch up with a change `origin` made to `name`."""
         for session in list(self._sessions):
             if session is not origin:
@@ -331,16 +432,16 @@ class ProcessPlugins(Generic[DepsT]):
         """Every loaded process-scoped plugin, in load order."""
         return list(self._shared.items())
 
-    def register_shared(self, name: str, loaded: LoadedPlugin[DepsT]) -> None:
+    def register_shared(self, name: str, *, loaded: LoadedPlugin[DepsT]) -> None:
         """Record a process-scoped plugin as it starts; `forget_shared` drops it if starting fails."""
         self._shared[name] = loaded
 
-    def forget_shared(self, name: str, loaded: LoadedPlugin[DepsT] | None) -> None:
-        """Drop a process-scoped plugin that failed to start."""
+    def forget_shared(self, name: str, *, loaded: LoadedPlugin[DepsT] | None) -> None:
+        """Drop a process-scoped plugin that failed to start; no other session joined it, as `loading` held them."""
         if loaded is not None and self._shared.get(name) is loaded:
             del self._shared[name]
 
-    async def share(self, origin: 'SessionPlugins[DepsT]', name: str, loaded: LoadedPlugin[DepsT]) -> None:
+    async def share(self, name: str, loaded: LoadedPlugin[DepsT], *, origin: 'SessionPlugins[DepsT]') -> None:
         """Join a process-scoped plugin `origin` just loaded to every other live session."""
         for session in list(self._sessions):
             if session is not origin:
@@ -349,23 +450,25 @@ class ProcessPlugins(Generic[DepsT]):
     async def unload_shared(self, name: str, *, reason: SessionEndReason, origin: 'SessionPlugins[DepsT]') -> None:
         """Take a process-scoped plugin out of every session, and end it once every running turn is over."""
         loaded = self._shared.pop(name)
-        for session in self._sessions:
+        holders = [session for session in self._sessions if session.holds(name, loaded)]
+        for session in holders:
             session.detach(name, loaded)
-        waiting = [session for session in self._sessions if session.in_turn]
+        # Only a turn that bound it may still use it.
+        waiting = [session for session in holders if session.in_turn]
         if not waiting:
             await origin.end(name, loaded, reason=reason)
             return
-        self._ending[id(loaded)] = len(waiting)
+        self._ending[id(loaded)] = (loaded, len(waiting))
         for session in waiting:
-            session.retire(name, loaded, reason)
+            session.retire(name, loaded, reason=reason)
 
     def last_end(self, loaded: LoadedPlugin[DepsT]) -> bool:
         """Whether ending `loaded` now is due: not a process-scoped plugin another running turn still holds."""
-        pending = self._ending.get(id(loaded))
-        if pending is None:
+        ending = self._ending.get(id(loaded))
+        if ending is None:
             return True
-        if pending > 1:
-            self._ending[id(loaded)] = pending - 1
+        if ending[1] > 1:
+            self._ending[id(loaded)] = (loaded, ending[1] - 1)
             return False
         del self._ending[id(loaded)]
         return True

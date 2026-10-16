@@ -84,8 +84,9 @@ class Conversation(Protocol):
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
-        directory or when persistence is not configured. A conversation still running in another
-        process is not taken over: a fork of it is resumed, and the notice says so.
+        directory, when persistence is not configured, or when another live session of this CLAI holds
+        it. A conversation still running in another process is not taken over: a fork of it is resumed,
+        and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
@@ -215,8 +216,9 @@ class PluginCatalog(Protocol):
     """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `SessionPlugins` is one.
 
     Each action applies at once and is saved, as the same `/plugins` action is, in every live session
-    of this CLAI; a running turn keeps the plugins it started with. Adding and removing declarations goes through the prompt, with
-    `PluginHost.send_input`, as does a settings menu that is not declared (`/plugins configure NAME`).
+    of this CLAI; a running turn keeps the plugins it started with. Adding and removing declarations
+    goes through the prompt, with `PluginHost.send_input`, as does a settings menu that is not declared
+    (`/plugins configure NAME`).
     Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
     own `on_session_start` or `on_session_end`, which a change runs.
     """
@@ -311,6 +313,27 @@ class LiveSession(Protocol):
         """Whether a turn runs in the session now."""
         ...
 
+    def setting(self, key: str, /) -> JsonValue:
+        """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
+        ...
+
+    @property
+    def queued(self) -> int:
+        """How many inputs wait for the session's running turn or command to end."""
+        ...
+
+    @property
+    def watchers(self) -> int:
+        """How many `watch` calls have not stopped watching yet."""
+        ...
+
+    def watch(self) -> Callable[[], None]:
+        """Count a watcher, such as a browser showing the session, until the returned function is called.
+
+        A watched session is never closed for being idle. Calling the returned function again does nothing.
+        """
+        ...
+
     def send_input(self, text: str, /) -> None:
         """Enter `text` at the session's prompt, as `PluginHost.send_input` does."""
         ...
@@ -336,7 +359,40 @@ class LiveSessions(Protocol):
         ...
 
     def current(self) -> LiveSession | None:
-        """The session whose moment, command, or run is being handled now; `None` outside one."""
+        """The session whose moment, command, or run is being handled now; `None` outside one.
+
+        A task started while a session is handled, such as a server started from a command, inherits it.
+        """
+        ...
+
+    async def open(self, conversation_id: str, /) -> LiveSession:
+        """The live session holding a saved conversation, resuming it in a new one, in its own directory, if none does.
+
+        Concurrent calls for one conversation return the same session. Raises `LookupError` for an unknown
+        conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        Do not await it from `on_session_start`: the new session waits for the plugins still loading.
+        """
+        ...
+
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
+        """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in.
+
+        Do not await it from `on_session_start`: the new session waits for the plugins still loading.
+        """
+        ...
+
+    async def close(self, live_id: str, /) -> None:
+        """Close a session CLAI opened with `open` or `new`, cancelling its turn; its plugins end with `'exit'`.
+
+        Raises `LookupError` when none is live and `ValueError` for one its own driver runs, such as the terminal's.
+        """
+        ...
+
+    def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call `listener` whenever a session opens or closes, or its running, queued, or watched state may change.
+
+        It is called synchronously, so it must be quick and not raise. The returned function unsubscribes.
+        """
         ...
 
 
@@ -753,6 +809,7 @@ class PluginHost(Generic[DepsT]):
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
         workspace: Callable[[], Path] = Path.cwd,
         live: LiveSessions | None = None,
+        default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -763,7 +820,7 @@ class PluginHost(Generic[DepsT]):
         conversations; `setting` reads its settings, as the method of the same name does; `plugins`
         is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
         directory, each read each time, as the properties of the same names are. `live` is given to a
-        process-scoped plugin's host only.
+        process-scoped plugin's host only. `default_model` resolves the model a new session starts with.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -794,13 +851,15 @@ class PluginHost(Generic[DepsT]):
         """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
         self._tasks = tasks
         self._workspace = workspace
+        self._default_model = default_model
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
         Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`,
-        `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the session
-        whose moment, command, or run is being handled, else the session that loaded it, which its
-        other attributes, such as `conversation` and `status`, always name.
+        `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the
+        session whose moment, command, or run is being handled, else the session that loaded it (once
+        that one has closed, the oldest live session). Its other attributes, such as `conversation` and
+        `status`, always name the session that loaded it.
         """
 
     @property
@@ -854,6 +913,16 @@ class PluginHost(Generic[DepsT]):
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
         self._send_input(text)
+
+    async def default_model(self) -> Model | str | None:
+        """The model a new session starts with: the saved `model` setting, resolved as `/model NAME` does.
+
+        Without a saved one, the agent's own model, or `None` when it has none. For a plugin whose
+        own agent works for the whole process rather than one session, such as the web UI's
+        orchestrator. A host without CLAI's settings, such as in a test, returns `None` unless built
+        with `default_model=`.
+        """
+        return None if self._default_model is None else await self._default_model()
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting, such as `run.code_mode`, read now, as `/set KEY` shows it.
