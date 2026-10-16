@@ -50,6 +50,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const [projects, setProjects] = useState<Project[]>([])
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [menu, setMenu] = useState<string | null>(null)
+  const [menuUp, setMenuUp] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [unsaved, setUnsaved] = useState(false)
   const search = useRef<HTMLInputElement>(null)
@@ -191,14 +192,20 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                     )}
                     <button
                       className="session-more"
-                      onClick={() => setMenu(menu === session.id ? null : session.id)}
+                      onClick={(event) => {
+                        // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
+                        const list = event.currentTarget.closest('.projects')?.getBoundingClientRect()
+                        const row = event.currentTarget.getBoundingClientRect()
+                        setMenuUp(list !== undefined && row.bottom > list.top + list.height / 2)
+                        setMenu(menu === session.id ? null : session.id)
+                      }}
                       title="Session actions"
                       aria-label="Session actions"
                     >
                       <MoreIcon size={14} />
                     </button>
                     {menu === session.id && (
-                      <div className="menu session-menu" role="menu">
+                      <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
                         <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
                         <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
                         <button

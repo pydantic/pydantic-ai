@@ -18,7 +18,7 @@ Use the [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking
 
-agent = Agent('anthropic:claude-opus-4-7', capabilities=[Thinking(effort='high')])
+agent = Agent('{{ anthropic:large }}', capabilities=[Thinking(effort='high')])
 ```
 
 You can also set the underlying `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings] directly:
@@ -26,7 +26,7 @@ You can also set the underlying `thinking` field in [`ModelSettings`][pydantic_a
 ```python {title="unified_thinking.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
+agent = Agent('{{ anthropic:large }}', model_settings={'thinking': 'high'})
 ```
 
 The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:

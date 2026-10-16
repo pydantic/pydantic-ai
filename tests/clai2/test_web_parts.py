@@ -414,15 +414,25 @@ async def test_windows_keeps_its_port_exclusive(monkeypatch: pytest.MonkeyPatch)
     await served.stop()
 
 
+class _Output(io.StringIO):
+    """Console output that tells when `clai2 --web` is ready for its user."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready = anyio.Event()
+
+    def write(self, s: str) -> int:
+        if 'Press Ctrl-C to quit.' in s:
+            self.ready.set()
+        return super().write(s)
+
+
 @pytest.mark.parametrize('resume', [False, True])
 async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`clai2 --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl-C."""
-    opened = anyio.Event()
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
 
-    def open_browser(url: str) -> None:
-        opened.set()
-
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', open_browser)
     store = SettingsStore(tmp_path / 'config.db')
     saved = None
     if resume:
@@ -431,7 +441,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
         saved = await sessions.save(
             summary=ConversationSummary(workspace=str(Path.cwd().resolve()), title='Saved'), messages=[]
         )
-    output = io.StringIO()
+    output = _Output()
     console = Console(file=output, force_terminal=False, width=200)
     with anyio.move_on_after(30):
         async with anyio.create_task_group() as group:
@@ -444,9 +454,10 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
                     resume=saved.id if saved else None,
                 )
             )
-            await opened.wait()
+            await output.ready.wait()
             group.cancel_scope.cancel()
     text = output.getvalue()
+    assert len(opened) == 1
     assert 'Web UI running at http://127.0.0.1:' in text and 'Press Ctrl-C to quit.' in text
     assert ('Resumed Saved' in text) is resume
     assert [plugin.enabled for plugin in store.plugins() if plugin.id == 'web'] == ([True] if resume else []), (
