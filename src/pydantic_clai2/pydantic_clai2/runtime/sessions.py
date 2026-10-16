@@ -6,7 +6,7 @@ Claude Code and Codex sessions.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from contextlib import AbstractAsyncContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager, AbstractContextManager, nullcontext
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -80,8 +80,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
-        self.held_elsewhere: Callable[[str], bool] = lambda conversation_id: False
-        """Whether another live session of this process holds a conversation, which `resume` then refuses."""
+        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
+        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
 
     @property
     def follows_workspace(self) -> bool:
@@ -96,15 +96,14 @@ class Sessions(Generic[DepsT, OutputT]):
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
         """
-        if self.held_elsewhere(conversation_id):
-            raise ValueError(f'Session {conversation_id} is open in another live session of this CLAI.')
-        if self.relocate is not None and not allow_other_workspace:
-            workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
-            if workspace != self.session.workspace:
-                await self.relocate(workspace)
-        notice = await self.session.resume(
-            conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
-        )
+        with self.claim(conversation_id):
+            if self.relocate is not None and not allow_other_workspace:
+                workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+                if workspace != self.session.workspace:
+                    await self.relocate(workspace)
+            notice = await self.session.resume(
+                conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
+            )
         await self.show_resumed()
         return notice
 

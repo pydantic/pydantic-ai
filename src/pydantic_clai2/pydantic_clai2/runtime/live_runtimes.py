@@ -7,8 +7,8 @@ opened with `open` or `new` run here, each as a task of `serving`, and close aft
 
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -170,8 +170,24 @@ class LiveRuntimes(JoinedSessions):
             del self._opening[conversation_id]
             opened.set()
 
-    async def new(self, workspace: Path | None = None) -> LiveSession:
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
         return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+
+    @contextmanager
+    def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:
+        """Reserve `conversation_id` while `holder` resumes it, so `open` waits and no other session resumes it.
+
+        Raises `ValueError` when another live session holds it, or is opening or resuming it.
+        """
+        held = self.holding(conversation_id)
+        if (held is not None and held is not holder) or conversation_id in self._opening:
+            raise ValueError(f'Session {conversation_id} is open in another live session of this CLAI.')
+        claimed = self._opening[conversation_id] = Event()
+        try:
+            yield
+        finally:
+            del self._opening[conversation_id]
+            claimed.set()
 
     async def close(self, live_id: str, /) -> None:
         live = self._live.get(live_id)
@@ -204,7 +220,7 @@ class LiveRuntimes(JoinedSessions):
 
     async def _start(self, workspace: Path | None, *, resume: str | None) -> LiveSession:
         if self._group is None or self.build is None:
-            return await super().new()
+            return await super().new(workspace=workspace)
         # What `build` adds is not listed until it has loaded.
         self._building = True
         try:

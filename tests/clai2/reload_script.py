@@ -1,6 +1,7 @@
 """Exercise real module reloads in a process isolated from pytest's imported class identities."""
 
 import asyncio
+import gc
 import io
 import sys
 from dataclasses import replace
@@ -112,6 +113,9 @@ async def main(root: Path, mode: str) -> None:
                 'reload'
             ]
             labels.append(label)
+            # The terminal's session stays live through every reload, failed ones included, and is the only one.
+            live = [len(o.listing()) for o in gc.get_objects() if type(o).__name__ == 'LiveRuntimes']
+            assert sum(live) == 1, live
             text = next(prompts)
             if text == '/reload' and mode != 'unchanged':
                 reloads += 1
