@@ -104,7 +104,7 @@ async def test_output_is_captured_from_a_terminal(terminal: tuple[int, int], mon
         "printf '\\033[31mred\\033[0m\\r\\nline\\n'; printf to-stderr >&2"
     )
     console = io.StringIO()
-    context = await run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=os.getcwd())
+    context = await run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd())
     stdout = 'tty\ncontrolling\npager=cat\nred\nline\n'
     assert context == _captured(command, 'Exit code 0', stdout, 'to-stderr')
     # stderr comes through a pipe of its own, not the terminal, so it is shown as it arrives: anywhere in stdout.
@@ -118,7 +118,7 @@ async def test_keys_reach_the_command(user: int) -> None:
     command = "printf 'name? '; IFS= read -r name; printf 'hi %s\\n' \"$name\""
     console = io.StringIO()
     task = asyncio.create_task(
-        run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=os.getcwd())
+        run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd())
     )
     await _console_shows(console, 'prompt\nname? ')
     os.write(user, b'bob\r')
@@ -138,7 +138,7 @@ async def test_ctrl_c_interrupts_the_command(
     console = io.StringIO()
     task = asyncio.create_task(
         run_shell_command(
-            ': > ready; exec sleep 30', console=Console(file=console), interrupts=interrupts, cwd=os.getcwd()
+            ': > ready; exec sleep 30', console=Console(file=console), interrupts=interrupts, cwd=Path.cwd()
         )
     )
     with anyio.fail_after(5):
@@ -163,7 +163,7 @@ async def test_full_screen_program_gets_the_terminal(user: int) -> None:
     screen = bytearray()
     with _recorded_hold(events):
         task = asyncio.create_task(
-            run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=os.getcwd())
+            run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd())
         )
         await _screen_shows(user, b'\x1b[?1049hFULLREADY', screen)
         assert events == ['hold leave_screen=True']
@@ -194,7 +194,7 @@ async def test_cancelling_a_full_screen_program_restores_the_terminal(
                 "printf '\\033[?1049h'; exec sleep 30",
                 console=Console(file=io.StringIO()),
                 interrupts=Interrupts(),
-                cwd=os.getcwd(),
+                cwd=Path.cwd(),
             )
         )
         await _screen_shows(user, b'\x1b[?1049h', screen)
@@ -208,7 +208,7 @@ async def test_resizing_reaches_the_command(user: int, tmp_path: Path) -> None:
     """The command runs in the session's directory and sees the terminal's size change."""
     command = "trap 'stty size > resized; exit 0' WINCH; stty size > started; : > ready; while :; do sleep 0.05; done"
     task = asyncio.create_task(
-        run_shell_command(command, console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=str(tmp_path))
+        run_shell_command(command, console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=tmp_path)
     )
     with anyio.fail_after(5):
         while not (tmp_path / 'ready').exists():
@@ -227,7 +227,7 @@ async def test_background_job_cannot_hold_the_command_open(user: int) -> None:
     """A job left running keeps the pseudo-terminal open; CLAI stops waiting for its output shortly after."""
     with anyio.fail_after(1.5):
         context = await run_shell_command(
-            'sleep 2 & echo started', console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=os.getcwd()
+            'sleep 2 & echo started', console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=Path.cwd()
         )
     assert context.endswith('stdout:\nstarted\n\n\nstderr:\n')
 
@@ -235,7 +235,7 @@ async def test_background_job_cannot_hold_the_command_open(user: int) -> None:
 async def test_spawn_failure_releases_the_pseudo_terminal(user: int) -> None:
     console = io.StringIO()
     context = await run_shell_command(
-        'echo a\x00b', console=Console(file=console), interrupts=Interrupts(), cwd=os.getcwd()
+        'echo a\x00b', console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd()
     )
     assert '\nShell error: embedded null byte\n' in context
 

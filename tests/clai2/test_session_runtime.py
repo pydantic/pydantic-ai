@@ -3,6 +3,7 @@
 import io
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -46,3 +47,22 @@ async def test_a_runtime_without_a_terminal_serves_input_over_the_process_stores
     assert '> hello\n\nsuccess (no tool calls)' in output.getvalue()
     saved = await process.conversations.get(conversation_id=runtime.session.summary.id)
     assert saved.summary.workspace == str((tmp_path / 'project').resolve())
+
+
+def test_a_runtime_takes_its_store_from_the_process(tmp_path: Path) -> None:
+    """`store` and `process` name the settings twice, so passing both is refused rather than one dropped."""
+    store = SettingsStore(tmp_path / 'config.db')
+    with pytest.raises(TypeError, match='`store` or `process`, not both'):
+        create_shell(
+            Agent(TestModel(), deps_type=type(None)),
+            deps=None,
+            plugins=(),
+            usage_limits=None,
+            console=Console(file=io.StringIO()),
+            settings=None,
+            store=store,
+            builtin_plugins=(),
+            project=ProjectSettings(),
+            headless=True,
+            process=ClaiProcess.open(store),
+        )

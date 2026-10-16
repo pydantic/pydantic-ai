@@ -129,14 +129,15 @@ def create_shell(
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
-    what the session shares with the others in this CLAI; without one, it gets its own over `store`, which
-    is otherwise unused.
+    what the session shares with the others in this CLAI; without one, it gets its own over `store`.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
         if settings is not None
         else Settings(model=None)
     )
+    if process is not None and store is not None:
+        raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
     process = process or ClaiProcess.open(store)
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
@@ -886,7 +887,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
                 context = await run_shell_command(
-                    command, console=self.console, interrupts=self.interrupts, cwd=self.session.workspace
+                    command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
                 )
                 await self.session.commit_messages(
                     [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
