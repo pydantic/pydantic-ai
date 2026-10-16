@@ -27,9 +27,9 @@
 
 **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](https://pydantic.dev/docs/ai/core-concepts/persistence/), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
-[Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/) grades an agent's final outputs and [tool-call trajectories](https://pydantic.dev/docs/ai/evals/evaluators/agentic/), on datasets or [live production traffic](https://pydantic.dev/docs/ai/evals/online-evaluation/), and [Pydantic Graph](https://pydantic.dev/docs/ai/graph/graph/) gives you typed control flow when one agent loop is not enough. Both are separate packages.
+[Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/) grades an agent's final outputs and [tool-call trajectories](https://pydantic.dev/docs/ai/evals/evaluators/agentic/), on datasets or [live production traffic](https://pydantic.dev/docs/ai/evals/online-evaluation/), and [Pydantic Graph](https://pydantic.dev/docs/ai/graph/graph/) gives you typed control flow when one agent loop is not enough. Both are separate open-source packages, and so are [genai-prices](https://github.com/pydantic/genai-prices), which keeps model pricing current, and [Monty](https://github.com/pydantic/monty), the sandboxed Python interpreter that runs model-written code.
 
-[Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) is one key for every model with real-time cost monitoring and budget control; the Gateway self-hosts if you would rather, and our [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/) is plain OpenTelemetry, so any backend you already run works. Underneath both, [genai-prices](https://github.com/pydantic/genai-prices) keeps model pricing current, and [Monty](https://github.com/pydantic/monty) is the sandboxed Python interpreter that runs model-written code.
+[Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) is one key for every model with real-time cost monitoring and budget control; our [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/) is plain OpenTelemetry, so any backend you already run works.
 
 View the complete documentation at [pydantic.dev/docs/ai](https://pydantic.dev/docs/ai/).
 
@@ -153,6 +153,8 @@ class ResearchWorkflow(PydanticAIWorkflow):
 ```
 
 [DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
+
+Saving, resuming, and forking a run need no engine: [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) from Pydantic AI Harness snapshots every settled step to a store you choose, the way a checkpointer does (see [Persistence](https://pydantic.dev/docs/ai/core-concepts/persistence/)). The engine is for recovering a run that crashes partway through a step.
 
 **Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
 

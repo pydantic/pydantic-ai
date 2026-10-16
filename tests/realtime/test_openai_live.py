@@ -409,6 +409,39 @@ def test_seeding_projects_history_to_text() -> None:
     )
 
 
+def test_seeding_marks_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Book me a flight.')]),
+        # Cut off where the listener stopped hearing it.
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        # Interrupted with no offset reported: the last speech part is marked.
+        ModelResponse(
+            parts=[
+                SpeechPart(speaker='assistant', transcript='Let me check.'),
+                SpeechPart(speaker='assistant', transcript='It leaves at'),
+            ],
+            state='interrupted',
+        ),
+        # Nothing was transcribed, so there is still nothing to seed.
+        ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=0)], state='interrupted'),
+    ]
+
+    assert seed_input_items(history, provider_name='openai') == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Book me a flight.'}]},
+            {
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, the morning flight\n[Interrupted after 640 ms]'}],
+            },
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Let me check.'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'It leaves at\n[Interrupted]'}]},
+        ]
+    )
+
+
 def test_seeding_refuses_media(image_content: Any) -> None:
     """Unsupported content raises rather than being silently dropped from the seeded conversation."""
     messages = [ModelRequest(parts=[UserPromptPart(content=[image_content])])]

@@ -358,6 +358,10 @@ Key facts for building realtime agents:
   down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
   gets the same treatment on your own signal. A playback layer that buffers ahead of the device
   makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
+  A reply cut off this way is recorded as interrupted with `SpeechPart.interrupted_at_ms`, even when it
+  had already finished generating (the usual case): a later snapshot holds an interrupted copy at the
+  same position, so persist the latest `all_messages()` rather than appending only what's past what you
+  stored. Its transcript stays what the model generated; text handoff and seeding add an interruption note.
 - **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.
