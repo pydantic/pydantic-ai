@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
 from decimal import Decimal
+from types import AsyncGeneratorType
 from typing import Any, Literal, cast
 
 import httpx2
@@ -38,6 +39,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
@@ -1172,6 +1174,22 @@ async def test_streaming_error_after_first_event_propagates() -> None:
     assert events == snapshot(
         [PartStartEvent(index=0, part=TextPart(content='hello ')), FinalResultEvent(tool_name=None, tool_call_id=None)]
     )
+
+
+async def test_streaming_handed_over_stream_closes_its_events() -> None:
+    """Closing the iterator of a handed-over stream also closes the stream's own event generator."""
+    async with FallbackModel(success_model_stream).request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as streamed_response:
+        assert isinstance(aiter(streamed_response), PeekableAsyncStream)
+        iterator = cast(PeekableAsyncStream[ModelResponseStreamEvent, Any], aiter(streamed_response))
+        source = iterator.source
+        assert isinstance(source, AsyncGeneratorType)
+        assert await anext(iterator) == PartStartEvent(index=0, part=TextPart(content='hello '))
+        assert source.ag_frame is not None
+
+        await iterator.aclose()
+        assert source.ag_frame is None
 
 
 async def test_streaming_without_events_is_handed_over() -> None:

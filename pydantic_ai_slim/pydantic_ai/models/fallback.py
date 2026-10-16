@@ -21,7 +21,7 @@ from pydantic_ai._instrumentation import (
 )
 from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import await_maybe, get_first_param_type
+from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
@@ -603,23 +603,13 @@ async def _request_stream_until_first_event(
     model. The event is replayed to the consumer, so the stream it gets is unchanged.
     """
     async with model.request_stream(messages, model_settings, model_request_parameters, run_context) as response:
-        events = aiter(response)
-        try:
-            first_event = await anext(events)
-        except StopAsyncIteration:
-            pass
-        else:
-            # `StreamedResponse.__aiter__` hands out the iterator stored here, so this puts the event back.
-            response._event_iterator = _prepend_event(first_event, events)  # pyright: ignore[reportPrivateUsage]
+        events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
+            PeekableAsyncStream(aiter(response))
+        )
+        await events.peek()
+        # `StreamedResponse.__aiter__` hands out the iterator stored here, so the consumer gets the peeked event too.
+        response._event_iterator = events  # pyright: ignore[reportPrivateUsage]
         yield response
-
-
-async def _prepend_event(
-    first_event: ModelResponseStreamEvent, events: AsyncIterator[ModelResponseStreamEvent]
-) -> AsyncIterator[ModelResponseStreamEvent]:
-    yield first_event
-    async for event in events:
-        yield event
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
