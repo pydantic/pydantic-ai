@@ -160,6 +160,9 @@ class LiveRuntimes(JoinedSessions):
     @asynccontextmanager
     async def serving(self) -> AsyncGenerator[None]:
         """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all."""
+        # A new sessions database switches to WAL on first use, which fails at once when two sessions' first
+        # saves race, so make it before any session runs.
+        await self._conversations.listing(limit=1)
         async with create_task_group() as group:
             self._group = group
             group.start_soon(self._close_idle_ones)

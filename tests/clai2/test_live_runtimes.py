@@ -3,8 +3,7 @@
 import io
 import os
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -89,14 +88,6 @@ class Fleet:
     def live(self) -> LiveRuntimes:
         return self.process.live
 
-    @asynccontextmanager
-    async def serving(self) -> AsyncGenerator[None]:
-        """Serve the live sessions over a sessions database that already exists."""
-        # Switching a new database to WAL can fail at once when two first saves race, so make it first.
-        await self.process.conversations.listing()
-        async with self.live.serving():
-            yield
-
     def folder(self, name: str) -> Path:
         directory = self.root / name
         directory.mkdir(exist_ok=True)
@@ -164,7 +155,7 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
     fleet.agents = {name: blocked(name, started, release, calls) for name in 'ab'}
     launched_in = Path.cwd()
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             a = await fleet.live.new(workspace=fleet.folder('a'))
             b = await fleet.live.new(workspace=fleet.folder('b'))
             assert [session.id for session in fleet.live.listing()] == [a.id, b.id]
@@ -203,7 +194,7 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
         summary=ConversationSummary(workspace=str(fleet.folder('a').resolve()), title='Saved'), messages=history
     )
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             opened: list[LiveSession] = []
 
             async def open_it(conversation_id: str = saved.id) -> None:
@@ -297,7 +288,7 @@ async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path, ca
     held = fleet.build(fleet.folder('held'))
     with pytest.raises(RuntimeError, match='opens no other live sessions'):
         await fleet.live.new()
-    async with fleet.serving():
+    async with fleet.live.serving():
         with pytest.raises(LookupError):
             await fleet.live.open('unknown')
         with pytest.raises(ValueError, match='does not exist'):
@@ -309,7 +300,7 @@ async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path, ca
         with pytest.raises(ValueError, match='runs under its own driver'):
             await fleet.live.close(held.live_session.id)
     fleet.live.build = None
-    async with fleet.serving():
+    async with fleet.live.serving():
         with pytest.raises(RuntimeError, match='opens no other live sessions'):
             await fleet.live.new()
     assert fleet.built == ['held']
@@ -363,7 +354,7 @@ async def test_a_session_that_fails_leaves_the_others_running(
 
     fleet.live.build = failing
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             with pytest.raises(RuntimeError, match='early broke'):
                 await fleet.live.new(workspace=fleet.folder('early'))
             await fleet.live.new(workspace=fleet.folder('late'))
@@ -395,7 +386,7 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
         fleet.agents[name] = reader(name)
     launched_in = Path.cwd()
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             sessions = [await fleet.live.new(workspace=fleet.folder(name)) for name in ('alpha', 'beta')]
             for session in sessions:
                 session.send_input('read the rules')
@@ -416,7 +407,7 @@ async def test_idle_sessions_close_after_the_timeout(tmp_path: Path) -> None:
     release = {'busy': anyio.Event()}
     fleet.agents['busy'] = blocked('busy', started, release, {'busy': 0})
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             idle, watched, busy, focused = [
                 await fleet.live.new(workspace=fleet.folder(name)) for name in ('idle', 'watched', 'busy', 'focused')
             ]
@@ -465,7 +456,7 @@ async def test_a_session_that_ends_while_another_closes_is_skipped(tmp_path: Pat
     fleet.live.clock = lambda: now[0]
     fleet.live.idle_after = 10
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             await fleet.live.new(workspace=fleet.folder('held'))
             other = await fleet.live.new(workspace=fleet.folder('other'))
             now[0] = 11
@@ -489,7 +480,7 @@ async def test_a_conversation_another_process_runs_opens_one_copy(tmp_path: Path
         messages=[],
     )
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             first = await fleet.live.open(busy.id)
             assert first.conversation.conversation_id != busy.id
             assert await fleet.live.open(busy.id) is first
@@ -520,7 +511,7 @@ async def test_a_session_runs_as_the_one_being_handled(tmp_path: Path, monkeypat
 
     fleet.live.build = recording
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             opener = await fleet.live.new(workspace=fleet.folder('opener'))
             with handling(fleet.runtimes[opener.id].live_session):
                 opened = await fleet.live.new(workspace=fleet.folder('opened'))
@@ -546,7 +537,7 @@ async def test_the_idle_check_runs_on_its_own(tmp_path: Path) -> None:
     fleet = Fleet(tmp_path)
     fleet.live.idle_after = fleet.live.check_every = 0
     with anyio.fail_after(20):
-        async with fleet.serving():
+        async with fleet.live.serving():
             await fleet.live.new(workspace=fleet.folder('brief'))
             await until(fleet.live, lambda: not fleet.live.listing())
     assert Recorder.ended == [('brief', 'exit')]
