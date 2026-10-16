@@ -121,7 +121,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
-            # `AnthropicModel` narrows `supports_auto_cache` per client (the Bedrock and Vertex SDK clients don't
+            # `AnthropicModel` narrows `supports_auto_cache` per client (the legacy Bedrock SDK client doesn't
             # support the top-level automatic caching parameter), and `supported_cache_retentions` on Bedrock, which
             # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
             # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching

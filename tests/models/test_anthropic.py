@@ -982,23 +982,14 @@ def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
         pytest.param('1h', '1h', id='custom-1h'),
     ],
 )
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
-    ],
-)
-async def test_anthropic_cache_fallback_on_unsupported_clients(
+async def test_anthropic_cache_fallback_on_legacy_bedrock_client(
     allow_model_requests: None,
     cache_value: bool | Literal['1h'],
     expected_ttl: str,
-    client_cls: type[Any],
-    base_url: str,
 ):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
+    """Test that anthropic_cache falls back to per-block caching on the legacy Bedrock client.
 
-    On these platforms the top-level cache_control parameter is not supported,
+    The legacy Bedrock InvokeModel API rejects the top-level cache_control parameter,
     so per-block cache_control is applied to the last user message instead.
     """
     from unittest.mock import AsyncMock, MagicMock
@@ -1007,8 +998,8 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
 
     mock_client = MagicMock()
     mock_client.timeout = DEFAULT_TIMEOUT
-    mock_client.__class__ = client_cls
-    mock_client.base_url = base_url
+    mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client.base_url = 'https://bedrock.amazonaws.com'
     mock_client.beta.messages.create = AsyncMock(return_value=c)
 
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -2455,9 +2446,9 @@ async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requ
 @pytest.mark.parametrize(
     ('client_cls', 'expected_ttls'),
     [
-        # Bedrock and Vertex don't take the top-level `cache_control`, so it goes on the last block instead.
+        # The legacy Bedrock client doesn't take the top-level `cache_control`, so it goes on the last block instead.
         pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, ['1h', '1h'], id='vertex'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h (automatic)'], id='vertex'),
         pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
     ],
 )
