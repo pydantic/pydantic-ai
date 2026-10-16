@@ -62,6 +62,8 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('clai-theme', theme)
+    // The browser's own bar follows the page: Paraffin in dark mode, Paper in light.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1d0214' : '#fdfcf6')
   }, [theme])
 
   useEffect(() => {

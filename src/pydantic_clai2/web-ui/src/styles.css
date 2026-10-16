@@ -1,73 +1,90 @@
 /* CLAI web UI: a calm, dark-first workspace in the spirit of the Codex desktop app. */
 
+/* Colours from pydantic.dev: Paraffin and plum grounds, Paper text, Lithium pink accents, Aqua for additions. */
+
 :root,
 [data-theme='dark'] {
   color-scheme: dark;
-  --bg: #1d1d1d;
-  --bg-sidebar: #151515;
-  --surface: #262626;
-  --surface-raised: #2c2c2c;
-  --hover: rgba(255, 255, 255, 0.055);
-  --active: rgba(255, 255, 255, 0.09);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text: #ececec;
-  --text-soft: #c8c8c8;
-  --muted: #9a9a9a;
-  --faint: #6a6a6a;
-  --accent: #f5f5f5;
-  --accent-text: #111;
-  --brand: #e520e9;
-  --link: #8ab4ff;
-  --green: #4ac26b;
-  --red: #ff6b6b;
-  --amber: #e5b544;
-  --add-bg: rgba(46, 160, 67, 0.16);
-  --add-text: #7ee2a0;
-  --del-bg: rgba(248, 81, 73, 0.16);
-  --del-text: #ffa198;
-  --code-bg: #141414;
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border);
-  --hl-keyword: #ff7b72;
-  --hl-string: #a5d6ff;
-  --hl-title: #d2a8ff;
-  --hl-number: #79c0ff;
-  --hl-comment: #8b949e;
-  --hl-attr: #ffa657;
+  --lithium: #e520e9;
+  --lithium-bright: #f637fe;
+  --lithium-deep: #bc0fbc;
+  --bg: #1d0214;
+  --bg-sidebar: #160010;
+  --surface: #280f20;
+  --surface-raised: #36182d;
+  --composer: #280f20;
+  --hover: rgba(253, 252, 246, 0.06);
+  --active: rgba(229, 32, 233, 0.14);
+  --border: rgba(253, 252, 246, 0.09);
+  --border-strong: #49353f;
+  --text: #fdfcf6;
+  --text-soft: #e6dfe2;
+  --muted: #ad99a5;
+  --faint: #7c6673;
+  --accent: var(--lithium);
+  --accent-hover: #c71cca;
+  --accent-text: #ffffff;
+  --accent-strong: var(--lithium-deep);
+  --accent-strong-hover: #9a0e98;
+  --brand: var(--lithium);
+  --link: #f58cf7;
+  --focus: var(--lithium);
+  --green: #77ffd8;
+  --red: #ff6550;
+  --amber: #f0b429;
+  --add-bg: rgba(119, 255, 216, 0.09);
+  --add-text: #9bfcda;
+  --del-bg: rgba(255, 101, 80, 0.12);
+  --del-text: #ff8a8a;
+  --code-bg: #140010;
+  --shadow: 0 16px 48px rgba(10, 0, 7, 0.6), 0 0 0 1px var(--border);
+  --glow: 0 0 0 1px rgba(229, 32, 233, 0.08), 0 10px 32px rgba(10, 0, 7, 0.45);
+  --hl-keyword: #f637fe;
+  --hl-string: #77ffd8;
+  --hl-title: #b79bff;
+  --hl-number: #ffd4e5;
+  --hl-comment: #8a7583;
+  --hl-attr: #f0b429;
 }
 
 [data-theme='light'] {
   color-scheme: light;
-  --bg: #ffffff;
-  --bg-sidebar: #f7f7f7;
-  --surface: #f3f3f3;
+  --bg: #fdfcf6;
+  --bg-sidebar: #f4f2e8;
+  --surface: #f1eee2;
   --surface-raised: #ffffff;
-  --hover: rgba(0, 0, 0, 0.045);
-  --active: rgba(0, 0, 0, 0.075);
-  --border: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.14);
-  --text: #0e0e0e;
-  --text-soft: #2b2b2b;
-  --muted: #6b6b6b;
-  --faint: #9e9e9e;
-  --accent: #111;
-  --accent-text: #fff;
-  --link: #0b63d8;
-  --green: #1a7f37;
-  --red: #cf222e;
-  --amber: #9a6700;
-  --add-bg: rgba(46, 160, 67, 0.12);
-  --add-text: #116329;
-  --del-bg: rgba(248, 81, 73, 0.12);
+  --composer: #ffffff;
+  --hover: rgba(62, 4, 43, 0.05);
+  --active: rgba(229, 32, 233, 0.1);
+  --border: rgba(25, 23, 17, 0.09);
+  --border-strong: rgba(25, 23, 17, 0.17);
+  --text: #191711;
+  --text-soft: #403d36;
+  --muted: #67635a;
+  --faint: #7f8174;
+  --accent: var(--lithium);
+  --accent-hover: var(--lithium-deep);
+  --accent-text: #ffffff;
+  --accent-strong: var(--lithium-deep);
+  --accent-strong-hover: #9a0e98;
+  --link: #bc0fbc;
+  --focus: #bc0fbc;
+  --green: #047a58;
+  --red: #d1232f;
+  --amber: #996600;
+  --add-bg: rgba(4, 122, 88, 0.1);
+  --add-text: #035c43;
+  --del-bg: rgba(209, 35, 47, 0.09);
   --del-text: #a40e26;
-  --code-bg: #f6f7f8;
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--border);
-  --hl-keyword: #cf222e;
-  --hl-string: #0a3069;
-  --hl-title: #8250df;
-  --hl-number: #0550ae;
-  --hl-comment: #6e7781;
-  --hl-attr: #953800;
+  --code-bg: #f8f6ee;
+  --shadow: 0 16px 48px rgba(62, 4, 43, 0.12), 0 0 0 1px var(--border);
+  --glow: 0 0 0 1px rgba(62, 4, 43, 0.04), 0 10px 32px rgba(62, 4, 43, 0.08);
+  --hl-keyword: #bc0fbc;
+  --hl-string: #047a58;
+  --hl-title: #814edf;
+  --hl-number: #b4532a;
+  --hl-comment: #716d64;
+  --hl-attr: #996600;
 }
 
 * {
@@ -124,7 +141,7 @@ pre {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--link) 35%, transparent);
+  background: color-mix(in srgb, var(--lithium) 35%, transparent);
 }
 
 /* Layout */
@@ -186,7 +203,8 @@ pre {
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  background: linear-gradient(135deg, #e520e9, #8b5cf6);
+  background: var(--lithium);
+  box-shadow: 0 0 16px rgba(229, 32, 233, 0.35);
   color: white;
   font: 600 11px/1 ui-monospace, 'SF Mono', monospace;
 }
@@ -310,6 +328,7 @@ pre {
 
 .session.current {
   background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
 }
 
 .session-main {
@@ -376,8 +395,8 @@ pre {
 
 .state.running,
 .state.busy {
-  background: var(--link);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--link) 60%, transparent);
+  background: var(--lithium);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
   animation: pulse 1.6s ease-out infinite;
 }
 
@@ -994,7 +1013,7 @@ pre {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--lithium);
   animation: bounce 1.2s ease-in-out infinite;
 }
 
@@ -1040,13 +1059,18 @@ pre {
   flex-direction: column;
   border: 1px solid var(--border-strong);
   border-radius: 22px;
-  background: var(--surface);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  transition: border-color 0.15s ease;
+  background: var(--composer);
+  box-shadow: var(--glow);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .composer:focus-within {
-  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+  border-color: var(--focus);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--lithium) 14%, transparent),
+    var(--glow);
 }
 
 .composer textarea {
@@ -1122,12 +1146,22 @@ pre {
   color: var(--accent-text);
 }
 
+.send:not(.stop):hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--lithium) 45%, transparent);
+}
+
 .send:disabled {
-  opacity: 0.25;
+  opacity: 0.3;
 }
 
 .send.stop {
-  background: var(--accent);
+  background: var(--text);
+  color: var(--bg);
+}
+
+.send.stop:hover {
+  background: var(--text-soft);
 }
 
 .suggestions {
@@ -1156,6 +1190,7 @@ pre {
 
 .suggestions button.active {
   background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
 }
 
 .suggestion-name {
@@ -1227,7 +1262,7 @@ pre {
 }
 
 .option.selected {
-  border-color: color-mix(in srgb, var(--text) 40%, transparent);
+  border-color: var(--focus);
   background: var(--active);
 }
 
@@ -1281,9 +1316,14 @@ pre {
   font-weight: 500;
 }
 
+/* Text on a button needs 4.5:1, so text buttons take the deeper Lithium; icon buttons keep the bright one. */
 .primary {
-  background: var(--accent);
+  background: var(--accent-strong);
   color: var(--accent-text);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-strong-hover);
 }
 
 .ghost {
@@ -1378,6 +1418,7 @@ pre {
 /* Empty state: the composer sits under the question, as in a desktop agent's new thread */
 
 .hero {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1389,6 +1430,18 @@ pre {
   padding: 0 28px 12vh;
 }
 
+/* The faint aqua and pink wash behind pydantic.dev's hero sections. */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 10% 0 30%;
+  z-index: -1;
+  background:
+    radial-gradient(50% 60% at 30% 40%, rgba(229, 32, 233, 0.09), transparent 70%),
+    radial-gradient(45% 55% at 72% 55%, rgba(119, 255, 216, 0.05), transparent 70%);
+  pointer-events: none;
+}
+
 .hero h1 {
   margin: 0 0 6px;
   text-align: center;
@@ -1398,7 +1451,7 @@ pre {
 }
 
 .hero-project {
-  color: var(--muted);
+  color: var(--lithium);
 }
 
 .hero-hint {
