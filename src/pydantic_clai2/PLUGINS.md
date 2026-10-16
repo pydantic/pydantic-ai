@@ -2565,8 +2565,8 @@ prompt the keyboard does:
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
   fails.
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
-  session persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
-  `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
+  session persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history
+  (up to the last step of a turn still running), `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
   refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
   from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
   `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do

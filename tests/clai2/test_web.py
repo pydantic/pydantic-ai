@@ -30,10 +30,11 @@ from websockets.typing import Origin
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins import web
@@ -568,28 +569,36 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
 
 
 def test_a_session_busy_in_another_clai_is_watched_not_copied(make_web: 'MakeWeb') -> None:
-    """Reading a session another CLAI runs saves nothing; only opening it continues a copy, as `/resume` does."""
+    """Reading a session another CLAI runs shows its saved steps and saves nothing; only opening it makes a copy."""
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
     shell = web_.shell
-    store = shell.sessions.store
+    store, steps = shell.sessions.store, shell.session.step_store
+    assert steps is not None
     summary = ConversationSummary(
-        workspace=shell.session.workspace, title='Live', outcome='running', owner_pid=os.getpid()
+        workspace=shell.session.workspace, title='Live', outcome='running', run_id='live', owner_pid=os.getpid()
     )
-    live = web_.portal.call(lambda: store.save(summary=summary, messages=[ModelRequest.user_text_prompt('hi')]))
+    prompt = ModelRequest.user_text_prompt('hi')
+    live = web_.portal.call(lambda: store.save(summary=summary, messages=[prompt]))
 
     def saved() -> set[str]:
         return {entry.id for entry in web_.portal.call(store.listing)}
+
+    def shown() -> tuple[bool, bool, list[str]]:
+        transcript = web_.get(f'/api/sessions/{live.id}').json()
+        return transcript['openable'], transcript['busy'], [item['text'] for item in transcript['items']]
 
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         socket.receive_text()
         running = web_.run()
         before = saved()
-        transcript = web_.get(f'/api/sessions/{live.id}').json()
-        assert (transcript['openable'], transcript['busy'], [item['text'] for item in transcript['items']]) == (
-            True,
-            True,
-            ['hi'],
+        assert shown() == (True, True, ['hi'])
+        # The other CLAI saves each step of its turn to the step store, and the conversation once the turn ends.
+        step = ModelResponse(parts=[TextPart('Step 1')])
+        frontier = ContinuableSnapshot(
+            run_id='live', step_index=1, messages=[prompt, step], state='interrupted', conversation_id=live.id
         )
+        web_.portal.call(lambda: steps.save_snapshot(frontier))
+        assert shown() == (True, True, ['hi', 'Step 1'])
         assert saved() == before, 'watching it saves no copy'
 
         assert web_.post(f'/api/sessions/{live.id}/open').status_code == 204
@@ -597,8 +606,8 @@ def test_a_session_busy_in_another_clai_is_watched_not_copied(make_web: 'MakeWeb
         assert snapshot.session.id not in before and snapshot.session.title == 'Live (fork)'
         assert saved() == before | {snapshot.session.id}
 
-        web_.portal.call(lambda: store.save(summary=replace(live, outcome='completed'), messages=[]))
-        assert web_.get(f'/api/sessions/{live.id}').json()['busy'] is False, 'its turn there ended'
+        web_.portal.call(lambda: store.save(summary=replace(live, outcome='completed'), messages=[prompt, step]))
+        assert shown() == (True, False, ['hi', 'Step 1']), 'its turn there ended'
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
 
