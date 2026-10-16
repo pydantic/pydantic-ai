@@ -214,10 +214,6 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
         # CI keeps no checkpoint between runs, so there is nothing to narrow against.
         return _check_everything(runner, 'CI is set')
 
-    if sys.version_info < (3, 11):
-        # Reading Pyright's file list out of pyproject.toml needs `tomllib`, added in 3.11.
-        return _check_everything(runner, 'this interpreter is older than Python 3.11')
-
     project = _load_project()
     if project is None:
         return _check_everything(runner, 'the Pyright file list is not one this script can reproduce')

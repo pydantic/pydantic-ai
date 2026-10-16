@@ -1,0 +1,112 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3.7-flash:streamGenerateContent?alt=sse
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "297"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: "data: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAISzgQBjz1rX/85Cr0l5cFg9n4wyVA8ehX4doVLaJPB3p6e0Frg4GAAIUrmxKkZdMMPI9J1oETKe4NYvRNkepU2VUtmhzH8gFcaH/yxb3KgDBJHNDDXs3Sv2EqsCX1fxVtdFBfOSOkLlCjfb/dhqYoZzrW03S+oQalZl9F8qqFanFC5yNocZqV+US/OagCE+VB1UzOwr/sQIb+7KjDyPHHvKZ3X9/P3zN20nsbuwawJT3gRhmfVtl2TQuXtG75YktAQQbtTMG3k70biyO40eij4lVHCQgGM+JXTk2zrp5BbOM6G0G6ZMQOPYc+sxPTyTL+Z53rajUS1aYJoPTDQm/YRPAOv6/egTIcurN95ny7lkHLSHb0YwGGObD4HAABG5un2UlaegfGXDbFBRQxEz7YYHq4StmuzFMHmrh/9U2Yd0g9ONn3rs9wH6NmDL9Gtk+q6ShQDRbGW4mzbjTQvxKwjaJUFQn2pkpFWQBxF0u25TTdGlEh8Juxw4xjzzGOGNz9VAKJ4/vQn1+dQitIDx+LGiIB1wYt9fwOwV9BJzAiUTb8RrkXbJHYwqn7ZZlsxgFtwhrj2W+7w8hbrp7EQ2BYjaeiDAOJX63Q9us0A2lN9PCgdBevVSSPuF/2FXiev9mqHXC7BgJyXqqfA4XGzXoA2QHC/IEIS9qzVmGIy0Gs3e8jl3Fpme+5ts6Ift4mN06eJCpUFxyD/w3EhJF32RE7NnF0CE3/9PNLedxytNkWe4g8AzIYU6qLfwU4MaKoHNnMz6AuvOnKclV5UEVi6rkiosA==\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAISjQMBjz1rX406KTgencET+fKqm27TOYUki8xhfqLKiQohrBrPNQQ/I/77jjf9Bi05zHE/C9TNkaDUgKAeUO8B9NFk5ZVePJbWToIqEseUG+H0bK8Yj4dE6In8xVZwCqxqSDeCtsRuFThzaeq81AMVnOMI8GzILtR+wDqK/FF+UNsgqqVKA16RtClgxdQkU/EJVAZygAOwhJtHyC29lsErRIi8g+8eB4NP9/e6N6VmaNJWQuDGXsIe2dydNr0xqLfrZ3dafO63DjK2hGMZxg/fCLaLHe119Utqhocyh1jdQFqkTq0w8SOM8UntMt20LMUy/GWoBqQPyl60T18WmFoPp6p1fwUEHem813aOWl5Yhfh5yDCwalqSDR507tLx1HwwMQ1IXIa0GrsWIc6LEsrmPXRAtO5ozarmRve+RcwJtb9Y1EnupX5Z/4UI3onbb941sxghp4WJFF0twXpxbWTthPnVdCpabZlMkIjASsHWmJZ7XpUzw3/+RHrsgK8brnzwF4RduK5gtSVdizbbjWGu\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAIS9wMBjz1rX2B5+AYGLsctE+tQk7WBh6AJTgb4J6dR7blm554zpV6uWdhyC/UyQQ6aTRhkLPbDVgeUXyy8rgc1Ged7kNg+CKCGBHL8rnlFuSkRIL9hiZSQW2h78ECbIt3HBsXfRQA6ZJzs/vo5tUN0FYMFFhSIXEn9QJ9R9NznL/ZnmOxRGJiGr9JTJXfOtstoPYgkrI2dV0v8nBXDEMQ4sS3LykJ9LhR+l2+qsjV0UQi06MNp5IQIuOyOUbsU7aH2aUfqvaPzASEkBgBwyDq40VfDYgxJpgu4Om9SK+ODfYIoJxEK5lJyJmq2+KD8eJksO4dvLbCQfRGSawcZdAPLIyQtkqH9iNEniI81/Tah4Oc8iv2YSfn+QfdeaAEv7Jq7S7ocvaX4GaClcpgF49irJU8Abn4yprCWS1IheOWlBNPNuuAEyjoTWGvHyl+CzupOnO8ZiiqycfWcEoCYoDtQ4RRYxx9lBKXZo6BlqdIcmLfokkWpSJVE5YC6SLsrC52aZv+2BcaRxYILlJtJ9+NnQMeoMNvciFOmhVvdr1dIlMAt8u6RLC0cOvbm2lQLT+1vydYzgnnNL8b+KKNyE7doqdA17mqr44IUpNkz4vuHD28HvsEO/TTkIiwhQoUiHaEp5xBI8LQ14e08cTvFns3x8mV7MF6qnRZyAQ==\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAISiAMBjz1rX36NckOoH0CDTW4tjKeYoU2hOKGJ2jx/3dYicmV/AMXi0gsXH4E7xj6o0W7p0DYZ8P4GFXXgMolLtcTotzHDjwNvRL0YXpeK+MijC9WJn6RBvim12I2nRgoZvVmrnZg4UkwdM4/D/T3taclsJpBDWeBIko9BRmWo+SzDA74Cd1KTuKFvbL6uJLX3hC35JzInvZTISDaGJjQc5ScbWO6swTWLnYd9ScpPC7zVu1wJ/g2s5UAkg1ne1NTu69GtDzZLCXma/IGytVF0BWGqtnwMI34rQdHSp2EiyoSZmFAsbbYt8E45YQQGS0NGVRlLnYKPvi2x0CA2JPOA4z132JQhtT8An9jP/xliYnx1e+MqSvD6IGp52H/UepZWFkFNu4vvLqiRhUbeKounREGwK76woNpsLl97cQY1RT/8otLKPTjrrFfrRm8LbjdTVPbYFoIv/0gFH8+6Q6e1AaiGg4Mqe5YXnRX5qzWeAzuwXY/gkrpxvRA+6+53/3FyEqDpJOYIRxCFaQ==\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"text\": \"No animals appear\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"text\": \" in this video, as it is a screen recording of a computer programming and code editing session.\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"AY89a18GQoOzJMOIIBHyipLwstU6sR9Eqon9+j9Acem3aJviy8yBguziHtu9BwYlTtw3rOTFh2sZCzbtc6eu1w5J6gadqv4qLAPRwTIkHB0jiPt3Zxou3fknowrv/QjpDwEGsWm7F1z58sPNFXK60CplnJrM/6pZSe2loYK9LGMWKwDn+ICRXUWicD+jiQEvwzOAmqyRnbbRgXsRu5C0iSzEOdSQXcB4I7RU+MvQFv4h3RAHJKiMl+CRcMVf2qfp2KRQ/h9ZRm+MCyuKvWBNG8zFuRymCKoutEqXVPapQvlRxvDfoVuMlTkQuTFWzXMywzWjGA2/HT1yl6PYiy5wivQrSd3TKK2+1G9qcFxWROiWQIc4hSPzW4Qk1EmMQvEgCZvYrrW4DVXKAdK8+vc/mcWzwmbc+KamVEla29rogxakYzcMV7rxdbHkv6uNgkJN+cMbZh7ZBrG8wUxHDRsBpH6kPamo3rBx7ZHyaswGI1tM4Q4ToT4XRgRvNp7gdzln1rpjFJo81WpgWxEoCBrstkIS02WvD9KAIRGxkhsLeb8x2bLU\"}]},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\": 261,\"candidatesTokenCount\": 83,\"totalTokenCount\": 5081,\"trafficType\": \"ON_DEMAND\",\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 261}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 83}],\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 707},{\"modality\": \"VIDEO\",\"tokenCount\": 3600}],\"toolUsePromptTokenCount\": 4307,\"thoughtsTokenCount\": 430},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:26.767950Z\",\"responseId\": \"5oHOas7vLpjlwtQP79_BoQ0\"}\r\n\r\n"
+  recorded_at: 2026-10-13T19:09:39.106651+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3.7-flash:streamGenerateContent?alt=sse
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1127"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+        - parts:
+          - text: >-
+              No animals appear in this video, as it is a screen recording of a computer
+              programming and code editing session.
+            thoughtSignature: >-
+              AY89a18GQoOzJMOIIBHyipLwstU6sR9Eqon9-j9Acem3aJviy8yBguziHtu9BwYlTtw3rOTFh2sZCzbtc6eu1w5J6gadqv4qLAPRwTIkHB0jiPt3Zxou3fknowrv_QjpDwEGsWm7F1z58sPNFXK60CplnJrM_6pZSe2loYK9LGMWKwDn-ICRXUWicD-jiQEvwzOAmqyRnbbRgXsRu5C0iSzEOdSQXcB4I7RU-MvQFv4h3RAHJKiMl-CRcMVf2qfp2KRQ_h9ZRm-MCyuKvWBNG8zFuRymCKoutEqXVPapQvlRxvDfoVuMlTkQuTFWzXMywzWjGA2_HT1yl6PYiy5wivQrSd3TKK2-1G9qcFxWROiWQIc4hSPzW4Qk1EmMQvEgCZvYrrW4DVXKAdK8-vc_mcWzwmbc-KamVEla29rogxakYzcMV7rxdbHkv6uNgkJN-cMbZh7ZBrG8wUxHDRsBpH6kPamo3rBx7ZHyaswGI1tM4Q4ToT4XRgRvNp7gdzln1rpjFJo81WpgWxEoCBrstkIS02WvD9KAIRGxkhsLeb8x2bLU
+          role: model
+        - parts:
+          - text: What filename is open in the active editor tab?
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: "data: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAIS9gQBjz1rX2lVFRC22ZlG/GLdgcY7Do/DNn1pwClc6raDes0rNACUV4umcgCGwpbvt0jec+M716bEbfEOkY2LprEJYLj6P2tC2L4nTk7hfBOE+iigfJ4M5kyPC74rM1udhRJWLR1Qzck7wdke68oRKRSFVMyXOHRL3xly/SiGEIPEaT5vEY05FAgAbgNM16Jtuk64T+Oiqut1sanA+kJtPhdMBT2PPy52VSY+HgE9+DHji8uUpAmQo1EeMdvmPppV6168VgWCpy+xHJprajAVAPGu9s0cSdB3TEhZv/dRm2jns1CuXUXKphOIDLv2iP12q9Ero4KTF5/fXQQO3z/c69TOPM4Z2BFNBY8DghCS0gfGJR+3G1N2ofq4/QNh3y8242QgNV8AVNFXo5WS3b4agDD0d/jG77b9uL0SamqFMsrDrisEqPgJPfIpowGJGqtMPCE2DWPeFbVw0IcfB1a7zQH0dhzlmLmi/mhn5l0SCAZJYCr+svSVQqa0kqis/q/MsZuuXqaWvbSRanQXT0WYKa5TF9kNwkQtrYTv+Sj6vN11S+7rfwXrIZ7yMZ3GT3YD/cgjJooBnTanLj5uB8jyuSWIaWXhJI+5KsK+0lAK9Le0HJEIjIpFXIYp350WYIcIUJA8MBaKGE/f05Xs54OHfU4CAbxjVQc1D2BvPiXtKWv5dlPBCnoBY/syoELJZ46l3+npTJOPAUJITB7xFPBJUpgqrpID7AE4R0F6mHk3xTTGt7/5WXOf7DNifppieA03GguoaQTDi92Jmpp+pR68inLXvQNixC5RemuBJpOmVPlJpsLVjd8oqBUQWD+Oix6Wi9VsMiRXxHg=\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:39.207535Z\",\"responseId\": \"84HOaq_VDJvhwtQP4_O1oAg\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAISlAMBjz1rX+K+7coHRy/MpjJg/REWZzE4VSROPy0vXH3RmyemZ6Zz9K3XGBZ7C8HPFmz6UENrb48yPHEU6MSv5gIk1VWiI+0Co65JoJ0M4ULXp0+eIjWs3GkuQM3h0d9ahx1VIMFH3YKq4wNZjtRnmFAjG4WgwdoWaAsNSnn5FJZy0dDqIDDt3ishnm6GajiWHEOe29XeilTgLAKF7uj+3UbYThRSeEcQTf+0SkohW5k2hKd2X5p8/T4oAMyOqNaahECfkaJ0xV7m4s4Cece73hSsiADOLLbJT1Q5P1J0CjyceQ2uEreaDRDMQQH4B6jvTZNhCKVkTcr4LNm5VSMBcindwHxH6tJVGz+SR8463mzqO6wTxNIeaIPbMsvjWzIU0BGhFqZr7F+/W8Jo0pR9K3eI8E1TjKBb6L/VxJXEWTtw98tF2RhK0Ykxl6SsIl3BPNKZIJI++/fzq1WrJl92RpOk/mRVMIqWMkmpHWNA2wrw3fnfU0sDPV48YIKWbmJlJel5+3V5LzrWAiYgMkZ34ZydbEuQ6w==\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:39.207535Z\",\"responseId\": \"84HOaq_VDJvhwtQP4_O1oAg\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"text\": \"The file open in the active editor tab is **`browserRouter.tsx`**.\"}]}}],\"usageMetadata\": {\"trafficType\": \"ON_DEMAND\"},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:39.207535Z\",\"responseId\": \"84HOaq_VDJvhwtQP4_O1oAg\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"AY89a1+soGCyq6TZFx35zoH90og1/LZlFuGYVgWKlLRxp/Ah5iNOrocNkPSdjRGUCTxTjCYpdet+24hla7PSWq1Py/uM2XhjpuHqmEduA30m/MQUIjMl+9tIZe4fKoNiWleDnA3DqQmfpVxgW9pR6Ut1SruMvhv6J8/jV+Z41g7jRbEMlK1GBBU7NHX9isJ0DHZldHKz6nElAPd85MBbDoknJDnBKRZu0vyr/tetWZ0cR1wfhp7NT4nuSfkgFlOFTNL7t+h72igxgMSxRz8+/RGqlbcWc3UFlnxxOdRvyz/m5KYWEVuenH8jLGl5sxYLwYfhbnnwU1UT/MnIEgjYDyVfC37bmPS/K54mmhPZNej77hACnlf2OzFzLz8hpDpfr2qJ9gWB6haBAohvjLCFcyPY+rlYFkCgmbpMwNXvogo1sjbQnDN8fViZ0aTSgsmUufezKStX\"}]},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\": 357,\"candidatesTokenCount\": 34,\"totalTokenCount\": 1416,\"trafficType\": \"ON_DEMAND\",\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 357}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 34}],\"toolUsePromptTokensDetails\": [{\"modality\": \"VIDEO\",\"tokenCount\": 600},{\"modality\": \"TEXT\",\"tokenCount\": 355}],\"toolUsePromptTokenCount\": 955,\"thoughtsTokenCount\": 70},\"modelVersion\": \"gemini-3.7-flash\",\"createTime\": \"2026-10-13T19:09:39.207535Z\",\"responseId\": \"84HOaq_VDJvhwtQP4_O1oAg\"}\r\n\r\n"
+  recorded_at: 2026-10-13T19:09:44.711659+00:00

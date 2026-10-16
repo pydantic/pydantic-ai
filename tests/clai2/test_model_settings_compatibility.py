@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
-from pydantic_clai2 import model_settings
-from pydantic_clai2.custom_params import CustomParamsMenu
-from pydantic_clai2.field_menu import FieldMenu, FieldRow
-from pydantic_clai2.model_menu import ModelSettingsSource
-from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.models import model_settings
+from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.menu_script import make_context
 
 
@@ -32,10 +32,10 @@ def test_reads_keep_known_overrides_and_ignore_future_fields(tmp_path: Path) -> 
     context, _ = make_context(tmp_path)
     saved: dict[str, JsonValue] = {'temperature': 0.5, 'future_setting': {'nested': [1, None, False]}}
     context.store.save_model_settings('test', saved)
-    assert context.model_settings('test') == {'temperature': 0.5}
+    assert context.model_settings('test') == {'cache': True, 'temperature': 0.5}
     assert context.store.model_settings('test') == saved
     context.store.save_model_settings('test', {'future_setting': True})
-    assert context.model_settings('test') is None
+    assert context.model_settings('test') == {'cache': True}
 
 
 def test_known_values_and_new_edits_still_validate() -> None:

@@ -1,216 +1,246 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '722'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Give me details about Mexico City. Use available background tools where helpful.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      output_config:
-        format:
-          schema:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-              country:
-                type: string
-              population:
-                type: integer
-            required:
-            - city
-            - country
-            - population
-            type: object
-          type: json_schema
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            country:
-              type: string
-          required:
-          - country
-          type: object
-        name: get_currency
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '613'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-f30bcd32d0ef8281b0044dd9bf4838dd-f9666b1b19055ba2-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - caller:
-          type: direct
-        id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
-        input:
-          country: Mexico
-        name: get_currency
-        type: tool_use
-      id: msg_012D84nr17fsA3jUdAePwnUP
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 753
-        output_tokens: 53
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1061'
+      - "667"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Give me details about Mexico City. Use available background tools where helpful.
-          type: text
-        role: user
-      - content:
-        - id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
-          input:
-            country: Mexico
-          name: get_currency
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: Mexican Peso (MXN)
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Give me details about Mexico City. Use available background tools where helpful.
             type: text
-          is_error: false
-          tool_use_id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      output_config:
-        format:
-          schema:
+        model: claude-sonnet-4-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_currency
+          description: ""
+          input_schema:
             additionalProperties: false
             properties:
-              city:
-                type: string
               country:
                 type: string
-              population:
-                type: integer
             required:
-            - city
             - country
-            - population
             type: object
-          type: json_schema
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            country:
-              type: string
-          required:
-          - country
-          type: object
-        name: get_currency
-    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '572'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1ecab8b5f893153f802fc6e81da5b6f5-ce352ffb3a16102d-01
+      - 00-a3e73fe4980a855145ea893d8549819c-2e7a0507558ee9b3-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3dzT2CjDqrgqkY9Ye4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":753,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01MruVnAsScpdx2ddiYPQsW2","name":"get_currency","input":{},"caller":{"type":"direct"}}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"count"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ry\": \"M"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"exico\"}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":753,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":53}            }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-29T16:28:27.577421+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "980"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: '{"city": "Mexico City", "country": "Mexico", "population": 9209944}'
-        type: text
-      id: msg_018dLcpRUm5LLnhx9ZrN31vD
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 826
-        output_tokens: 24
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Give me details about Mexico City. Use available background tools where helpful.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01MruVnAsScpdx2ddiYPQsW2
+            type: tool_use
+            name: get_currency
+            input:
+              country: Mexico
+        - role: user
+          content:
+          - tool_use_id: toolu_01MruVnAsScpdx2ddiYPQsW2
+            type: tool_result
+            content:
+            - text: Mexican Peso (MXN)
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_currency
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e5d79af55d1002be548cc61a4b1fd090-1d2065f2636d7454-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3e7wiUG1Pnw7EjmP8L","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":826,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"city\": \"Mexico City\", \"country"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\": \"Mexico\", \"population\": "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"9"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"209"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"944"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"}"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":826,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":24}       }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-09-29T16:28:29.103604+00:00

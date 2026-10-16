@@ -1,6 +1,7 @@
 """Isolate settings and provider access for every CLAI test."""
 
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import pytest
 from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
+from pydantic_clai2.config import Settings, credential_store
+from tests.clai2.cli_runner import CliRunner
 
 
 @pytest.fixture
@@ -57,16 +60,31 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
         fake.opened.append(url)
         return True
 
-    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', open_browser)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.OPEN_BROWSER', open_browser)
     return fake
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Copy out through OSC 52 only: the local clipboard command would replace the developer's clipboard."""
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.text_clipboard.copy_command', lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    # State such as the web UI's orchestrator chat, which `XDG_STATE_HOME` would otherwise keep outside `HOME`.
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    # Away from this repository's own files, such as the Agent Skills the `coder` plugin would load.
+    monkeypatch.chdir(tmp_path_factory.mktemp('work'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
+    # Claude Code and Codex sessions are read from the isolated home, never the developer's own.
+    monkeypatch.delenv('CLAUDE_CONFIG_DIR', raising=False)
+    monkeypatch.delenv('CODEX_HOME', raising=False)
     for name in (
         'LOGFIRE_TOKEN',
         'LOGFIRE_API_KEY',
@@ -87,12 +105,40 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         credentials[service, account] = value
 
     def delete_password(service: str, account: str) -> None:
-        del credentials[service, account]
+        if credentials.pop((service, account), None) is None:
+            raise PasswordDeleteError(account)
 
     monkeypatch.setattr(keyring, 'get_password', get_password)
     monkeypatch.setattr(keyring, 'set_password', set_password)
     monkeypatch.setattr(keyring, 'delete_password', delete_password)
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
+    # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
+    credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture(autouse=True)
+def native_tools() -> Iterator[None]:
+    """Default code mode to off, so shells run native tools unless a test turns it on.
+
+    CLAI turns code mode on by default, folding tools into `run_code`, but most shell tests script
+    native tool calls with `TestModel`. Override this fixture to test the real default.
+    """
+    setting = Settings.model_fields['code_mode']
+    shipped = setting.default
+    setting.default = False
+    Settings.model_rebuild(force=True)
+    try:
+        yield
+    finally:
+        setting.default = shipped
+        Settings.model_rebuild(force=True)
+
+
+def stored_accounts() -> set[str]:
+    """Accounts with a saved credential: each is an encrypted file, while the keyring only holds their key."""
+    directory = credential_store.credentials_path().parent
+    return {path.stem.removeprefix('credentials-') for path in directory.glob('credentials-*.enc')}
 
 
 @pytest.fixture
@@ -115,3 +161,9 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(keyring, 'set_password', set_value)
     monkeypatch.setattr(keyring, 'delete_password', delete)
     return entries
+
+
+@pytest.fixture
+def run_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> CliRunner:
+    """Run `clai2` in this process; see `CliRunner`."""
+    return CliRunner(monkeypatch=monkeypatch, capsys=capsys)
