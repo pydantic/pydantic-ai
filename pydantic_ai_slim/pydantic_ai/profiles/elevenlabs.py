@@ -39,12 +39,13 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
         # ElevenLabs' WebRTC transport is LiveKit-based with no server-side control-plane sideband.
         'supports_webrtc': False,
         'supports_thinking': False,
-        # `agent_response` is an explicit end-of-response frame carrying the whole reply text, so the
-        # turn boundary is a protocol fact, and every recorded response is one agent turn.
+        # A spoken reply ends with its last audio, which the `context_usage` report marks (with it in the
+        # agent's `client_events`, as the docs recommend); a text reply ends with `agent_response`. Only an
+        # agent without that report falls back to a second without audio.
         'synthesizes_turn_boundary': False,
         'responses_are_requests': True,
-        # Usage arrives as `context_usage`, once per user turn and after the `agent_response`
-        # boundary, so it is never attached to a `ModelResponse`: the response usage measures nothing
+        # Usage arrives as `context_usage`, once per reply, with its last audio, and is never attached
+        # to a `ModelResponse`: the response usage measures nothing
         # about the context. The live fraction is `ElevenLabsAgentsRealtimeConnection.context_limit_tokens`
         # against the reported `context_tokens` instead.
         'response_usage_covers_context': False,

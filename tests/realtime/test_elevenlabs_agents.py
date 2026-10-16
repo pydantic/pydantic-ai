@@ -12,6 +12,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
+import re
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from typing import Any
@@ -930,6 +931,30 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
     assert repointed == {
         'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_9', 'tool_new', 'tool_1', 'tool_5']}}}
     }
+
+
+@pytest.mark.parametrize(
+    ('overrides', 'tool_choice', 'instructions', 'toggle'),
+    [
+        ({'agent': {'prompt': {'prompt': False}}}, 'auto', 'Be terse.', 'agent.prompt.prompt'),
+        ({'agent': {'prompt': {'tool_ids': False}}}, 'none', '', 'agent.prompt.tool_ids'),
+    ],
+    ids=['instructions', 'tool-choice'],
+)
+async def test_tool_sync_changes_nothing_when_an_override_is_refused(
+    overrides: dict[str, Any], tool_choice: Any, instructions: str, toggle: str
+) -> None:
+    # The sync changes workspace state, so a conversation refused for a missing override toggle must not get to it.
+    recorder = RestRecorder(
+        agent_json(overrides=overrides),
+        extra={('GET', '/v1/convai/tools'): httpx2.Response(200, json=tools_listing())},
+    )
+    model = _model(recorder)
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync', tool_choice=tool_choice)
+    with pytest.raises(UserError, match=re.escape(f'`{toggle}`')):
+        async with _connect(model, instructions=instructions, tools=[WEATHER_TOOL], model_settings=settings):
+            pass  # pragma: no cover
+    assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
 
 
 async def test_tool_sync_patch_only_skips_the_repoint() -> None:
@@ -2691,6 +2716,17 @@ async def test_an_mcp_call_awaiting_approval_is_denied(reported: bool) -> None:
     assert [event.response_id for event in ended] == ['pydantic_ai_response_1']
     # Only the first such call warns.
     await _next_frames(frames, ws, [_mcp_call('awaiting_approval', tool_call_id='mcp_2')])
+
+
+async def test_an_mcp_call_denied_before_a_drop_keeps_its_denial() -> None:
+    connection, ws = _connection()
+    with pytest.warns(UserWarning, match='cannot do, so the call was denied'):
+        ws._incoming.append(json.dumps(_mcp_call('awaiting_approval')))  # pyright: ignore[reportPrivateUsage]
+        frames = [frame async for frame in connection.frames()]
+    returns = [part for part in _native_parts(frames) if isinstance(part, NativeToolReturnPart)]
+    assert [(part.tool_call_id, part.outcome) for part in returns] == [('mcp_1', 'denied')]
+    ended = [event for frame in frames for event in frame if isinstance(event, ResponseEnded)]
+    assert [event.status for event in ended] == ['lost']
 
 
 async def test_a_failed_mcp_call_is_recorded_as_failed() -> None:

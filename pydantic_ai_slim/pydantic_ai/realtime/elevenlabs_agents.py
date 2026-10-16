@@ -55,6 +55,7 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[elevenlabs-agents-realtime]"`'
     ) from _import_error
 
+from .. import _utils
 from .._http import legacy_httpx
 from .._instrumentation import get_instructions
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -1323,6 +1324,15 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                     "sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent."
                 )
         elif tool_sync == 'sync':
+            # The sync changes workspace state, so everything else that can refuse the conversation is checked
+            # first. Synced, the agent's client tools are the run's, so a `tool_choice` restriction needs the
+            # `tool_ids` override exactly when it leaves out one of them.
+            restricts = (tool_choice == 'none' or isinstance(tool_choice, tuple)) and bool(
+                {tool.name for tool in tools} - {tool.name for tool in advertised_tools}
+            )
+            self._initiation_payload(
+                instructions=instructions, agent=agent, settings=settings, tool_ids=[] if restricts else None
+            )
             attached_ids = await self._sync_tools(agent, tools)
         elif tool_sync == 'off':
             pass
@@ -1544,11 +1554,11 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         await self._ws.send(to_json(event).decode())
 
     async def frames(self) -> AsyncIterator[RealtimeFrame]:
-        read: asyncio.Future[str | bytes] | None = None
+        read: asyncio.Task[str | bytes] | None = None
         try:
             while True:
                 if read is None:
-                    read = asyncio.ensure_future(self._ws.recv())
+                    read = asyncio.create_task(self._ws.recv())
                 # A reply whose text is complete waits only so long for more of its audio (see `_AUDIO_TAIL_GRACE`).
                 # The read stays in flight across the wait: a cancelled read could drop the frame it holds.
                 done, _ = await asyncio.wait({read}, timeout=_AUDIO_TAIL_GRACE if self._tail is not None else None)
@@ -1584,7 +1594,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                     yield self._frame(events)
         finally:
             if read is not None:
-                read.cancel()
+                await _utils.cancel_and_drain(read)
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
@@ -1647,8 +1657,15 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         else:
             message = f'{_PROVIDER_LABEL} connection closed: {error}'
         self._tail = None
+        # A call denied for want of an approval was answered on the wire, so its return is in the response all the same.
+        denied = [event for part in self._mcp_denied.values() for event in self._native_part(part)]
+        self._mcp_denied.clear()
         return self._name_conversation(
-            [*self._lifecycle.connection_lost(), RealtimeSessionErrorEvent(message=message, recoverable=False)]
+            [
+                *(self._lifecycle.frame_for(denied) if denied else []),
+                *self._lifecycle.connection_lost(),
+                RealtimeSessionErrorEvent(message=message, recoverable=False),
+            ]
         )
 
     async def _map_event(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:

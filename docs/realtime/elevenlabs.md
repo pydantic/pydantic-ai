@@ -91,7 +91,7 @@ model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 | --- | --- |
 | `elevenlabs_agents_first_message`, `elevenlabs_agents_language` | The greeting the agent opens with and the conversation language |
 | `elevenlabs_agents_voice_id`, `elevenlabs_agents_tts` | The provider voice and the TTS delivery knobs (model, stability, speed, similarity boost) |
-| `elevenlabs_agents_llm` | The LLM the ElevenLabs pipeline runs, e.g. `gpt-5.2` |
+| `elevenlabs_agents_llm` | The LLM the ElevenLabs pipeline runs, by its ElevenLabs model id |
 | `elevenlabs_agents_dynamic_variables` | Values substituted into `{{placeholders}}` in the agent's prompts and messages |
 | `elevenlabs_agents_custom_llm_extra_body` | Extra request body for an agent backed by a custom LLM; gated by its own security toggle |
 | `elevenlabs_agents_user_id` | Opaque end-user identifier for ElevenLabs-side analytics |
@@ -189,7 +189,8 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 ### Gateway
 
 ElevenLabs is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
-through `provider='elevenlabs-agents'` or an `ElevenLabsProvider`.
+with an `elevenlabs-agents:<agent_id>` model string, or with `provider='elevenlabs'` or an
+`ElevenLabsProvider`.
 
 ### Audio formats
 
