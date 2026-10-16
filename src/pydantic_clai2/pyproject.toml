@@ -37,6 +37,10 @@ dependencies = [
     # plugins) runs a uvicorn callback server with `ws="websockets-sansio"`, which imports `websockets`
     # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
     "websockets>=13.0",
+    # The `web` plugin's server (`/web`, `clai2 --web`). A dependency rather than an extra so that
+    # `uvx pydantic-clai2 --web` works as is; uvicorn and starlette already come with `mcp`.
+    "fastapi>=0.115.0",
+    "uvicorn>=0.38.0",
     "genai-prices>=0.1.7",
     # 1.0 adds `termflow.live` (ScreenBuffer, render_diff, Widget), which paints the transcript panel.
     "termflow-md>=1.0.0,<2",

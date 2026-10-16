@@ -1,0 +1,663 @@
+"""The `web` plugin end to end: a shell driven over HTTP, its WebSocket stream, and the access checks."""
+
+import asyncio
+import html
+import io
+import threading
+from collections.abc import AsyncIterator, Callable, Iterator
+from concurrent.futures import Future
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TypeVar
+from urllib.parse import urlparse
+
+import anyio
+import httpx
+import httpx2
+import pytest
+from anyio.from_thread import BlockingPortal, start_blocking_portal
+from pydantic import JsonValue, TypeAdapter, ValidationError
+from rich.console import Console
+from starlette.testclient import TestClient, WebSocketTestSession
+from starlette.websockets import WebSocketDisconnect
+from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
+from websockets.typing import Origin
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2.builtin_plugins import web
+from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, live
+from pydantic_clai2.builtin_plugins.web.app import (
+    HEADER,
+    UNBUILT,
+    ASGIApp,
+    Guard,
+    Message,
+    Receive,
+    Scope,
+    Send,
+    create_app,
+)
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    ItemAdded,
+    Notice,
+    QuestionAsked,
+    QuestionClosed,
+    ServerMessage,
+    SessionsChanged,
+    Snapshot,
+    TextDelta,
+    TitleChanged,
+    ToolDone,
+    TurnEnded,
+    TurnStarted,
+)
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import PluginHost, SessionEndReason
+
+TOKEN = 'secret-token'
+HOSTS = frozenset({'testserver'})
+
+
+class QuestionModel(TestModel):
+    """Asks one question with `ask_user_question`, then answers with text."""
+
+    def gen_tool_args(self, tool_def: ToolDefinition) -> JsonValue:
+        return {
+            'questions': [
+                {'question': 'Which colour?', 'header': 'Colour', 'options': [{'label': 'Red'}, {'label': 'Blue'}]}
+            ]
+        }
+
+
+@dataclass
+class Web:
+    shell: _Shell[None, str]
+    plugin: WebPlugin
+    client: TestClient
+    portal: BlockingPortal
+    """The event loop the shell and every request share, as uvicorn and CLAI do."""
+    runs: list[Future[SessionEndReason]] = field(default_factory=list[Future[SessionEndReason]])
+
+    def run(self) -> Future[SessionEndReason]:
+        """Run the shell's prompt loop on the client's event loop until it reads `/exit`."""
+        self.runs.append(self.portal.start_task_soon(self.shell.run))
+        return self.runs[-1]
+
+    def post(self, path: str, body: object = None) -> httpx2.Response:
+        return self.client.post(path, json=body, headers={HEADER: TOKEN})
+
+    def get(self, path: str) -> httpx2.Response:
+        return self.client.get(path, headers={HEADER: TOKEN})
+
+
+MakeWeb = Callable[..., Web]
+"""Builds a headless shell with the `web` plugin loaded, and a test client for its app."""
+
+
+def static_dir(tmp_path: Path) -> Path:
+    static = tmp_path / 'static'
+    (static / 'assets').mkdir(parents=True)
+    (static / 'index.html').write_text(
+        '<html><head><script src="/assets/app.js"></script><link href="/assets/index.css"></head></html>'
+    )
+    (static / 'assets' / 'app.js').write_text('console.log("hi")')
+    return static
+
+
+@pytest.fixture
+def make_web(tmp_path: Path) -> Iterator['MakeWeb']:
+    made_webs: list[Web] = []
+    portals: list[AbstractContextManager[BlockingPortal]] = []
+
+    def make(agent: Agent[None, str], settings: dict[str, JsonValue] | None = None) -> Web:
+        shell = create_shell(
+            agent,
+            deps=None,
+            plugins=(),
+            usage_limits=None,
+            console=Console(file=io.StringIO(), width=100),
+            settings=None,
+            store=SettingsStore(tmp_path / 'config.db'),
+            builtin_plugins=[
+                PluginSettings(
+                    id='web',
+                    factory='pydantic_clai2.builtin_plugins.web',
+                    settings={'open_browser': False, **(settings or {})},
+                )
+            ],
+            project=ProjectSettings(),
+            headless=True,
+        )
+        portals.append(start_blocking_portal())
+        portal = portals[-1].__enter__()
+        portal.call(shell.loader.load_all)
+        [entry] = [entry for entry in shell.loader.entries() if entry.loaded is not None]
+        plugin = entry.loaded.plugin if entry.loaded else None
+        assert isinstance(plugin, WebPlugin)
+        client = TestClient(create_app(remote=plugin.remote, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
+        client.portal = portal
+        made = Web(shell=shell, plugin=plugin, client=client, portal=portal)
+        made_webs.append(made)
+        return made
+
+    yield make
+    for made in made_webs:
+        for run in made.runs:
+            run.cancel()
+        made.portal.call(made.shell.loader.close, 'exit')
+    for opened in portals:
+        opened.__exit__(None, None, None)
+
+
+WIRE = TypeAdapter[ServerMessage](ServerMessage)
+MessageT = TypeVar('MessageT')
+
+
+def receive_until(socket: WebSocketTestSession, kind: type[MessageT]) -> tuple[list[ServerMessage], MessageT]:
+    """Messages from the WebSocket up to and including the first `kind`, which is also returned on its own."""
+    received: list[ServerMessage] = []
+    while True:
+        message = WIRE.validate_json(socket.receive_text())
+        received.append(message)
+        if isinstance(message, kind):
+            return received, message
+
+
+def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb') -> None:
+    """A prompt entered over HTTP runs in the shell; the browser sees the turn, its text, its tools, and the end."""
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    def lookup(*, query: str) -> str:
+        """Look something up."""
+        return f'found {query}'
+
+    agent = Agent(
+        TestModel(call_tools=['lookup'], custom_output_text='All **done**.'), deps_type=type(None), capabilities=[tools]
+    )
+    web_ = make_web(agent)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        snapshot = WIRE.validate_json(socket.receive_text())
+        assert isinstance(snapshot, Snapshot) and snapshot.items == [] and not snapshot.running
+        running = web_.run()
+        assert web_.post('/api/input', {'text': 'look it up'}).status_code == 204
+        messages, end = receive_until(socket, TurnEnded)
+        [started] = [message.item for message in messages if isinstance(message, TurnStarted)]
+        assert started is not None and started.text == 'look it up'
+        items = [message.item for message in messages if isinstance(message, ItemAdded)]
+        [tool] = [item for item in items if item.kind == 'tool']
+        assert (tool.name, tool.state) == ('lookup', 'running')
+        [done] = [message for message in messages if isinstance(message, ToolDone)]
+        assert (done.id, done.text, done.state) == (tool.id, 'found a', 'done')
+        [answer] = [item for item in items if item.kind == 'assistant']
+        deltas = [message.text for message in messages if isinstance(message, TextDelta) and message.id == answer.id]
+        assert answer.text + ''.join(deltas) == 'All **done**.'
+        assert end.outcome == 'completed' and end.usage is not None and end.usage.requests == 2
+        # A browser connecting now sees the finished turn as history.
+        state = web_.get('/api/state').json()
+        assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
+        assert state['items'][-1]['text'] == 'All **done**.'
+        assert web_.post('/api/input', {'text': '/cost'}).status_code == 204
+        _, notice = receive_until(socket, Notice)
+        assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
+        assert web_.post('/api/input', {'text': '/missing'}).status_code == 204
+        _, notice = receive_until(socket, Notice)
+        assert (notice.level, notice.text) == ('error', 'Unknown command /missing. Use /help.')
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
+    """`/fork` fires the turn moments for its background run; the browser shows only the held conversation's turns."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
+    shell = web_.shell
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/fork look elsewhere'})
+        forked, _ = receive_until(socket, Notice)
+
+        async def forks_finished() -> None:
+            await asyncio.gather(*(record.task for record in shell.forks.records))
+
+        web_.portal.call(forks_finished)
+        assert not web_.plugin.remote.running
+        web_.post('/api/input', {'text': 'here'})
+        messages, end = receive_until(socket, TurnEnded)
+        started = [message for message in [*forked, *messages] if isinstance(message, TurnStarted)]
+        assert [message.item.text for message in started if message.item] == ['here']
+        assert end.outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_failed_turn(make_web: 'MakeWeb') -> None:
+    async def fail(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise RuntimeError('model unavailable')
+        yield  # pragma: no cover
+
+    web_ = make_web(Agent(FunctionModel(stream_function=fail), deps_type=type(None)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'try'})
+        end = receive_until(socket, TurnEnded)[1]
+        assert (end.outcome, end.error, end.usage) == ('failed', 'model unavailable', None)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
+    web_ = make_web(Agent(TestModel()))
+    assert web_.post('/api/input', {'text': '   '}).json() == {'detail': 'Type a prompt or a /command.'}
+    response = web_.post('/api/input', {'text': '!ls'})
+    assert (response.status_code, response.json()) == (400, {'detail': 'Shell lines (!) run only in the terminal.'})
+
+
+def test_completion_and_models(make_web: 'MakeWeb') -> None:
+    web_ = make_web(Agent(TestModel()))
+    [web_command] = [entry for entry in web_.get('/api/complete?text=/we').json() if entry['text'] == 'web']
+    assert web_command == {
+        'text': 'web',
+        'start': 2,
+        'display': '/web',
+        'meta': 'Open this session in your browser; /web stop ends the web UI',
+    }
+    assert web_.get('/api/models').json() == []
+    assert web_.post('/api/model', {'name': 'test:model'}).status_code == 204
+
+
+def test_questions_are_answered_from_the_browser(make_web: 'MakeWeb') -> None:
+    agent = Agent(QuestionModel(call_tools=['ask_user_question']), deps_type=type(None))
+    web_ = make_web(agent)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'ask me'})
+        asked = receive_until(socket, QuestionAsked)[1].questions
+        assert [question['id'] for question in web_.get('/api/state').json()['questions']] == [asked.id]
+        assert [option.label for option in asked.questions[0].options] == ['Red', 'Blue']
+        wrong = web_.post(f'/api/questions/{asked.id}', {'answers': [{'header': 'Colour', 'selected': ['Green']}]})
+        assert wrong.status_code == 400
+        assert web_.post('/api/questions/unknown', {'answers': None}).status_code == 404
+        answered = web_.post(f'/api/questions/{asked.id}', {'answers': [{'header': 'Colour', 'selected': ['Blue']}]})
+        assert answered.status_code == 204
+        assert receive_until(socket, QuestionClosed)[1].id == asked.id
+        assert receive_until(socket, TurnEnded)[1].outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    tool = next(item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'tool')
+    assert 'Blue' in tool['text']
+
+
+@pytest.mark.parametrize(
+    ('answers', 'expected'), [([{'header': 'Colour', 'custom': 'Teal'}], 'Teal'), (None, 'declined')]
+)
+def test_a_custom_answer_or_declining(make_web: 'MakeWeb', answers: JsonValue, expected: str) -> None:
+    agent = Agent(QuestionModel(call_tools=['ask_user_question']), deps_type=type(None))
+    web_ = make_web(agent)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'ask me'})
+        asked = receive_until(socket, QuestionAsked)[1].questions
+        assert web_.post(f'/api/questions/{asked.id}', {'answers': answers}).status_code == 204
+        receive_until(socket, TurnEnded)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    [result] = [item['text'] for item in web_.get('/api/state').json()['items'] if item['kind'] == 'tool']
+    assert expected in result
+
+
+def test_interrupt_from_the_browser(make_web: 'MakeWeb') -> None:
+    started = anyio.Event()
+
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    async def wait() -> str:
+        """Wait forever."""
+        started.set()
+        await anyio.sleep_forever()
+        return 'never'  # pragma: no cover
+
+    agent = Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools])
+    web_ = make_web(agent)
+    assert web_.post('/api/interrupt').json() == {'interrupted': False}
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'wait'})
+        web_.portal.call(started.wait)
+        # A browser connecting mid-turn sees the prompt and the running tool.
+        state = web_.get('/api/state').json()
+        assert state['running'] is True
+        assert [(item['kind'], item['state']) for item in state['items']] == [('user', 'done'), ('tool', 'running')]
+        assert web_.post('/api/interrupt').json() == {'interrupted': True}
+        assert receive_until(socket, TurnEnded)[1].outcome == 'cancelled'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """The sidebar lists, reads, renames, forks, deletes, opens, and starts sessions in the store `/resume` uses."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
+    shell = web_.shell
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'first'})
+        receive_until(socket, TurnEnded)
+        # The turn's outcome is saved after its run ends; the sidebar is told once it is.
+        receive_until(socket, SessionsChanged)
+        first = shell.session.conversation_id
+        elsewhere = web_.portal.call(
+            lambda: shell.sessions.store.save(
+                summary=ConversationSummary(workspace='/somewhere/else', title='Elsewhere'), messages=[]
+            )
+        )
+
+        projects = web_.get('/api/sessions').json()
+        assert projects[0]['current'] is True
+        assert [(entry['title'], entry['state'], entry['current']) for entry in projects[0]['sessions']] == [
+            ('first', 'completed', True)
+        ]
+        assert [project['name'] for project in projects[1:]] == ['else']
+        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['sessions'][0]['id'] == elsewhere.id
+
+        transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
+        assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
+        assert web_.get('/api/sessions/missing').status_code == 404
+
+        assert web_.post(f'/api/sessions/{first}/rename', {'title': 'Renamed'}).status_code == 204
+        assert receive_until(socket, TitleChanged)[1].title == 'Renamed'
+        receive_until(socket, SessionsChanged)
+        assert shell.session.title == 'Renamed'
+        assert web_.post(f'/api/sessions/{first}/rename', {'title': ' '}).status_code == 400
+
+        assert web_.client.delete(f'/api/sessions/{first}', headers={HEADER: TOKEN}).status_code == 400
+        assert web_.client.delete(f'/api/sessions/{elsewhere.id}', headers={HEADER: TOKEN}).status_code == 204
+
+        assert web_.post('/api/sessions/new').status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert snapshot.session.id != first and snapshot.items == []
+
+        assert web_.post(f'/api/sessions/{first}/open').status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id, snapshot.session.title) == (first, 'Renamed')
+
+        copy = web_.post(f'/api/sessions/{first}/fork').json()['id']
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id, snapshot.session.title) == (copy, 'Renamed (fork)')
+        assert [item.text for item in snapshot.items] == ['first', 'ok']
+
+        other = web_.portal.call(
+            lambda: shell.sessions.store.save(
+                summary=ConversationSummary(workspace='/somewhere/else', title='Other'), messages=[]
+            )
+        )
+        forked = web_.post(f'/api/sessions/{other.id}/fork').json()['id']
+        assert shell.session.conversation_id == copy, 'a copy saved in another directory is not opened'
+        assert forked != other.id
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
+    """A turn this CLAI runs shows as running; one another live process runs, as busy; a dead one, as cancelled."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    import os
+
+    for title, pid in (('Live', os.getpid()), ('Dead', 2**22 + 12345)):
+        web_.portal.call(
+            lambda title=title, pid=pid: store.save(
+                summary=ConversationSummary(workspace='/x', title=title, outcome='running', owner_pid=pid),
+                messages=[],
+            )
+        )
+    sessions = {entry['title']: entry['state'] for entry in web_.get('/api/sessions').json()[-1]['sessions']}
+    assert sessions == {'Live': 'busy', 'Dead': 'cancelled'}
+    web_.plugin.remote.running = True
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.get('/api/sessions').json()[0]['sessions'][0]
+    assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
+    web_ = make_web(Agent(TestModel()))
+    web_.plugin.host.sessions = None
+    assert web_.get('/api/sessions').status_code == 404
+
+
+def test_access_checks(make_web: 'MakeWeb') -> None:
+    """Every request needs this launch's token, for the address the server listens on."""
+    web_ = make_web(Agent(TestModel()))
+    client = web_.client
+    assert client.get('/api/state').status_code == 403
+    assert client.get('/api/state', headers={HEADER: 'wrong'}).status_code == 403
+    assert client.get(f'/api/state?token={TOKEN}').status_code == 403, 'the API takes only the header'
+    assert client.get('/api/state', headers={HEADER: TOKEN, 'host': 'evil.example'}).status_code == 403
+    page = client.get('/')
+    assert (page.status_code, page.text) == (
+        403,
+        "Open the address CLAI printed: it carries this launch's access token.",
+    )
+    assert client.get('/assets/app.js').status_code == 403
+    assert client.get(f'/?token={TOKEN}', headers={'host': 'evil.example'}).status_code == 403
+
+    page = client.get(f'/?token={TOKEN}')
+    assert f'<meta name="clai-token" content="{TOKEN}"></head>' in page.text
+    assert f'src="/assets/app.js?token={TOKEN}"' in page.text and f'href="/assets/index.css?token={TOKEN}"' in page.text
+    assert "frame-ancestors 'none'" in page.headers['content-security-policy']
+    assert 'set-cookie' not in page.headers, 'cookies reach every port of the host'
+    assert client.get(f'/assets/app.js?token={TOKEN}').text == 'console.log("hi")'
+
+    for path, headers in (
+        ('/ws', {'origin': 'http://testserver'}),
+        (f'/ws?token={TOKEN}', {}),
+        (f'/ws?token={TOKEN}', {'origin': 'http://evil.example'}),
+    ):
+        with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(path, headers=headers):
+            pass  # pragma: no cover
+        assert refused.value.code == 1008
+
+
+def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
+    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).remote
+    with TestClient(create_app(remote=remote, token=TOKEN, hosts=HOSTS, static=tmp_path / 'missing')) as client:
+        page = client.get(f'/?token={TOKEN}')
+        assert (page.status_code, page.text) == (503, UNBUILT)
+
+
+def test_a_build_without_assets(tmp_path: Path) -> None:
+    static = tmp_path / 'bare'
+    static.mkdir()
+    (static / 'index.html').write_text('<html><head></head></html>')
+    remote = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})).remote
+    with TestClient(create_app(remote=remote, token=TOKEN, hosts=HOSTS, static=static)) as client:
+        assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
+        assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
+            'detail': "Plugin 'web' has no prompt to enter input at."
+        }
+
+
+async def test_lifespan_passes_through() -> None:
+    seen: list[str] = []
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        seen.append(str(scope['type']))
+
+    guard = Guard(inner, token=TOKEN, hosts=HOSTS)
+
+    async def receive() -> Message:  # pragma: no cover
+        return {}
+
+    async def send(message: Message) -> None:  # pragma: no cover
+        pass
+
+    await guard({'type': 'lifespan'}, receive, send)
+    assert seen == ['lifespan']
+
+
+def web_shell(
+    tmp_path: Path, settings: dict[str, JsonValue] | None = None, *, terminal: bool = True
+) -> '_Shell[None, str]':
+    return create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO(), force_terminal=terminal),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=[
+            PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings=settings or {})
+        ],
+        project=ProjectSettings(),
+        headless=True,
+    )
+
+
+async def test_web_command_serves_on_a_free_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/web` serves on the shell's loop and opens it through a private page; `stop` ends it, and so does unloading."""
+    opened: list[str] = []
+    loop_thread = threading.get_ident()
+
+    def open_browser(url: str) -> bool:
+        assert threading.get_ident() != loop_thread, 'a foreground `$BROWSER` command would block the loop'
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr(web, 'open_browser', open_browser)
+    shell = web_shell(tmp_path)
+    await shell.loader.load_all()
+    assert await shell.commands.execute_async('/web status') == 'The web UI is not running. Start it with /web.'
+    assert await shell.commands.execute_async('/web stop') == 'The web UI is not running.'
+    started = await shell.commands.execute_async('/web')
+    url = started.removeprefix('Web UI running at ')
+    assert url.startswith('http://127.0.0.1:')
+    [launcher] = [Path(urlparse(page).path) for page in opened]
+    assert launcher.stat().st_mode & 0o077 == 0, 'only you can read the token'
+    assert html.escape(url) in launcher.read_text()
+    assert await shell.commands.execute_async('/web start') == f'Web UI already running at {url}'
+    assert (await shell.commands.execute_async('/web status')).endswith('with 0 browser(s) connected.')
+    base, token = url.split('/?token=')
+    port = urlparse(base).port
+    async with httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(), trust_env=False) as client:
+        assert (await client.get(url)).status_code != 403
+        assert (await client.get(url, headers={'host': f'attacker.example:{port}'})).status_code == 403
+    async with connect(f'ws://127.0.0.1:{port}/ws?token={token}', origin=Origin(base)) as socket:
+        snapshot = WIRE.validate_json(await socket.recv())
+        assert isinstance(snapshot, Snapshot)
+    with pytest.raises(InvalidStatus):
+        async with connect(f'ws://127.0.0.1:{port}/ws?token={token}', origin=Origin('http://attacker.example')):
+            pass  # pragma: no cover
+    with pytest.raises(ValueError, match='Usage: /web'):
+        await shell.commands.execute_async('/web open now')
+    assert await shell.commands.execute_async('/web stop') == 'Web UI stopped.'
+    assert not launcher.exists()
+    await shell.commands.execute_async('/web')
+    await shell.loader.close('exit')
+
+
+async def test_stopping_the_only_interface_is_refused(tmp_path: Path) -> None:
+    """With no terminal prompt, as under `clai2 --web`, stopping the web UI would leave nothing to type at."""
+    shell = web_shell(tmp_path, {'open_browser': False}, terminal=False)
+    await shell.loader.load_all()
+    await shell.commands.execute_async('/web')
+    with pytest.raises(ValueError, match='only way to drive this CLAI'):
+        await shell.commands.execute_async('/web stop')
+    await shell.loader.close('exit')
+
+
+async def test_the_default_port_admits_bare_host_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On port 80, browsers send `Host: 127.0.0.1` without the port, so that form is admitted too."""
+    served: list[frozenset[str]] = []
+
+    class Served:
+        port = 80
+
+        @classmethod
+        def serve(cls, app: Callable[[int], ASGIApp], *, host: str, port: int) -> 'Served':
+            guard = app(cls.port)
+            assert isinstance(guard, Guard)
+            served.append(guard.hosts)
+            return cls()
+
+        async def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(web, 'WebServer', Served)
+    shell = web_shell(tmp_path, {'port': 80, 'open_browser': False})
+    await shell.loader.load_all()
+    assert (await shell.commands.execute_async('/web')).startswith('Web UI running at http://127.0.0.1:80/?token=')
+    assert {'127.0.0.1', 'localhost', '[::1]', '127.0.0.1:80'} <= served[0]
+    await shell.loader.close('exit')
+
+
+async def test_a_server_beyond_loopback_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    served: list[tuple[str, frozenset[str]]] = []
+
+    class Served:
+        port = 4321
+
+        @classmethod
+        def serve(cls, app: Callable[[int], ASGIApp], *, host: str, port: int) -> 'Served':
+            guard = app(cls.port)
+            assert isinstance(guard, Guard)
+            served.append((host, guard.hosts))
+            return cls()
+
+        async def stop(self) -> None:
+            pass
+
+    monkeypatch.setattr(web, 'WebServer', Served)
+    shell = web_shell(tmp_path, {'host': '[fd00::5]', 'open_browser': False, 'ask_user': False})
+    await shell.loader.load_all()
+    started = await shell.commands.execute_async('/web')
+    assert started.startswith('Web UI running at http://[fd00::5]:4321/?token=')
+    assert started.endswith('Other machines can reach it: keep the link private.')
+    assert served == [('fd00::5', frozenset({'127.0.0.1:4321', 'localhost:4321', '[::1]:4321', '[fd00::5]:4321'}))]
+    await shell.loader.close('exit')
+
+
+@pytest.mark.parametrize('host', ['0.0.0.0', '::', '[::]', '::0', '0:0:0:0:0:0:0:0', ' '])
+def test_every_interface_is_refused(host: str) -> None:
+    with pytest.raises(ValidationError, match='listen on one address'):
+        WebSettings(host=host)
+
+
+def test_a_host_name_is_kept() -> None:
+    assert WebSettings(host=' localhost ').host == 'localhost'
+
+
+def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
+    """A browser that stops reading is closed with "try again" rather than buffering the whole session."""
+    monkeypatch.setattr(live, 'QUEUE_LIMIT', 2)
+    web_ = make_web(Agent(TestModel()))
+    hub = web_.plugin.hub
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+
+        async def flood() -> None:
+            # All at once, on the loop, so the WebSocket cannot forward any in between.
+            for text in ('one', 'two', 'three'):
+                hub.publish(Notice(text=text))
+
+        web_.portal.call(flood)
+        with pytest.raises(WebSocketDisconnect) as closed:
+            socket.receive_text()
+        assert closed.value.code == 1013
+    assert hub.clients == 0
