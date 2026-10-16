@@ -623,7 +623,11 @@ class Session(Generic[DepsT, OutputT]):
         """
         if self.model is None:
             return self.agent.model
-        model = self.resolve_model(self.model)
+        return await self.build_model(self.model)
+
+    async def build_model(self, name: str) -> Model | str:
+        """What `resolve_model` makes of `name`, as it does of the selected model."""
+        model = self.resolve_model(name)
         return await model if isinstance(model, Awaitable) else model
 
     def _run_settings(self) -> AgentModelSettings[DepsT] | None:

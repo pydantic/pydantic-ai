@@ -519,9 +519,28 @@ class OrchestratorState:
     running: bool
     items: list[Item]
     questions: list[Questions]
+    model: str | None
+    """The model it runs on; `None` follows the session's."""
 
 
-OrchestratorEvent = ItemMessage | TurnStarted | TurnEnded | QuestionAsked | QuestionClosed | OrchestratorState
+@dataclass(frozen=True, kw_only=True)
+class OrchestratorModel:
+    """The orchestrator chat's model changed; `None` follows the session's again."""
+
+    type: Literal['orchestrator_model'] = 'orchestrator_model'
+    model: str | None
+
+
+OrchestratorEvent = (
+    ItemMessage
+    | TurnStarted
+    | TurnEnded
+    | QuestionAsked
+    | QuestionClosed
+    | Notice
+    | OrchestratorState
+    | OrchestratorModel
+)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -1,0 +1,103 @@
+"""What the web UI's composers complete and run: CLAI's commands, and the orchestrator chat's own.
+
+The session's composer enters every `/command` at the prompt. The orchestrator chat runs its own (`OWN`)
+on its conversation, and enters at the prompt only CLAI's commands declared with `conversation=False`
+(`shared`), showing their results in its chat instead of the session's.
+"""
+
+from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, Notice
+from pydantic_clai2.commands import is_command_input
+from pydantic_clai2.plugins import CommandEnd, PluginHost
+
+OWN = {
+    'model': "Show or pick the orchestrator's model; /model session follows the session's again",
+    'new': 'Start a new orchestrator chat; its workspaces are kept',
+    'clear': 'Alias of /new',
+    'help': 'List the commands that work in the orchestrator chat',
+    'stop': "Stop the orchestrator's running turn",
+}
+"""The orchestrator chat's own commands, acting on its conversation in place of the session's of the same name."""
+
+FOLLOW = ('session', 'default')
+"""What `/model` takes in the orchestrator chat to follow the session's model again."""
+
+
+def shared(host: PluginHost[None], name: str) -> bool:
+    """Whether CLAI's command `name` changes CLAI rather than the session's conversation, so this chat runs it too."""
+    return name not in OWN and (command := host.command(name)) is not None and not command.conversation
+
+
+def picks_session_model(name: str, args: list[str]) -> bool:
+    """Whether a shared command picks the session's model all the same: `/set model NAME` is `/model NAME` there."""
+    return name in ('set', 'settings') and args[:1] == ['model']
+
+
+def parse(text: str) -> tuple[str, list[str]]:
+    """A `/command`'s name and arguments; a bare `/` asks for help, as at the prompt."""
+    name, *args = text.removeprefix('/').split() or ['help']
+    return name, args
+
+
+def result_notice(event: CommandEnd) -> Notice | None:
+    """What a chat shows for a command that ended: its error, its output, or nothing."""
+    if event.error is not None:
+        return Notice(text=str(event.error), level='error', command=event.text)
+    return Notice(text=event.output, command=event.text) if event.output else None
+
+
+async def completions(host: PluginHost[None], text: str) -> list[CompletionInfo]:
+    """What Tab offers at the prompt for `text`."""
+    return [
+        CompletionInfo(
+            text=completion.text,
+            start=-completion.start_position,
+            display=completion.display or completion.text,
+            meta=completion.display_meta,
+        )
+        for completion in await host.complete(text)
+    ]
+
+
+async def saved_models(host: PluginHost[None]) -> list[str]:
+    """The saved models and chains `/model` offers, as `PROVIDER:NAME`."""
+    return [completion.text for completion in await completions(host, '/model ') if ':' in completion.text]
+
+
+async def orchestrator_completions(host: PluginHost[None], text: str) -> list[CompletionInfo]:
+    """What Tab offers in the orchestrator chat: its own commands and the shared ones, with their arguments."""
+    words = text[1:].split()
+    if not is_command_input(text) or (not words and text.endswith(' ')):
+        return []
+    if len(words) <= 1 and not text.endswith(' '):
+        prefix = text[1:]
+        own = [
+            CompletionInfo(text=name, start=len(prefix), display=f'/{name}', meta=meta)
+            for name, meta in OWN.items()
+            if prefix in name
+        ]
+        others = [found for found in await completions(host, text) if shared(host, found.text)]
+        # Best match first, as at the prompt: the exact name, then names starting with the fragment.
+        return sorted([*own, *others], key=lambda found: (found.text != prefix, not found.text.startswith(prefix)))
+    name, args = words[0], [*words[1:], *([''] if text.endswith(' ') else [])]
+    if name == 'model' and len(args) == 1:
+        choices = (FOLLOW[0], *await saved_models(host))
+        return [
+            CompletionInfo(text=choice, start=len(args[0]), display=choice) for choice in choices if args[0] in choice
+        ]
+    if not shared(host, name) or picks_session_model(name, args):
+        return []
+    # Nor is `model` offered as the setting to change, which would pick the session's.
+    found = await completions(host, text)
+    return [completion for completion in found if not picks_session_model(name, [*args[:-1], completion.text])]
+
+
+async def orchestrator_help(host: PluginHost[None]) -> str:
+    """`/help` in the orchestrator chat: its own commands, then CLAI's that it runs too."""
+    others = [found for found in await completions(host, '/') if shared(host, found.text)]
+    return '\n'.join(
+        [
+            *(f'/{name}: {meta}' for name, meta in OWN.items()),
+            *(f'/{found.text}: {found.meta}' for found in others),
+            "The session's own commands, such as /fork or /compact, work in a session, not here.",
+        ]
+    )

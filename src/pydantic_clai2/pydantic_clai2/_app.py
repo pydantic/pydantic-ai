@@ -612,10 +612,19 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
+    commands.register(
+        Command(
+            name='keys',
+            description='Manage saved API keys',
+            handler=keys_command,
+            during_turn=True,
+            conversation=False,
+        )
+    )
     commands.register(
         Command(
             name='login',
+            conversation=False,
             description=(
                 'Sign in: openai-codex, github-copilot, or one a plugin adds; NAME@PROFILE adds another account'
             ),
@@ -627,6 +636,7 @@ def create_shell(
     commands.register(
         Command(
             name='accounts',
+            conversation=False,
             description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
             handler=models.accounts,
             during_turn=True,
@@ -634,6 +644,7 @@ def create_shell(
     )
     set_ = Command(
         name='set',
+        conversation=False,
         description='Change settings; no arguments opens the menu',
         handler=lambda args: set_command(context, args),
         complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
@@ -644,6 +655,7 @@ def create_shell(
     commands.register(
         Command(
             name='theme',
+            conversation=False,
             description='Select a Termflow palette; no arguments opens the picker',
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
@@ -746,6 +758,7 @@ def create_shell(
     commands.register(
         Command(
             name='config',
+            conversation=False,
             description='show|get|set|reset settings',
             handler=lambda args: config_command(store, args),
             complete=config_completions,
@@ -781,6 +794,7 @@ def create_shell(
     commands.register(
         Command(
             name='spinner',
+            conversation=False,
             description='Select the working animation; no arguments opens the picker',
             handler=lambda args: spinner_command(context, spinners, args),
             complete=lambda args: spinner_completions(spinners, args),
@@ -790,6 +804,7 @@ def create_shell(
     commands.register(
         Command(
             name='plugins',
+            conversation=False,
             description='Manage plugins; no arguments opens the menu',
             handler=lambda args: (
                 _PLUGINS_OFF if not loader.enabled else loader.command(args) if args else open_plugins_menu(loader)

@@ -2,7 +2,8 @@
 
 It has its own conversation and only the tools in `workspace_tools`, plus `ask_user_question`, answered
 in its own chat. The session's agent gets none of them. Its conversation is one JSON file in CLAI's state
-directory, so it survives a reload and a restart, and never shows among the saved sessions.
+directory, so it survives a reload and a restart, and never shows among the saved sessions; the model
+chosen for it is another file beside it. Its `/commands` are in `chat_commands`.
 """
 
 import asyncio
@@ -17,21 +18,33 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from anyio import get_cancelled_exc_class, to_thread
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, repair_messages
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUser, AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.chat_commands import (
+    FOLLOW,
+    OWN,
+    orchestrator_help,
+    parse,
+    picks_session_model,
+    result_notice,
+    saved_models,
+    shared,
+)
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_clai2.builtin_plugins.web.protocol import (
     EventTranslator,
     Item,
     ItemAdded,
     ItemLog,
+    Notice,
     OrchestratorEvent,
     OrchestratorMessage,
+    OrchestratorModel,
     OrchestratorState,
     ServerMessage,
     TurnEnded,
@@ -39,14 +52,19 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     history_items,
     usage_info,
 )
+from pydantic_clai2.commands import expand_bare_command, is_command_input
 from pydantic_clai2.config.settings_store import state_dir
-from pydantic_clai2.plugins import PluginHost, TurnOutcome
+from pydantic_clai2.models.model_catalog import check_installed
+from pydantic_clai2.plugins import CommandEnd, PluginHost, TurnOutcome
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
 
 HISTORY = 'orchestrator.json'
 """The conversation's file in CLAI's state directory."""
+SETTINGS = 'orchestrator-settings.json'
+"""What the user chose for the orchestrator, beside its conversation, so every CLAI and a new chat keep it."""
 
 INSTRUCTIONS = """\
 You are CLAI's orchestrator. You manage workspaces: checkouts of a repository on their own branch, each \
@@ -95,9 +113,15 @@ def write_saved(path: Path, messages: list[ModelMessage], *, revision: str | Non
     """Replace `path` with `messages` through a new file only you can read; `ChatChanged` if it is not at `revision`."""
     if _revision(path)[1] != revision:
         raise ChatChanged
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = ModelMessagesTypeAdapter.dump_json(messages)
-    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{HISTORY}.', suffix='.tmp')
+    _replace(path, data)
+    return Saved(messages=messages, revision=hashlib.sha256(data).hexdigest())
+
+
+def _replace(path: Path, data: bytes) -> None:
+    """Replace `path` with `data` through a new file only you can read, so no reader sees half of it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
     try:
         with os.fdopen(descriptor, 'wb') as file:
             file.write(data)
@@ -105,7 +129,21 @@ def write_saved(path: Path, messages: list[ModelMessage], *, revision: str | Non
     except BaseException:
         os.unlink(name)
         raise
-    return Saved(messages=messages, revision=hashlib.sha256(data).hexdigest())
+
+
+class OrchestratorSettings(BaseModel):
+    """What the user chose for the orchestrator chat; a choice not made follows the session."""
+
+    model: str | None = None
+    """The model its turns run on; `None` uses the session's."""
+
+
+def read_settings(path: Path) -> OrchestratorSettings:
+    """The choices in `path`; none when there is no file or it cannot be read."""
+    try:
+        return OrchestratorSettings.model_validate_json(path.read_bytes())
+    except (OSError, ValidationError):
+        return OrchestratorSettings()
 
 
 class Orchestrator:
@@ -127,6 +165,14 @@ class Orchestrator:
         """The running turn was told to stop, or is saving: it is not cancelled again, so it always ends."""
         self._tools: WorkspaceTools | None = None
         self._agent: Agent[None, str] | None = None
+        self._model: str | None = None
+        """The model chosen for its turns, as last read or chosen; `None` follows the session's."""
+        self._entered: list[str] = []
+        """CLAI commands this chat entered at the prompt whose end it has not seen yet, to show their results.
+
+        Matched by text, all `CommandEnd` carries: one cancelled while it runs ends without one, so the same
+        text entered next from the session's composer answers here instead.
+        """
 
     @property
     def running(self) -> bool:
@@ -136,10 +182,15 @@ class Orchestrator:
     def path(self) -> Path:
         return state_dir() / HISTORY
 
+    @property
+    def settings_path(self) -> Path:
+        return state_dir() / SETTINGS
+
     async def load(self) -> Saved:
-        """The conversation, read from its file again between turns, as another CLAI may have saved it since."""
+        """The conversation and its model, read again between turns, as another CLAI may have saved them since."""
         if self.running:
             return self._saved
+        self._model = (await to_thread.run_sync(read_settings, self.settings_path)).model
         if self._unsaved is not None:
             return Saved(messages=self._unsaved, revision=self._saved.revision)
         self._saved = await to_thread.run_sync(read_saved, self.path)
@@ -160,7 +211,11 @@ class Orchestrator:
         if self.running:
             items += self._turn.items.values()
         return OrchestratorState(
-            enabled=self.enabled(), running=self.running, items=items, questions=self.answerer.questions
+            enabled=self.enabled(),
+            running=self.running,
+            items=items,
+            questions=self.answerer.questions,
+            model=self._model,
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -188,10 +243,13 @@ class Orchestrator:
     # What the browser does.
 
     async def send(self, text: str) -> None:
-        """Start a turn with `text`; one runs at a time, and only while the `workspaces` plugin is on."""
-        text = text.strip()
+        """Run a `/command`, or start a turn with `text`: one at a time, and only while `workspaces` is on."""
+        text = expand_bare_command(text.strip())
         if not text:
             raise ValueError('Type a message for the orchestrator.')
+        if is_command_input(text):
+            await self._command(text)
+            return
         if not self.enabled():
             raise RuntimeError('Turn the `workspaces` plugin on first.')
         saved = await self.load()
@@ -212,7 +270,10 @@ class Orchestrator:
         error: str | None = None
         usage: RunUsage | None = None
         try:
-            model = await self.host.conversation.resolved_model()
+            conversation = self.host.conversation
+            model = await (
+                conversation.resolved_model() if self._model is None else conversation.build_model(self._model)
+            )
             if model is None:
                 raise RuntimeError('Choose a model for this session first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:
@@ -260,6 +321,92 @@ class Orchestrator:
         if not self._stopping:
             self._stopping = True
             self._task.cancel()
+        return True
+
+    async def _command(self, text: str) -> None:
+        """Run one of the chat's own commands, or enter one of CLAI's shared ones at the prompt.
+
+        The prompt runs CLAI's as it runs the session's, and `command_ended` shows the result here.
+        """
+        name, args = parse(text)
+        if shared(self.host, name) and not picks_session_model(name, args):
+            self._entered.append(text)
+            try:
+                self.host.send_input(text)
+            except RuntimeError:
+                self._entered.remove(text)
+                raise
+            return
+        try:
+            output = await self._run_own(name, args)
+        except (ValueError, RuntimeError) as error:
+            self._send(Notice(text=str(error), level='error', command=text))
+        else:
+            if output:
+                self._send(Notice(text=output, command=text))
+
+    async def _run_own(self, name: str, args: list[str]) -> str:
+        if name == 'model':
+            return await self._model_command(args)
+        if name in OWN and args:
+            raise ValueError(f'Usage: /{name}')
+        if name in ('new', 'clear'):
+            await self.clear()
+            return ''
+        if name == 'help':
+            return await orchestrator_help(self.host)
+        if name == 'stop':
+            return '' if self.interrupt() else 'The orchestrator is not working.'
+        if picks_session_model(name, args):
+            raise ValueError(
+                f"/{name} model picks the session's model, in a session; /model NAME picks the orchestrator's."
+            )
+        if self.host.command(name) is not None:
+            raise ValueError(f'/{name} works in a session, not in the orchestrator chat. See /help.')
+        raise ValueError(f'Unknown command /{name}. Use /help.')
+
+    async def _model_command(self, args: list[str]) -> str:
+        """`/model`: show the orchestrator's model and the saved ones, pick one, or follow the session's again."""
+        if args and args[0] in MODEL_SUBCOMMANDS:
+            raise ValueError(f'/model {args[0]} works in a session, not in the orchestrator chat.')
+        if len(args) > 1:
+            raise ValueError('Usage: /model [NAME|session]')
+        if args and args[0] in FOLLOW:
+            await self.select_model(None)
+            return f"The orchestrator follows the session's model, {self.host.status.model}, from its next turn."
+        if args:
+            await self.select_model(args[0])
+            return f'The orchestrator runs on {args[0]} from its next turn.'
+        await self.load()
+        current = self._model or f"{self.host.status.model}, the session's"
+        saved = ', '.join(await saved_models(self.host)) or 'none'
+        return (
+            f'The orchestrator runs on {current}.\nSaved models: {saved}.\n'
+            "/model NAME picks one for it alone; /model session follows the session's again."
+        )
+
+    async def select_model(self, name: str | None) -> None:
+        """Run the next turns on `name`, checked as `/model NAME` checks it, or on the session's model with `None`.
+
+        The session's own model stays as it is.
+        """
+        if name is not None:
+            check_installed(name)
+        data = OrchestratorSettings(model=name).model_dump_json().encode()
+        try:
+            await to_thread.run_sync(_replace, self.settings_path, data)
+        except OSError as exc:
+            raise RuntimeError(f"The orchestrator's model could not be saved: {exc}") from exc
+        self._model = name
+        self._send(OrchestratorModel(model=name))
+
+    def command_ended(self, event: CommandEnd) -> bool:
+        """Show the result of a CLAI command this chat entered; `False` for any other, which the session shows."""
+        if event.text not in self._entered:
+            return False
+        self._entered.remove(event.text)
+        if (notice := result_notice(event)) is not None:
+            self._send(notice)
         return True
 
     def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:

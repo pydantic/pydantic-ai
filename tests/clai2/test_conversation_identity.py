@@ -72,6 +72,14 @@ def test_transcript_identity() -> None:
     assert (named.conversation_id, named.title) == ('abc', 'Named')
 
 
+async def test_transcript_resolves_its_model_or_a_named_one() -> None:
+    transcript = Transcript(model='test')
+    assert (await transcript.resolved_model(), await transcript.build_model('other:model')) == (
+        'test',
+        'other:model',
+    )
+
+
 async def test_session_publishes_each_change_once(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)

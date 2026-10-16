@@ -254,6 +254,11 @@ async def test_complete_offers_what_tab_does(tmp_path: Path) -> None:
         f'option{index}' for index in range(100)
     ]
     assert await host.complete('/broken ') == [], 'a failing completer offers nothing, as in the editor'
+    # The declaration behind a name, as `/help` lists it: `/set` changes CLAI, `/cost` reads the conversation.
+    set_, cost_ = host.command('set'), host.command('cost')
+    assert set_ is not None and not set_.conversation and cost_ is not None and cost_.conversation
+    assert host.command('fast') is None, 'only for Codex models, so not available here'
+    assert host.command('nonsense') is None
     await shell.loader.close('exit')
 
 
@@ -296,6 +301,7 @@ async def test_a_host_without_a_shell() -> None:
         host.send_input('hello')
     assert not host.interrupt()
     assert await host.complete('/') == []
+    assert host.command('help') is None
     assert host.sessions is None
     assert host.tasks is None
 

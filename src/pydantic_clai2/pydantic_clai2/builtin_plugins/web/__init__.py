@@ -104,6 +104,7 @@ class WebPlugin(Plugin[WebSettings]):
         return (
             Command(
                 name='web',
+                conversation=False,
                 description='Open this session in your browser; /web stop ends the web UI',
                 handler=self.command,
                 complete=lambda args: ('start', 'stop', 'status') if len(args) <= 1 else (),

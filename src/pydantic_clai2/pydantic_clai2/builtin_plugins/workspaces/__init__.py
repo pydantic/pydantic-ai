@@ -80,6 +80,7 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
         return (
             Command(
                 name='workspaces',
+                conversation=False,
                 description='List workspaces; create KIND [REPO [REF]], open ID, stop ID, or destroy ID',
                 handler=self.command,
                 complete=self.complete,

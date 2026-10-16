@@ -77,6 +77,13 @@ class Conversation(Protocol):
         """
         ...
 
+    async def build_model(self, name: str) -> Model | str:
+        """The model `name` selects, built as the selected one is: `chain:NAME`, `PROVIDER@PROFILE:NAME`, a plugin's prefix.
+
+        A name it does not build itself comes back as it is, for core to infer.
+        """
+        ...
+
     async def resume(self, conversation_id: str) -> str:
         """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
 
@@ -355,6 +362,10 @@ class Transcript:
     async def resolved_model(self) -> Model | str | None:
         """The `model` given at construction."""
         return self.model
+
+    async def build_model(self, name: str) -> Model | str:
+        """`name` as it is, for core to infer."""
+        return name
 
     async def resume(self, conversation_id: str) -> str:
         """An in-memory transcript has no saved conversations to switch to."""
@@ -732,6 +743,14 @@ class PluginHost(Generic[DepsT]):
         headless `-p` run is not cancelled.
         """
         return self._interrupt()
+
+    def command(self, name: str, /) -> Command | None:
+        """The `/NAME` command `/help` lists now, given without its slash; `None` when there is none.
+
+        A remote UI reads its declaration, such as `conversation`, to tell what it may run where.
+        """
+        found = next((command for command in self._commands or () if command.name == name), None)
+        return found if found is not None and found.available() else None
 
     async def complete(self, text: str, /) -> list[Completion]:
         """What Tab offers at the prompt for `text`: command names with descriptions, their arguments, `@` paths.

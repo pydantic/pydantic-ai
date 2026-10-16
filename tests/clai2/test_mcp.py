@@ -107,6 +107,7 @@ async def test_builtin_is_enabled_and_the_dashboard_is_the_front_door() -> None:
     assert declaration.factory == 'pydantic_clai2.mcp'
     plugin = make_plugin({})
     assert len(plugin.capabilities) == 1
+    assert [command.conversation for command in plugin.commands] == [False], 'it changes CLAI, not the conversation'
     dashboard = await plugin.commands.execute_async('/mcp')
     assert 'No MCP servers yet' in dashboard
     assert '/mcp install' in dashboard

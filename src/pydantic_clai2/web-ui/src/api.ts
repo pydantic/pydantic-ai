@@ -107,6 +107,9 @@ export const orchestrator = {
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/orchestrator/interrupt'),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', '/api/orchestrator/answer', { id, answers }),
   clear: () => call<void>('POST', '/api/orchestrator/clear'),
+  complete: (text: string) => call<CompletionInfo[]>('GET', `/api/orchestrator/complete?text=${encodeURIComponent(text)}`),
+  /** Its own model; `null` follows the session's again. */
+  selectModel: (name: string | null) => call<void>('POST', '/api/orchestrator/model', { name }),
 }
 
 /** Start a workspace's CLAI if needed and open its own page in a new tab. */

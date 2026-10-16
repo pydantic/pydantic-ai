@@ -235,23 +235,44 @@ export function reduce(state: State, message: ServerMessage): State {
 export interface OrchestratorView {
   /** Whether the `workspaces` plugin is on, which the orchestrator needs; `null` until the server says. */
   enabled: boolean | null
+  /** The model it runs on; `null` follows the session's. */
+  model: string | null
   chat: State
 }
 
-export const initialOrchestrator: OrchestratorView = { enabled: null, chat: initial }
+export const initialOrchestrator: OrchestratorView = { enabled: null, model: null, chat: initial }
 
 /** What the orchestrator chat gets on the WebSocket, or `enabled` from asking the server again. */
 export type OrchestratorAction = OrchestratorEvent | { type: 'enabled'; enabled: boolean }
 
+/** The chat's `items` from the server, keeping the notices and turn summaries this page added after the item they followed.
+
+The server sends the whole chat as a turn starts, its prompt last; theirs stay above it, even when a turn that failed
+before it was saved leaves fewer items. An empty chat is a new one, which drops them too.
+ */
+function withLocal(entries: Entry[], items: Item[], running: boolean): Entry[] {
+  if (items.length === 0) return items
+  const last = running ? items.length - 1 : items.length
+  const after: Entry[][] = [[], ...items.map(() => [])]
+  let seen = 0
+  for (const entry of entries) {
+    if (entry.kind !== 'notice' && entry.kind !== 'turn') seen++
+    else after[Math.min(seen, last)]?.push(entry)
+  }
+  return [...(after[0] ?? []), ...items.flatMap((item, index) => [item, ...(after[index + 1] ?? [])])]
+}
+
 export function reduceOrchestrator(view: OrchestratorView, action: OrchestratorAction): OrchestratorView {
   if (action.type === 'enabled') return { ...view, enabled: action.enabled }
+  if (action.type === 'orchestrator_model') return { ...view, model: action.model }
   if (action.type !== 'orchestrator_state') return { ...view, chat: reduce(view.chat, action) }
   const chat = view.chat
   return {
     enabled: action.enabled,
+    model: action.model,
     chat: {
       ...chat,
-      entries: action.items,
+      entries: withLocal(chat.entries, action.items, action.running),
       running: action.running,
       questions: action.questions,
       turnStartedAt: action.running ? chat.turnStartedAt : null,

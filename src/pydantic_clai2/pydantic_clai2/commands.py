@@ -98,6 +98,12 @@ class Command:
     handlers that may take a while and only print through the console: one that reads keys or
     opens a menu needs the suspended editor every other command gets.
     """
+    conversation: bool = True
+    """Whether it acts on the session's conversation, as `/fork` or a skill does.
+
+    `False` marks one that changes CLAI itself, such as its settings, keys, or plugins, so a chat beside
+    the session, such as the web UI's orchestrator chat, runs it too.
+    """
     overridable: bool = False
     """Give way to another command with the same name, whichever registers first, instead of clashing.
 
