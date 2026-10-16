@@ -1022,6 +1022,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         tool_call_id=call.tool_call_id,
                     )
                     self.output_parts.append(part)
+                    yield _messages.FunctionToolCallEvent(call)
                     yield _messages.FunctionToolResultEvent(part)
         elif calls:
             for call in calls:
@@ -1158,6 +1159,7 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     tool_call_id=call.tool_call_id,
                 )
                 self.output_parts.append(part)
+                yield _messages.FunctionToolCallEvent(call)
                 yield _messages.FunctionToolResultEvent(part)
         else:
             # Every output failed; run function tools so the model can correct next round.

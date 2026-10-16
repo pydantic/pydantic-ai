@@ -6382,7 +6382,8 @@ async def test_stream_skipped_tool_returns_roundtrip(frontend_tool: bool) -> Non
 
         @agent.tool_plain(name='get_weather')
         def weather(location: str) -> str:
-            raise NotImplementedError  # pragma: no cover - skipped: an output tool already produced the final result
+            # Skipped: an output tool already produced the final result.
+            raise NotImplementedError  # pragma: no cover
 
     server_history: list[ModelMessage] = []
 

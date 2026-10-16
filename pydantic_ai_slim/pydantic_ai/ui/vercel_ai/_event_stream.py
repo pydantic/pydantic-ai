@@ -339,16 +339,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def _handle_tool_call(self, event: ToolCallEvent) -> AsyncIterator[BaseChunk]:
         part = event.part
-        # The call event arrived; we own the input-chunk lifecycle from here. Drop the
-        # stash so `_handle_tool_result` doesn't double-emit a backfill chunk.
-        self._streamed_call_parts.pop(part.tool_call_id, None)
-
-        # `args_valid is None` covers resume of non-`ToolApproved` deferred results
-        # (`ToolDenied`, `ModelRetry`, direct return) and the output-tool
-        # end-strategy-skipped path. The original `tool-input-available` already fired
-        # on the first agent run; re-emitting here would be misleading.
+        # `args_valid is None`: the call wasn't validated because it won't run here. On resume of
+        # a non-`ToolApproved` deferred result (`ToolDenied`, `ModelRetry`, direct return), the
+        # original `tool-input-available` already fired on the first agent run, so nothing is
+        # emitted. For a call skipped because a final result was already processed, the input
+        # streamed in this run: keep the stash so `_handle_tool_result` backfills the chunk.
         if event.args_valid is None:
             return
+
+        # We own the input-chunk lifecycle from here. Drop the stash so `_handle_tool_result`
+        # doesn't double-emit a backfill chunk.
+        self._streamed_call_parts.pop(part.tool_call_id, None)
 
         # SDK v6+ supports `tool-input-error`, so we suppress `tool-input-available` on
         # validation failure and let `_handle_tool_result` emit the dedicated error chunk

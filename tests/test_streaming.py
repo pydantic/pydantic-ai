@@ -56,8 +56,10 @@ from pydantic_ai import (
     ThinkingPart,
     ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -2671,6 +2673,66 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_early_strategy_emits_events_for_skipped_tool_calls(self):
+        """Calls skipped because an output tool already produced the final result still emit their events.
+
+        Each skipped function or deferred call gets an unvalidated `FunctionToolCallEvent` and a
+        `FunctionToolResultEvent` carrying the stub return recorded in history, like a skipped output tool.
+        """
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            yield {
+                0: DeltaToolCall('final_result', '{"value": "final"}', tool_call_id='call-output'),
+                1: DeltaToolCall('regular_tool', '{"x": 1}', tool_call_id='call-regular'),
+                2: DeltaToolCall('deferred_tool', '{"x": 2}', tool_call_id='call-deferred'),
+                3: DeltaToolCall('final_result', '{"value": "other"}', tool_call_id='call-output-2'),
+            }
+
+        agent = Agent(
+            FunctionModel(stream_function=sf),
+            output_type=[OutputType, DeferredToolRequests],
+            end_strategy='early',
+            toolsets=[ExternalToolset([ToolDefinition(name='deferred_tool')])],
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        async with agent.run_stream_events('test early strategy') as event_stream:
+            events: list[tuple[str, str, bool | str | None]] = []
+            async for event in event_stream:
+                if isinstance(event, ToolCallEvent):
+                    events.append((type(event).__name__, event.tool_call_id, event.args_valid))
+                elif isinstance(event, ToolResultEvent):
+                    assert isinstance(event.part, ToolReturnPart)
+                    events.append((type(event).__name__, event.tool_call_id, event.part.model_response_str()))
+
+        assert events == snapshot(
+            [
+                ('OutputToolCallEvent', 'call-output', True),
+                ('OutputToolResultEvent', 'call-output', 'Final result processed.'),
+                ('OutputToolCallEvent', 'call-output-2', None),
+                (
+                    'OutputToolResultEvent',
+                    'call-output-2',
+                    'Output tool not used - a final result was already processed.',
+                ),
+                ('FunctionToolCallEvent', 'call-regular', None),
+                (
+                    'FunctionToolResultEvent',
+                    'call-regular',
+                    'Tool not executed - a final result was already processed.',
+                ),
+                ('FunctionToolCallEvent', 'call-deferred', None),
+                (
+                    'FunctionToolResultEvent',
+                    'call-deferred',
+                    'Tool not executed - a final result was already processed.',
                 ),
             ]
         )

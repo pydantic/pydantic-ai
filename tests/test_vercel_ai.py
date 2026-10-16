@@ -3505,7 +3505,8 @@ async def test_run_stream_skipped_tool_returns():
 
     @agent.tool_plain
     def get_weather(location: str) -> str:
-        raise NotImplementedError  # pragma: no cover - skipped: an output tool already produced the final result
+        # Skipped: an output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
 
     request = SubmitMessage(
         id='foo',
