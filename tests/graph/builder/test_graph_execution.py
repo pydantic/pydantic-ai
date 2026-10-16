@@ -490,6 +490,133 @@ async def test_join_with_fanned_producer(
     assert execution_order == (['downstream'] if skip_fan_result else ['fan_result', 'downstream'])
 
 
+@pytest.mark.parametrize('skip_step_3', [False, True])
+async def test_join_dispatched_mid_run_feeds_downstream_join(skip_step_3: bool):
+    """A join finalized while other steps are running hands its tasks to the caller before a downstream join is checked.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/9629.
+    """
+    g = GraphBuilder(output_type=list[str])
+    step_4_reduced = Event()
+    step_5_started = Event()
+    step_5_inputs: list[list[str]] = []
+
+    def reduce_and_signal(current: list[str], inputs: str) -> list[str]:
+        step_4_reduced.set()
+        return reduce_list_append(current, inputs)
+
+    @g.step
+    async def step_1(ctx: StepContext[None, None, None]) -> str:
+        await step_4_reduced.wait()
+        return 'step_1'
+
+    @g.step
+    async def step_2(ctx: StepContext[None, None, None]) -> str:
+        await step_4_reduced.wait()
+        return 'step_2'
+
+    @g.step
+    async def step_4(ctx: StepContext[None, None, None]) -> str:
+        return 'step_4'
+
+    @g.step
+    async def slow_unrelated_step(ctx: StepContext[None, None, None]) -> str:
+        # Only finishes once `step_5` has started, so joins can't wait for this to complete.
+        await step_5_started.wait()
+        return 'slow_unrelated_step'
+
+    @g.step
+    async def step_3(ctx: StepContext[None, None, list[str]]) -> str:
+        return 'step_3'
+
+    @g.step
+    async def step_5(ctx: StepContext[None, None, list[str]]) -> str:
+        step_5_inputs.append(sorted(ctx.inputs))
+        step_5_started.set()
+        return 'step_5'
+
+    join_1_2 = g.join(reduce_list_append, initial_factory=list[str])
+    join_3_4 = g.join(reduce_and_signal, initial_factory=list[str])
+    join_all = g.join(reduce_list_append, initial_factory=list[str])
+
+    g.add(
+        g.edge_from(g.start_node).to(step_1, step_2, step_4, slow_unrelated_step),
+        g.edge_from(step_1, step_2).to(join_1_2),
+        g.edge_from(join_1_2).to(step_3),
+        g.edge_from(step_3, step_4).to(join_3_4),
+        g.edge_from(join_3_4).to(step_5),
+        g.edge_from(step_5, slow_unrelated_step).to(join_all),
+        g.edge_from(join_all).to(g.end_node),
+    )
+
+    saw_step_3 = False
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        async with g.build().iter() as run:
+            async for batch in run:
+                if isinstance(batch, EndMarker):
+                    break
+                if any(task.node_id == step_3.id for task in batch):
+                    saw_step_3 = True
+                    if skip_step_3:
+                        run.override_next([task for task in batch if task.node_id != step_3.id])
+
+    assert saw_step_3
+    assert step_5_inputs == ([['step_4']] if skip_step_3 else [['step_3', 'step_4']])
+    assert run.output is not None
+    assert sorted(run.output) == ['slow_unrelated_step', 'step_5']
+
+
+@pytest.mark.parametrize('with_running_step', [False, True])
+async def test_end_run_from_join_batch(with_running_step: bool):
+    """The caller can end the run instead of executing the tasks of a join finalized mid-run."""
+    g = GraphBuilder(output_type=list[str])
+    never = Event()
+
+    @g.step
+    async def step_1(ctx: StepContext[None, None, None]) -> str:
+        return 'step_1'
+
+    @g.step
+    async def step_2(ctx: StepContext[None, None, None]) -> str:
+        return 'step_2'
+
+    @g.step
+    async def after_join(ctx: StepContext[None, None, list[str]]) -> str:
+        raise AssertionError('should not run')  # pragma: no cover
+
+    join = g.join(reduce_list_append, initial_factory=list[str])
+    final_join = g.join(reduce_list_append, initial_factory=list[str])
+    g.add(
+        g.edge_from(step_1, step_2).to(join),
+        g.edge_from(join).to(after_join),
+    )
+    if with_running_step:
+
+        @g.step
+        async def still_running(ctx: StepContext[None, None, None]) -> str:
+            await never.wait()
+            raise AssertionError('should be cancelled')  # pragma: no cover
+
+        g.add(
+            g.edge_from(g.start_node).to(step_1, step_2, still_running),
+            g.edge_from(after_join, still_running).to(final_join),
+        )
+    else:
+        g.add(
+            g.edge_from(g.start_node).to(step_1, step_2),
+            g.edge_from(after_join).to(final_join),
+        )
+    g.add(g.edge_from(final_join).to(g.end_node))
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        async with g.build().iter() as run:
+            async for batch in run:
+                if not isinstance(batch, EndMarker) and any(task.node_id == after_join.id for task in batch):
+                    run.override_next(EndMarker(['ended']))
+
+    assert run.output == ['ended']
+
+
 async def test_independent_joins_finalize_while_other_tails_are_running():
     """Independent join tails can synchronize without blocking each other's finalization."""
     g = GraphBuilder(output_type=list[int])
