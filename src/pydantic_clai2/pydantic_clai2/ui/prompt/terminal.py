@@ -45,9 +45,13 @@ class Terminal(Generic[DepsT, OutputT]):
     gives it, as one the browser opened does. `/resume` of a session live in another shows that one.
     """
 
-    def __init__(self, *, console: Console, transcript: TranscriptBuffer, history: History) -> None:
+    def __init__(
+        self, *, console: Console, transcript: TranscriptBuffer, history: History, shows_others: bool = True
+    ) -> None:
         """`transcript` is the output retained for redrawing, kept across `/reload`; `history` the prompts recalled."""
         self.console = console
+        self.shows_others = shows_others
+        """Whether `/resume` shows another live session here; `clai2 --web` keeps its first one."""
         self.lines = not console.is_terminal
         """Whether it reads lines, decided once: a command that holds the terminal makes the console no terminal."""
         self.transcript = transcript

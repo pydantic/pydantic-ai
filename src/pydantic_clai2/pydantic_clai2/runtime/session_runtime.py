@@ -483,6 +483,7 @@ def create_shell(
         await render_history(messages, console=console, renderer=renderer)
 
     sessions.on_resume = show_resumed
+    sessions.show_live = shell.show_live
     shell.session.claim = lambda conversation_id: process.live.claim(conversation_id, holder=shell.live_session)
     process.live.add(shell)
     # Headless, a session still edits prompts in a terminal console, but reads no lines from a pipe.
@@ -499,10 +500,9 @@ def _show_in_terminal(
     With `shows_others`, `/resume` of a conversation another live session holds shows that session there;
     `clai2 --web` keeps its terminal on the session it started with.
     """
-    if shows_others:
-        shell.sessions.show_live = shell.show_live
     Terminal[DepsT, OutputT](
         console=shell.console,
+        shows_others=shows_others,
         transcript=transcript if transcript is not None else TranscriptBuffer(),
         history=input_history(shell.process.store.path.with_name('input-history')),
     ).attach(shell)
@@ -904,7 +904,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         As `/resume` does, the terminal then shows that session's history; this one stays live.
         """
         other = self.process.live.runtime(conversation_id)
-        if self.terminal is None or other is None or other is self or not isinstance(other, SessionRuntime):
+        if (
+            self.terminal is None
+            or not self.terminal.shows_others
+            or other is None
+            or other is self
+            or not isinstance(other, SessionRuntime)
+        ):
             return None
         # Every session of a process runs the same agent, so it has the same types.
         await self.terminal.show(cast('SessionRuntime[DepsT, OutputT]', other))

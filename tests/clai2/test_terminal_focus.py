@@ -120,6 +120,11 @@ async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(
         home.send_input('/cost')
         assert home.queued == 1
         await until(desk.live, lambda: home.idle)
+        # The session shown moves the terminal on in turn: back to the first one, and to this one again.
+        b.send_input(f'/resume {home.session.conversation_id}')
+        await until(desk.live, lambda: terminal.shown is home and other.idle)
+        home.send_input(f'/resume {conversation}')
+        await until(desk.live, lambda: terminal.shown is other and home.idle)
         b.send_input('/exit')
 
     assert await desk.run(body) == 'exit'
@@ -444,7 +449,7 @@ def prompts(runtime: SessionRuntime[None, str]) -> list[str]:
     ]
 
 
-def test_clai2_web_keeps_its_terminal_on_the_session_it_started_with(tmp_path: Path) -> None:
+async def test_clai2_web_keeps_its_terminal_on_the_session_it_started_with(tmp_path: Path) -> None:
     fleet = Fleet(tmp_path)
     shell = create_shell(
         Agent(TestModel()),
@@ -461,7 +466,9 @@ def test_clai2_web_keeps_its_terminal_on_the_session_it_started_with(tmp_path: P
         process=fleet.process,
     )
     assert shell.terminal is not None and shell.editor is None
-    assert shell.sessions.show_live != shell.show_live
+    assert not shell.terminal.shows_others
+    assert await shell.show_live(shell.session.conversation_id) is None
+    await shell.close('exit')
 
 
 class Opener(Plugin):

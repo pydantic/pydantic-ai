@@ -294,7 +294,8 @@ async def chat(
                         served = terminal.served
                         if not terminal.home_closed:
                             with transcript.capture(console):
-                                await shell.close(reason)
+                                # It ends for good when another session's reload or exit restarts or ends CLAI.
+                                await shell.close(reason if last is shell else 'exit')
                 if not last.reload_requested:
                     if (relaunch := last.relaunch(web=served)) is not None:
                         raise relaunch
