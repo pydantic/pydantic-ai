@@ -215,6 +215,8 @@ async def test_a_workspace_from_creation_to_destruction(
         return True
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.workspaces.open_browser', open_browser)
+    # Whatever this process has, the workspace's CLAI is told not to load a `.env`.
+    monkeypatch.delenv('PYTHON_DOTENV_DISABLED', raising=False)
     plugin = loaded(rig, WorkspacesSettings(kinds={'local-worktree': WorktreeKind(model='test')}))
     assert plugin.summary() == '1 command'
     assert await run(plugin, '/workspaces') == 'No workspaces. Make one with /workspaces create KIND [REPO [REF]].'
@@ -243,6 +245,7 @@ async def test_a_workspace_from_creation_to_destruction(
     ]
     assert (spawned.cwd, spawned.log) == (workspace.path, folder / 'session.log')
     assert token not in ' '.join(spawned.argv), 'the token stays off the command line'
+    assert spawned.env['PYTHON_DOTENV_DISABLED'] == '1', 'a `.env` in the checkout is not loaded'
     assert rig.probe.tokens == [token]
     for private in (folder / 'token', folder / 'workspace.json', folder / 'open.html'):
         assert stat.S_IMODE(private.stat().st_mode) == 0o600
