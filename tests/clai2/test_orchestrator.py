@@ -505,7 +505,7 @@ async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, mo
         await tools.session_start(workspace, 'block')
         await child.blocked.wait()
         # Stop it once `session_wait` waits on the connection. `anyio.wait_all_tasks_blocked` cannot tell:
-        # it counts a task in a worker thread as blocked, and uvicorn's 0.1 s tick can keep it polling for minutes.
+        # it counts a task awaiting a worker thread as blocked, and uvicorn's 0.1 s tick can keep it polling for minutes.
         entered = anyio.Event()
         wait = SessionView.wait
 
