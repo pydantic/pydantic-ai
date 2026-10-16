@@ -35,7 +35,7 @@ async def open_window(url: str, *, command: Sequence[str] | None = None) -> int:
 
     `command` replaces the child process, `python -m pydantic_clai2.cli.desktop`. Cancelling kills the window.
     """
-    argv = [sys.executable, '-m', __name__] if command is None else list(command)
+    argv = [sys.executable, '-P', '-m', __name__] if command is None else list(command)
     process = await anyio.open_process(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=None)
     async with process:
         assert process.stdin is not None
