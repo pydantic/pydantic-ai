@@ -69,6 +69,8 @@ class _Live:
     """Set once it starts closing, so `open` waits for it to close rather than return it."""
     done: Event = field(default_factory=Event)
     """Set once it has closed."""
+    copied: tuple[str, str] | None = None
+    """The conversation `open` asked for and the copy it continues in, when another process was running it."""
 
 
 class LiveRuntimes(JoinedSessions):
@@ -162,6 +164,17 @@ class LiveRuntimes(JoinedSessions):
             None,
         )
 
+    def _copy_of(self, conversation_id: str) -> _Live | None:
+        """The session `open` started for `conversation_id`, still in the copy it made of it."""
+        return next(
+            (
+                live
+                for live in self._live.values()
+                if live.copied == (conversation_id, live.runtime.live_session.conversation.conversation_id)
+            ),
+            None,
+        )
+
     @asynccontextmanager
     async def serving(self) -> AsyncGenerator[None]:
         """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all.
@@ -184,7 +197,7 @@ class LiveRuntimes(JoinedSessions):
 
     async def open(self, conversation_id: str, /) -> LiveSession:
         while True:
-            live = self._holder(conversation_id)
+            live = self._holder(conversation_id) or self._copy_of(conversation_id)
             switching = self._switching.get(live.runtime.live_session.id) if live is not None else None
             if live is not None and live.ready and not live.closing and switching is None:
                 return live.runtime.live_session
@@ -281,6 +294,9 @@ class LiveRuntimes(JoinedSessions):
         live = self._live[runtime.live_session.id]
 
         def started() -> None:
+            if resume is not None and (copy := runtime.live_session.conversation.conversation_id) != resume:
+                # Another process runs it, so this session continues in a copy; opening it again returns this one.
+                live.copied = (resume, copy)
             live.ready = True
             task_status.started(runtime.live_session)
             self.changed(runtime.live_session)

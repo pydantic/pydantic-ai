@@ -1,6 +1,7 @@
 """Several live sessions in one CLAI process: `LiveRuntimes` opens, runs, and closes them, each in its own folder."""
 
 import io
+import os
 import re
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -153,6 +154,8 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
     calls = {'a': 0, 'b': 0}
     fleet.agents = {name: blocked(name, started, release, calls) for name in 'ab'}
     launched_in = Path.cwd()
+    # Switching a new database to WAL can fail at once when two first saves race, so make it first.
+    await fleet.process.conversations.listing()
     with anyio.fail_after(20):
         async with fleet.live.serving():
             a = await fleet.live.new(workspace=fleet.folder('a'))
@@ -216,6 +219,11 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
             # Plugins resume through `host.conversation`, which refuses it too.
             with pytest.raises(ValueError, match='is open in another live session'):
                 await fleet.runtimes[other.id].session.resume(saved.id)
+            # Nor may another session delete or archive it.
+            with pytest.raises(ValueError, match='is open in another live session'):
+                await fleet.runtimes[other.id].sessions.delete(saved.id)
+            with pytest.raises(ValueError, match='is open in another live session'):
+                await fleet.runtimes[other.id].sessions.archive(saved.id)
             # The session holding it may restore it again.
             assert 'Resumed Saved' in await fleet.runtimes[first.id].sessions.resume(saved.id)
             # While one session resumes a conversation, `open` waits for it, and no other session may take it.
@@ -462,6 +470,28 @@ async def test_a_session_that_ends_while_another_closes_is_skipped(tmp_path: Pat
                 Gate.release.set()
             assert not fleet.live.listing()
     assert sorted(Recorder.ended) == [('held', 'exit'), ('other', 'exit')]
+
+
+async def test_a_conversation_another_process_runs_opens_one_copy(tmp_path: Path) -> None:
+    """Opening it twice returns the session continuing its one copy."""
+    fleet = Fleet(tmp_path, builtin=())
+    busy = await fleet.process.conversations.save(
+        summary=ConversationSummary(
+            workspace=str(fleet.folder('a').resolve()), title='Busy', outcome='running', owner_pid=os.getpid()
+        ),
+        messages=[],
+    )
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            first = await fleet.live.open(busy.id)
+            assert first.conversation.conversation_id != busy.id
+            assert await fleet.live.open(busy.id) is first
+            assert len(await fleet.process.conversations.listing()) == 2
+            # Once it moves on to another conversation, opening the busy one starts afresh.
+            copy = first.conversation.conversation_id
+            first.send_input('/new')
+            await until(fleet.live, lambda: first.conversation.conversation_id != copy and not first.running)
+            assert await fleet.live.open(busy.id) is not first
 
 
 async def test_a_session_runs_as_the_one_being_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

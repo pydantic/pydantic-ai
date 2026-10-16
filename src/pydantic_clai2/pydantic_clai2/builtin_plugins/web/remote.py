@@ -4,11 +4,12 @@ import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path, PurePath
 from typing import Literal
 from urllib.parse import urlsplit
 
-from anyio import fail_after, get_cancelled_exc_class, to_thread
+from anyio import Lock, fail_after, get_cancelled_exc_class, to_thread
 from pydantic import JsonValue
 from pydantic.errors import PydanticInvalidForJsonSchema
 from termflow.themes import PALETTES
@@ -49,6 +50,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     SessionInfo,
     SessionsChanged,
     SessionState,
+    SettingsChanged,
     Snapshot,
     StatusChanged,
     StatusInfo,
@@ -70,6 +72,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.cli.self_update import installed
+from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
@@ -86,7 +89,7 @@ from pydantic_clai2.plugins import (
     UpdateProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
-from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.session_workspace import workspace_directory
@@ -138,6 +141,8 @@ class Remote:
         """The theme browsers were last sent, so a command that changes it sends it again."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
+        self._command_edits = Lock()
+        """One page edit of a command's menu at a time; `/set`'s source also serializes its saves with the terminal's."""
         self.version = installed().label
         self.update: UpdateInfo | None = None
         """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
@@ -272,16 +277,21 @@ class Remote:
         self.hub.publish(SessionsChanged())
 
     def command_ended(self, event: CommandEnd) -> None:
-        if (name := self._theme_name()) != self._theme:
-            self._theme = name
-            self.hub.publish(ThemeChanged(theme=self.theme()))
         if event.error is not None:
             self.hub.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:
             self.hub.publish(Notice(text=event.output, command=event.text))
-        self.publish_status()
+        self._settings_changed()
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
+
+    def _settings_changed(self) -> None:
+        """Tell browsers CLAI's settings may have changed: the theme if it did, the status row, and open menus."""
+        if (name := self._theme_name()) != self._theme:
+            self._theme = name
+            self.hub.publish(ThemeChanged(theme=self.theme()))
+        self.publish_status()
+        self.hub.publish(SettingsChanged())
 
     def update_progress(self, event: UpdateProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
@@ -300,14 +310,21 @@ class Remote:
 
     # What the browser does.
 
-    def send(self, text: str) -> None:
-        """Enter a prompt or `/command` as if typed at the prompt."""
+    def send(self, text: str) -> str | None:
+        """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
+
+        That menu opens in the page instead of the terminal: the name of its command is returned, and
+        nothing is entered. Otherwise the result is `None`.
+        """
         text = text.strip()
         if not text:
             raise ValueError('Type a prompt or a /command.')
         if text.startswith('!'):
             raise ValueError('Shell lines (!) run only in the terminal.')
+        if is_command_input(text) and len(text.split()) == 1 and self.host.command_menu(text[1:]) is not None:
+            return text[1:]
         self.host.send_input(text)
+        return None
 
     async def complete(self, text: str) -> list[CompletionInfo]:
         return [
@@ -421,28 +438,11 @@ class Remote:
 
         Raises `ValueError` with the row's own message when the menu rejects the value; nothing is saved then.
         """
-
-        async def edit(menu: SettingsMenu) -> list[str]:
-            row = await to_thread.run_sync(_row, menu, key)
-            text = (value or '').strip()
-            if not text:
-                return [await to_thread.run_sync(menu.source.reset, row)]
-            if (problem := await to_thread.run_sync(menu.source.problem, row, text)) is not None:
-                raise ValueError(problem)
-            return [await to_thread.run_sync(menu.source.apply, row, text)]
-
-        return await self._edit(name, edit)
+        return await self._edit(name, partial(_set_row, key=key, value=value))
 
     async def run_menu_action(self, name: str, key: str) -> MenuEdited:
         """Run what a row of a plugin's declared menu does when chosen, asking through this page's dialogs."""
-
-        async def edit(menu: SettingsMenu) -> list[str]:
-            action = menu.actions.get(key)
-            if action is None:
-                raise LookupError(f'{name} has no action {key}.')
-            return list(await action(self.dialogs))
-
-        return await self._edit(name, edit)
+        return await self._edit(name, partial(_run_action, key=key, dialogs=self.dialogs, owner=name))
 
     async def _edit(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
         """One edit, after which the plugin loads again if it saved new settings; shown here and in the terminal."""
@@ -461,6 +461,38 @@ class Remote:
     def answer_dialog(self, dialog_id: str, value: str | None) -> None:
         """Answer a settings menu's open dialog, or cancel it with `None`."""
         self.dialogs.answer(dialog_id, value)
+
+    # Commands' own menus, such as `/set`'s, which the page shows instead of the terminal.
+
+    def _command_menu(self, name: str) -> SettingsMenu:
+        menu = self.host.command_menu(name)
+        if menu is None:
+            raise LookupError(f'/{name} has no menu to show here.')
+        return menu
+
+    async def command_menu(self, name: str) -> MenuInfo:
+        """The menu bare `/NAME` opens, as the command declares it, with every row's current value."""
+        return await to_thread.run_sync(_menu_info, self._command_menu(name))
+
+    async def edit_command_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
+        """Set a row of a command's menu to `value`, or reset it with `None` or empty text, as the terminal's menu does."""
+        return await self._edit_command(name, partial(_set_row, key=key, value=value))
+
+    async def run_command_menu_action(self, name: str, key: str) -> MenuEdited:
+        """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
+        return await self._edit_command(name, partial(_run_action, key=key, dialogs=self.dialogs, owner=f'/{name}'))
+
+    async def _edit_command(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
+        """One edit, printed in the terminal too, after which every page reads the settings again."""
+        menu = self._command_menu(name)
+        async with self._command_edits:
+            try:
+                messages = await edit(menu)
+            finally:
+                self._settings_changed()
+        for message in messages:
+            self.host.console.print(message, markup=False, highlight=False)
+        return MenuEdited(messages=messages, menu=await to_thread.run_sync(_menu_info, menu))
 
     # The sidebar's workers: the delegated tasks.
 
@@ -736,6 +768,25 @@ def _row(menu: SettingsMenu, key: str) -> FieldRow:
     if row is None:
         raise LookupError(f'{menu.source.title} has no setting {key}.')
     return row
+
+
+async def _set_row(menu: SettingsMenu, *, key: str, value: str | None) -> list[str]:
+    """Set a row as its menu does: empty text resets it, and a value the row rejects raises `ValueError`."""
+    row = await to_thread.run_sync(_row, menu, key)
+    text = (value or '').strip()
+    if not text:
+        return [await to_thread.run_sync(menu.source.reset, row)]
+    if (problem := await to_thread.run_sync(menu.source.problem, row, text)) is not None:
+        raise ValueError(problem)
+    return [await to_thread.run_sync(menu.source.apply, row, text)]
+
+
+async def _run_action(menu: SettingsMenu, *, key: str, dialogs: Dialogs, owner: str) -> list[str]:
+    """Run a row's action, asking through `dialogs`; `owner`, the plugin or `/command`, names the menu in errors."""
+    action = menu.actions.get(key)
+    if action is None:
+        raise LookupError(f'{owner} has no action {key}.')
+    return list(await action(dialogs))
 
 
 def _busy(summary: ConversationSummary) -> bool:
