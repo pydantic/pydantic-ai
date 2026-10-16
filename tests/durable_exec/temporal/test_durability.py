@@ -8,7 +8,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import patch
@@ -37,6 +37,7 @@ from pydantic_ai import (
     RequestUsage,
     RetryPromptPart,
     RunContext,
+    RunTimedOut,
     RunUsage,
     TextPart,
     TextPartDelta,
@@ -619,6 +620,134 @@ async def test_durability_default_ids_survive_replay(client: Client):
     assert _stable_ids_seen == [(run_id, conversation_id)] * 2
     assert run_id.startswith(f'{handle.result_run_id}:')
     assert conversation_id != run_id
+
+
+# --- Run deadline (`timeout=`) ---
+
+
+_deadline_seen: list[tuple[datetime | None, datetime | None]] = []
+
+_deadline_sub_agent = Agent(TestModel(), name='durability_deadline_sub_agent')
+
+
+@_deadline_sub_agent.tool
+def _record_sub_agent_deadline(ctx: RunContext[object]) -> str:
+    _deadline_seen.append((None, ctx.deadline))
+    return 'ok'
+
+
+async def record_deadline(ctx: RunContext[object]) -> str:
+    # An agent run from a tool inherits the run's deadline, even inside an activity.
+    await _deadline_sub_agent.run('sub')
+    _deadline_seen.append((ctx.deadline, None))
+    return 'ok'
+
+
+def _deadline_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if returns < 2:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='record_deadline', args='{}', tool_call_id=f'call-{returns}')]
+        )
+    return ModelResponse(parts=[TextPart(content='done')])
+
+
+_deadline_agent = Agent(
+    FunctionModel(_deadline_model_fn),
+    name='durability_deadline',
+    toolsets=[FunctionToolset(tools=[record_deadline], id='deadline')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DeadlineWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> list[str]:
+        start = workflow.now()
+        result = await _deadline_agent.run('Hello', timeout=timeout)
+        return [result.output, start.isoformat()]
+
+
+async def test_durability_deadline_survives_replay(client: Client):
+    """The deadline comes from `workflow.now()`, so every replay of the workflow computes the same one.
+
+    With workflow caching off, the worker replays the workflow from history for each activity result.
+    """
+    _deadline_seen.clear()
+    timeout = 3600
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeadlineWorkflow],
+        plugins=[AgentPlugin(_deadline_agent)],
+        max_cached_workflows=0,
+    ):
+        handle = await client.start_workflow(
+            DeadlineWorkflow.run, args=[timeout], id=f'deadline-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        output, start = await handle.result()
+    assert output == 'done'
+    deadline = datetime.fromisoformat(start) + timedelta(seconds=timeout)
+    # Each tool activity sees the deadline, and so does the agent it runs.
+    assert sorted(_deadline_seen, key=lambda seen: seen[0] is None) == [
+        (deadline, None),
+        (deadline, None),
+        (None, deadline),
+        (None, deadline),
+    ]
+
+
+async def slow_deadline_tool() -> str:
+    await asyncio.sleep(30)
+    return 'never reached'  # pragma: no cover
+
+
+def _call_slow_deadline_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(tool_name='slow_deadline_tool', args='{}', tool_call_id='call-slow')])
+
+
+_timed_out_agent = Agent(
+    FunctionModel(_call_slow_deadline_tool),
+    name='durability_timed_out',
+    toolsets=[FunctionToolset(tools=[slow_deadline_tool], id='slow_deadline')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class TimedOutWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> list[str]:
+        try:
+            await _timed_out_agent.run('Hello', timeout=timeout)
+        except RunTimedOut as exc:
+            return [type(message).__name__ for message in exc.all_messages()]
+        return []  # pragma: no cover
+
+
+async def test_durability_timeout_fires_as_workflow_timer_and_replays(client: Client):
+    """Expiry inside a workflow uses a workflow timer and replays deterministically.
+
+    How far the run gets before the timer fires depends on activity scheduling, so this asserts only that the
+    run timed out; the partial state a timed-out run keeps is covered by `test_run_timeout.py`.
+    """
+    workflow_id = f'timed-out-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TimedOutWorkflow],
+        plugins=[AgentPlugin(_timed_out_agent)],
+    ):
+        handle = await client.start_workflow(TimedOutWorkflow.run, args=[0.2], id=workflow_id, task_queue=TASK_QUEUE)
+        messages = await handle.result()
+    # The run timed out, with at least its prompt recorded, wherever it was when the timer fired.
+    assert messages[0] == 'ModelRequest'
+
+    history = await handle.fetch_history()
+    assert any(event.HasField('timer_fired_event_attributes') for event in history.events)
+    replay = await Replayer(workflows=[TimedOutWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 async def test_durability_replays_history_recorded_before_stable_default_ids(
@@ -4633,10 +4762,12 @@ async def test_durability_continuation_resume_from_history(client: Client):
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The suspended response's 5 + 2 tokens were counted by the run that produced it, so this run counts only
+    # the continuation it requested; the completed response in history still reports the whole turn.
     usage = result.usage
     assert usage.requests == 1
-    assert usage.input_tokens == 8
-    assert usage.output_tokens == 6
+    assert (usage.input_tokens, usage.output_tokens) == (3, 4)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert _continuation_model.request_calls == 1
     assert _scheduled_activity_count(history) == 1

@@ -10,9 +10,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent, CancellationToken, RunCancelled, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, ToolOutput, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
@@ -424,6 +424,11 @@ I'd be happy to help you use a tool! However, I need more information about what
                         args={'repo': 'pydantic-ai'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                     ),
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'logfire'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
@@ -435,27 +440,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content="[Scrubbed due to 'API Key']",
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_table_of_contents',
-                        args={'repo': 'logfire'},
-                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
+                    ),
                     ToolReturnPart(
                         tool_name='get_table_of_contents',
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
-                    )
+                    ),
                 ]
             ),
             ModelResponse(
@@ -3482,6 +3473,71 @@ async def test_run_stream_on_complete_error():
     )
 
 
+async def test_run_stream_skipped_tool_returns():
+    """A function tool call skipped under `end_strategy='early'` streams its input and its recorded return.
+
+    Without them, the AI SDK leaves the call part in `input-streaming`, which isn't valid client history.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"location": "Paris"}', tool_call_id='call-weather'),
+            1: DeltaToolCall(name='final_result', json_args='{"value": "done"}', tool_call_id='call-output'),
+        }
+
+    class Output(BaseModel):
+        value: str
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=ToolOutput(Output), end_strategy='early'
+    )
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        # Skipped: an output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Weather?')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert [event for event in events if event['type'].startswith('tool-')] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call-weather', 'toolName': 'get_weather'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-weather', 'inputTextDelta': '{"location": "Paris"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'call-output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-output', 'inputTextDelta': '{"value": "done"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-output',
+                'toolName': 'final_result',
+                'input': {'value': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call-output', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-weather',
+                'toolName': 'get_weather',
+                'input': {'location': 'Paris'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'call-weather',
+                'output': 'Tool not executed - a final result was already processed.',
+            },
+        ]
+    )
+
+
 async def test_run_stream_cancelled():
     agent = Agent(model=TestModel())
 
@@ -4814,63 +4870,16 @@ async def test_adapter_load_messages():
                         args={'repo': 'pydantic'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                     ),
-                ],
-                timestamp=IsDatetime(),
-                metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="[Scrubbed due to 'API Key']",
-                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
                     ToolCallPart(
                         tool_name='get_table_of_contents',
                         args={'repo': 'pydantic-ai'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="[Scrubbed due to 'API Key']",
-                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
+                    ),
                     ToolCallPart(
                         tool_name='get_table_of_contents',
                         args={'repo': 'logfire'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="Can't do that",
-                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                        timestamp=IsDatetime(),
-                        outcome='failed',
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
@@ -4898,6 +4907,35 @@ async def test_adapter_load_messages():
                         provider_name='openai',
                         outcome='failed',
                     ),
+                ],
+                timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="Can't do that",
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
                     ),
