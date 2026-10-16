@@ -1907,24 +1907,26 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
-runtime: the console, the conversation, the status row, the full screen, and its
-saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
+runtime: the console, the conversation, the status row, the full screen, its
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
+saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`
 
-Six `async` methods fire outside the agent run, in the shell:
+Seven `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
 | `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
-| `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
+| `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
+| `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
@@ -1936,13 +1938,24 @@ startup or preventing other handlers from running.
 
 `on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
-background naming or a rename in the `/resume` browser retitles the current conversation.
+background naming, a rename in the `/resume` browser, or `host.sessions.rename` retitles the current
+conversation.
 `title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
 or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
 conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
 picked from the `--resume` browser arrives as this event. The event fires once per change,
 never for a background `/fork`, and a name from background naming waits until no turn or
 command is running.
+
+`on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
+opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
+the text the command returned, which the shell printed (empty when it returned none, as for a
+menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
+command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
+instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
+with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
+handler cannot cancel it. Use it to show command results somewhere other than
+the terminal; the shell has already printed them.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2105,6 +2118,45 @@ class Standup(Plugin):
 
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
+
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`
+
+A plugin that is another way to use CLAI, such as a remote UI, drives the same
+prompt the keyboard does:
+
+- `self.host.send_input(text)` enters `text` as Enter at the prompt does, at any time from the
+  shell's event loop: it is trimmed, a bare `clear` runs `/clear`, and blank text does nothing. A
+  prompt runs as a turn and a `/command` as a command, each echoed in the transcript; while a turn
+  runs it queues behind it like a typed follow-up, and a `during_turn` command such as `/plugins`
+  opens over it at once. Input entered before the prompt opens, such as from `on_session_start`,
+  waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
+  `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
+  A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead.
+  A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
+  prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
+  which reads its prompts line by line.
+- `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
+  `False` when nothing was running. A menu open over the cancelled turn or command closes with
+  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
+- `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
+  for command names (with their descriptions), their arguments, and `@` paths. As in the
+  editor, they are computed in a worker thread, at most 100 of them, and none when a completer
+  fails.
+- `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
+  session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
+  `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
+  refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
+  its own copy of the session's `run_code` REPL, and a deleted session's REPL is deleted with it. Like opening `/resume`,
+  `listing` queues the newest untitled sessions for background naming, which calls the
+  naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
+  while a turn runs, unlike background naming.
+
+| | `send_input(text)` | `submit_prompt(text)` |
+|---|---|---|
+| Called from | anywhere on the shell's event loop | a `/command` handler, between turns |
+| Runs | a prompt as a turn, a `/command` as a command | always a prompt, after the command returns |
+| Echoed in the transcript | yes, like typed input | no |
 
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
 first token after the leading `/` makes it a prompt instead, so screenshot paths
