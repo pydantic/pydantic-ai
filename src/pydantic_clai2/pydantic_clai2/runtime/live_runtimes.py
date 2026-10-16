@@ -69,6 +69,8 @@ class _Live:
     """Set once it starts closing, so `open` waits for it to close rather than return it."""
     done: Event = field(default_factory=Event)
     """Set once it has closed."""
+    copied: tuple[str, str] | None = None
+    """The conversation `open` asked for and the copy it continues in, when another process was running it."""
 
 
 class LiveRuntimes(JoinedSessions):
@@ -134,16 +136,23 @@ class LiveRuntimes(JoinedSessions):
         live = self._holder(conversation_id)
         return live.runtime.live_session if live is not None else None
 
-    def in_use(self, conversation_id: str) -> bool:
-        """Whether a live session holds `conversation_id`, or one is opening or resuming it."""
-        return conversation_id in self._opening or self._holder(conversation_id) is not None
-
     def _holder(self, conversation_id: str) -> _Live | None:
         return next(
             (
                 live
                 for live in self._live.values()
                 if live.runtime.live_session.conversation.conversation_id == conversation_id
+            ),
+            None,
+        )
+
+    def _copy_of(self, conversation_id: str) -> _Live | None:
+        """The session `open` started for `conversation_id`, still in the copy it made of it."""
+        return next(
+            (
+                live
+                for live in self._live.values()
+                if live.copied == (conversation_id, live.runtime.live_session.conversation.conversation_id)
             ),
             None,
         )
@@ -162,7 +171,7 @@ class LiveRuntimes(JoinedSessions):
 
     async def open(self, conversation_id: str, /) -> LiveSession:
         while True:
-            live = self._holder(conversation_id)
+            live = self._holder(conversation_id) or self._copy_of(conversation_id)
             switching = self._switching.get(live.runtime.live_session.id) if live is not None else None
             if live is not None and live.ready and not live.closing and switching is None:
                 return live.runtime.live_session
@@ -259,6 +268,9 @@ class LiveRuntimes(JoinedSessions):
         live = self._live[runtime.live_session.id]
 
         def started() -> None:
+            if resume is not None and (copy := runtime.live_session.conversation.conversation_id) != resume:
+                # Another process runs it, so this session continues in a copy; opening it again returns this one.
+                live.copied = (resume, copy)
             live.ready = True
             task_status.started(runtime.live_session)
             self.changed(runtime.live_session)
