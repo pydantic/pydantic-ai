@@ -105,7 +105,8 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
                 stacklevel=2,
             )
 
-        instructions_text = InstructionPart.join(parts)
+        # Nothing appends here, so an empty append-mode block has no withdrawal to record.
+        instructions_text = InstructionPart.join([part for part in parts if part.content])
 
         result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)

@@ -229,12 +229,18 @@ def normalize_toolset_instruction_parts(
 
 
 def _normalize_append_parts(current: list[InstructionPart]) -> list[InstructionPart]:
-    """Downgrade append-mode blocks without a unique identity to `'rewrite'`, and strip the others."""
+    """Downgrade append-mode blocks without a unique identity to `'rewrite'`, and strip the others.
+
+    Append-mode blocks are kept when empty so a withdrawal can be recorded; a downgraded one is dropped then,
+    like any rewrite-mode block with no content.
+    """
     counts = Counter(part.id for part in current)
     normalized: list[InstructionPart] = []
     for part in current:
         if part.on_change == 'append' and (part.id is None or counts[part.id] > 1):
             warnings.warn(f'{_unaddressable_reason(part)}; rewriting its prefix instead.', UserWarning, stacklevel=2)
+            if not part.content.strip():
+                continue
             part = replace(part, on_change='rewrite')
         normalized.append(replace(part, content=part.content.strip()) if part.on_change == 'append' else part)
     return normalized

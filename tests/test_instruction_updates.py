@@ -6,8 +6,9 @@ import hashlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Any, Literal
 
+import httpx2
 import pytest
 from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
@@ -912,6 +913,55 @@ async def test_instruction_updates_unaddressable_warn_and_default_rewrites():
         assert request.instructions == 'B'
         assert baseline_of(request) is None
         assert not any(isinstance(p, InstructionDeltaPart) for p in request.parts)
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.parametrize('case', ['unnamed-none', 'duplicate-empty'])
+async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str, allow_model_requests: None):
+    """An append-mode block that falls back to `'rewrite'` with no content is dropped, as rewrite-mode blocks are.
+
+    Kept, it would go out as an empty system text block, which Anthropic rejects. A mock transport stands in
+    for a cassette: the claim is about the request body, and an Anthropic 400 isn't worth recording.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-5',
+                'content': [{'type': 'text', 'text': 'ok'}],
+                'stop_reason': 'end_turn',
+                'usage': {'input_tokens': 1, 'output_tokens': 1},
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test', http_client=http_client))
+        agent = Agent(model, instructions='Stable.')
+        if case == 'unnamed-none':
+
+            @agent.instructions(on_change='append')
+            def state() -> str | None:
+                return None
+
+        else:
+            agent = Agent(
+                model,
+                instructions=[
+                    'Stable.',
+                    InstructionPart(content='', name='state', on_change='append'),
+                    InstructionPart(content='', name='state', on_change='append'),
+                ],
+            )
+        with pytest.warns(UserWarning, match='rewriting its prefix instead'):
+            # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
+            await agent.run('Continue.', model_settings={'max_tokens': 1024})
+    assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
 
 
 async def test_instruction_updates_named_block_without_source_id_warns():

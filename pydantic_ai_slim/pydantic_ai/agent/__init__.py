@@ -3926,6 +3926,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     UserWarning,
                     stacklevel=2,
                 )
+            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
+            instruction_parts = [part for part in instruction_parts if part.content]
             resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
             request_messages = [
                 *(message_history or ()),
