@@ -68,7 +68,12 @@ export interface State {
   shown: string | null
   /** The session the page last asked to watch, until its snapshot comes. */
   awaiting: string | null
-  /** Another session's snapshot that came meanwhile: on reconnecting, the default session's, shown if the awaited one is gone. */
+  /** What showed before `awaiting`, shown again if the awaited session turns out not to be live. */
+  previous: string | null
+  /**
+   * Another session's snapshot that came while waiting: on reconnecting, the default session's, shown if the awaited
+   * one is gone.
+   */
   stray: Snapshot | null
   /** Each session's chat, by conversation ID: the shown one's, and others seen before, until they close. */
   chats: Record<string, Chat>
@@ -93,6 +98,7 @@ export interface State {
 export const initial: State = {
   shown: null,
   awaiting: null,
+  previous: null,
   stray: null,
   chats: {},
   live: {},
@@ -175,7 +181,10 @@ function taskChanged(chat: Chat, task: TaskEntry): Chat {
   return { ...chat, tasks, taskItems }
 }
 
-/** Apply one message about a conversation; every change makes new objects, so memoized rows re-render only when theirs changed. */
+/**
+ * Apply one message about a conversation; every change makes new objects, so memoized rows re-render only when theirs
+ * changed.
+ */
 export function reduceChat(chat: Chat, message: SessionMessage): Chat {
   switch (message.type) {
     case 'item':
@@ -264,7 +273,8 @@ function applySnapshot(state: State, message: Snapshot): State {
     running: message.running,
     status: message.status,
     questions: message.questions,
-    turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
+    // Only the shown session's clock is current: another's chat stopped getting messages when it stopped showing.
+    turnStartedAt: message.running && id === state.shown ? (previous?.turnStartedAt ?? null) : null,
     tasks: message.tasks,
     taskItems: message.task_items,
   }
@@ -272,6 +282,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     ...state,
     shown: id,
     awaiting: null,
+    previous: null,
     stray: null,
     chats: { ...state.chats, [id]: chat },
     dialogs: message.dialogs,
@@ -285,8 +296,14 @@ function applySnapshot(state: State, message: Snapshot): State {
 /** Apply one server message or page action to the page's state. */
 export function reduce(state: State, action: Action): State {
   switch (action.type) {
-    case 'show':
-      return { ...state, shown: action.id, awaiting: action.id, stray: null }
+    case 'show': {
+      // A chat kept from an earlier visit missed what happened since, so it goes until the snapshot brings it back.
+      // The shown session is shown again only by a reconnect, whose new connection answers its watch.
+      const chats = { ...state.chats }
+      if (action.id !== state.shown) delete chats[action.id]
+      const previous = state.previous ?? state.shown
+      return { ...state, shown: action.id, awaiting: action.id, previous, stray: null, chats }
+    }
     case 'snapshot': {
       const id = action.session.id
       // While a watch is unanswered, another session's snapshot is the one a reconnect sends first, kept in case.
@@ -299,9 +316,11 @@ export function reduce(state: State, action: Action): State {
       // A closed session's chat goes, unless the page still shows it.
       const chats = Object.fromEntries(Object.entries(state.chats).filter(([id]) => id in live || id === state.shown))
       const next = { ...state, live, chats }
-      // The awaited session is not live, so no answer comes: show what came instead, if anything did.
+      // The awaited session is not live, so no answer comes: show what came instead, or what showed before.
       if (state.awaiting === null || state.awaiting in live) return next
-      return state.stray ? applySnapshot(next, state.stray) : { ...next, awaiting: null }
+      if (state.stray) return applySnapshot(next, state.stray)
+      const back = state.previous !== null && state.previous in live ? state.previous : null
+      return { ...next, shown: back, awaiting: null, previous: null }
     }
     case 'dialog':
       return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== action.dialog.id), action.dialog] }

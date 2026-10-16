@@ -142,6 +142,11 @@ export function App() {
   useEffect(() => {
     if (shown !== null && connection === 'open') socket.current?.watch(shown)
   }, [shown, connection])
+  // A session that closed before it could show leaves nothing shown: show the default session again.
+  const lostSession = shown === null && state.version !== null
+  useEffect(() => {
+    if (lostSession && connection === 'open') void api.state().then(dispatch, () => undefined)
+  }, [lostSession, connection])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
@@ -521,7 +526,7 @@ export function App() {
                 ))}
                 {composerElement}
                 <p className="hero-hint">
-                  Type <kbd>/</kbd> for commands. The terminal and this page drive the same session.
+                  Type <kbd>/</kbd> for commands. Your other sessions keep running while you work here.
                 </p>
               </div>
             ) : (

@@ -58,6 +58,13 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const request = useRef(0)
   const session = useContext(SessionContext)
 
+  // Another session shown: the last one's completions and model list are not this one's.
+  useEffect(() => {
+    request.current++
+    setSuggestions([])
+    setModels(null)
+  }, [session])
+
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
 
   // The composer moves from the new-session hero to the bottom bar when the first message lands; keep typing there.

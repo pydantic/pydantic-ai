@@ -1,4 +1,5 @@
 import { createContext } from 'react'
+import type { Snapshot } from './state'
 import type {
   AnswerBody,
   CompletionInfo,
@@ -87,6 +88,8 @@ export function sessionApi(id: string | null) {
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>
       call<void>('POST', `${base}/questions/${request}`, { answers }),
+    /** Flip a run switch as `/set` typed in the session does; a running turn keeps the tools it started with. */
+    setSwitch: (key: Switch, on: boolean) => call<Entered>('POST', `${base}/input`, { text: `/set ${key} ${on}` }),
   }
 }
 
@@ -99,7 +102,8 @@ export const api = {
   /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
   update: () => call<void>('POST', '/api/input', { text: '/update' }),
   models: () => call<string[]>('GET', '/api/models'),
-  setSwitch: (key: Switch, on: boolean) => call<void>('POST', '/api/switch', { key, on }),
+  /** The default session's snapshot: the terminal's, else the one opened last. */
+  state: () => call<Snapshot>('GET', '/api/state'),
   sessions: (query: string, archived = false) =>
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),

@@ -87,11 +87,12 @@ function dot(session: SessionEntry, live: Record<string, LiveEntry>): Dot {
   return session.state === 'running' ? 'ready' : session.state
 }
 
+/** The dots of a session with a turn running, here or in another CLAI. */
+const WORKING: readonly Dot[] = ['running', 'queued', 'asking', 'busy']
+
 /** Whether a turn runs in one of these sessions, so a collapsed group still shows it. */
 function active(worktrees: Worktree[], live: Record<string, LiveEntry>): boolean {
-  return worktrees.some((worktree) =>
-    worktree.sessions.some((s) => ['running', 'queued', 'asking', 'busy'].includes(dot(s, live))),
-  )
+  return worktrees.some((worktree) => worktree.sessions.some((s) => WORKING.includes(dot(s, live))))
 }
 
 /** A session's status dot, named for screen readers; none for a session that is not doing anything. */
@@ -197,6 +198,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const row = (session: SessionEntry) => {
     const state = dot(session, live)
     const current = isShown(session)
+    const working = WORKING.includes(state)
     return (
       <div
         key={session.id}
@@ -253,11 +255,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
             ) : (
               <button
-                disabled={current || session.state === 'running' || session.state === 'busy'}
+                disabled={current || working}
                 title={
                   current
                     ? 'The open session cannot be archived'
-                    : session.state === 'running' || session.state === 'busy'
+                    : working
                       ? 'A running session cannot be archived'
                       : 'Hide it; nothing is deleted'
                 }
@@ -268,7 +270,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             )}
             <button
               className="danger"
-              disabled={current}
+              disabled={current || working}
+              title={current ? 'The open session cannot be deleted' : working ? 'A running session cannot be deleted' : undefined}
               onClick={() =>
                 window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
                 void act(() => api.remove(session.id))
@@ -383,7 +386,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                   return (
                     <div
                       key={worktree.root}
-                      className={`worktree ${nested ? 'nested' : ''} ${worktree.current ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
+                      className={`worktree ${nested ? 'nested' : ''} ${worktree.sessions.some(isShown) ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
                     >
                       {nested && (
                         <button

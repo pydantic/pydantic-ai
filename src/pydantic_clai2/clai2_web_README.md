@@ -32,8 +32,8 @@ a live session shows that it runs a turn, pulsing; runs one with input queued be
 waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or
 delete it. Archiving hides a session from the sidebar and `/resume`
 without deleting anything; the archive button beside the search lists archived sessions too, muted,
-and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
-be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
+and searches them, each with **Unarchive** in its menu. The shown session and running ones cannot
+be archived or deleted, and resuming an archived one, or a new turn in it, unarchives it. A session whose
 directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
 terminal, a session saved in another directory, since the terminal works where it started.
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn, and only
