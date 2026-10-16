@@ -6076,9 +6076,12 @@ async def test_run_stream_early_exit_in_cancelled_scope_cancels_model_request_cl
     assert cleanup.finished.is_set() is shielded
 
 
-async def test_run_stream_records_response_returned_after_absorbing_native_cancel():
-    """A response `wrap_model_request` returns after absorbing a native cancellation is recorded before the run is
-    cancelled, as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+async def test_run_stream_records_response_returned_after_absorbing_cancellation(
+    cancellation: Literal['native', 'anyio'],
+):
+    """A response `wrap_model_request` returns after absorbing a cancellation is recorded before the run is cancelled,
+    as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
     """
     cleanup_started = anyio.Event()
 
@@ -6096,21 +6099,29 @@ async def test_run_stream_records_response_returned_after_absorbing_native_cance
 
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[AbsorbCancellation()])
     messages: list[ModelMessage] = []
+    scope = anyio.CancelScope()
 
     async def drive() -> None:
         nonlocal messages
-        with capture_run_messages() as messages:
+        with capture_run_messages() as messages, scope:
             async with agent.run_stream('hello') as result:
                 async for _ in result.stream_text(debounce_by=None):
                     pass
 
     task = asyncio.create_task(drive())
     await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-    task.cancel()
+    if cancellation == 'native':
+        task.cancel()
+    else:
+        scope.cancel()
     await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
 
-    with pytest.raises(asyncio.CancelledError):
+    if cancellation == 'native':
+        with pytest.raises(asyncio.CancelledError):
+            task.result()
+    else:
         task.result()
+        assert scope.cancelled_caught
     assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
 
 

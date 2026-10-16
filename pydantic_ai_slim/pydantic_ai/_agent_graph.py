@@ -1708,6 +1708,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             if not _stream_cut_short:
                                 raise
                             model_response = e.response
+                        except asyncio.CancelledError:
+                            # `wrap_model_request` returned a response before an `anyio` cancellation reached it:
+                            # record it before the cancellation propagates, so cancellation doesn't discard it.
+                            if not wrap_task.cancelled():
+                                self._append_response(ctx, wrap_task.result(), record_usage=not _handler_usage_recorded)
+                            raise
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
