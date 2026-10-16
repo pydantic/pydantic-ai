@@ -107,7 +107,7 @@ _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unch
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
 
 
-def _process(process: ClaiProcess | None, store: SettingsStore | None) -> ClaiProcess:
+def _process(*, process: ClaiProcess | None, store: SettingsStore | None) -> ClaiProcess:
     """The process a session joins: `process`, else a new one over `store`."""
     if process is not None and store is not None:
         raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
@@ -144,7 +144,7 @@ def create_shell(
         if settings is not None
         else Settings(model=None)
     )
-    process = _process(process, store)
+    process = _process(process=process, store=store)
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
     session = Session(
