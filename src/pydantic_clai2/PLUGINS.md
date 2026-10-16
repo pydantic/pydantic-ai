@@ -1073,6 +1073,7 @@ setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 
 `disabled_skills` is a JSON list of skill names that are off, `[]` by default.
+Names are saved NFKC-normalized, the form harness compares skill names in.
 A skill that is off is left out of the model's catalog and gets no `/command`.
 The list applies in every project, so a name no folder has is not an error:
 `coder` removes the named skills from what `Skills` offers each turn instead of

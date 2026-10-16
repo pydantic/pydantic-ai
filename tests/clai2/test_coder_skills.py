@@ -194,7 +194,10 @@ class TestDisabledSkills:
             (['review', 'deploy'], []),
             # The setting is the same in every project, so a name this one lacks is not an error.
             (['elsewhere'], ['deploy', 'review']),
+            # Compared after NFKC normalization, as harness compares names: a fullwidth `v` is `v`.
+            (['re\uff56iew'], ['deploy']),
         ],
+        ids=['none', 'one', 'all', 'unknown', 'normalized'],
     )
     async def test_a_disabled_skill_is_hidden_from_the_model_and_has_no_command(
         self, project: Path, disabled: list[str], offered: list[str]
@@ -216,6 +219,9 @@ class TestDisabledSkills:
     def test_invalid_names_are_rejected(self, value: str) -> None:
         with pytest.raises(ValidationError, match='Skill names must be nonempty'):
             CoderSettings(disabled_skills=[value])
+
+    def test_names_are_saved_normalized(self) -> None:
+        assert CoderSettings(disabled_skills=['re\uff56iew']).disabled_skills == ['review']
 
     async def test_the_skills_row_toggles_each_skill_and_saves_it(self, project: Path) -> None:
         for name in ('deploy', 'review'):

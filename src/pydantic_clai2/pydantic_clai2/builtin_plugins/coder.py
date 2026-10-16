@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -103,7 +104,8 @@ class CoderSettings(BaseModel):
         for value in values:
             if not value or value != value.strip() or not value.isprintable():
                 raise ValueError('Skill names must be nonempty, without surrounding whitespace or control characters.')
-        return values
+        # Harness compares skill names after NFKC normalization, so a name typed another way still matches.
+        return [unicodedata.normalize('NFKC', value) for value in values]
 
     @model_serializer(mode='wrap')
     def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
@@ -288,7 +290,11 @@ class _ProjectSkills(WrapperCapability[DepsT]):
         return offered.visit_and_replace(self._enabled) or CombinedCapability[DepsT]([])
 
     def _enabled(self, capability: AbstractCapability[DepsT]) -> AbstractCapability[DepsT] | None:
-        """Each skill `Skills` offers is a deferred capability whose `id` is the skill's name."""
+        """Each skill `Skills` offers is a deferred capability whose `id` is the skill's name.
+
+        The model loads a skill by that name with `load_capability`, so the `id` is what the catalog
+        shows it. `TestDisabledSkills` fails if a disabled skill reaches the catalog some other way.
+        """
         return None if capability.defer_loading and capability.id in self.disabled else capability
 
 
