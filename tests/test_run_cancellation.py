@@ -2210,12 +2210,6 @@ async def _permit_cleanup(cleanup: _WrapRunCleanup) -> None:
     cleanup.permitted.set()
 
 
-async def _cancel_during_cleanup(scope: anyio.CancelScope, cleanup: _WrapRunCleanup) -> None:
-    await cleanup.started.wait()
-    scope.cancel()
-    await _permit_cleanup(cleanup)
-
-
 @pytest.mark.parametrize('shielded', [True, False])
 async def test_iter_break_in_cancelled_scope_cancels_wrap_run_cleanup_like_the_scope(shielded: bool):
     """Breaking out of `iter()` inside a cancelled `anyio` scope lets `wrap_run` cleanup finish only if it shields it."""
@@ -2275,10 +2269,16 @@ async def test_anyio_scope_cancelled_during_wrap_run_cleanup_cancels_it_like_the
     cleanup = _WrapRunCleanup(shielded=shielded)
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
     scope = anyio.CancelScope()
+
+    async def cancel_during_cleanup() -> None:
+        await cleanup.started.wait()
+        scope.cancel()
+        await _permit_cleanup(cleanup)
+
     # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
     async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as tg:
-            tg.start_soon(_cancel_during_cleanup, scope, cleanup)
+            tg.start_soon(cancel_during_cleanup)
             with scope:
                 await agent.run('go')
 
