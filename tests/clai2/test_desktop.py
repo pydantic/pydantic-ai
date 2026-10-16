@@ -39,18 +39,27 @@ async def test_open_window_hands_the_address_over_stdin(tmp_path: Path) -> None:
     assert received.read_text() == 'http://127.0.0.1:1/?token=secret\n'
 
 
-def test_bridge_opens_only_web_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bridge_opens_only_web_addresses_and_keeps_tokens_off_command_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     opened: list[str] = []
 
     def open_url(url: str) -> bool:
         opened.append(url)
         return True
 
-    monkeypatch.setattr('webbrowser.open', open_url)
-    bridge = Bridge()
-    assert bridge.open_external('https://logfire.pydantic.dev/x') is True
+    monkeypatch.setattr(desktop, 'open_browser', open_url)
+    bridge = Bridge(tmp_path)
+    assert bridge.open_external('https://logfire.pydantic.dev/x?q=1') is True
     assert bridge.open_external('file:///etc/passwd') is False
-    assert opened == ['https://logfire.pydantic.dev/x']
+    # A workspace's page carries its token: the browser gets a private page that forwards to it.
+    assert bridge.open_external('http://127.0.0.1:2/?token=secret&x=<1>') is True
+    page = tmp_path / 'open.html'
+    assert opened == ['https://logfire.pydantic.dev/x?q=1', page.as_uri()]
+    assert page.stat().st_mode & 0o777 == 0o600
+    assert page.read_text() == (
+        '<!doctype html><meta http-equiv="refresh" content="0;url=http://127.0.0.1:2/?token=secret&amp;x=&lt;1&gt;">'
+    )
 
 
 def test_main_shows_the_address_in_a_maximized_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

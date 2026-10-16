@@ -5,18 +5,21 @@ module as a child process. The child reads the page's address, token included, f
 the token never appears on a command line, shows it with pywebview, and exits when the window closes.
 """
 
+import html
 import subprocess
 import sys
-import webbrowser
 from collections.abc import Sequence
 from importlib.resources import files
 from importlib.util import find_spec
+from pathlib import Path
 from typing import TextIO
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import anyio
 
+from pydantic_clai2.config.credential_store import write_private
 from pydantic_clai2.config.settings_store import state_dir
+from pydantic_clai2.ui.browser import open_browser
 
 TITLE = 'CLAI'
 MISSING = (
@@ -47,11 +50,26 @@ async def open_window(url: str, *, command: Sequence[str] | None = None) -> int:
 class Bridge:
     """What the page may ask of its window, as `window.pywebview.api.open_external(url)`."""
 
+    def __init__(self, storage: Path) -> None:
+        self.storage = storage
+        """Where a page that forwards to a token-bearing address is written."""
+
     def open_external(self, url: str) -> bool:
-        """Open an `http` or `https` address in the default browser, as a link with `target="_blank"` does."""
-        if urlsplit(url).scheme not in ('http', 'https'):
+        """Open an `http` or `https` address in the default browser, as a link with `target="_blank"` does.
+
+        An address carrying a `token`, such as a workspace's page, opens through a file only you can read
+        that forwards to it, as `/web` and `/workspaces open` do: a browser launcher such as `xdg-open`
+        gets the address on its command line, which other users can list.
+        """
+        parts = urlsplit(url)
+        if parts.scheme not in ('http', 'https'):
             return False
-        return webbrowser.open(url)
+        if 'token' not in parse_qs(parts.query):
+            return open_browser(url)
+        page = self.storage / 'open.html'
+        content = f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
+        write_private(path=page, value=content)
+        return open_browser(page.as_uri())
 
 
 def main(stdin: TextIO = sys.stdin) -> None:
@@ -65,7 +83,7 @@ def main(stdin: TextIO = sys.stdin) -> None:
     storage.mkdir(parents=True, exist_ok=True)
     # pywebview turns text selection off by default, which would also stop copying from the transcript.
     webview.create_window(  # pyright: ignore[reportUnknownMemberType]
-        TITLE, url, js_api=Bridge(), maximized=True, min_size=(800, 500), text_select=True
+        TITLE, url, js_api=Bridge(storage), maximized=True, min_size=(800, 500), text_select=True
     )
     # Not private: the page keeps its preferences (theme, sidebar, panels) in local storage across launches.
     icon = files('pydantic_clai2.builtin_plugins.web') / 'static' / 'clai-icon.png'
