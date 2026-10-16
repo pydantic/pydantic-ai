@@ -855,10 +855,6 @@ def _pong_frame(ping_frame: dict[str, Any]) -> str:
     return to_json({'type': 'pong', 'event_id': event.ping_event.event_id}).decode()
 
 
-async def _send_pong(ws: ClientConnection, ping_frame: dict[str, Any]) -> None:
-    await ws.send(_pong_frame(ping_frame))
-
-
 def _validate_audio_format(wire_format: str | None, *, expected_rate: int, direction: str, model_name: str) -> None:
     """Check a handshake-reported audio format against the profile's PCM sample rate."""
     if wire_format is None:
@@ -1249,6 +1245,32 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
             requested.append((('conversation', 'text_only'), True, "`output_modality='text'`"))
         return requested
 
+    def _check_override_permissions(
+        self,
+        agent: _AgentPreflight,
+        settings: ElevenLabsAgentsRealtimeModelSettings,
+        requested: Sequence[tuple[tuple[str, ...], Any, str]],
+    ) -> None:
+        """Raise a `UserError` naming the toggle for a requested override the agent doesn't permit."""
+        for path, _, source in requested:
+            if not _override_allowed(agent.override_permissions, path):
+                dotted = '.'.join(path)
+                raise UserError(
+                    f'The ElevenLabs agent {self.agent_id!r} does not permit the `{dotted}` conversation '
+                    f'override required by {source}. Enable the override toggle at '
+                    f'`platform_settings.overrides.conversation_config_override.{dotted}` '
+                    "(the agent's Security tab in the ElevenLabs dashboard), or remove the conflicting input."
+                )
+        if (
+            settings.get('elevenlabs_agents_custom_llm_extra_body') is not None
+            and not agent.custom_llm_extra_body_allowed
+        ):
+            raise UserError(
+                f'The ElevenLabs agent {self.agent_id!r} does not permit `custom_llm_extra_body`. '
+                'Enable the toggle at `platform_settings.overrides.custom_llm_extra_body` '
+                "(the agent's Security tab), or remove the `elevenlabs_agents_custom_llm_extra_body` setting."
+            )
+
     def _initiation_payload(
         self,
         *,
@@ -1258,18 +1280,10 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         tool_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Build `conversation_initiation_client_data`, preflight-checking every override's toggle."""
-        permissions = agent.override_permissions
         requested = self._requested_overrides(instructions, settings, tool_ids)
+        self._check_override_permissions(agent, settings, requested)
         overrides: dict[str, Any] = {}
-        for path, value, source in requested:
-            if not _override_allowed(permissions, path):
-                dotted = '.'.join(path)
-                raise UserError(
-                    f'The ElevenLabs agent {self.agent_id!r} does not permit the `{dotted}` conversation '
-                    f'override required by {source}. Enable the override toggle at '
-                    f'`platform_settings.overrides.conversation_config_override.{dotted}` '
-                    "(the agent's Security tab in the ElevenLabs dashboard), or remove the conflicting input."
-                )
+        for path, value, _ in requested:
             _set_override(overrides, path, value)
         if config_override := settings.get('elevenlabs_agents_config_override'):
             _deep_merge(overrides, config_override)
@@ -1282,12 +1296,6 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         if overrides:
             payload['conversation_config_override'] = overrides
         if (extra_body := settings.get('elevenlabs_agents_custom_llm_extra_body')) is not None:
-            if not agent.custom_llm_extra_body_allowed:
-                raise UserError(
-                    f'The ElevenLabs agent {self.agent_id!r} does not permit `custom_llm_extra_body`. '
-                    'Enable the toggle at `platform_settings.overrides.custom_llm_extra_body` '
-                    "(the agent's Security tab), or remove the `elevenlabs_agents_custom_llm_extra_body` setting."
-                )
             payload['custom_llm_extra_body'] = extra_body
         if (dynamic_variables := settings.get('elevenlabs_agents_dynamic_variables')) is not None:
             payload['dynamic_variables'] = dynamic_variables
@@ -1336,12 +1344,12 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         elif tool_sync == 'sync':
             # The sync changes workspace state, so everything else that can refuse the conversation is checked
             # first. Synced, the agent's client tools are the run's, so a `tool_choice` restriction needs the
-            # `tool_ids` override exactly when it leaves out one of them.
+            # `tool_ids` override exactly when it leaves out one of them (whatever ids it then names).
             restricts = (tool_choice == 'none' or isinstance(tool_choice, tuple)) and bool(
                 {tool.name for tool in tools} - {tool.name for tool in advertised_tools}
             )
-            self._initiation_payload(
-                instructions=instructions, agent=agent, settings=settings, tool_ids=[] if restricts else None
+            self._check_override_permissions(
+                agent, settings, self._requested_overrides(instructions, settings, [] if restricts else None)
             )
             attached_ids = await self._sync_tools(agent, tools)
         elif tool_sync == 'off':
@@ -1480,8 +1488,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
 
         `None` until the agent reports one, which requires `context_usage` in its
         `conversation.client_events` list. It is a property of the conversation, not of a response,
-        so it is kept here rather than summed into the session's usage; pass
-        `profile={'context_window': ...}` to pin a value up front.
+        so it is kept here rather than summed into the session's usage, and the session's
+        [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used] is only known once such a
+        report arrives.
         """
         return self._context_limit_tokens
 
@@ -1692,7 +1701,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         """Map one server frame to codec events; pings are answered here and yield nothing."""
         event_type = data.get('type')
         if event_type == 'ping':
-            await _send_pong(self._ws, data)
+            await self._ws.send(_pong_frame(data))
             return []
         ended = self._end_calls() if self._calls_open and event_type != 'client_tool_call' else []
         if self._tail is not None and event_type in _TAIL_ENDING_FRAMES:
@@ -1705,7 +1714,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # (ElevenLabs reports no usage per response: this one only ends it.)
         return [SessionUsage(usage=RequestUsage(), response_scoped=True)]
 
-    async def _map_frame(self, event_type: Any, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+    async def _map_frame(self, event_type: object, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         if event_type == 'queue_status':
             status = _QueueStatusEvent.model_validate(data).queue_status_event.status
             # A `timed_out` conversation is closed with code 4300 next, which ends the stream.
@@ -1800,7 +1809,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # answer, so it is denied rather than left to stall the conversation until the approval times out.
             if not self._warned_mcp_approval:
                 self._warned_mcp_approval = True
-                warnings.warn(_MCP_APPROVAL_DENIED, stacklevel=2)
+                # (Raised from the connection's receive loop, so there is no caller to point at.)
+                warnings.warn(_MCP_APPROVAL_DENIED, UserWarning, stacklevel=1)
             await self._send_event(
                 {'type': 'mcp_tool_approval_result', 'tool_call_id': call.tool_call_id, 'is_approved': False}
             )
@@ -1836,7 +1846,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         self._native_part_index += 1
         return [PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)]
 
-    def _map_turn_event(self, event_type: Any, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+    def _map_turn_event(self, event_type: object, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         """Map the frames making up the agent's turn: transcripts, the boundary, and interruptions."""
         if event_type == 'agent_chat_response_part':
             # Text-only conversations stream the response as start/delta/stop parts ahead of the
