@@ -17,7 +17,9 @@ projection on both sides of the `supports_turn_scoped_system_prompts` flag.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -696,6 +698,22 @@ WEATHER_PARAMETERS = ModelRequestParameters(
 )
 
 
+@contextmanager
+def converse_request_bodies(model: BedrockConverseModel) -> Iterator[list[dict[str, Any]]]:
+    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too."""
+    captured: list[dict[str, Any]] = []
+
+    def capture(request: Any, **_: Any) -> None:
+        captured.append(json.loads(request.body))
+
+    event = 'before-send.bedrock-runtime.Converse'
+    model.client.meta.events.register_last(event, capture)
+    try:
+        yield captured
+    finally:
+        model.client.meta.events.unregister(event, capture)
+
+
 async def send(model: Model, history: list[ModelMessage], settings: ModelSettings | None = None) -> None:
     """Send `history` as one request through the model's public path, as the agent graph does."""
     await model.request(model.prepare_messages(history, WEATHER_PARAMETERS), settings, WEATHER_PARAMETERS)
@@ -808,36 +826,35 @@ async def test_anthropic_leading_turn_scoped_prompt_is_not_hoisted(
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-async def test_bedrock_message_cache_point_goes_before_the_turn_scoped_prompt():
+async def test_bedrock_message_cache_point_goes_before_the_turn_scoped_prompt(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
     """`bedrock_cache_messages` puts its cache point before the reminder, not after it.
 
     The Converse API has no `system` role in `messages`, so the reminder is `<system>`-tagged text that
     ends the last user turn and is gone from the next request; a cache point after it would write an
-    entry that request can't read. A unit test because Bedrock isn't recorded in this suite: the claim
-    is where the adapter puts the block.
+    entry that request can't read. With nothing ahead of the reminder in its message, there's nothing
+    to cache up to.
     """
-    model = BedrockConverseModel(
-        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-        provider=BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x'),
-    )
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     settings: BedrockModelSettings = {'bedrock_cache_messages': True}
 
-    prepared = model.prepare_messages(tool_loop_history(), ModelRequestParameters())
-    _, bedrock_messages = await model._map_messages(prepared, ModelRequestParameters(), settings)  # pyright: ignore[reportPrivateUsage]
+    with converse_request_bodies(model) as bodies:
+        await send(model, tool_loop_history(), settings)
+        await send(model, REMINDER_ONLY, settings)
 
-    assert bedrock_messages[-1]['content'] == snapshot(
+    tool_loop, only_reminder = bodies
+    assert tool_loop['messages'][-1]['content'] == snapshot(
         [
             {'toolResult': {'toolUseId': 'call_2', 'content': [{'text': 'Oslo: 18C'}], 'status': 'success'}},
             {'cachePoint': {'type': 'default'}},
             {'text': '<system>Reminder 2.</system>'},
         ]
     )
-    assert 'Reminder 1.' not in str(bedrock_messages)
-
-    # With nothing ahead of the reminder in its message, there's nothing to cache up to.
-    only_reminder = model.prepare_messages(REMINDER_ONLY, ModelRequestParameters())
-    _, bedrock_messages = await model._map_messages(only_reminder, ModelRequestParameters(), settings)  # pyright: ignore[reportPrivateUsage]
-    assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '<system>Reminder.</system>'}]}])
+    assert 'Reminder 1.' not in str(tool_loop['messages'])
+    assert only_reminder['messages'] == snapshot(
+        [{'role': 'user', 'content': [{'text': '<system>Reminder.</system>'}]}]
+    )
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
@@ -991,23 +1008,17 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic(
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock():
-    """Only the reminder ending the request is skipped: lasting text with the same content stays ahead of the cache point.
-
-    Through the adapter's message mapping, as the other Bedrock tests here: Bedrock goes through boto, not httpx, so
-    there's no request capture for it.
-    """
-    model = BedrockConverseModel(
-        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-        provider=BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x'),
-    )
+async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Only the reminder ending the request is skipped: lasting text with the same content stays ahead of the cache point."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     settings: BedrockModelSettings = {'bedrock_cache_messages': True}
 
-    prepared = model.prepare_messages(duplicate_text_history(), ModelRequestParameters())
-    _, bedrock_messages = await model._map_messages(prepared, ModelRequestParameters(), settings)  # pyright: ignore[reportPrivateUsage]
+    with converse_request_bodies(model) as bodies:
+        await send(model, duplicate_text_history(), settings)
 
-    content = cast(list[dict[str, Any]], bedrock_messages[-1]['content'])
-    assert content[-3:] == [
+    assert bodies[0]['messages'][-1]['content'][-3:] == [
         {'text': '<system>Reminder.</system>'},
         {'cachePoint': {'type': 'default'}},
         {'text': '<system>Reminder.</system>'},
