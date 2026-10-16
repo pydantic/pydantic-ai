@@ -29,7 +29,7 @@ from pydantic_ai_harness.step_persistence import SqliteStepStore
 
 store = SqliteStepStore(database='sessions.db')
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StepPersistence(store=store),
         ConversationSearch(SnapshotHistorySource(store), scope='conversation'),
@@ -62,7 +62,7 @@ Overlap matching keys off a content hash of each serialized message, not object 
 
 ```python
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StepPersistence(store=store),
         ConversationSearch(SnapshotHistorySource(store), scope='conversation'),

@@ -43,6 +43,15 @@ def reject_cancellation_token(cancellation_token: object | None, *, engine: str)
         raise cancellation_token_unsupported_error(engine)
 
 
+def reject_run_timeout(timeout: float | None, *, wrapper: str, capability: str) -> None:
+    """Reject a run `timeout` on a deprecated durable wrapper agent, which has no replay-safe clock."""
+    if timeout is not None:
+        raise UserError(
+            f'`timeout` is not supported by the deprecated `{wrapper}`. Use the `{capability}` capability, '
+            "which keeps the run's deadline when the durable execution is replayed or recovered."
+        )
+
+
 def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
     """Classify a leaf toolset for durable-execution runtime support, or `None` if it needs no wrapping."""
     from ..toolsets._dynamic import DynamicToolset

@@ -18,7 +18,7 @@ Use the [`Caching`][pydantic_ai.capabilities.Caching] capability to enable cachi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching()])
+agent = Agent('{{ anthropic:large }}', capabilities=[Caching()])
 ```
 
 `model_settings={'cache': True}` is the equivalent through the `cache` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings].
@@ -58,7 +58,7 @@ from pydantic_ai.capabilities import Caching
 handbook = '...'  # a long document, well above the provider's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     capabilities=[Caching(messages=False)],
 )
@@ -74,7 +74,7 @@ On providers where `Caching()` has no effect, `messages=False` doesn't either: i
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     model_settings={'cache': {'retention': '1h', 'messages': False}},
 )
 ```
@@ -179,6 +179,7 @@ Pydantic AI makes the following guarantees about the prompt prefix it sends to p
 
 - [Instructions are assembled deterministically](../agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort before dynamic instructions, preserving the static prefix when dynamic content changes.
 - Message history is append-only within a run: Pydantic AI does not rewrite or reorder settled messages. [History processors](../message-history.md#processing-message-history) you add, and capabilities that rewrite history such as [compaction](compaction.md), are the exception.
+- The [output mode](../output.md) a structured `output_type` gets when it doesn't pick one is chosen on the run's first request to each model and kept for the rest of the run (except behind a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a [thinking](thinking.md) setting that changes between steps doesn't add or remove the output tool. A new run, including one continuing the same conversation, chooses again.
 - Internal bookkeeping such as run IDs, message timestamps, and deferred-tool flags does not reach the provider wire and therefore cannot move the prompt prefix.
 - [Vercel AI](../ui/vercel-ai.md) and [AG-UI](../ui/ag-ui.md) adapter round-trips are tested to reconstruct histories that serialize back to the same provider request for the wire-relevant fields (tool call arguments, thinking signatures). Older UI protocol versions can be lossy — for example, AG-UI versions without a reasoning carrier drop thinking parts, which moves the prefix — so keep the client packages current.
 - Every recorded provider conversation in Pydantic AI's test suite is checked for wire-level prefix stability, so a framework change that starts moving prefixes fails CI in the pull request that introduces it.
@@ -194,7 +195,7 @@ from pydantic_ai.capabilities import Caching
 handbook = '...'  # a long document, well above the provider's minimum cacheable length
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     instructions=f'Answer questions about this employee handbook:\n\n{handbook}',
     capabilities=[Caching()],
 )

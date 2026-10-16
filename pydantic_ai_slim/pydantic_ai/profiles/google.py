@@ -196,6 +196,10 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
     # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+    # https://ai.google.dev/gemini-api/docs/generate-content/long-decode: "Gemini 4 Argon does not support
+    # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
+    # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
+    ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 

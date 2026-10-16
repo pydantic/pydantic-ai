@@ -25,19 +25,19 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Researcher
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[LocalWorkspace('.'), Researcher()])
+agent = Agent('{{ openai:medium }}', capabilities=[LocalWorkspace('.'), Researcher()])
 
 result = agent.run_sync('What changed in the last three major releases of Django?')
 print(result.output)
 ```
 
 The same agent works with every Pydantic AI interface: [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) for terminal chat, [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) for a browser chat UI.
-It works under [durable execution](durable-execution.md) too: pass `Researcher()` next to `TemporalDurability()`, `DBOSDurability()`, or `PrefectDurability()` when you construct the agent, and keep the workspace attached for its tool-result spills.
+It works under [durable execution](../workspace.md#durable-execution) too: pass `Researcher()` next to `TemporalDurability()`, `DBOSDurability()`, or `PrefectDurability()` when you construct the agent, and keep the workspace attached for its tool-result spills.
 
 Or skip the file entirely and run the exported [`researcher_agent`](#api-reference) with [`clai`](https://pydantic.dev/docs/ai/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
-uvx --with 'pydantic-ai-harness[researcher]' clai -a pydantic_ai_harness.researcher:researcher_agent -m openai:gpt-5.6-sol
+uvx --with 'pydantic-ai-harness[researcher]' clai -a pydantic_ai_harness.researcher:researcher_agent -m {{ openai:medium }}
 ```
 
 ## What's inside
@@ -90,7 +90,7 @@ sub_researcher = SubAgent(
 )
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     instructions=instructions,
     capabilities=[
         LocalWorkspace('.'),  # where oversized tool results are spilled

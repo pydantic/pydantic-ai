@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     AudioUrl,
@@ -63,14 +63,16 @@ from pydantic_ai import (
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    sanitize_messages,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -82,7 +84,7 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.output import OutputDataT
+from pydantic_ai.output import OutputDataT, ToolOutput
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -2582,7 +2584,7 @@ def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x":1}')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='result')]),
         ModelResponse(parts=[TextPart(content='Done')]),
     ]
@@ -2596,7 +2598,7 @@ def test_dump_load_roundtrip_tools() -> None:
 
 def test_dump_load_roundtrip_failed_tool_return() -> None:
     original: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x":1}')]),
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -2626,7 +2628,7 @@ def test_dump_load_roundtrip_load_capability() -> None:
     resuming agent would forget its loaded capabilities. Dumped at exactly 0.1.11 to pin the floor.
     """
     original: list[ModelMessage] = [
-        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id":"foobar"}')]),
         ModelRequest(
             parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
         ),
@@ -3287,7 +3289,7 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
                 NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
-                    args='{"query": "test"}',
+                    args='{"query":"test"}',
                     provider_name='anthropic',
                 ),
                 NativeToolReturnPart(
@@ -3314,7 +3316,7 @@ def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
                 NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
-                    args='{"query": "test"}',
+                    args='{"query":"test"}',
                     provider_name='anthropic',
                 ),
                 NativeToolReturnPart(
@@ -3584,7 +3586,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
                     {
                         'id': 'call_1',
                         'type': 'function',
-                        'function': {'name': 'search', 'arguments': '{"q": "test"}'},
+                        'function': {'name': 'search', 'arguments': '{"q":"test"}'},
                     },
                 ],
             },
@@ -3602,7 +3604,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
             ModelResponse(
                 parts=[
                     TextPart(content='Before tools'),
-                    ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                    ToolCallPart(tool_name='search', args='{"q":"test"}', tool_call_id='call_1'),
                     TextPart(content='After tools'),
                 ],
                 timestamp=IsDatetime(),
@@ -6226,7 +6228,7 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 
 
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
-    """Build the client tool history needed to round-trip tool-result metadata.
+    """Build the client tool history the reducer produces for one response's tool calls and results.
 
     The assistant message carries `content=''` because the stream announces it with a
     `TEXT_MESSAGE_START`, which the reducer materializes as `{id, role, content: ''}` before
@@ -6237,32 +6239,40 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
     `REASONING_ENCRYPTED_VALUE` branch then attaches `subtype='message'` data by message ID:
     https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
     """
-    start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
-    result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')
-    arguments = ''.join(
-        event['delta']
+    starts = [event for event in events if event['type'] == 'TOOL_CALL_START']
+    # All calls come from one model response, which the reducer resolves onto one assistant message.
+    parent_message_ids = {start['parentMessageId'] for start in starts}
+    assert len(parent_message_ids) == 1
+    tool_calls = [
+        ToolCall(
+            id=start['toolCallId'],
+            function=FunctionCall(
+                name=start['toolCallName'],
+                arguments=''.join(
+                    event['delta']
+                    for event in events
+                    if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
+                ),
+            ),
+        )
+        for start in starts
+    ]
+    tool_messages = [
+        ToolMessage(id=result['messageId'], tool_call_id=result['toolCallId'], content=result['content'])
+        for result in events
+        if result['type'] == 'TOOL_CALL_RESULT'
+    ]
+
+    encrypted_values = {
+        event['entityId']: event['encryptedValue']
         for event in events
-        if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
-    )
-    tool_call = ToolCall(
-        id=start['toolCallId'],
-        function=FunctionCall(name=start['toolCallName'], arguments=arguments),
-    )
-    tool_message = ToolMessage(
-        id=result['messageId'],
-        tool_call_id=result['toolCallId'],
-        content=result['content'],
-    )
+        if event['type'] == 'REASONING_ENCRYPTED_VALUE' and event['subtype'] == 'message'
+    }
+    for tool_message in tool_messages:
+        if tool_message.id in encrypted_values:
+            tool_message.encrypted_value = encrypted_values[tool_message.id]
 
-    for event in events:
-        if (
-            event['type'] == 'REASONING_ENCRYPTED_VALUE'
-            and event['subtype'] == 'message'
-            and event['entityId'] == tool_message.id
-        ):
-            tool_message.encrypted_value = event['encryptedValue']
-
-    return [AssistantMessage(id=start['parentMessageId'], content='', tool_calls=[tool_call]), tool_message]
+    return [AssistantMessage(id=parent_message_ids.pop(), content='', tool_calls=tool_calls), *tool_messages]
 
 
 @pytest.mark.parametrize(
@@ -6350,6 +6360,69 @@ async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
     tool_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
     assert tool_return.content == 'Search unavailable'
     assert tool_return.outcome == expected_outcome
+
+
+@pytest.mark.parametrize('frontend_tool', [False, True])
+async def test_stream_skipped_tool_returns_roundtrip(frontend_tool: bool) -> None:
+    """Tool calls skipped because an output tool already produced the final result stream their returns.
+
+    Without a `TOOL_CALL_RESULT` for the skipped calls, the client history leaves them dangling and the
+    next request fills them with a different placeholder than the server recorded, changing the prompt
+    prefix. The skipped call is either a function tool under `end_strategy='early'`, or a frontend
+    (deferred) tool under any strategy.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"location": "Paris"}', tool_call_id='call-weather'),
+            1: DeltaToolCall(name='final_result', json_args='{"value": "done"}', tool_call_id='call-output'),
+        }
+
+    class Output(BaseModel):
+        value: str
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        output_type=[ToolOutput(Output), DeferredToolRequests] if frontend_tool else ToolOutput(Output),
+        end_strategy='early',
+    )
+    if not frontend_tool:
+
+        @agent.tool_plain(name='get_weather')
+        def weather(location: str) -> str:
+            # Skipped: an output tool already produced the final result.
+            raise NotImplementedError  # pragma: no cover
+
+    server_history: list[ModelMessage] = []
+
+    def on_complete(result: AgentRunResult[Any]) -> None:
+        server_history.extend(result.all_messages())
+
+    run_input = create_input(
+        UserMessage(id='msg-1', content='Weather?'), tools=[get_weather()] if frontend_tool else None
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=on_complete))
+    ]
+
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
+
+    def tool_returns(messages: list[ModelMessage]) -> list[tuple[str, Any]]:
+        return [
+            (part.tool_call_id, part.content) for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        ]
+
+    assert tool_returns(reloaded) == tool_returns(server_history)
+    assert tool_returns(server_history) == snapshot(
+        [
+            ('call-output', 'Final result processed.'),
+            ('call-weather', 'Tool not executed - a final result was already processed.'),
+        ]
+    )
 
 
 # region: Coverage — event_stream thinking version branches
@@ -8966,6 +9039,309 @@ async def test_compaction_stream_matches_dumped_activity_message() -> None:
     assert isinstance(activity, ActivityMessage)
     assert snapshot_event['activityType'] == activity.activity_type
     assert snapshot_event['content'] == activity.content
+
+
+def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
+    """The messages `@ag-ui/client`'s default reducer appends for these events.
+
+    A minimal port covering the event types the enqueued-messages tests produce: text messages, tool
+    calls and results, and activity snapshots, each appended at its stream position.
+    """
+    messages: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    tool_calls: dict[str, dict[str, Any]] = {}
+    for event in events:
+        match event['type']:
+            case 'TEXT_MESSAGE_START':
+                by_id[event['messageId']] = {'id': event['messageId'], 'role': 'assistant'}
+                messages.append(by_id[event['messageId']])
+            case 'TEXT_MESSAGE_CONTENT':
+                message = by_id[event['messageId']]
+                message['content'] = message.get('content', '') + event['delta']
+            case 'TOOL_CALL_START':
+                # The stream announces every parent message before a tool call references it.
+                tool_calls[event['toolCallId']] = {
+                    'id': event['toolCallId'],
+                    'type': 'function',
+                    'function': {'name': event['toolCallName'], 'arguments': ''},
+                }
+                by_id[event['parentMessageId']].setdefault('toolCalls', []).append(tool_calls[event['toolCallId']])
+            case 'TOOL_CALL_ARGS':
+                tool_calls[event['toolCallId']]['function']['arguments'] += event['delta']
+            case 'TOOL_CALL_RESULT':
+                messages.append(
+                    {
+                        'id': event['messageId'],
+                        'role': 'tool',
+                        'toolCallId': event['toolCallId'],
+                        'content': event['content'],
+                    }
+                )
+            case 'ACTIVITY_SNAPSHOT':
+                messages.append(
+                    {
+                        'id': event['messageId'],
+                        'role': 'activity',
+                        'activityType': event['activityType'],
+                        'content': event['content'],
+                    }
+                )
+            case _:
+                pass
+    return TypeAdapter(list[Message]).validate_python(messages)
+
+
+def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tuple[str, Any]]]]:
+    """Message boundaries, part kinds and content, without the IDs and timestamps a reload re-mints."""
+    return [
+        (
+            message.kind,
+            [
+                (
+                    part.part_kind,
+                    part.args_as_dict() if isinstance(part, ToolCallPart) else getattr(part, 'content', None),
+                )
+                for part in message.parts
+            ],
+        )
+        for message in messages
+    ]
+
+
+def _enqueuing_agent() -> Agent[object, str]:
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Background result: 42')
+        ctx.enqueue(SystemPromptPart(content='Announcement'))
+        ctx.enqueue(ModelResponse(parts=[TextPart('Synthetic reply')]), 'Synthetic follow-up')
+        return 'started'
+
+    return agent
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `pydantic_ai_enqueued_messages` activity at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    adapter = AGUIAdapter(
+        agent,
+        create_input(UserMessage(id='user-1', content='Go')),
+        ag_ui_version='0.1.19',
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert 'Reminder' not in json.dumps(events)
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt: Literal['server', 'client']) -> None:
+    """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
+
+    They ride in a `pydantic_ai_enqueued_messages` activity, which the client keeps in its message list and
+    only renders if it registered a renderer for that type, and load back as their own requests at the
+    position they were delivered in. An enqueued system prompt is only sent when the frontend owns the
+    system prompt, since it would otherwise be stripped on the way back in.
+    """
+    agent = _enqueuing_agent()
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19', manage_system_prompt=manage_system_prompt)
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+
+    activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    assert activities[0] == snapshot(
+        {
+            'type': 'ACTIVITY_SNAPSHOT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'activityType': 'pydantic_ai_enqueued_messages',
+            'content': {
+                'messages': [
+                    {
+                        'id': IsStr(),
+                        'role': 'user',
+                        'content': 'Background result: 42',
+                    }
+                ]
+            },
+            'replace': True,
+        }
+    )
+    # A server-owned system prompt isn't sent to the frontend at all: it would be stripped on the way back.
+    streamed = [
+        [(message['role'], message['content']) for message in activity['content']['messages']]
+        for activity in activities
+    ]
+    announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
+    assert streamed == [
+        [('user', 'Background result: 42')],
+        *announcement,
+        [('assistant', 'Synthetic reply'), ('user', 'Synthetic follow-up')],
+    ]
+    # Delivered after the tool result and before the step that responds to it, as in server history.
+    types = [event['type'] for event in events]
+    assert types.index('TOOL_CALL_RESULT') < types.index('ACTIVITY_SNAPSHOT') < types.index('TEXT_MESSAGE_CONTENT')
+
+    reloaded = AGUIAdapter(
+        agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
+    )
+    loaded = reloaded.sanitize_messages(reloaded.messages)
+    if manage_system_prompt == 'server':
+        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
+        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+            expected = sanitize_messages(server_history)
+    else:
+        expected = sanitize_messages(server_history, strip_system_prompts=False)
+    assert _model_visible(loaded) == _model_visible(expected)
+    assert _model_visible(loaded) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background result: 42')]),
+        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
+        # An enqueued response stays its own message: the model's next text doesn't extend it.
+        ('response', [('text', 'Synthetic reply')]),
+        ('request', [('user-prompt', 'Synthetic follow-up')]),
+        ('response', [('text', 'done')]),
+    ]
+
+
+async def test_enqueued_messages_event_skipped_for_legacy_ag_ui() -> None:
+    """Enqueued-message activities are omitted when the negotiated AG-UI version predates activity events."""
+    agent = _enqueuing_agent()
+    adapter = AGUIAdapter(agent, create_input(UserMessage(id='user-1', content='Go')), ag_ui_version='0.1.10')
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+    assert not any(event['type'] == 'ACTIVITY_SNAPSHOT' for event in events)
+
+
+@requires_ag_ui('0.1.19')
+async def test_enqueued_messages_preserve_file_data() -> None:
+    """With `preserve_file_data`, an enqueued uploaded file survives the stream round trip like a dumped one."""
+    uploaded = UploadedFile(file_id='file-1', provider_name='openai', media_type='application/pdf')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='attach', json_args='{}', tool_call_id='attach-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def attach(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Here is the file', uploaded)
+        return 'attached'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19', preserve_file_data=True)
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)], preserve_file_data=True)
+    assert uploaded in [
+        item for part in iter_message_parts(loaded, ModelRequest, UserPromptPart) for item in part.content
+    ]
+
+
+def test_enqueued_messages_keep_their_own_message_ids() -> None:
+    """The activity's id isn't kept on the enqueued messages, which carry their own."""
+    activity = ActivityMessage(
+        id='activity-1',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'enqueued-1', 'role': 'user', 'content': 'injected'}]},
+    )
+
+    loaded = AGUIAdapter.load_messages([AssistantMessage(id='assistant-1', content='hello'), activity])
+    assert [(message.kind, (message.metadata or {}).get('__pydantic_ai__')) for message in loaded] == snapshot(
+        [('response', {'ui_message_id': 'assistant-1'}), ('request', {'ui_message_id': 'enqueued-1'})]
+    )
+
+
+def test_enqueued_response_is_not_extended_by_the_next_message() -> None:
+    """A payload ending in a response, e.g. one whose trailing system prompt stayed on the server, is a boundary."""
+    activity = ActivityMessage(
+        id='activity-1',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'enqueued-1', 'role': 'assistant', 'content': 'synthetic'}]},
+    )
+
+    loaded = AGUIAdapter.load_messages([activity, AssistantMessage(id='assistant-1', content='reply')])
+    assert [
+        (message.kind, _model_visible([message])[0][1], (message.metadata or {}).get('__pydantic_ai__'))
+        for message in loaded
+    ] == snapshot(
+        [
+            ('response', [('text', 'synthetic')], {'ui_message_id': 'enqueued-1'}),
+            ('response', [('text', 'reply')], {'ui_message_id': 'assistant-1'}),
+        ]
+    )
+
+
+def test_enqueued_messages_malformed_or_nested_payload_is_skipped() -> None:
+    """A client can put anything in the activity; malformed content loads nothing, and nesting doesn't recurse."""
+    nested = ActivityMessage(
+        id='nested',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'x', 'role': 'user', 'content': 'dropped'}]},
+    )
+    messages: list[Message] = [
+        AssistantMessage(id='assistant-1', content='hello'),
+        ActivityMessage(id='a1', activity_type='pydantic_ai_enqueued_messages', content={'messages': 'not-a-list'}),
+        ActivityMessage(id='a2', activity_type='pydantic_ai_enqueued_messages', content={}),
+        ActivityMessage(
+            id='a3',
+            activity_type='pydantic_ai_enqueued_messages',
+            content={
+                'messages': [
+                    {'id': 'inner', 'role': 'user', 'content': 'kept'},
+                    nested.model_dump(mode='json', by_alias=True),
+                ]
+            },
+        ),
+    ]
+
+    assert _model_visible(AGUIAdapter.load_messages(messages)) == snapshot(
+        [('response', [('text', 'hello')]), ('request', [('user-prompt', 'kept')])]
+    )
 
 
 async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:

@@ -6,7 +6,7 @@ from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
@@ -469,16 +469,25 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
-        slf_value = getattr(slf, k, 0)
-        incr_value = getattr(incr_usage, k, 0)
-        if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
-            setattr(slf, k, slf_value + incr_value)
+    _add_usage_tokens(slf, incr_usage, 1)
 
-    for key, value in incr_usage.details.items():
+
+def _add_usage_tokens(slf: RunUsage | RequestUsage, other: RunUsage | RequestUsage, sign: Literal[1, -1]) -> None:
+    """Add `sign` times `other`'s token counts to `slf`'s in place, including provider-specific counters.
+
+    `sign=-1` is the inverse of `_incr_usage_tokens`, which the continuation glue uses to tell what a request that
+    resumed a suspended response billed beyond it.
+    """
+    for k in (slf.__dict__.keys() | other.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
+        slf_value = getattr(slf, k, 0)
+        other_value = getattr(other, k, 0)
+        if isinstance(slf_value, (int, float)) and isinstance(other_value, (int, float)):
+            setattr(slf, k, slf_value + sign * other_value)
+
+    for key, value in other.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
         if isinstance(value, (int, float)):
-            slf.details[key] = slf.details.get(key, 0) + value
+            slf.details[key] = slf.details.get(key, 0) + sign * value
 
 
 @dataclass(repr=False, kw_only=True)
@@ -516,7 +525,9 @@ class UsageLimits:
     Unlike `input_tokens_limit` which is cumulative across the entire run, this
     limit is checked against each request's input token count independently —
     ahead of the request when `count_tokens_before_request=True`, otherwise against
-    the provider-reported `input_tokens` of the response.
+    the provider-reported `input_tokens` of the response. For a response a provider merged
+    from several requests ([Google long decode](../models/google.md#long-decode)), it is
+    checked against the first request's input tokens.
 
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop

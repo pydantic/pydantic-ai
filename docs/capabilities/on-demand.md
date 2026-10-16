@@ -27,7 +27,7 @@ def refund_status(order_id: str) -> str:
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     instructions='You are a customer support assistant.',
     capabilities=[refunds],
 )
@@ -96,7 +96,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         MCP(
             url='https://mcp.example.com/analytics',
@@ -217,7 +217,7 @@ class DeepReasoning(AbstractCapability[Any]):
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         DeepReasoning(
             id='deep-reasoning',
@@ -253,7 +253,7 @@ class AccountSecurityWorkflow(AbstractCapability):
         return args
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow()])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[AccountSecurityWorkflow()])
 ```
 
 !!! note "Checking other capabilities"
@@ -268,7 +268,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         WebSearch(
             local='duckduckgo',
@@ -350,7 +350,7 @@ class AccountSecurity(AbstractCapability[Store]):
 
 
 support_agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
     capabilities=[orders, AccountSecurity()],
@@ -398,7 +398,7 @@ refund_policy = Capability(
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         refund_policy,
         RunbookRequired(requirements={'issue_refund': 'refund-policy'}),
@@ -454,7 +454,7 @@ def load_skill(path: Path) -> Capability:
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     instructions='You are a customer support assistant.',
     capabilities=[load_skill(p) for p in Path('skills').glob('*.md')],
 )
