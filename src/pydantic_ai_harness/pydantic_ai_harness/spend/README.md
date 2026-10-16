@@ -260,7 +260,7 @@ State lives across runs deliberately, so `for_run` is not overridden: a daily bu
 
 A response a `FallbackModel` rejected with a `fallback_on` response handler was billed as well. Each one recorded in `ModelResponse.failed_attempts` is accrued as a request of its own, ahead of the response that carries it. When every model fails, the attempts on the `FallbackExceptionGroup` are accrued the same way, also when an error hook recovers from it. A response the `Fallback` capability rejected is accrued as a failed attempt too, with its parts and `provider_url`. An attempt that raised before the provider answered reported no usage and is not charged. `Spent.requests` counts these attempts, where core's `RunUsage.requests` counts only the responses the agent acted on.
 
-`price` receives a rejected attempt as a `ModelResponse` with the attempt's model, provider, usage and timestamp, but no parts and no `provider_url`. A `price` that reads the output or keys on the endpoint has to allow for that. When `price` returns `None`, the cost core recorded on the attempt is used. If that cost is negative or not finite, the registry prices the attempt instead.
+`price` receives an attempt a `FallbackModel` recorded as a `ModelResponse` with the attempt's model, provider, usage and timestamp, but no parts and no `provider_url`. A `price` that reads the output or keys on the endpoint has to allow for that. When `price` returns `None`, the cost core recorded on the attempt is used. If that cost is negative or not finite, the registry prices the attempt instead.
 
 A cached response, or one supplied with `SkipModelRequest`, never reached the provider and is not charged.
 
