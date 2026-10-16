@@ -53,7 +53,7 @@ from .write import write_file
 # `(command, timeout?)`, `MultiEdit` takes `(file_path, edits)`, etc.), so the
 # precise per-tool shape is enforced at the tool's own definition site — at the
 # registry layer the meaningful contract is "callable that returns (or awaits)
-# a string the model can read", or for `Read`, an image or PDF it can view.
+# a string the model can read", or for `Read`, a file it can be sent.
 ClaudeCodeToolFn: TypeAlias = Callable[..., str | Awaitable[str | list[str | BinaryContent]]]
 
 # `Task` is async like the harness-backed file/shell tools, but unlike them its

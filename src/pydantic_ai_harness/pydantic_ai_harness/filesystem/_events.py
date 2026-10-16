@@ -38,7 +38,7 @@ SearchKind = Literal['find', 'grep']
 
 @dataclass(kw_only=True)
 class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
-    """A file was read successfully, including an image, PDF or other binary file.
+    """A file was read successfully, including a binary one.
 
     `content_hash` is the hash of the whole file's bytes, whatever window was
     returned: the hash `write_file` and `edit_file` check `expected_hash` against.

@@ -71,7 +71,7 @@ def _fit_to_output_budget(prefix: str, body: str) -> str:
 async def read_file(
     ctx: RunContext[object], file_path: str, offset: int | None = None, limit: int | None = None
 ) -> str | list[str | BinaryContent]:
-    """Read a UTF-8 text file, or view an image or PDF. Relative paths resolve under the workspace.
+    """Read a UTF-8 text file, or view an image, audio, video or document file. Relative paths resolve under the workspace.
 
     Optional 1-based line `offset` and line `limit` mirror Claude's Read tool.
     """
@@ -92,7 +92,7 @@ async def read_file(
         # escape and abort the whole run, where the old tool returned an error.
         return f'error: {exc}'
     if not isinstance(body, str):
-        # An image or PDF: its header and the file, which the model sees directly.
+        # A file the model can be sent: its header and the file itself.
         return body
     if body.startswith('Path not found: '):
         # The harness returns a missing path as a plain result (file contents always

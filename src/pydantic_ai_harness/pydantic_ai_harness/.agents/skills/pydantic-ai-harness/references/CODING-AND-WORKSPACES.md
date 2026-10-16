@@ -154,9 +154,10 @@ Tool arguments (scripted tests need them; `expected_hash` exists only with `cont
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
 
-`read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
-from its leading bytes, not its extension), and a text description (size, media type, and for other
-binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+`read_file` returns `[header, BinaryContent]` for a binary file up to 5 MB in a format `BinaryContent`
+can send to a model (image, audio, video, or a document such as PDF; images and PDFs detected from their
+leading bytes, the rest by extension), and a text description (size, media type, and for unknown formats
+the first 64 bytes in hex) for any other binary file; text files come back as a string.
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach
