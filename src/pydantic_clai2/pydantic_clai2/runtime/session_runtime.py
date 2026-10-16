@@ -117,11 +117,14 @@ async def _default_model(
     return await models.resolve(saved) if isinstance(saved, str) else fallback
 
 
+_RESTART_ELSEWHERE = (
+    '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
+    'or with no terminal, in the session CLAI started with.'
+)
+
+
 def _refuse_restart(args: list[str]) -> str:
-    raise ValueError(
-        '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
-        'or with no terminal, in the session CLAI started with.'
-    )
+    raise ValueError(_RESTART_ELSEWHERE)
 
 
 def _process(
@@ -396,7 +399,9 @@ def create_shell(
             name='update',
             description='Install the newest CLAI from the updates.channel setting (stable or main)',
             handler=lambda args: shell.update(args),
-            menu=lambda: update_menu(context, updates, run=lambda text: shell.send_input(text)),
+            menu=lambda: update_menu(
+                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+            ),
         )
     )
     commands.register(
@@ -864,25 +869,29 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return await self.updates.command(args)
 
     def _refuse_restart_while_others_run(self) -> None:
+        if (refusal := self.restart_refusal()) is not None:
+            raise ValueError(refusal)
+
+    def restart_refusal(self) -> str | None:
+        """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
         if self.terminal is None and self.process.live.focused not in (None, self.live_session.id):
             # The session CLAI started with, while the terminal shows another: the restart starts from that one.
-            _refuse_restart([])
+            return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:
             # The restart resumes this conversation where CLAI started, which works only in its own folder.
-            raise ValueError(
+            return (
                 f'CLAI restarts in {home.session.workspace}, where it started, and this session works in '
                 f'{self.session.workspace}; restart it from a session there.'
             )
         running = sum(
             1 for session in self.process.live.listing() if session.running and session.id != self.live_session.id
         )
+        if running > 1:
+            return f'{running} other sessions are running turns; try again when they finish.'
         if running:
-            raise ValueError(
-                f'{running} other sessions are running turns; try again when they finish.'
-                if running > 1
-                else '1 other session is running a turn; try again when it finishes.'
-            )
+            return '1 other session is running a turn; try again when it finishes.'
+        return None
 
     async def run(self) -> SessionEndReason:
         """Take input until this session ends; with a terminal, until the session the terminal shows ends."""

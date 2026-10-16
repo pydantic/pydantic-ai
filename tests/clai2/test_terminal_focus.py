@@ -27,9 +27,11 @@ from pydantic_clai2.plugins import LiveSessions, Plugin, SessionStart
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
+from pydantic_clai2.ui.menus.update_menu import VERSION
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import NOWHERE, Terminal
+from tests.clai2.dialog_script import ScriptedDialogs
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.clai2.test_live_runtimes import Fleet, Recorder, blocked, until
 
@@ -164,6 +166,12 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
             for command in ('/reload', '/update'):
                 with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
                     await home.commands.execute_async(command)
+            # The web UI's Settings > About says so too, instead of entering `/update`.
+            about = next(command for command in home.commands if command.name == 'update').menu
+            assert about is not None
+            assert await about().actions[VERSION](ScriptedDialogs([])) == [
+                '2 other sessions are running turns; try again when they finish.'
+            ]
             release['c'].set()
             await until(desk.live, lambda: not c.running)
             with pytest.raises(ValueError, match='1 other session is running a turn; try again when it finishes'):
