@@ -258,14 +258,7 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
             port = parsed.port
         except ValueError:
             port = None
-        if (
-            parsed.scheme != 'http'
-            or parsed.netloc != f'127.0.0.1:{port}'
-            or not port
-            or parsed.path != _REDIRECT_PATH
-            or parsed.query
-            or parsed.fragment
-        ):
+        if not port or redirect_uri != f'http://127.0.0.1:{port}{_REDIRECT_PATH}':
             raise UserError(
                 f'`redirect_uri` must be `http://127.0.0.1:PORT{_REDIRECT_PATH}`: Sign in with ChatGPT only '
                 f'lets the port vary, got {redirect_uri!r}.'

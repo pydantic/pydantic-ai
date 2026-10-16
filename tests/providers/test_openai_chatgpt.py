@@ -176,6 +176,7 @@ def test_extra_params_cannot_override_what_the_exchange_relies_on(param: str):
         'http://user:pass@127.0.0.1:1455/auth/callback',
         'http://127.0.0.1:1455/auth/callback?x=1',
         'http://127.0.0.1:1455/auth/callback#x',
+        'HTTP://127.0.0.1:1455/auth/callback',
     ],
 )
 def test_redirect_uri_must_be_the_loopback_callback(redirect_uri: str):
@@ -302,6 +303,7 @@ async def test_exchange_rejects_an_unusable_client_id(
         pytest.param({'aud': 'oaiapp_other'}, "not issued for client 'oaiapp_issued'", id='audience'),
         pytest.param({'aud': None}, "not issued for client 'oaiapp_issued'", id='no-audience'),
         pytest.param({'exp': time.time() - 3600}, 'has expired', id='expired'),
+        pytest.param({'exp': time.time() - 120}, 'has expired', id='expired-beyond-clock-skew'),
         pytest.param({'exp': None}, 'has expired', id='no-expiry'),
         pytest.param({'exp': 10**14}, 'has expired', id='absurd-expiry'),
         pytest.param({'nonce': 'other-attempt'}, 'nonce', id='nonce'),
@@ -330,6 +332,13 @@ async def test_exchange_rejects_a_different_account(token_endpoint: TokenEndpoin
 async def test_exchange_accepts_an_audience_list(token_endpoint: TokenEndpoint):
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID)
     token_endpoint(token_response(flow, claims={'aud': [CLIENT_ID, 'https://api.openai.com/v1']}))
+
+    assert (await flow.exchange_code('the-code')).client_id == CLIENT_ID
+
+
+async def test_exchange_tolerates_small_clock_skew(token_endpoint: TokenEndpoint):
+    flow = OpenAIChatGPTOAuthFlow(app_name='My App', client_id=CLIENT_ID)
+    token_endpoint(token_response(flow, claims={'exp': time.time() - 30}))
 
     assert (await flow.exchange_code('the-code')).client_id == CLIENT_ID
 
