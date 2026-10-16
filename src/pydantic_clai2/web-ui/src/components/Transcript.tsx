@@ -1,5 +1,6 @@
-import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useContext, useMemo, useState } from 'react'
 import { OpenCardsContext } from '../openCards'
+import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { WorkspaceLinkContext } from '../workspaceLink'
 import type { Item } from '../protocol'
 import type { Entry } from '../state'
@@ -10,6 +11,7 @@ import { ChevronIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
 import { ToolCard, codeCalls, isWorkspaceTool } from './ToolCard'
+import { UsageCard } from './UsageCard'
 
 const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
   switch (entry.kind) {
@@ -26,6 +28,7 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
     case 'tool':
       return <ToolCard item={entry} />
     case 'notice':
+      if (entry.usage && entry.level === 'info') return <UsageCard notice={entry} usage={entry.usage} />
       return (
         <div className={`notice ${entry.level}`}>
           {entry.command && <span className="notice-command">{entry.command}</span>}
@@ -147,21 +150,10 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
     }),
     [open],
   )
-  const scroller = useRef<HTMLDivElement>(null)
-  const pinned = useRef(true)
-  useEffect(() => {
-    const element = scroller.current
-    if (!element) return
-    const onScroll = () => {
-      pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
-    }
-    element.addEventListener('scroll', onScroll, { passive: true })
-    return () => element.removeEventListener('scroll', onScroll)
-  }, [])
-  useLayoutEffect(() => {
-    const element = scroller.current
-    if (element && pinned.current) element.scrollTop = element.scrollHeight
-  }, [entries])
+  const { scroller, behind, jump } = useStickToBottom<HTMLDivElement>(
+    entries,
+    entries.findLast((entry) => entry.kind === 'user'),
+  )
   const last = entries[entries.length - 1]
   const orchestrating = useContext(WorkspaceLinkContext) !== null
   return (
@@ -185,6 +177,7 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
           </div>
         )}
       </div>
+      <JumpToLatest shown={behind} onJump={jump} />
     </div>
     </OpenCardsContext.Provider>
   )

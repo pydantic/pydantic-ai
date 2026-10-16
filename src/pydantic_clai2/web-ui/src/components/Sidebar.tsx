@@ -6,6 +6,7 @@ import type { Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../p
 import { WorkersTree } from './WorkersTree'
 import { WorkspacesSection } from './WorkspacesSection'
 import {
+  ArchiveIcon,
   BranchIcon,
   ChevronIcon,
   ComposeIcon,
@@ -14,6 +15,7 @@ import {
   MoreIcon,
   OrchestratorIcon,
   PaletteIcon,
+  GearIcon,
   PuzzleIcon,
   SearchIcon,
   SidebarIcon,
@@ -22,6 +24,8 @@ import {
 
 export interface SidebarHandle {
   focusSearch: () => void
+  /** Focus the first row of the Workers tree; `false` when the session has no delegated tasks. */
+  focusWorkers: () => boolean
 }
 
 interface Props {
@@ -43,6 +47,7 @@ interface Props {
   onOrchestrator: () => void
   onCollapse: () => void
   onPlugins: () => void
+  onSettings: () => void
   onError: (message: string) => void
   /** The current session's delegated tasks, shown under it. */
   tasks: TaskEntry[]
@@ -83,6 +88,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     onOrchestrator,
     onCollapse,
     onPlugins,
+    onSettings,
     onError,
     tasks,
     worker,
@@ -91,6 +97,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   ref,
 ) {
   const [query, setQuery] = useState('')
+  /** Whether archived sessions are listed too, muted, and searched. */
+  const [archived, setArchived] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [menu, setMenu] = useState<string | null>(null)
@@ -98,21 +106,34 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const [renaming, setRenaming] = useState<string | null>(null)
   const [unsaved, setUnsaved] = useState(false)
   const search = useRef<HTMLInputElement>(null)
+  const aside = useRef<HTMLElement>(null)
 
-  useImperativeHandle(ref, () => ({ focusSearch: () => search.current?.focus() }), [])
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusSearch: () => search.current?.focus(),
+      focusWorkers: () => {
+        const first = aside.current?.querySelector<HTMLElement>('.workers .worker')
+        first?.scrollIntoView({ block: 'nearest' })
+        first?.focus()
+        return Boolean(first)
+      },
+    }),
+    [],
+  )
 
   const loading = useRef(0)
   const load = useCallback(async () => {
     // A search and the periodic refresh can overlap; only the latest request's answer is shown.
     const id = ++loading.current
     try {
-      const found = await api.sessions(query)
+      const found = await api.sessions(query, archived)
       if (id === loading.current) setProjects(found)
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
     }
-  }, [query, onError])
+  }, [query, archived, onError])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), query ? 150 : 0)
@@ -155,7 +176,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const row = (session: SessionEntry) => (
     <div
       key={session.id}
-      className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''}`}
+      className={`session ${session.current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
     >
       {renaming === session.id ? (
         <input
@@ -179,6 +200,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
           <span className={`state ${session.state}`} />
           <span className="session-title">{session.title}</span>
+          {session.archived && <span className="worktree-tag">archived</span>}
           {opening === session.id && <span className="spinner" aria-label="Opening" />}
           <span className="session-time">{session.state === 'running' ? '' : ago(session.updated_at)}</span>
         </button>
@@ -201,6 +223,23 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
           <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
           <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
+          {session.archived ? (
+            <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
+          ) : (
+            <button
+              disabled={session.current || session.state === 'running' || session.state === 'busy'}
+              title={
+                session.current
+                  ? 'The open session cannot be archived'
+                  : session.state === 'running' || session.state === 'busy'
+                    ? 'A running session cannot be archived'
+                    : 'Hide it; nothing is deleted'
+              }
+              onClick={() => void act(() => api.archive(session.id))}
+            >
+              Archive
+            </button>
+          )}
           <button
             className="danger"
             disabled={session.current}
@@ -233,7 +272,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
 
   return (
-    <aside className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
+    <aside ref={aside} className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
       <div className="sidebar-top">
         <div className="brand">
           <Logo />
@@ -272,6 +311,18 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             }
           }}
         />
+        <button
+          className={`archived-toggle ${archived ? 'on' : ''}`}
+          onClick={(event) => {
+            event.preventDefault()
+            setArchived((on) => !on)
+          }}
+          title={archived ? 'Hide archived sessions' : 'Show and search archived sessions'}
+          aria-label="Archived"
+          aria-pressed={archived}
+        >
+          <ArchiveIcon size={14} />
+        </button>
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">
@@ -342,7 +393,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           </label>
         )}
         <div className="foot-actions">
-          <button className="icon-button" onClick={onPlugins} title={`Plugins (${MOD},)`} aria-label="Plugins">
+          <button className="icon-button" onClick={onSettings} title={`Settings (${MOD},)`} aria-label="Settings">
+            <GearIcon size={16} />
+          </button>
+          <button className="icon-button" onClick={onPlugins} title="Plugins" aria-label="Plugins">
             <PuzzleIcon size={16} />
           </button>
           {!themeInfo?.palette && (

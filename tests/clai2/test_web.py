@@ -208,7 +208,7 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.items == [] and not snapshot.running
         running = web_.run()
-        assert web_.post('/api/input', {'text': 'look it up'}).status_code == 204
+        assert web_.post('/api/input', {'text': 'look it up'}).json() == {'menu': None}
         messages, end = receive_until(socket, TurnEnded)
         [started] = [message.item for message in messages if isinstance(message, TurnStarted)]
         assert started is not None and started.text == 'look it up'
@@ -235,10 +235,10 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         state = web_.get('/api/state').json()
         assert [item['kind'] for item in state['items']] == ['user', 'tool', 'assistant']
         assert state['items'][-1]['text'] == 'All **done**.'
-        assert web_.post('/api/input', {'text': '/cost'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/cost'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.command, notice.level) == ('/cost', 'info') and notice.text.startswith('Retained history')
-        assert web_.post('/api/input', {'text': '/missing'}).status_code == 204
+        assert web_.post('/api/input', {'text': '/missing'}).status_code == 200
         _, notice = receive_until(socket, Notice)
         assert (notice.level, notice.text) == ('error', 'Unknown command /missing. Use /help.')
         web_.post('/api/input', {'text': '/exit'})
@@ -307,6 +307,37 @@ def test_theme(make_web: 'MakeWeb') -> None:
         web_.post('/api/input', {'text': '/theme default'})
         changed = receive_until(socket, ThemeChanged)[1].theme
         assert (changed.name, changed.palette) == ('default', None), "back to Pydantic's colours"
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_theme_changes_while_a_turn_runs(make_web: 'MakeWeb') -> None:
+    """`/theme NAME` from the browser's picker applies at once, not after the running turn."""
+    started, release = anyio.Event(), anyio.Event()
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    async def wait() -> str:
+        """Wait to be released."""
+        started.set()
+        await release.wait()
+        return 'released'
+
+    web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'wait'})
+        web_.portal.call(started.wait)
+        assert web_.post('/api/input', {'text': '/theme tokyo_night'}).json() == {'menu': None}
+        web_.portal.call(anyio.wait_all_tasks_blocked)
+        state = web_.get('/api/state').json()
+        assert (state['running'], state['theme']['name']) == (True, 'tokyo_night')
+        messages, changed = receive_until(socket, ThemeChanged)
+        assert changed.theme.name == 'tokyo_night'
+        assert not any(isinstance(message, TurnEnded) for message in messages)
+        web_.portal.call(release.set)
+        assert receive_until(socket, TurnEnded)[1].outcome == 'completed'
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
 
@@ -624,6 +655,42 @@ def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: '
     assert shown() == [('folder', True)]
     folder.mkdir()
     assert shown() == [('folder', False)]
+
+
+def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'MakeWeb') -> None:
+    """Archiving hides a session, listed again muted with `include_archived=true`; the open one is refused."""
+    web_ = make_web(Agent(TestModel()))
+    old = web_.portal.call(
+        lambda: web_.shell.sessions.store.save(summary=ConversationSummary(workspace='/x', title='Stale'), messages=[])
+    )
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.shell.session.conversation_id
+
+    def listed(path: str) -> dict[str, bool]:
+        return {
+            entry['title']: entry['archived']
+            for project in web_.get(path).json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        assert web_.post(f'/api/sessions/{old.id}/archive').status_code == 204
+        receive_until(socket, SessionsChanged)
+        assert listed('/api/sessions') == {'New session': False}
+        assert listed('/api/sessions?include_archived=true') == {'New session': False, 'Stale': True}
+        assert listed('/api/sessions?q=Stale&include_archived=true') == {'Stale': True}
+        refused = web_.post(f'/api/sessions/{current}/archive')
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            'The current session cannot be archived. Switch to another one first.',
+        )
+        assert web_.post('/api/sessions/missing/archive').status_code == 404
+        assert web_.client.post(f'/api/sessions/{old.id}/unarchive').status_code == 403, 'the token is checked'
+        assert web_.post(f'/api/sessions/{old.id}/unarchive').status_code == 204
+        receive_until(socket, SessionsChanged)
+    assert listed('/api/sessions') == {'New session': False, 'Stale': False}
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
@@ -1228,6 +1295,8 @@ def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tm
         'secret': False,
         'note': '',
         'action': False,
+        'menu': False,
+        'button': '',
     }
     assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:

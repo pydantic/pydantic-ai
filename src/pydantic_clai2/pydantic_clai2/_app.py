@@ -32,7 +32,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
+from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -64,9 +64,11 @@ from pydantic_clai2.plugins import (
     TaskEvent,
     TurnEnd,
     TurnStart,
+    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.menus import Dialogs, SettingsMenu
 from pydantic_clai2.runtime._session import (
     ModelDefaults,
     Session,
@@ -88,15 +90,16 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
-from pydantic_clai2.ui.menus.key_menu import keys_command
-from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
+from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
-from pydantic_clai2.ui.menus.set_menu import set_command
+from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
-from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
+from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, system_prompt_menu
 from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
+from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
@@ -234,6 +237,7 @@ async def chat(
     session_id: str | None = None,
     fork_session: bool = False,
     worktree: Worktree | None = None,
+    web: WebHandoff | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -247,6 +251,8 @@ async def chat(
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
+    `web` is the web UI CLAI served before `/update` restarted it: the `web` plugin serves it again, with no
+    browser opening, so its open pages reconnect.
     """
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
@@ -273,6 +279,7 @@ async def chat(
         )
     fresh = False
     warming: Thread | None = None
+    served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
@@ -304,6 +311,8 @@ async def chat(
                                     with shell.defer_identity() if browse else nullcontext():
                                         await shell.loader.load_all(fresh=fresh)
                                         _report_project_plugins(shell.loader, console)
+                                        await _serve_again(shell.loader, web, console=console)
+                                        web = None
                                         if restored:
                                             # Now that observability has subscribed and renderers have loaded.
                                             shell.session.record_resumed()
@@ -327,17 +336,12 @@ async def chat(
                             raise exc.exceptions[0] from None
                         raise
                     finally:
+                        served = _serving(shell)  # Before closing the plugins stops the web UI.
                         with transcript.capture(console):
                             await shell.loader.close(reason)
                 if not shell.reload_requested:
-                    if (executable := shell.updates.relaunch) is not None:
-                        summary = shell.session.summary
-                        raise Relaunch(
-                            executable=executable,
-                            session_id=summary.id if summary.revision else None,
-                            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
-                            new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
-                        )
+                    if (relaunch := shell.relaunch(web=served)) is not None:
+                        raise relaunch
                     return
                 shell.reload_requested = False
                 if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -416,10 +420,27 @@ class _ModelResolver:
             self._auth = CodexAuth(self.console)
         return self._auth
 
-    async def login(self, args: list[str]) -> str:
+    async def login(self, args: list[str], dialogs: Dialogs | None = None) -> str:
+        """`/login`; `dialogs` asks wherever a menu was opened, such as the web UI, instead of the terminal."""
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
+        return await login_command(
+            args, codex=self.codex_auth(), plugins=self.logins(), store=self.store, dialogs=dialogs
+        )
+
+    def accounts_menu(self) -> SettingsMenu:
+        """`/accounts` (and bare `/login`) as a declared menu, signing in through the dialogs it is shown with."""
+        from pydantic_clai2.ui.menus.accounts_menu import accounts_settings_menu
+
+        if self.store is None:  # pragma: no cover -- the shell always has a store.
+            raise ValueError('Accounts need a settings database.')
+        return accounts_settings_menu(
+            self.store,
+            sign_in=lambda target, dialogs: self.login([target], dialogs),
+            plugins=self.logins,
+            # Read when an account signs out, on the loop: the menu itself is built in a worker thread.
+            forget=lambda account: self.codex_auth().forget(account),
+        )
 
     async def resolve(self, name: str) -> Model | str:
         """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string.
@@ -562,7 +583,13 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
+    def apply_setting(key: str, settings: Settings) -> None:
+        session_settings(key, settings)
+        # A model chosen outside the prompt, as from the web UI, shows at once, not at the next read; a running
+        # turn holds the change, and its model, until it ends.
+        shell.show_model()
+
+    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -582,6 +609,13 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
+    def effort_menu() -> SettingsMenu:
+        # Model settings load provider SDKs; keep them off the startup path.
+        from pydantic_clai2.ui.menus.model_menu import model_settings_menu
+
+        model = session.model or _model_label(agent)
+        return model_settings_menu(store, model, settings_as=context.settings_model(model))
+
     sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
     commands = Commands()
     commands.register(
@@ -590,6 +624,7 @@ def create_shell(
             description='View or set reasoning effort: /effort [VALUE|reset]',
             handler=lambda args: effort_command(context, args, model=session.model or _model_label(agent)),
             complete=lambda args: effort_completions(context, args, model=session.model or _model_label(agent)),
+            menu=effort_menu,
         )
     )
     commands.register(
@@ -612,7 +647,11 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
+    commands.register(
+        Command(
+            name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True, menu=keys_menu
+        )
+    )
     commands.register(
         Command(
             name='login',
@@ -622,6 +661,7 @@ def create_shell(
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
             during_turn=True,
+            menu=models.accounts_menu,
         )
     )
     commands.register(
@@ -630,6 +670,7 @@ def create_shell(
             description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
             handler=models.accounts,
             during_turn=True,
+            menu=models.accounts_menu,
         )
     )
     set_ = Command(
@@ -638,6 +679,7 @@ def create_shell(
         handler=lambda args: set_command(context, args),
         complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
         during_turn=True,
+        menu=lambda: settings_menu(context),
     )
     commands.register(set_)
     commands.register(replace(set_, name='settings', description='Alias of /set'))
@@ -648,6 +690,8 @@ def create_shell(
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
             during_turn=True,
+            menu=lambda: settings_menu(context, keys=('display.theme',), title='Theme'),
+            args_during_turn=True,
         )
     )
     commands.register(
@@ -656,6 +700,7 @@ def create_shell(
             description='View the system prompt and edit your own instructions, sent after the built-in ones',
             handler=lambda args: system_prompt_command(context, args, history=lambda: session.messages),
             during_turn=True,
+            menu=lambda: system_prompt_menu(context, history=lambda: session.messages),
         )
     )
     commands.register(
@@ -669,6 +714,7 @@ def create_shell(
             complete=lambda args: model_completions(context, args),
             during_turn=True,
             during_turn_subcommands=MODEL_SUBCOMMANDS,
+            menu=lambda: models_menu(context),
         )
     )
     # Deprecated spellings of `/model add`, `/model settings`, and `/model chains`, kept working for existing habits.
@@ -741,6 +787,7 @@ def create_shell(
             name='update',
             description='Install the newest CLAI from the updates.channel setting (stable or main)',
             handler=updates.command,
+            menu=lambda: update_menu(context, updates, run=lambda text: shell.send_input(text)),
         )
     )
     commands.register(
@@ -773,6 +820,9 @@ def create_shell(
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
+    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
+    updates.capture = lambda: _web_serving(loader) is not None
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -785,6 +835,7 @@ def create_shell(
             handler=lambda args: spinner_command(context, spinners, args),
             complete=lambda args: spinner_completions(spinners, args),
             during_turn=True,
+            menu=lambda: settings_menu(context, keys=('display.spinner',), title='Working animation'),
         )
     )
     commands.register(
@@ -886,6 +937,26 @@ def create_shell(
     return shell
 
 
+async def _serve_again(loader: PluginLoader[DepsT], web: WebHandoff | None, *, console: Console) -> None:
+    """Serve `web` again, the web UI CLAI served before `/update` restarted it; nothing without one."""
+    if web is not None:
+        from pydantic_clai2.cli.web import serve_again
+
+        console.print(await serve_again(loader, web), markup=False)
+
+
+def _web_serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+    """The port and token of the web UI the `web` plugin serves now; `None` while it serves none."""
+    from pydantic_clai2.cli.web import serving
+
+    return serving(loader)
+
+
+def _serving(shell: '_Shell[DepsT, OutputT]') -> WebHandoff | None:
+    """The web UI to serve again once `/update` restarts CLAI; `None` when it does not, or none runs."""
+    return None if shell.updates.relaunch is None else _web_serving(shell.loader)
+
+
 @dataclass(kw_only=True)
 class _ConversationFooter:
     """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
@@ -936,6 +1007,19 @@ class _Shell(Generic[DepsT, OutputT]):
     _identity_pending: bool = field(default=False, init=False)
     _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
+
+    def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
+        """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
+        if (executable := self.updates.relaunch) is None:
+            return None
+        summary = self.session.summary
+        return Relaunch(
+            executable=executable,
+            session_id=summary.id if summary.revision else None,
+            # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+            new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
+            web=web,
+        )
 
     @property
     def session_id(self) -> str | None:
@@ -1191,6 +1275,14 @@ class _Shell(Generic[DepsT, OutputT]):
             await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
+    def show_model(self) -> None:
+        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed."""
+        model = self.session.model or _model_label(self.agent)
+        if model != self.status.model:
+            self.status.context_window = None
+            self.status.context_alert = False
+        self.status.model = model
+
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
         self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
@@ -1211,11 +1303,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                model = self.session.model or _model_label(self.agent)
-                if model != self.status.model:
-                    self.status.context_window = None
-                    self.status.context_alert = False
-                self.status.model = model
+                self.show_model()
                 self.status.workspace = self.session.workspace
                 self._show_status_segments()
                 if self.editor is not None:
@@ -1591,6 +1679,7 @@ async def _run_prompt(
 
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
+        status.context_estimated = False
 
     def context_window(window: int) -> None:
         # The `compaction` gauge, when loaded, already measured this request, honouring its override.
@@ -1618,6 +1707,7 @@ async def _run_prompt(
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
                 status.context_tokens = context_tokens(message) or None
+                status.context_estimated = False
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)

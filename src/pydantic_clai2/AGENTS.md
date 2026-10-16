@@ -32,7 +32,7 @@ capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 `get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
 chat); `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, and `on_task_event` for CLAI's own moments;
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, and `on_update_progress` for CLAI's own moments;
 `prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
@@ -64,6 +64,11 @@ they agree in the same PR.
   waits for its tools, so neither may open a browser or wait on a sign-in. Use
   `plugins/sign_in.py`: a `SignInMethod` (`mcp.OAuthSignIn` for MCP OAuth),
   `sign_in_now` from a menu or `/NAME login`, and no tools while signed out.
+- **A built-in's per-run capability is a `WorkspacelessCapability`.** A bare
+  capability function might return a sandbox, so `local_workspace()` attaches the
+  launch directory only after every `for_run`, and harness `Skills` (which reads its
+  libraries in `for_run`) fails the turn. Wrap a function that never returns a
+  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -73,7 +78,8 @@ they agree in the same PR.
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
 - **Only shell-owned moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`.
+  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`,
+  `on_update_progress`.
   Startup load failures happen before an agent run, so core's `before_run` cannot
   observe them. The loader reports them after trying every enabled plugin so
   observability can receive failures that preceded its own load. Which conversation
@@ -84,7 +90,9 @@ they agree in the same PR.
   Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
   fires nothing. A delegated task's own events never enter the parent run's stream, and a
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
-  the harness owner's one observer, fires `TaskEvent`. Additional moments need the same
+  the harness owner's one observer, fires `TaskEvent`. `/update` is a command, so no core
+  hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
+  fires `UpdateProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
@@ -95,7 +103,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   methods returned, so unloading is "discard this `LoadedPlugin`". No
   `callback -> owner` map, no scanning registries for a plugin's name.
 - **A running agent run never changes its plugins.** Core binds capabilities once
-  per run, so `/plugins` (the one `args_during_turn` command) may load and unload
+  per run, so `/plugins` (an `args_during_turn` command) may load and unload
   mid-turn, but the run keeps the snapshot `run_turn` bound. `PluginLoader.turn()`
   defers `on_session_end` of plugins unloaded meanwhile until the run is over,
   shielded from cancellation. Do not swap capabilities inside a run; that needs
@@ -205,6 +213,12 @@ one that is not.
   from inside another menu's key handler, so `PluginMenu` closes with a
   `Configure` result and `open_plugins_menu` runs the settings menu, then
   reopens the list.
+- Enter performs the highlighted row's primary action (`/plugins` toggles, like
+  Space) and never silently closes a list menu. Termflow's default Enter selects
+  the row and closes, so where that is not the row's action, bind `enter` as a
+  hotkey that does the action, or nothing; Esc closes.
+- Footer hints separate actions with ` - ` and capitalize named keys (`Enter`,
+  `Esc`, `Space`); letter hotkeys stay as typed (`c configure`, `R reset`).
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
@@ -231,7 +245,8 @@ one that is not.
 - Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
   on a temporary file, else (on Windows, unset, or failing to start) a built-in
   prompt_toolkit editor, since termflow has no multi-line input. Call it from a
-  menu worker between widgets. Do not write another editor.
+  menu worker between widgets, or ask with `Dialogs.text(multiline=True)` from a
+  settings menu action, which the web UI shows as a text area. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`. Code that asks through `Dialogs` (settings menu

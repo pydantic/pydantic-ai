@@ -100,6 +100,7 @@ from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
+from ._request_timeout import RequestDeadline
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -563,6 +564,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client the provider created if it can't be used on the running event loop.
+
+        An agent calls this at the start of each run, so that a model the run uses without entering it gets a new
+        client when the run is on a different event loop than the client was last used on. See
+        [`Provider`][pydantic_ai.providers.Provider]. A model that wraps others calls it on each of them.
+        """
+        if (provider := self.provider) is not None:
+            provider._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
+
     @property
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
@@ -620,6 +631,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+
+        A model that makes its requests through other models, each under a deadline of its own, overrides this to
+        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        """
+        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -991,7 +1010,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume.
+        `TextPart`s that any model can consume, and puts the tool results in each request in the
+        order of the calls they answer, so the request bytes (and the provider's prompt cache)
+        don't depend on the order a history happened to store them in.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1070,7 +1091,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
-        return messages
+        return _order_tool_results_by_call(messages)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -1277,6 +1298,10 @@ class StreamedResponse(ABC):
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
+    _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
+    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+
+    Set before iteration starts by whoever opened the stream under that deadline."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1385,10 +1410,16 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            self._event_iterator = iterator_with_cancel_guard(
-                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
-            )
+            events = self._get_event_iterator()
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
+        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
+        self._request_deadline = deadline
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.
@@ -2557,6 +2588,47 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             changed = True
         else:
             new_messages.append(msg)
+
+    return new_messages if changed else messages
+
+
+def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Order the tool results in each request by the order of the calls they answer.
+
+    The order results are stored in depends on how they were produced: `end_strategy='early'` stores output
+    tool results first, and a UI client such as AG-UI rebuilds them in the order the tools completed. The
+    provider's prompt cache is keyed on the bytes sent, so the same exchange has to render the same way
+    whichever path built the history. Only the positions holding a `ToolReturnPart` or `RetryPromptPart` that
+    answers a call in the immediately preceding `ModelResponse` are refilled, in call order; every other part
+    keeps its position, and results answering the same call keep their relative order.
+
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    previous: ModelMessage | None = None
+    for message in messages:
+        if isinstance(message, ModelRequest) and isinstance(previous, ModelResponse):
+            call_order: dict[str, int] = {}
+            for part in previous.parts:
+                if isinstance(part, ToolCallPart):
+                    call_order.setdefault(part.tool_call_id, len(call_order))
+            answers = [
+                (index, part)
+                for index, part in enumerate(message.parts)
+                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_call_id in call_order
+            ]
+            slots = [index for index, _ in answers]
+            results = sorted((part for _, part in answers), key=lambda part: call_order[part.tool_call_id])
+            if any(message.parts[index] is not result for index, result in zip(slots, results)):
+                parts = list(message.parts)
+                for index, result in zip(slots, results):
+                    parts[index] = result
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+        previous = message
 
     return new_messages if changed else messages
 
