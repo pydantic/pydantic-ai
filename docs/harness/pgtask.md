@@ -47,7 +47,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.pgtask import PGTaskDurability
 
 tasks = TaskRegistry(queue_name='agents')
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[PGTaskDurability()])
+agent = Agent('{{ openai:medium }}', name='analyst', capabilities=[PGTaskDurability()])
 
 
 @tasks.task('analyse')
