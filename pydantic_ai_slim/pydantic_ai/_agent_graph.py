@@ -390,8 +390,10 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
-    default_output_mode: tuple[str, StructuredOutputMode] | None = None
-    """Internal: the ID of the model whose first request this run resolved the default output mode, and that mode.
+    default_output_modes: dict[str, StructuredOutputMode] = dataclasses.field(
+        default_factory=dict[str, StructuredOutputMode]
+    )
+    """Internal: the default output mode each model's first request this run resolved to, keyed by model ID.
 
     See `_keep_default_output_mode`."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
@@ -1076,8 +1078,8 @@ def _keep_default_output_mode(
     if params.output_mode != 'auto':
         return params
     model_id = model.model_id
-    if state.default_output_mode is not None and state.default_output_mode[0] == model_id:
-        kept = params.with_default_output_mode(state.default_output_mode[1])
+    if (kept_mode := state.default_output_modes.get(model_id)) is not None:
+        kept = params.with_default_output_mode(kept_mode)
         try:
             model.prepare_request(model_settings, kept)
         except exceptions.UserError:
@@ -1087,7 +1089,7 @@ def _keep_default_output_mode(
     _, prepared = model.prepare_request(model_settings, params)
     # `FallbackModel` leaves it to whichever model ends up answering.
     if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
-        state.default_output_mode = (model_id, mode)
+        state.default_output_modes[model_id] = mode
     return params
 
 
