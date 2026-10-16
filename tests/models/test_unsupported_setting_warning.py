@@ -12,12 +12,24 @@ import warnings
 from dataclasses import dataclass
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelHTTPError, UnsupportedSettingWarning
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
+
+from ..conftest import try_import
+
+with try_import() as openai_available:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 def _reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -117,3 +129,51 @@ async def test_fallback_model_warns_only_for_the_models_it_tries():
     ):
         result = await agent.run('hello')
     assert result.output == 'done'
+
+
+class Answer(BaseModel):
+    answer: str
+
+
+def _structured_reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'answer': 'done'})])
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+async def test_warns_once_per_request(fallback: bool):
+    """Framework code prepares a request without sending it too, to resolve the output mode and describe the request
+    on a span; only the model that sends the request warns.
+    """
+    model = IgnoringModel(_structured_reply, model_name='ignoring')
+    agent = Agent(
+        FallbackModel(FunctionModel(_fail), model) if fallback else model,
+        output_type=Answer,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+        model_settings={'timeout': 5},
+    )
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always', UnsupportedSettingWarning)
+        result = await agent.run('hello')
+
+    assert result.output == Answer(answer='done')
+    assert len(record) == 1
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize('profile_drops_it', [False, True])
+def test_openai_profile_adds_ignored_settings(profile_drops_it: bool):
+    """An OpenAI-compatible provider whose profile drops a setting warns about it like the model class would."""
+    profile = OpenAIModelProfile(openai_unsupported_model_settings=('parallel_tool_calls',) if profile_drops_it else ())
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'), profile=profile)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool')])
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always', UnsupportedSettingWarning)
+        model.prepare_request({'parallel_tool_calls': False}, params)
+
+    assert [str(w.message) for w in record] == (
+        ["The `parallel_tool_calls` setting is not supported by model 'openai:gpt-4o' and will be ignored."]
+        if profile_drops_it
+        else []
+    )

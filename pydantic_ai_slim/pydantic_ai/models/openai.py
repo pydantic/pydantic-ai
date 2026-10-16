@@ -600,6 +600,11 @@ def _drop_sampling_params_for_reasoning(
         model_settings.pop(k, None)
 
 
+def _with_profile_unsupported_settings(unsupported: frozenset[str], profile: OpenAIModelProfile) -> frozenset[str]:
+    """Add what the profile says a model or OpenAI-compatible provider rejects, so a dropped guarantee still warns."""
+    return unsupported | frozenset(profile.get('openai_unsupported_model_settings', ()))
+
+
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
 
@@ -1348,8 +1353,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     def _unsupported_settings(self) -> frozenset[str]:
-        # The profile adds what a particular model or provider rejects, like `max_tokens` on the Codex backend.
-        return self.unsupported_settings | frozenset(self.profile.get('openai_unsupported_model_settings', ()))
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     async def request(
         self,
@@ -2469,8 +2473,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     def _unsupported_settings(self) -> frozenset[str]:
-        # The profile adds what a particular model or provider rejects, like `max_tokens` on the Codex backend.
-        return self.unsupported_settings | frozenset(self.profile.get('openai_unsupported_model_settings', ()))
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     @property
     def system(self) -> str:

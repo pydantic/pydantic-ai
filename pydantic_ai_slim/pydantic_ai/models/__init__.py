@@ -39,6 +39,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
+from .._unsupported_settings import GUARANTEE_SETTINGS, warnings_suppressed
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
 from ..messages import (
@@ -490,21 +491,6 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """Usage accumulated by the run before this request step."""
 
 
-_GUARANTEE_SETTINGS: dict[str, str] = {
-    'timeout': ' Use `request_timeout` instead, which Pydantic AI enforces for every model.',
-    'max_retries': '',
-    'stop_sequences': '',
-    'parallel_tool_calls': '',
-    'extra_headers': '',
-    'extra_body': '',
-}
-"""The settings a model warns about ignoring, with a hint to append to the warning.
-
-These change what a request guarantees, so ignoring one silently would surprise the user. The other settings are
-tuning knobs that a model ignores silently, so the same settings work across models.
-"""
-
-
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
@@ -546,8 +532,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
-    Declared on the model class rather than the profile: whether a setting reaches the provider is decided by the
-    API and SDK the class speaks, not by the model behind it.
+    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
+    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
+    listed here.
+
+    It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
+    SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
+    [`openai_unsupported_model_settings`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_unsupported_model_settings].
     """
 
     _provider: Provider[InterfaceClient]
@@ -1023,10 +1014,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> None:
         """Warn about each set setting that changes what the request guarantees and that this model ignores."""
-        if not model_settings:
+        if not model_settings or warnings_suppressed():
             return
         unsupported = self._unsupported_settings()
-        for name, hint in _GUARANTEE_SETTINGS.items():
+        for name, hint in GUARANTEE_SETTINGS.items():
             if name not in model_settings or name not in unsupported:
                 continue
             # Only `False` is a guarantee, and only a request with function tools can make parallel calls.

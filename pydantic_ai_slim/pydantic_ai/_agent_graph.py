@@ -73,6 +73,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
@@ -1088,13 +1089,15 @@ def _keep_default_output_mode(
     if (kept_mode := state.default_output_modes.get(model_id)) is not None:
         kept = params.with_default_output_mode(kept_mode)
         try:
-            model.prepare_request(model_settings, kept)
+            with suppress_unsupported_setting_warnings():
+                model.prepare_request(model_settings, kept)
         except exceptions.UserError:
             # The kept mode isn't valid for this request: e.g. Bedrock rejects output tools alongside thinking on
             # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
             return params
         return kept
-    _, prepared = model.prepare_request(model_settings, params)
+    with suppress_unsupported_setting_warnings():
+        _, prepared = model.prepare_request(model_settings, params)
     # `FallbackModel` leaves it to whichever model ends up answering.
     if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
         state.default_output_modes[model_id] = mode

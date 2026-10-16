@@ -332,7 +332,8 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Google (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
-    * Mistral (`0` only, which turns off a `retry_config` set on the client)
+    * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
+      warning)
     * Cohere
     * Cerebras
     * Crusoe
