@@ -131,11 +131,15 @@ class ConversationStore(ABC):
 
     async def load(self, conversation_id: str) -> Conversation | None:
         """Load a conversation, or `None` if the store doesn't have it."""
-        record = await self.read_record(conversation_id)
-        if record is None:
-            return None
+        while True:
+            record = await self.read_record(conversation_id)
+            if record is None:
+                return None
+            history = await self._history_of(record)
+            if history is not None:
+                break
         return Conversation(
-            messages=[entry.message for entry in await self.read_history(record.head_id)],
+            messages=[entry.message for entry in history],
             usage=record.usage,
             conversation_id=record.conversation_id,
             deferred_tool_requests=record.deferred_tool_requests,
@@ -168,7 +172,9 @@ class ConversationStore(ABC):
         record = await self.read_record(conversation_id)
         if (record.revision if record is not None else None) != conversation.revision:
             raise ConversationConflict(conversation_id)
-        history = await self.read_history(record.head_id) if record is not None else []
+        history = await self._history_of(record) if record is not None else []
+        if history is None:
+            raise ConversationConflict(conversation_id)
         shared = 0
         for entry, message in zip(history, conversation.messages):
             if entry.message != message:
@@ -224,6 +230,7 @@ class ConversationStore(ABC):
             conversation_id=new_conversation_id or str(uuid7()),
             head_id=head_id,
             usage=dataclasses.replace(record.usage) if keep == len(history) else _usage.RunUsage(),
+            deferred_tool_requests=record.deferred_tool_requests if keep == len(history) else None,
             scope=scope if scope is not None else record.scope,
             forked_from=head_id,
         )
@@ -232,6 +239,7 @@ class ConversationStore(ABC):
             messages=[entry.message for entry in history[:keep]],
             usage=fork.usage,
             conversation_id=fork.conversation_id,
+            deferred_tool_requests=fork.deferred_tool_requests,
             revision=fork.revision,
         )
 
@@ -243,6 +251,20 @@ class ConversationStore(ABC):
     async def delete(self, conversation_id: str) -> None:
         """Delete a conversation, and the entries no other conversation's history still uses."""
         await self.delete_record(conversation_id)
+
+    async def _history_of(self, record: ConversationRecord) -> list[ConversationEntry] | None:
+        """`record`'s history, or `None` if another writer replaced or deleted the record while it was read.
+
+        A backend that reads the record and its history separately can find entries gone that a
+        concurrent save or delete released. That is only an error when the record is unchanged.
+        """
+        try:
+            return await self.read_history(record.head_id)
+        except LookupError:
+            current = await self.read_record(record.conversation_id)
+            if current is not None and current.revision == record.revision:
+                raise
+            return None
 
     async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
         """The entries from the first one up to `head_id`, in order."""
@@ -303,8 +325,8 @@ class ConversationStore(ABC):
 class InMemoryConversationStore(ConversationStore):
     """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that keeps everything in memory, for tests and examples.
 
-    It keeps its own copy of each message, as a store that serializes them would, so a run changing
-    the messages it was given doesn't change what was saved.
+    It keeps its own copy of each record and message, as a store that serializes them would, so
+    changing the conversation or record it was given or returned doesn't change what was saved.
     """
 
     def __init__(self) -> None:
@@ -313,12 +335,10 @@ class InMemoryConversationStore(ConversationStore):
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
         record = self._records.get(conversation_id)
-        return dataclasses.replace(record) if record is not None else None
+        return deepcopy(record)
 
     async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
-        return [
-            dataclasses.replace(record) for record in self._records.values() if scope is None or record.scope == scope
-        ]
+        return [deepcopy(record) for record in self._records.values() if scope is None or record.scope == scope]
 
     async def write_record(
         self,
@@ -332,7 +352,7 @@ class InMemoryConversationStore(ConversationStore):
             raise ConversationConflict(record.conversation_id)
         for entry in new_entries:
             self._entries[entry.id] = deepcopy(entry)
-        self._records[record.conversation_id] = dataclasses.replace(record)
+        self._records[record.conversation_id] = deepcopy(record)
 
     async def delete_record(self, conversation_id: str) -> None:
         self._records.pop(conversation_id, None)

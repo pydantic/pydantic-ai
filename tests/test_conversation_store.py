@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 import pytest
 
 from pydantic_ai import Agent, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.conversation_store import ConversationConflict, InMemoryConversationStore
+from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, InMemoryConversationStore
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -236,3 +238,93 @@ async def test_a_results_conversation_can_be_saved_and_continued_from_directly()
 
     assert result.conversation is result.conversation
     assert result.conversation.revision == 1
+
+
+async def test_a_whole_fork_keeps_what_a_paused_conversation_is_waiting_on() -> None:
+    store = InMemoryConversationStore()
+    requests = DeferredToolRequests(metadata={'call': {'reason': 'approval'}})
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], deferred_tool_requests=requests)
+    await store.save(conversation)
+
+    whole = await store.fork(conversation.conversation_id)
+    partial = await store.fork(conversation.conversation_id, at=0)
+
+    assert whole.deferred_tool_requests == requests
+    loaded = await store.load(whole.conversation_id)
+    assert loaded is not None
+    assert loaded.deferred_tool_requests == requests
+    assert partial.deferred_tool_requests is None
+
+
+async def test_the_store_keeps_its_own_copy_of_each_record() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(deferred_tool_requests=DeferredToolRequests(metadata={'call': {}}))
+    await store.save(conversation, scope='user-1')
+
+    conversation.usage.requests = 99
+    assert conversation.deferred_tool_requests is not None
+    conversation.deferred_tool_requests.metadata['call']['changed'] = True
+    (listed,) = await store.list_conversations()
+    listed.usage.requests = 42
+
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.usage.requests == 0
+    assert loaded.deferred_tool_requests == DeferredToolRequests(metadata={'call': {}})
+
+
+class _RacingStore(InMemoryConversationStore):
+    """Runs `race` the first time a history is read, as another writer acting between a store's two reads would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.race: Callable[[], Awaitable[None]] | None = None
+
+    async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
+        race, self.race = self.race, None
+        if race is not None:
+            await race()
+        return await super().read_history(head_id)
+
+
+async def test_a_conversation_deleted_while_it_is_read_loads_as_missing_and_conflicts_on_save() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.race = lambda: store.delete(conversation.conversation_id)
+    assert await store.load(conversation.conversation_id) is None
+
+    await store.save(other := Conversation(messages=[ModelRequest(parts=[UserPromptPart('two')])]))
+    store.race = lambda: store.delete(other.conversation_id)
+    with pytest.raises(ConversationConflict):
+        await store.save(other)
+
+
+async def test_a_conversation_replaced_while_it_is_read_loads_as_replaced() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    rewritten = Conversation(
+        messages=[ModelRequest(parts=[UserPromptPart('rewritten')])],
+        conversation_id=conversation.conversation_id,
+        revision=conversation.revision,
+    )
+
+    async def replace_it() -> None:
+        await store.save(rewritten)
+        await store.delete('unrelated')  # Collects the replaced history's entries.
+
+    store.race = replace_it
+    assert await store.load(conversation.conversation_id) == rewritten
+
+
+async def test_a_history_missing_an_entry_of_an_unchanged_record_fails_to_load() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    record = await store.save(conversation)
+    assert record.head_id is not None
+    del store._entries[record.head_id]  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(KeyError):
+        await store.load(conversation.conversation_id)

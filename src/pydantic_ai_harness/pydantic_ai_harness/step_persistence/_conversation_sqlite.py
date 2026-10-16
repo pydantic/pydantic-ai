@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+import threading
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import anyio
@@ -101,6 +103,7 @@ class SqliteConversationStore(ConversationStore):
         self._database = Path(database) if database is not None else None
         self._connection = connection
         self._schema_ready = False
+        self._lock = threading.Lock()
         if media_store == 'auto':
             media_store = (
                 SqliteMediaStore(database=self._database)
@@ -110,47 +113,51 @@ class SqliteConversationStore(ConversationStore):
         self._media_store: MediaStore | None = media_store
         self._media_threshold_bytes = media_threshold_bytes
 
-    def _open(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connected(self) -> Generator[sqlite3.Connection]:
+        """A connection to use for one operation.
+
+        A connection the store opens is its own and closed afterwards. A caller-owned one is shared,
+        so operations on it take turns: two at once would interleave their savepoints.
+        """
         if self._connection is not None:
-            conn = self._connection
-        else:
-            assert self._database is not None
-            self._database.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self._database, isolation_level=None)
+            with self._lock:
+                self._ensure_schema(self._connection)
+                yield self._connection
+            return
+        assert self._database is not None
+        self._database.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._database, isolation_level=None)
+        try:
             conn.execute('PRAGMA journal_mode=WAL')
+            self._ensure_schema(conn)
+            yield conn
+        finally:
+            conn.close()
+
+    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         if not self._schema_ready:
             conn.executescript(_SCHEMA)
             self._schema_ready = True
-        return conn
-
-    def _close(self, conn: sqlite3.Connection) -> None:
-        if self._connection is None:
-            conn.close()
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
         return await anyio.to_thread.run_sync(self._sync_read_record, conversation_id)
 
     def _sync_read_record(self, conversation_id: str) -> ConversationRecord | None:
-        conn = self._open()
-        try:
+        with self._connected() as conn:
             row = conn.execute(
                 'SELECT record FROM conversation_records WHERE conversation_id = ?', (conversation_id,)
             ).fetchone()
-        finally:
-            self._close(conn)
         return RECORD_ADAPTER.validate_json(row[0]) if row is not None else None
 
     async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
         return await anyio.to_thread.run_sync(self._sync_read_records, scope)
 
     def _sync_read_records(self, scope: str | None) -> list[ConversationRecord]:
-        conn = self._open()
-        try:
+        with self._connected() as conn:
             rows = conn.execute(
                 'SELECT record FROM conversation_records WHERE ? IS NULL OR scope = ?', (scope, scope)
             ).fetchall()
-        finally:
-            self._close(conn)
         return [RECORD_ADAPTER.validate_json(row[0]) for row in rows]
 
     async def write_record(
@@ -172,8 +179,7 @@ class SqliteConversationStore(ConversationStore):
         messages: list[tuple[str, str]],
         expected_revision: int | None,
     ) -> None:
-        conn = self._open()
-        try:
+        with self._connected() as conn:
             with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):
                 row = conn.execute(
                     'SELECT revision FROM conversation_records WHERE conversation_id = ?', (record.conversation_id,)
@@ -203,15 +209,12 @@ class SqliteConversationStore(ConversationStore):
                         RECORD_ADAPTER.dump_json(record).decode(),
                     ),
                 )
-        finally:
-            self._close(conn)
 
     async def delete_record(self, conversation_id: str) -> None:
         await anyio.to_thread.run_sync(self._sync_delete_record, conversation_id)
 
     def _sync_delete_record(self, conversation_id: str) -> None:
-        conn = self._open()
-        try:
+        with self._connected() as conn:
             with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):
                 row = conn.execute(
                     'DELETE FROM conversation_records WHERE conversation_id = ? RETURNING head_id', (conversation_id,)
@@ -235,8 +238,6 @@ class SqliteConversationStore(ConversationStore):
                         'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE sha256 = ?)',
                         (sha256, sha256),
                     )
-        finally:
-            self._close(conn)
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         row = await anyio.to_thread.run_sync(self._sync_read_entry, entry_id)
@@ -248,15 +249,12 @@ class SqliteConversationStore(ConversationStore):
         )
 
     def _sync_read_entry(self, entry_id: str) -> tuple[str | None, str] | None:
-        conn = self._open()
-        try:
+        with self._connected() as conn:
             return conn.execute(
                 'SELECT e.parent_id, m.message FROM conversation_entries e '
                 'JOIN conversation_messages m ON m.sha256 = e.sha256 WHERE e.id = ?',
                 (entry_id,),
             ).fetchone()
-        finally:
-            self._close(conn)
 
     async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
         """The entries from the first one up to `head_id`, in order, read in one query."""
@@ -277,8 +275,5 @@ class SqliteConversationStore(ConversationStore):
         return entries
 
     def _sync_read_history(self, head_id: str) -> list[tuple[str, str | None, str | None]]:
-        conn = self._open()
-        try:
+        with self._connected() as conn:
             return conn.execute(_HISTORY_SQL, (head_id,)).fetchall()
-        finally:
-            self._close(conn)

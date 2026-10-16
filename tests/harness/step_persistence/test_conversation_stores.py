@@ -135,3 +135,15 @@ async def test_postgres_store_creates_its_schema_once_under_concurrent_first_use
 
     assert sum('CREATE TABLE IF NOT EXISTS step_persistence_conv_records' in s for s in pool.statements) == 1
     pool.close()
+
+
+async def test_concurrent_saves_on_a_caller_connection_take_turns() -> None:
+    with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
+        store = SqliteConversationStore(connection=connection, media_store=None)
+        conversations = [Conversation(messages=[ModelRequest(parts=[UserPromptPart(str(i))])]) for i in range(20)]
+
+        async with anyio.create_task_group() as tg:
+            for conversation in conversations:
+                tg.start_soon(store.save, conversation)
+
+        assert [await store.load(c.conversation_id) for c in conversations] == conversations
