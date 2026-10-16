@@ -2468,6 +2468,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             A clone of this model bound to the open WebSocket connection. The source
             model is unchanged and keeps using HTTP.
         """
+        if _is_azure(self.client, self._provider.name):
+            raise UserError('Responses WebSockets are not supported with Azure OpenAI models.')
+
         try:
             from ._openai_responses_websocket import ResponsesWebSocket
         except ImportError as exc:

@@ -50,7 +50,7 @@ from ..realtime.ws_cassettes import (
 with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
-    from openai import APIError, AsyncOpenAI
+    from openai import APIError, AsyncAzureOpenAI, AsyncOpenAI
     from openai._base_client import platform_headers
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
@@ -60,6 +60,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
@@ -183,6 +184,19 @@ def test_connect_type_hints_are_resolvable():
         get_type_hints(OpenAIResponsesModel.connect)['websocket_connection_options']
         == WebSocketConnectionOptions | None
     )
+
+
+async def test_azure_connection_is_rejected_before_handshake(sockets: SocketHarness):
+    async with AsyncAzureOpenAI(
+        api_key='test',
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://example.openai.azure.com/',
+    ) as client:
+        model = OpenAIResponsesModel('gpt-4o', provider=AzureProvider(openai_client=client))
+        with pytest.raises(UserError, match='not supported with Azure OpenAI'):
+            async with model.connect():
+                pass
+    assert sockets.connect_count == 0
 
 
 async def test_tool_continuation(allow_model_requests: None, recorded_responses: RecordedResponses):

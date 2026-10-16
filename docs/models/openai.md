@@ -579,7 +579,7 @@ Request settings continue to map to `response.create`. The connection has these 
 
 - Handshake headers, authentication, the SDK client's WebSocket URL, proxy and TLS configuration are fixed when [`connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] opens. Put shared headers in model settings or [`connect(extra_headers=...)`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]; changing them on an individual run raises before send.
 - WebSocket responses cannot use [`openai_background=True`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background]. Compaction and token counting use HTTP, including when called on a connected model.
-- The OpenAI API WebSocket endpoint is the supported service. An OpenAI-compatible HTTP endpoint needs its own WebSocket support and client configuration. [`OpenAICodexModel`](openai-codex.md) uses per-request session headers and does not support this persistent connection.
+- The OpenAI API WebSocket endpoint is the supported service. Azure OpenAI models are rejected by `connect()` until their WebSocket behavior is verified. An OpenAI-compatible HTTP endpoint needs its own WebSocket support and client configuration. [`OpenAICodexModel`](openai-codex.md) uses per-request session headers and does not support this persistent connection.
 
 When instrumented, WebSocket model request spans have `pydantic_ai.transport='websocket'`, including transport errors after request preparation. Ordinary HTTP spans keep their existing attributes.
 
