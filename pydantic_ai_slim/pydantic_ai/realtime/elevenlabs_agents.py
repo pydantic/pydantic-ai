@@ -1686,9 +1686,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 self._context_limit_tokens = usage.context_limit_tokens
             # ElevenLabs reports LLM context consumption only: no output tokens and no credits reach
             # the WebSocket. Conversation cost appears post-hoc on `GET /v1/convai/conversations/{id}`.
-            # Gated behind `client_events` (off by default); verified cadence: once per user turn,
-            # *after* the `agent_response` turn boundary, so it cannot be attributed to a specific
-            # model response and accumulates into the run total only. The same report is the context
+            # Gated behind `client_events` (off by default); verified cadence: once per reply, with its
+            # last audio, so it ends the reply (see `_TAIL_ENDING_FRAMES`) before it is counted: it isn't
+            # attributed to a specific model response and accumulates into the run total only. The same report is the context
             # window fraction: `context_tokens` is the whole context the LLM holds, against the limit
             # (this frame's, or the last one reported when a frame omits it).
             context_tokens = usage.context_tokens or 0
@@ -1798,9 +1798,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # spoken. The already-emitted transcript cannot be shrunk through the codec (a final
             # `OutputTranscript` only extends), so the corrected text is retained on the finalized
             # response's `provider_details` and the interruption closes the turn here. When the user
-            # barged in during *playback*, after `agent_response` already closed the turn (the common
-            # audio-mode case: synthesis outruns playback), there is nothing left to finalize and the
-            # correction is dropped.
+            # barged in during *playback*, after the reply's last audio had already arrived and ended it
+            # (the common audio-mode case: synthesis outruns playback), there is nothing left to finalize
+            # and the correction is dropped.
             correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
             details = {'corrected_agent_response': correction.corrected_agent_response}
             if (tail := self._tail) is not None:
@@ -1825,8 +1825,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # is still being generated, the `agent_response` that follows is already cut down to what
             # was heard (no correction frame); during playback of a finished reply, the server sends
             # an `agent_response_correction` instead. Only an interruption that lands while the
-            # response is still open marks the turn interrupted: during playback the turn has already
-            # been finalized by `agent_response`, and the flag must not leak into the next turn.
+            # response is still open marks the turn interrupted: during playback the reply has already
+            # ended with its last audio, and the flag must not leak into the next turn.
             if self._response_open:
                 self._turn_interrupted = True
             if (tail := self._tail) is not None:

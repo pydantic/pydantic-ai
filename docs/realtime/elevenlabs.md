@@ -210,9 +210,11 @@ Telephony (`ulaw_8000`) agents are not supported.
 ### Usage and cost
 
 ElevenLabs reports the LLM's context consumption only, as `input_tokens`, and only when
-`context_usage` is in the agent's `conversation.client_events` list (it is not by default). A report
-arrives after each turn and counts toward the session's usage without belonging to any one
-response. The context window it names is kept on
+`context_usage` is in the agent's `conversation.client_events` list (it is not by default, and adding it
+is recommended: it also tells the session where a spoken response ends, see
+[Provider-specific quirks](#provider-specific-quirks)). A report arrives with the end of each response's
+audio and counts toward the session's usage without belonging to any one response. When ElevenLabs
+answers a turn with a fallback LLM, the report names that model and its context window. The context window it names is kept on
 [`ElevenLabsAgentsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.context_limit_tokens],
 and [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used] is the ratio of
 the two.
@@ -226,9 +228,15 @@ cost up afterwards through the ElevenLabs conversations API: every
 
 ### Provider-specific quirks
 
-- In audio mode, a response's transcript arrives whole, after its audio; only text-only mode streams
-  it. Synthesis outruns playback, so a spoken response is usually delivered in full while the user
-  is still hearing its first words.
+- In audio mode, a response's transcript arrives whole once the agent's LLM has finished, which can be
+  before or during its audio; only text-only mode streams it. The response ends with its last audio:
+  ElevenLabs marks that with the `context_usage` report when the agent sends it, and otherwise the
+  response ends when the next turn starts, or after a second without audio. Synthesis outruns
+  playback, so a spoken response is usually delivered in full while the user is still hearing its
+  first words.
+- With a TTS model that voices expressive tags, such as `eleven_v4_turbo`, the tags are part of the
+  response's transcript (`[happy] Hi there.`). Pick a model without them on the agent if the
+  transcript is shown or stored as plain text.
 - A barge-in on a response still being generated ends it with the transcript cut down to what the
   user heard (or, when ElevenLabs sends a correction instead, with the cut-down text in
   `provider_details['corrected_agent_response']`). One on a response already delivered keeps its full
