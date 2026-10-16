@@ -10,7 +10,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
 | `_app.py` | `chat`, the terminal app around one session (startup resume, `/reload`, `/update` restarts), and `open_stock_agent`, the stock agent for code outside the terminal |
-| `runtime/process.py` | `ClaiProcess`: what every session in one CLAI process shares, the settings and conversation stores |
+| `runtime/process.py` | `ClaiProcess`: what every session in one CLAI process shares: the settings and conversation stores, the one delegated-task owner (`TaskRouter`), the one `SessionNamer`, and the `ModelResolver` whose Codex sign-in each session's resolver (`for_session()`) uses |
 | `runtime/session_runtime.py` | `SessionRuntime`, one live session: its prompt loop, built-in `/commands`, plugin loader, input queue, and turns; `create_shell` builds one over a `ClaiProcess` |
 | `models/resolver.py` | `ModelResolver`: model names to models, loading provider integrations on demand, with accounts, profiles, and `chain:` fallbacks |
 | `runtime/_session.py` | conversation state, revision-checked saves (each recording the Git checkout of the session's directory), restore-only resume (a session busy in another process resumes as a saved fork), plugin snapshots and stock-agent rebuilding |
@@ -19,7 +19,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `runtime/imported_sessions.py` | Claude Code and Codex sessions for `/resume`, `--resume-claude`, and `--resume-codex`: the on-disk catalog, stable CLAI IDs, and copying into the store (re-reading an uncontinued copy on every resume) |
 | `runtime/claude_code_sessions.py`, `runtime/codex_sessions.py` | read each agent's JSON Lines transcripts: headers for the browser, and the history to continue (the last Claude Code branch, Codex's compacted history) |
 | `runtime/imported_history.py` | shared transcript reading and `HistoryBuilder`, which groups parts into requests and responses; core's `repair_messages` pairs the tool calls |
-| `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
+| `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker, shared by the process's sessions; each queues with its own `NamingClient` (model, setting, retitling) |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
@@ -28,7 +28,7 @@ Keep a row current when you add, move, or change the responsibility of a module.
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses, and the `SessionCatalog`, `PluginCatalog`, and `TaskCatalog` protocols behind `host.sessions`, `host.plugins`, and `host.tasks` |
-| `runtime/tasks.py` | `Tasks`, the harness `DelegationTasks` owner's one observer: the `/tasks` panel rows, the specialists (`Explore`, `Plan`), `TaskEvent`s for plugins, and the `TaskCatalog` plugins reach as `host.tasks` while the shell's owner runs |
+| `runtime/tasks.py` | `TaskRouter`, the process's one harness `DelegationTasks` owner (open while any session runs) and its observer, routing each task's events, wake-ups and rows to the session holding its conversation; `Tasks`, one session's view: the `/tasks` panel rows, the specialists (`Explore`, `Plan`), `TaskEvent`s for plugins, and the `TaskCatalog` plugins reach as `host.tasks` while the owner runs |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands; `PluginEntry` status and origin; the `PluginCatalog` hosts get as `host.plugins` (`listing`, `save_settings`) |
 | `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |

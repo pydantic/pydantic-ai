@@ -68,8 +68,21 @@ async def generate_name(*, model: Model | str, prompt: str) -> NamingResult:
     return NamingResult(name=result.output, tokens=result.usage.total_tokens)
 
 
+async def _unnamed(prompt: str) -> NamingResult | None:
+    return None
+
+
+@dataclass(frozen=True, kw_only=True)
+class NamingClient:
+    """How one live session names a conversation it queued: its model, its setting, and its retitling."""
+
+    generate: Callable[[str], Awaitable[NamingResult | None]]
+    enabled: Callable[[], bool] = lambda: True
+    on_named: Callable[[str, str], Awaitable[None]] | None = None
+
+
 class SessionNamer:
-    """A single worker owned by an application's task group.
+    """A single worker owned by an application's task group, shared by every live session of the process.
 
     `submit` is nonblocking, deduplicated and bounded. Failures are decorative:
     they retain fallback names and are logged, never propagated into user turns.
@@ -80,33 +93,42 @@ class SessionNamer:
         self,
         *,
         store: SqliteConversationStore,
-        generate: Callable[[str], Awaitable[NamingResult | None]],
+        generate: Callable[[str], Awaitable[NamingResult | None]] = _unnamed,
         enabled: Callable[[], bool] = lambda: True,
         timeout: float = 60,
         on_named: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
-        """Bind dependencies without spawning a task; `on_named` gets each saved conversation ID and title."""
+        """Bind dependencies without spawning a task; `on_named` gets each saved conversation ID and title.
+
+        `generate`, `enabled` and `on_named` serve a conversation submitted without a `NamingClient`.
+        """
         self.store = store
         self.generate = generate
         self.enabled = enabled
         self.timeout = timeout
         self.on_named = on_named
-        self._pending: OrderedDict[str, None] = OrderedDict()
+        self._pending: OrderedDict[str, NamingClient | None] = OrderedDict()
         self._wake = anyio.Event()
 
-    def submit(self, conversation_id: str) -> bool:
-        """Coalesce to the most recent committed head, keeping at most ten queued sessions."""
-        if not self.enabled() or conversation_id in self._pending or len(self._pending) >= 10:
+    def _client(self, client: NamingClient | None) -> NamingClient:
+        return client or NamingClient(generate=self.generate, enabled=self.enabled, on_named=self.on_named)
+
+    def submit(self, conversation_id: str, *, client: NamingClient | None = None) -> bool:
+        """Coalesce to the most recent committed head, keeping at most ten queued sessions.
+
+        `client` is the session that asked, whose model names it and who hears the new title.
+        """
+        if not self._client(client).enabled() or conversation_id in self._pending or len(self._pending) >= 10:
             return False
-        self._pending[conversation_id] = None
+        self._pending[conversation_id] = client
         self._wake.set()
         return True
 
-    def backfill(self, entries: list[ConversationSummary]) -> None:
+    def backfill(self, entries: list[ConversationSummary], *, client: NamingClient | None = None) -> None:
         """Queue only a bounded newest-first batch when a browser opens."""
         for entry in entries[:10]:
             if self.needed(entry):
-                self.submit(entry.id)
+                self.submit(entry.id, client=client)
 
     @staticmethod
     def needed(entry: ConversationSummary) -> bool:
@@ -121,29 +143,32 @@ class SessionNamer:
             await self._wake.wait()
             self._wake = anyio.Event()
             while self._pending:
-                conversation_id, _ = self._pending.popitem(last=False)
+                conversation_id, submitted = self._pending.popitem(last=False)
+                client = self._client(submitted)
                 try:
-                    if self.enabled():
+                    if client.enabled():
                         with anyio.fail_after(self.timeout):
-                            title = await self._name(conversation_id=conversation_id)
+                            title = await self._name(conversation_id=conversation_id, client=client)
                         # Outside the timeout: telling the shell may wait for the terminal, and the name is saved.
                         if title is not None:
-                            await self._notify(conversation_id, title)
+                            await self._notify(client, conversation_id, title)
                 except Exception:
                     logging.getLogger(__name__).debug('Session naming failed for %s', conversation_id, exc_info=True)
 
-    async def name(self, *, conversation_id: str) -> bool:
+    async def name(self, *, conversation_id: str, client: NamingClient | None = None) -> bool:
         """Name a saved revision. Safe to drive directly in tests without a background loop."""
-        title = await self._name(conversation_id=conversation_id)
+        client = self._client(client)
+        title = await self._name(conversation_id=conversation_id, client=client)
         if title is not None:
-            await self._notify(conversation_id, title)
+            await self._notify(client, conversation_id, title)
         return title is not None
 
-    async def _notify(self, conversation_id: str, title: str) -> None:
-        if self.on_named is not None:
-            await self.on_named(conversation_id, title)
+    @staticmethod
+    async def _notify(client: NamingClient, conversation_id: str, title: str) -> None:
+        if client.on_named is not None:
+            await client.on_named(conversation_id, title)
 
-    async def _name(self, *, conversation_id: str) -> str | None:
+    async def _name(self, *, conversation_id: str, client: NamingClient) -> str | None:
         """Generate and save a name; the saved title, or `None` when nothing was saved."""
         saved = await self.store.get(conversation_id=conversation_id)
         if not self.needed(saved.summary):
@@ -157,7 +182,7 @@ class SessionNamer:
             f'Previous title: {saved.summary.title}\nPrevious detail: {saved.summary.subtitle}\n'
             f'Current conversation tail:\n{digest}'
         )
-        result = await self.generate(prompt)
+        result = await client.generate(prompt)
         if result is None:
             return None
         title = ' '.join(result.name.title.split()[:8])

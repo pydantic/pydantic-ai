@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2.runtime.session_naming import NamingResult, SessionName, SessionNamer, generate_name
+from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionName, SessionNamer, generate_name
 
 
 async def test_structured_name_and_auxiliary_usage() -> None:
@@ -190,3 +190,39 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
             await done.wait()
             group.cancel_scope.cancel()
     assert notified == [(summary.id, 'Fix renderer')]
+
+
+async def test_one_worker_names_each_conversation_with_the_session_that_queued_it(tmp_path: Path) -> None:
+    """The process's one namer uses the asking session's model and tells only that session the new title."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    first, second = [
+        await store.save(
+            summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart(text)])]
+        )
+        for text in ('fix renderer', 'write docs')
+    ]
+    heard: list[tuple[str, str, str]] = []
+    done = anyio.Event()
+
+    def client(name: str) -> NamingClient:
+        async def generate(prompt: str) -> NamingResult:
+            return NamingResult(name=SessionName(title=f'Named by {name}'))
+
+        async def on_named(conversation_id: str, title: str) -> None:
+            heard.append((name, conversation_id, title))
+            if len(heard) == 2:
+                done.set()
+
+        return NamingClient(generate=generate, on_named=on_named)
+
+    namer = SessionNamer(store=store)
+    # Without a session, nothing names it.
+    assert not await namer.name(conversation_id=first.id)
+    assert namer.submit(first.id, client=client('a'))
+    namer.backfill([second], client=client('b'))
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(namer.run)
+            await done.wait()
+            group.cancel_scope.cancel()
+    assert heard == [('a', first.id, 'Named by a'), ('b', second.id, 'Named by b')]

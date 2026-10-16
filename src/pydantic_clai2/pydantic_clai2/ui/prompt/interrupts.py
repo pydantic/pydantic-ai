@@ -11,8 +11,14 @@ from types import FrameType
 class Interrupts:
     """Cancel one operation, or request exit on a second press within two seconds."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
-        """Use a monotonic clock so wall-clock changes cannot alter the window."""
+    def __init__(self, *, signals: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
+        """Use a monotonic clock so wall-clock changes cannot alter the window.
+
+        With `signals`, as for the session the terminal shows, Ctrl-C cancels the operation `run` awaits.
+        Other sessions leave the process's Ctrl-C handler alone, so overlapping runs cannot restore each
+        other's, and are cancelled with `cancel` only.
+        """
+        self.signals = signals
         self._clock = clock
         self._last: float | None = None
         self.exit_requested = False
@@ -39,7 +45,7 @@ class Interrupts:
 
     async def run(self, operation: Awaitable[None]) -> bool:
         """Return false for user cancellation; propagate external task cancellation."""
-        main_thread = threading.current_thread() is threading.main_thread()
+        handles = self.signals and threading.current_thread() is threading.main_thread()
         loop = asyncio.get_running_loop()
 
         async def invoke() -> None:
@@ -65,7 +71,7 @@ class Interrupts:
         previous = signal.getsignal(signal.SIGINT)
         self._cancel = cancel
         try:
-            if main_thread:
+            if handles:
                 signal.signal(signal.SIGINT, on_signal)
             try:
                 # `asyncio.wait` never forwards our own cancellation to `task`, so a
@@ -81,5 +87,5 @@ class Interrupts:
             return True
         finally:
             self._cancel = None
-            if main_thread:
+            if handles:
                 signal.signal(signal.SIGINT, previous)

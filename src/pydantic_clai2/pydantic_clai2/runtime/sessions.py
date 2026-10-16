@@ -35,7 +35,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.launch import launch_session_id
-from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
+from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from pydantic_clai2.ui.rendering.usage_report import usage_command
@@ -55,8 +55,12 @@ class Sessions(Generic[DepsT, OutputT]):
         store: SqliteConversationStore,
         context: CommandContext,
         launched: str | None = None,
+        namer: SessionNamer | None = None,
     ) -> None:
-        """Bind services to the active shell and its validated settings."""
+        """Bind services to the active shell and its validated settings.
+
+        `namer` is the process's naming worker, shared with its other sessions; without one, it gets its own.
+        """
         self.session = session
         self.store = store
         self.context = context
@@ -64,11 +68,12 @@ class Sessions(Generic[DepsT, OutputT]):
         """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
-        self.namer = SessionNamer(
-            store=store,
-            generate=self.generate,
-            enabled=lambda: self.context.settings.session_namer,
-            on_named=self.named,
+        self.naming = NamingClient(
+            generate=self.generate, enabled=lambda: self.context.settings.session_namer, on_named=self.named
+        )
+        """How this session names the conversations it queues on `namer`."""
+        self.namer = namer or SessionNamer(
+            store=store, generate=self.naming.generate, enabled=self.naming.enabled, on_named=self.naming.on_named
         )
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
@@ -180,7 +185,7 @@ class Sessions(Generic[DepsT, OutputT]):
     async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, as `/resume` lists them, queueing untitled ones for naming."""
         entries = await self.store.listing(query=query, limit=limit)
-        self.namer.backfill(entries)
+        self.namer.backfill(entries, client=self.naming)
         return entries
 
     async def saved(self, conversation_id: str) -> SavedConversation:
@@ -241,7 +246,7 @@ class Sessions(Generic[DepsT, OutputT]):
     async def browse(self, source: ImportSource | None) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing()
-        self.namer.backfill(entries)
+        self.namer.backfill(entries, client=self.naming)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 

@@ -44,7 +44,6 @@ from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import provider_of
-from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
@@ -124,18 +123,20 @@ def create_shell(
     load_plugins: bool = True,
     workspace: Path | None = None,
     process: ClaiProcess | None = None,
+    signals: bool = True,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
     what the session shares with the others in this CLAI; without one, it gets its own over `store`.
+    `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
         if settings is not None
         else Settings(model=None)
     )
-    process = process or ClaiProcess.open(store)
+    process = process or ClaiProcess.open(store, console=console)
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
     session = Session(
@@ -152,7 +153,7 @@ def create_shell(
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
     session.instructions = settings.instructions
-    models = ModelResolver(console=console, store=store)
+    models = process.models.for_session()
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))
@@ -179,7 +180,7 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
+    sessions = Sessions(session=session, store=conversations, context=context, launched=launched, namer=process.namer)
     commands = Commands(workspace=lambda: Path(session.workspace))
     commands.register(
         Command(
@@ -432,7 +433,7 @@ def create_shell(
         history=history,
         transcript=transcript,
         images=images,
-        interrupts=Interrupts(),
+        interrupts=Interrupts(signals=signals),
         screen=screen,
         sessions=sessions,
         speculation=Speculation(context=context, console=console, repl_states=session.repl_states),
@@ -560,10 +561,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
-            directory=None
-            if str(self.sessions.store.database) == ':memory:'
-            else Path(str(self.sessions.store.database) + '.tasks'),
-            step_store=self.session.step_store,
+            router=self.process.tasks,
             fire=self.loader.fire,
             listening=lambda: self.loader.handles(TaskEvent),
             send_input=self.send_input,
@@ -685,9 +683,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def run(self) -> SessionEndReason:
         try:
-            async with self.tasks.owner.opened():
+            async with self.process.tasks.opened() as owner:
                 if isinstance(self.agent, StockAgent):
-                    self.session.delegations = self.tasks.owner
+                    self.session.delegations = owner
                 return await self._run()
         finally:
             self.session.delegations = None
@@ -765,16 +763,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 menus.start_soon(self._run_mid_turn, text)
 
     def background_running(self) -> bool:
-        """Whether a background fork or a delegated task runs, using the plugins loaded now."""
-        return any(record.status == 'running' for record in self.forks.records) or any(
-            record.status == 'running' for record in self.tasks.owner.records.values()
-        )
+        """Whether a background fork or a delegated task of this session runs, using the plugins loaded now."""
+        return any(record.status == 'running' for record in self.forks.records) or self.tasks.running()
 
     def plugins_busy(self, text: str) -> bool:
         """Keep plugin-owned transports alive until all children using them settle."""
         if text.split(maxsplit=1)[0] != '/plugins':
             return False
-        if not any(record.status == 'running' for record in self.tasks.owner.records.values()):
+        if not self.tasks.running():
             return False
         self.console.print(_PLUGINS_WAIT, markup=False)
         return True
@@ -959,7 +955,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     and record.outcome == 'cancelled'
                 ):
                     await self.tasks.owner.cancel(record.id)
-        self.sessions.namer.submit(self.session.summary.id)
+        self.sessions.namer.submit(self.session.summary.id, client=self.sessions.naming)
         if self.editor is not None:
             await self.editor.output.drain()
         _report_interrupt(completed, self.console)
