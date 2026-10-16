@@ -444,14 +444,18 @@ class Remote:
     # Commands' own menus, such as `/set`'s, which the page shows instead of the terminal.
 
     def _command_menu(self, name: str) -> SettingsMenu:
+        """Build the menu bare `/NAME` declares; building may read files, as `/model`'s does, so call it off the loop."""
         menu = self.host.command_menu(name)
         if menu is None:
             raise LookupError(f'/{name} has no menu to show here.')
         return menu
 
+    def _command_info(self, name: str, path: Sequence[str]) -> MenuInfo:
+        return _menu_info(self._command_menu(name), path)
+
     async def command_menu(self, name: str, *, path: Sequence[str] = ()) -> MenuInfo:
         """The menu bare `/NAME` opens, or the one `path`'s rows open from it, with every row's current value."""
-        return await to_thread.run_sync(_menu_info, self._command_menu(name), path)
+        return await to_thread.run_sync(self._command_info, name, path)
 
     async def edit_command_menu(
         self, name: str, key: str, value: str | None, *, path: Sequence[str] = ()
@@ -467,7 +471,7 @@ class Remote:
         self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
     ) -> MenuEdited:
         """One edit, printed in the terminal too, after which every page reads the settings again."""
-        menu = self._command_menu(name)
+        menu = await to_thread.run_sync(self._command_menu, name)
         async with self._command_edits:
             try:
                 messages = await edit(menu)
@@ -476,7 +480,7 @@ class Remote:
         for message in messages:
             self.host.console.print(message, markup=False, highlight=False)
         # Built again: the edit may have changed what it lists, as adding or removing a model does.
-        return MenuEdited(messages=messages, menu=await to_thread.run_sync(_menu_info, self._command_menu(name), path))
+        return MenuEdited(messages=messages, menu=await to_thread.run_sync(self._command_info, name, path))
 
     # The sidebar's workers: the delegated tasks.
 

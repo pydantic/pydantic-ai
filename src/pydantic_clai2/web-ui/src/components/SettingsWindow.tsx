@@ -27,8 +27,8 @@ export const SECTIONS = [
     id: 'models',
     label: 'Models',
     icon: BrainIcon,
-    hint: 'The model each prompt uses, and each saved model\'s settings, as /model and /effort change them.',
-    commands: ['model', 'effort'],
+    hint: 'The model each prompt uses, and each saved model\'s settings, as /model and /model settings change them.',
+    commands: ['model'],
   },
   {
     id: 'plugins',

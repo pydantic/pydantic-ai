@@ -403,7 +403,6 @@ async def add_model(context: CommandContext, dialogs: Dialogs) -> list[str]:
         if picked is None:
             return []
         provider = picked
-        listed = menu.for_provider(provider)
         name = await dialogs.choose(
             title=f'Add a model: {provider}',
             options=[
@@ -412,7 +411,8 @@ async def add_model(context: CommandContext, dialogs: Dialogs) -> list[str]:
                     label=model.name,
                     description=' · '.join(fact for fact in (model.label, _tokens(model.context_window)) if fact),
                 )
-                for model in listed.models
+                for model in menu.models
+                if model.provider == provider
             ],
             current=menu.current,
         )

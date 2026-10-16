@@ -288,7 +288,7 @@ class ModelsSource:
                 note='current' if current else 'saved default' if name in protected else '',
             )
 
-        listed = [name for name in names if name not in _ROWS]
+        listed = _saved(names)
         return [
             FieldRow(
                 key=_MODEL,
@@ -337,22 +337,28 @@ class ModelsSource:
         return self._context.reset_setting(_MODEL)
 
 
-def _saved_models(context: CommandContext) -> list[str]:
-    return [name for name in context.store.models() if name not in _ROWS]
+def _saved(names: list[str]) -> list[str]:
+    return [name for name in names if name not in _ROWS]
 
 
 def models_menu(context: CommandContext) -> SettingsMenu:
-    """Bare `/model`'s menu, which the web UI shows: each saved model's row opens `/model settings NAME`'s menu."""
-    from pydantic_clai2.ui.menus.model_menu import add_model, model_settings_menu
+    """Bare `/model`'s menu, which the web UI shows: each saved model's row opens `/model settings NAME`'s menu.
+
+    Reads the saved models, so build it off the event loop.
+    """
+    from pydantic_clai2.ui.menus.model_menu import add_model
 
     return SettingsMenu(
         source=ModelsSource(context),
         actions={_ADD: partial(add_model, context), _REMOVE: partial(remove_model, context)},
-        menus={
-            name: partial(model_settings_menu, context.store, name, settings_as=context.settings_model(name))
-            for name in _saved_models(context)
-        },
+        menus={name: partial(_settings_menu, context, name) for name in _saved(context.store.models())},
     )
+
+
+def _settings_menu(context: CommandContext, name: str) -> SettingsMenu:
+    from pydantic_clai2.ui.menus.model_menu import model_settings_menu
+
+    return model_settings_menu(context.store, name, settings_as=context.settings_model(name))
 
 
 async def remove_model(context: CommandContext, dialogs: Dialogs) -> list[str]:

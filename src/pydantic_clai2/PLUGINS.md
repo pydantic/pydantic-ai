@@ -2879,7 +2879,8 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `menus`, for rows that open another `SettingsMenu`, such as each saved model's
   settings in `/model`'s menu: the row's key maps to a zero-argument callable that
   builds it when it opens. Leaving it returns to this menu, in the terminal and in
-  the web UI, which shows it beneath the row.
+  the web UI, which shows it beneath the row. The keys are read as the menu opens, so
+  a row an action adds meanwhile opens its menu once the menu opens again.
 - `searchable`, whether typing filters the list (default `True`).
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the

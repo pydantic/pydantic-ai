@@ -171,8 +171,12 @@ async def _run_menu(menu: SettingsMenu, runners: Runners, dialogs: TerminalDialo
     def acts(action: Action) -> Callable[[], Awaitable[Sequence[str]]]:
         return lambda: action(dialogs)
 
+    async def open_menu(build: Callable[[], SettingsMenu]) -> list[str]:
+        # Building it may read files or the keyring, as its rows may.
+        return await _run_menu(await to_thread.run_sync(build), runners, dialogs)
+
     def opens(build: Callable[[], SettingsMenu]) -> Callable[[], Awaitable[Sequence[str]]]:
-        return lambda: _run_menu(build(), runners, dialogs)
+        return partial(open_menu, build)
 
     # Building the list reads the rows, which may read the keyring or `/keys`: off the loop, as each step is.
     fields = await to_thread.run_sync(partial(FieldMenu, menu.source, searchable=menu.searchable))

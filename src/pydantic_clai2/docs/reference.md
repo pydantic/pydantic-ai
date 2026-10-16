@@ -532,9 +532,10 @@ that cache implicitly or not at all ignore it. Set it to `false` to turn caching
 to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
 over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
-In the web UI, `/model` and `/effort` typed in the composer open the Settings window's
-**Models** section instead: the model for the next prompt, each saved model's settings
-(this editor's rows), and adding and removing models. `/fast` still toggles, as in the terminal.
+In the web UI, `/model` typed in the composer opens the Settings window's **Models** section
+instead: the model for the next prompt, each saved model's settings (this editor's rows), and
+adding and removing models. `/effort` opens a dialog with the active model's settings, effort
+among them. `/fast` still toggles, as in the terminal.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`

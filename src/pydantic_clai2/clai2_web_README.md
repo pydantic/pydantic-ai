@@ -55,7 +55,7 @@ saved; a change made in the terminal shows here too. `/set` or `/settings` typed
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
 in the terminal.
 
-**Models** (`#settings/models`, or `/model` or `/effort` typed in the composer) picks the model for
+**Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
 the next prompt, exactly as `/model NAME` does: the session switches, the terminal's status row and
 the composer show it, and it is saved as the default. Each saved model and fallback chain has a row
 that opens its settings beneath it, the rows `/model settings NAME` edits, so effort and Codex fast
@@ -64,7 +64,8 @@ model** asks for a provider and one of its catalog models, then the account when
 several, as `/model add` does; GitHub Copilot, OpenRouter, and vLLM, which sign in or ask for an
 address first, are added from the terminal. **Remove a model** deletes one after asking, keeping the
 current model and the saved default. Creating, editing, and renaming fallback chains stays in the
-terminal's `/model chains`. `/fast` typed in the composer still toggles fast mode.
+terminal's `/model chains`. `/effort` typed in the composer opens a dialog with the active model's
+settings, effort among them, and `/fast` still toggles fast mode.
 
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
