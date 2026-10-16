@@ -18,6 +18,7 @@ import {
   TerminalIcon,
   ToolIcon,
 } from './icons'
+import { WorkerChips } from './WorkersTree'
 
 type Args = Record<string, unknown>
 
@@ -236,6 +237,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
       ) : (
         row
       )}
+      <WorkerChips item={raw} />
       {item.diffs.length > 0 && !open && (
         <div className="tool-diffs">
           {item.diffs.map((diff, index) => (

@@ -157,6 +157,14 @@ other sites show its pages inside theirs today, so the panel opens it in a windo
 instead, and points that window at each new turn. Without a Logfire project the panel says how to
 set one up.
 
+<!-- From #10359 -->
+When the agent delegates to sub-agents, a **Workers** tree appears under the current session:
+one row per worker, under the worker that started it, with its agent, model, elapsed time, and
+last action. Click one, or the link on the tool call that started it, to watch its transcript
+live; type in its box to steer it (it reads your message at its next model request). Stop,
+Background, and Resume do what `/tasks stop`, `background`, and `resume` do. A finished worker
+shows what it saved; **← Session**, or the session's row, goes back.
+
 <!-- From #10372 -->
 `clai2 --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
 takes the launch's token from a file only you can read, instead of making one, for a program that

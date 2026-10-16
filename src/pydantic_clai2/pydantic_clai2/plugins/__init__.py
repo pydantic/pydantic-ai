@@ -309,6 +309,14 @@ class TaskCatalog(Protocol):
         """
         ...
 
+    def steer(self, task_id: str, text: str) -> bool:
+        """Send a running task a user message, which its run reads at its next model request.
+
+        Returns `False` when the task is not running; `resume` continues a finished one. Raises
+        `ValueError` for blank text.
+        """
+        ...
+
 
 class Transcript:
     """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""

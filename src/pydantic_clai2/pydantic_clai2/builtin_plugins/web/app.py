@@ -35,12 +35,13 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     PanelInfo,
     PluginRow,
     Project,
+    TaskTranscript,
     Transcript,
     WorkspaceOpened,
     WorkspacesInfo,
     dump,
 )
-from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch
+from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch, TaskAction
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
 
 STATIC = Path(__file__).with_name('static')
@@ -181,6 +182,12 @@ class Forked(BaseModel):
     id: str
 
 
+class Steered(BaseModel):
+    """Whether the task was running to take the message; a finished one can be resumed instead."""
+
+    steered: bool
+
+
 def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Path = STATIC) -> ASGIApp:
     """The web UI for `remote`, accepting requests only for `hosts` (`HOST:PORT`) with `token`.
 
@@ -191,6 +198,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _prompt(app, remote)
     _sessions(app, remote)
     _plugins(app, remote)
+    _tasks(app, remote)
     _panels(app, remote)
     _workspaces(app, remote)
     _orchestrator(app, remote.orchestrator)
@@ -340,6 +348,23 @@ def _plugins(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:
         await _wait(remote.plugin_action(name, action))
+
+
+def _tasks(app: FastAPI, remote: Remote) -> None:
+    """The Workers tree: read a delegated task's history, steer it, and stop, background, or resume it."""
+
+    @app.get('/api/tasks/{task_id}')
+    async def task(task_id: str) -> TaskTranscript:
+        return _run(lambda: remote.task_transcript(task_id))
+
+    # Before the action route, which would otherwise take `steer` for an action.
+    @app.post('/api/tasks/{task_id}/steer')
+    async def steer(task_id: str, body: Input) -> Steered:
+        return Steered(steered=_run(lambda: remote.steer(task_id, body.text)))
+
+    @app.post('/api/tasks/{task_id}/{action}', status_code=204)
+    async def act(task_id: str, action: TaskAction) -> None:
+        await _wait(remote.task_action(task_id, action))
 
 
 def _panels(app: FastAPI, remote: Remote) -> None:

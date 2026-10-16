@@ -11,6 +11,7 @@ import type {
   Project,
   ServerMessage,
   Switch,
+  TaskTranscript,
   Transcript,
   WorkspacesInfo,
 } from './protocol'
@@ -85,6 +86,9 @@ export const api = {
   pluginSettings: (name: string, changes: Record<string, JsonValue>, reset: string[] = []) =>
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
+  task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
+  taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
+  steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
   menu: (name: string) => call<MenuInfo>('GET', `/api/plugins/${encodeURIComponent(name)}/fields`),
   setField: (name: string, key: string, value: string | null) =>
     call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}`, { value }),

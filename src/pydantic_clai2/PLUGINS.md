@@ -1230,6 +1230,15 @@ directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the t
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
+The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
+`host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
+agent, model, elapsed time, and last action, and a link from the tool call that started it.
+Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
+connects meanwhile gets each running task's transcript so far. Its own box steers it
+(`host.tasks.steer`), and Stop, Background, and Resume act as `/tasks` does; Resume asks the
+agent to continue a finished task, as a prompt. Once a task finishes, the page shows its saved
+history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
+
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
@@ -2519,7 +2528,9 @@ prompt the keyboard does:
   `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
-  `send_input` would. An ID from another conversation raises `LookupError`.
+  `send_input` would. `steer(ID, TEXT)` sends a running task a message, which it reads at its
+  next model request, and returns `False` once it has finished, when `resume` is the way to go
+  on. An ID from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|

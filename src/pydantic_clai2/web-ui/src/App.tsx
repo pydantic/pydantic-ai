@@ -13,11 +13,13 @@ import { MontyPanel } from './components/MontyPanel'
 import { OrchestratorPane } from './components/OrchestratorPane'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
+import { WorkerView } from './components/WorkerView'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
 import { MAC, MOD } from './platform'
 import { isLight, paletteVariables } from './palette'
 import { initial, initialOrchestrator, reduce, reduceOrchestrator } from './state'
+import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
 /** What the main pane shows: the session, or the orchestrator chat. */
@@ -47,6 +49,8 @@ export function App() {
   const [preview, setPreview] = useState<Saved | null>(null)
   // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
   const [opening, setOpening] = useState<Opening | null>(null)
+  // The delegated task whose transcript the main pane shows instead of the session's.
+  const [worker, setWorker] = useState<string | null>(null)
   const picked = useRef(0)
   const [toast, setToast] = useState<{ text: string; level: 'info' | 'error' } | null>(null)
   const [plugins, setPlugins] = useState(false)
@@ -184,6 +188,7 @@ export function App() {
   useEffect(() => {
     picked.current++
     setPreview(null)
+    setWorker(null)
     setOpening((current) => (current?.id === sessionId ? null : current))
   }, [sessionId])
 
@@ -234,6 +239,7 @@ export function App() {
       // Only the last session clicked is shown, however the requests for earlier ones resolve.
       const request = ++picked.current
       setPane('session')
+      setWorker(null)
       if (session.current) {
         setPreview(null)
         setOpening(null)
@@ -257,6 +263,13 @@ export function App() {
     },
     [state.running, showError, open],
   )
+
+  const openWorker = useCallback((id: string) => {
+    setPreview(null)
+    setWorker(id)
+  }, [])
+  const workerTask = worker === null ? null : (state.tasks.find((task) => task.id === worker) ?? null)
+  const links = useMemo(() => ({ tasks: state.tasks, parent: null, open: openWorker }), [state.tasks, openWorker])
 
   // Esc stops the turn of what the main pane shows.
   const orchestrating = pane === 'orchestrator'
@@ -284,7 +297,7 @@ export function App() {
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
-      } else if (event.key === 'Escape' && running && !event.defaultPrevented && !event.isComposing) {
+      } else if (event.key === 'Escape' && running && (orchestrating || !workerTask) && !event.defaultPrevented && !event.isComposing) {
         // Esc in the composer or on the page interrupts, as in the terminal; other fields keep it for themselves.
         const target = event.target as HTMLElement
         const field = target.closest('input, textarea, select')
@@ -296,14 +309,18 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, showError, togglePanel, openPlugins, newSession])
+  }, [running, stop, orchestrating, workerTask, showError, togglePanel, openPlugins, newSession])
 
   const status = state.status
-  const title = preview ? preview.title : (state.session?.title ?? 'New session')
+  const title = workerTask
+    ? `${workerTask.agent}: ${workerTask.prompt.split('\n')[0]}`
+    : preview
+      ? preview.title
+      : (state.session?.title ?? 'New session')
   const workspace = preview ? preview.workspace : (state.session?.workspace ?? '')
   const entries = preview ? preview.items : state.entries
   const project = (state.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
-  const fresh = !preview && entries.length === 0 && state.session !== null
+  const fresh = !preview && !workerTask && entries.length === 0 && state.session !== null
   const composerElement = (
     <Composer
       ref={composer}
@@ -349,6 +366,9 @@ export function App() {
           onCollapse={() => setSidebar(false)}
           onPlugins={openPlugins}
           onError={showError}
+          tasks={state.tasks}
+          worker={workerTask?.id ?? null}
+          onWorker={openWorker}
         />
       )}
       <main className="main">
@@ -374,7 +394,7 @@ export function App() {
                   {workspace.replace(/^\/Users\/[^/]+/, '~')}
                 </span>
               </div>
-              {status && !preview && (
+              {status && !preview && !workerTask && (
                 <div className="topbar-status">
                   <span className={`activity ${state.running ? 'busy' : ''}`}>{state.running ? status.activity : 'ready'}</span>
                   <span className="context" title="Context used / window">
@@ -424,7 +444,16 @@ export function App() {
                 </button>
               </div>
             )}
-            {fresh ? (
+            {workerTask ? (
+              <WorkerView
+                task={workerTask}
+                tasks={state.tasks}
+                live={state.taskItems[workerTask.id]}
+                onOpen={openWorker}
+                onBack={() => setWorker(null)}
+                onError={showError}
+              />
+            ) : fresh ? (
               <div className="hero">
                 <h1>
                   What should we build{project ? ' in ' : ''}
@@ -440,11 +469,13 @@ export function App() {
               </div>
             ) : (
               <>
-                <Transcript
-                  entries={entries}
-                  running={!preview && state.running}
-                  empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
-                />
+                <WorkersContext.Provider value={links}>
+                  <Transcript
+                    entries={entries}
+                    running={!preview && state.running}
+                    empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
+                  />
+                </WorkersContext.Provider>
                 <footer className="bottom">
                   {!preview &&
                     state.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}

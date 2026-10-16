@@ -35,6 +35,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
+from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
@@ -227,6 +228,26 @@ class ThemeInfo:
 
 
 @dataclass(kw_only=True)
+class TaskEntry:
+    """A delegated task as the sidebar's Workers tree shows it, like a `/tasks` row."""
+
+    id: str
+    parent_id: str | None
+    agent: str
+    model: str | None
+    prompt: str
+    status: Literal['running', 'finished']
+    outcome: DelegationOutcome | None
+    started_at: datetime
+    finished_at: datetime | None
+    background: bool
+    resumable: bool
+    activity: str
+    """Its last action, such as `thinking` or `running: shell`."""
+    usage: Usage
+
+
+@dataclass(kw_only=True)
 class Snapshot:
     """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
 
@@ -238,6 +259,10 @@ class Snapshot:
     questions: list[Questions]
     dialogs: list[Dialog]
     theme: ThemeInfo
+    tasks: list[TaskEntry]
+    """The conversation's delegated tasks, each parent before its children."""
+    task_items: dict[str, list[Item]]
+    """Each running task's transcript so far, by task ID."""
     follows_workspace: bool = False
     """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
 
@@ -445,6 +470,14 @@ class SessionsChanged:
 
 
 @dataclass(kw_only=True)
+class TaskChanged:
+    """A delegated task started, or its row changed: its activity, usage, or status."""
+
+    type: Literal['task'] = 'task'
+    task: TaskEntry
+
+
+@dataclass(kw_only=True)
 class PluginsChanged:
     """A command ran, which may have changed the plugins or their settings; an open plugins panel lists them again."""
 
@@ -464,6 +497,16 @@ ItemMessage = (
     | SubCallOutput
     | SubCallDone
 )
+
+
+@dataclass(kw_only=True)
+class TaskItems:
+    """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
+
+    type: Literal['task_event'] = 'task_event'
+    id: str
+    """The task's ID."""
+    messages: list[ItemMessage]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -506,6 +549,8 @@ ServerMessage = (
     | ThemeChanged
     | SessionsChanged
     | PluginsChanged
+    | TaskChanged
+    | TaskItems
 )
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
@@ -568,6 +613,14 @@ class Transcript:
     """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+
+
+@dataclass(kw_only=True)
+class TaskTranscript:
+    """A delegated task with its history, as it saved it."""
+
+    task: TaskEntry
+    items: list[Item]
 
 
 @dataclass(kw_only=True)
@@ -777,7 +830,9 @@ class EventTranslator:
     the write and is shown once it lands.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, scope: str = '') -> None:
+        """`scope` starts every item ID, so a delegated task's items cannot take the session's IDs."""
+        self._scope = scope
         self._parts: dict[int, str] = {}
         self._count = 0
         self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
@@ -786,6 +841,17 @@ class EventTranslator:
 
     def translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         """The item messages `event` makes; none for an event the browser does not show."""
+        messages = self._translate(event)
+        if not self._scope:
+            return messages
+        return [
+            ItemAdded(item=replace(message.item, id=self._scope + message.item.id))
+            if isinstance(message, ItemAdded)
+            else replace(message, id=self._scope + message.id)
+            for message in messages
+        ]
+
+    def _translate(self, event: AgentStreamEvent) -> list[ItemMessage]:
         if isinstance(event, PartStartEvent):
             return self._start(event)
         if isinstance(event, PartDeltaEvent):

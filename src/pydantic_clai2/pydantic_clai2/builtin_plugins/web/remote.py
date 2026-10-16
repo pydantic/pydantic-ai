@@ -52,6 +52,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     StatusChanged,
     StatusInfo,
+    TaskEntry,
+    TaskTranscript,
     TextDelta,
     ThemeChanged,
     ThemeInfo,
@@ -64,6 +66,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     usage_info,
     user_text,
 )
+from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
@@ -74,6 +77,8 @@ from pydantic_clai2.plugins import (
     PluginInfo,
     SessionCatalog,
     SidePanel,
+    TaskCatalog,
+    TaskEvent,
     TurnOutcome,
 )
 from pydantic_clai2.plugins.loader import PluginError
@@ -88,6 +93,7 @@ SPECULATION = 'run.speculative_code_mode'
 Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 PluginAction = Literal['enable', 'disable', 'reload']
+TaskAction = Literal['stop', 'background', 'resume']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
 VIEW_TIMEOUT = 10.0
@@ -108,6 +114,8 @@ class Remote:
         self.host = host
         self.hub = hub
         self.answerer = answerer
+        self.workers = Workers(publish=hub.publish, history=lambda task_id: self.task_catalog.history(task_id))
+        """The delegated tasks, which the plugin's `on_task_event` keeps up to date."""
         self.dialogs = BrowserDialogs(publish=hub.publish)
         """Where the settings menus opened in this page ask their questions."""
         self.orchestrator = Orchestrator(host=host, publish=hub.publish)
@@ -144,6 +152,8 @@ class Remote:
             questions=self.answerer.questions,
             dialogs=self.dialogs.dialogs,
             theme=self.theme(),
+            tasks=self.tasks(),
+            task_items=self.workers.items(),
             follows_workspace=self.host.sessions is not None and self.host.sessions.follows_workspace,
         )
 
@@ -247,6 +257,7 @@ class Remote:
             self.hub.publish(TitleChanged(title=event.title))
         else:
             self._shown = event.conversation_id
+            self.workers.reset()
             self.hub.publish(self.snapshot())
         self.hub.publish(SessionsChanged())
 
@@ -425,6 +436,47 @@ class Remote:
     def answer_dialog(self, dialog_id: str, value: str | None) -> None:
         """Answer a settings menu's open dialog, or cancel it with `None`."""
         self.dialogs.answer(dialog_id, value)
+
+    # The sidebar's workers: the delegated tasks.
+
+    @property
+    def task_catalog(self) -> TaskCatalog:
+        if self.host.tasks is None:
+            raise LookupError('This CLAI runs no delegated tasks.')
+        return self.host.tasks
+
+    def tasks(self) -> list[TaskEntry]:
+        """The conversation's delegated tasks, each parent before its children; none without a task owner."""
+        return [] if self.host.tasks is None else [task_entry(task) for task in self.host.tasks.listing()]
+
+    def task_transcript(self, task_id: str) -> TaskTranscript:
+        catalog = self.task_catalog
+        task = next((task for task in catalog.listing() if task.id == task_id), None)
+        if task is None:
+            raise LookupError(f'No task {task_id!r} in this conversation.')
+        return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
+
+    async def task_action(self, task_id: str, action: TaskAction) -> None:
+        """Stop, background, or resume a task, as `/tasks` does."""
+        catalog = self.task_catalog
+        if action == 'stop':
+            await catalog.stop(task_id)
+        elif action == 'background':
+            catalog.background(task_id)
+        else:
+            await catalog.resume(task_id)
+        # Backgrounding changes the row without an event from the task, which may be waiting on its model.
+        for task in catalog.listing():
+            if task.id == task_id:
+                self.workers.observe(TaskEvent(task=task))
+
+    def steer(self, task_id: str, text: str) -> bool:
+        """Send a running task a message, shown in its transcript; `False` once it has finished."""
+        text = text.strip()
+        steered = self.task_catalog.steer(task_id, text)
+        if steered:
+            self.workers.steered(task_id, text)
+        return steered
 
     # Side panels.
 
