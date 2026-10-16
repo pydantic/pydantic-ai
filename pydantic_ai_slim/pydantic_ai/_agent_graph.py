@@ -1083,7 +1083,8 @@ def _keep_default_output_mode(
         try:
             model.prepare_request(model_settings, kept)
         except exceptions.UserError:
-            # Bedrock rejects output tools alongside thinking on models other than Claude.
+            # The kept mode isn't valid for this request: e.g. Bedrock rejects output tools alongside thinking on
+            # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
             return params
         return kept
     _, prepared = model.prepare_request(model_settings, params)
