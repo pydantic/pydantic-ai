@@ -240,8 +240,6 @@ async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatc
     assert running_on_asyncio()
     assert not await anyio.to_thread.run_sync(running_on_asyncio)
 
-
-
 def test_get_event_loop_preserves_undrivable_loop() -> None:
     with undrivable_event_loop():
         loop = get_event_loop()
