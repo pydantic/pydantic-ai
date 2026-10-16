@@ -1016,13 +1016,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(self.final_result.output, DeferredToolRequests):
                 for call in calls:
-                    self.output_parts.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                            tool_call_id=call.tool_call_id,
-                        )
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+                        tool_call_id=call.tool_call_id,
                     )
+                    self.output_parts.append(part)
+                    yield _messages.FunctionToolResultEvent(part)
         elif calls:
             for call in calls:
                 try:
@@ -1152,13 +1152,13 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         if self.final_result is not None:
             # An output succeeded: function tools are not executed.
             for call in function_calls:
-                self.output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                        tool_call_id=call.tool_call_id,
-                    )
+                part = _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+                    tool_call_id=call.tool_call_id,
                 )
+                self.output_parts.append(part)
+                yield _messages.FunctionToolResultEvent(part)
         else:
             # Every output failed; run function tools so the model can correct next round.
             async for event in self._run_function_calls(function_calls):  # pragma: no branch
