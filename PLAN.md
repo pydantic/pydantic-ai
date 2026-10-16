@@ -182,8 +182,11 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
 
      As for today's children, `ctx.conversation_id` inside a member run is the member's own id. Team tools
      therefore find their conversation through `owner.records[DelegationTasks.child_id()].conversation_id`.
-   - **Who provides the runner:** the host, e.g. `clai2`'s `Session`, registers it when it constructs the owner.
-     It closes over the session's deps, model, local workspace, and a **per-member `RunUsage`**. A member
+   - **Who provides the runner:** the host registers it when it constructs the owner. In `clai2`, `ChatApp`
+     passes it to `Tasks`, which builds the owner. The runner reads the current `Session`'s deps, model and
+     local workspace lazily when it runs, the way `Tasks` already reads `conversation_id`. It also holds a
+     **per-member `RunUsage`**. Teams are therefore available only where `session.delegations` is set, which
+     today means stock agents. A member
      therefore never borrows a spawning run's `RunContext`, which may already have ended. Usage rolls up into a
      team total and is capped by the member's `UsageLimits`.
    - **Restarts:** because the runner is registered on the owner rather than saved per task, a member reloaded
@@ -201,7 +204,9 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    - **Closing the old path:** `delegate()` refuses `resume` for records that have a `name`, with a
      `ModelRetry` pointing at `send_message`. Without this, another member's `delegate_task(resume=...)` would
      re-parent the member and run it outside its own runner, usage and `max_active`. `clai2`'s
-     `TaskCatalog.resume` on a named record wakes it through `member_runner` instead of `resume_prompt`.
+     For a named record, both `TaskCatalog.resume` and the shell's own `/tasks resume ID` (`_app.py`
+     `tasks_command`, which today submits `resume_prompt` itself) wake the member through `member_runner`
+     instead of `resume_prompt`.
    - **Why not extend `delegate()`:** its contract is tool-facing. It raises `ModelRetry`, takes a `str` prompt,
      waits in the foreground until released, and derives the parent from `_CHILD`. A `parent=` override there
      would let any tool call write an arbitrary parent. Separate host-only methods keep that surface closed.
@@ -327,8 +332,13 @@ primitives, which is why its home is a question for maintainers.
   - releases their claims back to `pending`, so the board doesn't keep stale `in_progress` items;
   - writes each undelivered report into the lead inbox and marks the slot delivered, the same as on settle.
     Such members never settle through `_run`, and a later wake would overwrite the report.
-- **Start-up wake.** For team conversations, the shell's start-up wake is based on the lead inbox, not on
-  `reports()`, and goes through the batcher (below).
+- **Lead wake checks.** For team conversations, both of the shell's checks for whether to start a lead turn read
+  the lead inbox (pending, unacknowledged entries), not `reports()`:
+  - the start-up wake;
+  - the mid-session `PromptWakeup` check, which today drops a wake when `reports()` is empty.
+
+  Both go through the batcher (below). Member reports are marked delivered once they move into the lead inbox,
+  so a `reports()`-based check would drop every team wake.
 
 | Tool | Lead | Member | Notes |
 |---|---|---|---|
@@ -550,8 +560,14 @@ REST routes call `host.team`:
    - `delegate_task(resume=<member>)` from another member is refused.
 3. **Team composition:** in harness `teams/` or in `clai2`, per Q2. Board and message tools, `teams.*` events,
    gates, the `Team` observer, lead wake batching, docs and the skill update.
-4. **`clai2` TUI:** `runtime/team.py`, `host.team` with `TeamEvent` (and `PLUGINS.md`), roster rows,
-   panel-selection mode, focus view, `/team`, `/board`, and the `Plan*Event` renderer.
+4. **`clai2` TUI:**
+   - `runtime/team.py`, and `host.team` with `TeamEvent` (and `PLUGINS.md`);
+   - roster rows, panel-selection mode, focus view, `/team`, `/board`, and the `Plan*Event` renderer;
+   - `member_runner` wiring through `Tasks`;
+   - lead wake checks based on the inbox;
+   - member-aware `/tasks resume`.
+
+   Test: a member settling while the lead is idle gives the lead exactly one automatic turn.
 5. **`clai2` web:** protocol, `web/team.py`, `TeamPane`, kanban, message feed, and watch-scoped deltas.
 6. **Later:**
    - plan approval;
