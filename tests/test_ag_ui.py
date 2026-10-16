@@ -6226,7 +6226,7 @@ async def test_stream_tool_return_files_roundtrip_to_history() -> None:
 
 
 def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Message]:
-    """Build the client tool history needed to round-trip tool-result metadata.
+    """Build the client tool history the reducer produces for one response's tool calls and results.
 
     The assistant message carries `content=''` because the stream announces it with a
     `TEXT_MESSAGE_START`, which the reducer materializes as `{id, role, content: ''}` before
@@ -6237,32 +6237,40 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
     `REASONING_ENCRYPTED_VALUE` branch then attaches `subtype='message'` data by message ID:
     https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/sdks/typescript/packages/client/src/apply/default.ts
     """
-    start = next(event for event in events if event['type'] == 'TOOL_CALL_START')
-    result = next(event for event in events if event['type'] == 'TOOL_CALL_RESULT')
-    arguments = ''.join(
-        event['delta']
+    starts = [event for event in events if event['type'] == 'TOOL_CALL_START']
+    # All calls come from one model response, which the reducer resolves onto one assistant message.
+    parent_message_ids = {start['parentMessageId'] for start in starts}
+    assert len(parent_message_ids) == 1
+    tool_calls = [
+        ToolCall(
+            id=start['toolCallId'],
+            function=FunctionCall(
+                name=start['toolCallName'],
+                arguments=''.join(
+                    event['delta']
+                    for event in events
+                    if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
+                ),
+            ),
+        )
+        for start in starts
+    ]
+    tool_messages = [
+        ToolMessage(id=result['messageId'], tool_call_id=result['toolCallId'], content=result['content'])
+        for result in events
+        if result['type'] == 'TOOL_CALL_RESULT'
+    ]
+
+    encrypted_values = {
+        event['entityId']: event['encryptedValue']
         for event in events
-        if event['type'] == 'TOOL_CALL_ARGS' and event['toolCallId'] == start['toolCallId']
-    )
-    tool_call = ToolCall(
-        id=start['toolCallId'],
-        function=FunctionCall(name=start['toolCallName'], arguments=arguments),
-    )
-    tool_message = ToolMessage(
-        id=result['messageId'],
-        tool_call_id=result['toolCallId'],
-        content=result['content'],
-    )
+        if event['type'] == 'REASONING_ENCRYPTED_VALUE' and event['subtype'] == 'message'
+    }
+    for tool_message in tool_messages:
+        if tool_message.id in encrypted_values:
+            tool_message.encrypted_value = encrypted_values[tool_message.id]
 
-    for event in events:
-        if (
-            event['type'] == 'REASONING_ENCRYPTED_VALUE'
-            and event['subtype'] == 'message'
-            and event['entityId'] == tool_message.id
-        ):
-            tool_message.encrypted_value = event['encryptedValue']
-
-    return [AssistantMessage(id=start['parentMessageId'], content='', tool_calls=[tool_call]), tool_message]
+    return [AssistantMessage(id=parent_message_ids.pop(), content='', tool_calls=tool_calls), *tool_messages]
 
 
 @pytest.mark.parametrize(
@@ -6399,30 +6407,7 @@ async def test_stream_skipped_tool_returns_roundtrip(frontend_tool: bool) -> Non
         async for event in adapter.encode_stream(adapter.run_stream(on_complete=on_complete))
     ]
 
-    # Rebuild the client history the way the AG-UI reducer does from the stream.
-    tool_calls = [
-        ToolCall(
-            id=event['toolCallId'],
-            function=FunctionCall(
-                name=event['toolCallName'],
-                arguments=''.join(
-                    e['delta']
-                    for e in events
-                    if e['type'] == 'TOOL_CALL_ARGS' and e['toolCallId'] == event['toolCallId']
-                ),
-            ),
-        )
-        for event in events
-        if event['type'] == 'TOOL_CALL_START'
-    ]
-    tool_messages = [
-        ToolMessage(id=event['messageId'], tool_call_id=event['toolCallId'], content=event['content'])
-        for event in events
-        if event['type'] == 'TOOL_CALL_RESULT'
-    ]
-    reloaded = AGUIAdapter.load_messages(
-        [AssistantMessage(id='msg-2', content='', tool_calls=tool_calls), *tool_messages]
-    )
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
 
     def tool_returns(messages: list[ModelMessage]) -> list[tuple[str, Any]]:
         return [

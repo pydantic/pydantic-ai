@@ -633,6 +633,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Function tool helpers ----------------------------------------------
 
+    def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
+        """Record a 'not executed' stub for a call skipped because a final result was already processed.
+
+        Emits an unvalidated `FunctionToolCallEvent` and the stub's `FunctionToolResultEvent`, like
+        `_record_output_part` does for a skipped output tool, so event-stream consumers (e.g. UI adapters)
+        see the same result the message history records.
+        """
+        part = _messages.ToolReturnPart(
+            tool_name=call.tool_name,
+            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+            tool_call_id=call.tool_call_id,
+        )
+        self.output_parts.append(part)
+        yield _messages.FunctionToolCallEvent(call)
+        yield _messages.FunctionToolResultEvent(part)
+
     async def _validate_function_calls(
         self, calls: list[_messages.ToolCallPart], *, validated_calls: dict[str, ValidatedToolCall[DepsT]]
     ) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -1016,14 +1032,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(self.final_result.output, DeferredToolRequests):
                 for call in calls:
-                    part = _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                        tool_call_id=call.tool_call_id,
-                    )
-                    self.output_parts.append(part)
-                    yield _messages.FunctionToolCallEvent(call)
-                    yield _messages.FunctionToolResultEvent(part)
+                    for event in self._skip_function_call(call):
+                        yield event
         elif calls:
             for call in calls:
                 try:
@@ -1153,14 +1163,8 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         if self.final_result is not None:
             # An output succeeded: function tools are not executed.
             for call in function_calls:
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                    tool_call_id=call.tool_call_id,
-                )
-                self.output_parts.append(part)
-                yield _messages.FunctionToolCallEvent(call)
-                yield _messages.FunctionToolResultEvent(part)
+                for event in self._skip_function_call(call):
+                    yield event
         else:
             # Every output failed; run function tools so the model can correct next round.
             async for event in self._run_function_calls(function_calls):  # pragma: no branch

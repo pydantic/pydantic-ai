@@ -544,7 +544,7 @@ async def test_streaming_ignores_skipped_tool_calls(live_frames: list[str]):
     console = Console(file=StringIO(), force_terminal=False, width=80)
     await ask_agent(agent, 'name a city', stream=True, console=console, code_theme='monokai')
 
-    assert not any('alling tool' in frame for frame in _distinct_frames(live_frames))
+    assert not any('Calling tool' in frame or 'Called tool' in frame for frame in _distinct_frames(live_frames))
 
 
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
