@@ -24,7 +24,7 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 
 ## An end-to-end service {#end-to-end}
 
-One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) when a Logfire token is available, from `LOGFIRE_TOKEN` or the credentials `logfire auth` saved locally, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. To stay short, it leaves out what you add before exposing it: authentication and checks that the caller owns the run, deduplication of repeated requests, [usage limits](#cost), and a terminal state for a run that fails, which `GET /runs/{run_id}` otherwise keeps reporting as running.
+One file with the pieces most production agents need: an HTTP API, a tool that waits for a person to approve it, durable execution on [DBOS](durable_execution/dbos.md), and OpenTelemetry traces. It needs a model provider's API key and nothing else: DBOS keeps its state in a SQLite file here (use Postgres in production), and traces go to [Logfire](logfire.md) when a Logfire token is available, from `LOGFIRE_TOKEN` or the credentials `logfire auth` saved locally, or to any OTel collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. To stay short, it leaves out what you add before exposing it: authentication and checks that the caller owns the run, deduplication of repeated requests, and [usage limits](#cost).
 
 ```bash
 pip/uv-add "pydantic-ai[dbos]" fastapi uvicorn
@@ -63,21 +63,25 @@ def issue_refund(order_id: str, amount: float) -> str:
 
 @DBOS.workflow()
 async def support_run(prompt: str) -> str:
-    await DBOS.set_event_async('state', {'status': 'running'})
-    result = await agent.run(prompt)
-    while isinstance(output := result.output, DeferredToolRequests):
-        pending = {call.tool_call_id: call.args_as_dict() for call in output.approvals}
-        await DBOS.set_event_async('state', {'status': 'awaiting_approval', 'pending': pending})
-        approvals: dict[str, bool] | None = await DBOS.recv_async('approvals', timeout_seconds=7 * 24 * 3600)
-        if approvals is None:  # nobody answered within a week
-            approvals = {call_id: False for call_id in pending}
+    try:
         await DBOS.set_event_async('state', {'status': 'running'})
-        result = await agent.run(
-            conversation=result.conversation,
-            deferred_tool_results=output.build_results(approvals=approvals),
-        )
-    await DBOS.set_event_async('state', {'status': 'done', 'output': output})
-    return output
+        result = await agent.run(prompt)
+        while isinstance(output := result.output, DeferredToolRequests):
+            pending = {call.tool_call_id: call.args_as_dict() for call in output.approvals}
+            await DBOS.set_event_async('state', {'status': 'awaiting_approval', 'pending': pending})
+            approvals: dict[str, bool] | None = await DBOS.recv_async('approvals', timeout_seconds=7 * 24 * 3600)
+            if approvals is None:  # nobody answered within a week
+                approvals = {call_id: False for call_id in pending}
+            await DBOS.set_event_async('state', {'status': 'running'})
+            result = await agent.run(
+                conversation=result.conversation,
+                deferred_tool_results=output.build_results(approvals=approvals),
+            )
+        await DBOS.set_event_async('state', {'status': 'done', 'output': output})
+        return output
+    except Exception as e:  # so GET /runs/{run_id} doesn't keep reporting 'running'
+        await DBOS.set_event_async('state', {'status': 'failed', 'error': str(e)})
+        raise
 
 
 @app.post('/runs')
