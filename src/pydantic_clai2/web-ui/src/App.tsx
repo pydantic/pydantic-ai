@@ -8,7 +8,7 @@ import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { CommandMenu } from './components/CommandMenu'
-import { SettingsWindow, linkedSection, type SettingsSection } from './components/SettingsWindow'
+import { SettingsWindow, commandSection, linkedSection, type SettingsSection } from './components/SettingsWindow'
 import { DialogLayer } from './components/DialogLayer'
 import { MontyPanel } from './components/MontyPanel'
 import { OrchestratorPane } from './components/OrchestratorPane'
@@ -68,7 +68,8 @@ export function App() {
   const [commandMenu, setCommandMenu] = useState<string | null>(null)
   const closeCommandMenu = useCallback(() => setCommandMenu(null), [])
   const openMenu = useCallback((command: string) => {
-    if (command === 'set' || command === 'settings') setSettings('general')
+    const section = commandSection(command)
+    if (section) setSettings(section)
     else setCommandMenu(command)
   }, [])
   useEffect(() => {

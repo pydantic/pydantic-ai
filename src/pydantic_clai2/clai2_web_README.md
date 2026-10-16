@@ -46,7 +46,7 @@ of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
 web UI, the Monty panel's input runs `/monty` too.
 
-<!-- From the web settings stack -->
+<!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
 on its left, each with its own address (`#settings/general`, `#settings/plugins`) to link or
 reload. **General** holds the settings `/set` changes, grouped as their keys are (Display, Run,

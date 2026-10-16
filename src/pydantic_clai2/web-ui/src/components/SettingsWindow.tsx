@@ -3,18 +3,40 @@ import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
 import { BackIcon, PuzzleIcon, SlidersIcon } from './icons'
 
-/** The Settings window's sections, in the order its navigation lists them; each is `#settings/ID` in the address. */
+interface Section {
+  id: string
+  label: string
+  icon: typeof SlidersIcon
+  hint: string
+  commands: readonly string[]
+}
+
+/** The Settings window's sections, in the order its navigation lists them; each is `#settings/ID` in the address.
+
+`commands` are the bare commands whose declared menu opens the section, rather than a dialog of its own. */
 export const SECTIONS = [
-  { id: 'general', label: 'General', icon: SlidersIcon, hint: 'The settings /set changes, saved and applied at once.' },
+  {
+    id: 'general',
+    label: 'General',
+    icon: SlidersIcon,
+    hint: 'The settings /set changes, saved and applied at once.',
+    commands: ['set', 'settings'],
+  },
   {
     id: 'plugins',
     label: 'Plugins',
     icon: PuzzleIcon,
     hint: 'Turn plugins on and off and edit their settings, as /plugins does.',
+    commands: [],
   },
-] as const
+] as const satisfies readonly Section[]
 
 export type SettingsSection = (typeof SECTIONS)[number]['id']
+
+/** The section a bare command's menu opens, or `null` for one that opens a dialog of its own. */
+export function commandSection(command: string): SettingsSection | null {
+  return SECTIONS.find((section) => (section.commands as readonly string[]).includes(command))?.id ?? null
+}
 
 /** The section `#settings/ID` names, the first for a bare `#settings`, or `null` when the address names none. */
 export function linkedSection(hash: string): SettingsSection | null {
