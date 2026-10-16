@@ -794,6 +794,43 @@ async def test_instruction_updates_resumed_request_keeps_baseline():
     assert prefixes == [prefixes[0]] * 2
 
 
+async def test_instruction_updates_suspended_resume_after_a_rewritten_block_changed():
+    """A resumed turn whose rewrite-mode block changed since it was sent resends its recorded instructions."""
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=Settings)
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
+    history[-1] = scripted_response(
+        texts=['partial'], state='suspended', provider_response_id='paused', input_tokens=1, output_tokens=1
+    )
+    captured_parts: list[list[InstructionPart] | None] = []
+
+    class ResumeModel(ScriptedContinuationModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            captured_parts.append(model_request_parameters.instruction_parts)
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    model = ResumeModel(
+        responses=[scripted_response(texts=['done'], provider_response_id='complete', input_tokens=1, output_tokens=1)]
+    )
+    await agent.run(model=model, deps=Settings('Chatty.', 'A'), message_history=history)
+    # The current instructions don't rebuild what the turn was sent, so it gets the recorded text, as on any agent.
+    assert captured_parts == [[InstructionPart(content='Terse.\n\nA')]]
+
+
 @pytest.mark.parametrize('inline', [False, True])
 @pytest.mark.parametrize('rewrite', ['none', 'parts', 'empty'])
 async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline: bool, rewrite: str):
