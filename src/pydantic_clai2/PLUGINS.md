@@ -1485,7 +1485,8 @@ CLAI's own commands that change CLAI rather than the session's conversation (`/w
 `/spinner`, `/web`) run at the prompt exactly as from the session's composer, queued behind a
 running session turn as there, and their results show in the orchestrator chat instead of the
 session's. The terminal, under `/web`, still echoes them. `/set model` is refused there, since it
-picks the session's model; `/model NAME` picks the orchestrator's. Any other command, such as `/fork`,
+picks the session's model; `/model NAME` picks the orchestrator's. `/set` alone opens CLAI's
+settings menu where it opens from the session's composer, and its model row is the session's. Any other command, such as `/fork`,
 `/resume`, `/compact`, a skill, or a plugin's own, says it works in a session. `/plugins` alone opens
 the plugins panel. Text starting with `/` that is not a command, such as a path, is a prompt.
 
