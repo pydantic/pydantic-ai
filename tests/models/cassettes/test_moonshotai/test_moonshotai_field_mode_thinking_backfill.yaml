@@ -1,0 +1,122 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.moonshot.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1018"
+      content-type:
+      - application/json
+      host:
+      - api.moonshot.ai
+    body:
+      type: json
+      content:
+        model: kimi-k3
+        stream: false
+        messages:
+        - role: user
+          content: What is the weather in Paris? Use the get_weather tool.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_paris
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+          reasoning_content: ""
+        - role: tool
+          tool_call_id: call_paris
+          content: sunny
+        - role: user
+          content: And in London? Use the tool again, then answer for both in one short sentence.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_london
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+          reasoning_content: ""
+        - role: tool
+          tool_call_id: call_london
+          content: rainy
+        reasoning_effort: medium
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get the weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      msh-context-cache-token-boosted-nvme:
+      - "0"
+      msh-gid:
+      - enterprise-tier-2
+      msh-org-id:
+      - org-30b79407c5054f7885f3033c1614921d
+      msh-project-id:
+      - proj-c71799aed1924aa2b7b5779d0f9cbcf2
+      msh-request-id:
+      - e2b5f872-c99a-11f1-95a3-de7ba041809a
+      msh-trace-mode:
+      - "on"
+      msh-uid:
+      - d1sjhbnkgnumadtmapl0
+      msh-usage-cache-write-tokens-1h:
+      - "0"
+      msh-usage-cache-write-tokens-5m:
+      - "256"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-6ad2801a1328c8f56a792928
+        object: chat.completion
+        created: 1792180250
+        model: kimi-k3
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: The weather in Paris is sunny and in London it's rainy.
+            reasoning_content: "Paris: sunny, London: rainy. One short sentence."
+          finish_reason: stop
+        usage:
+          prompt_tokens: 379
+          completion_tokens: 40
+          total_tokens: 419
+          completion_tokens_details:
+            reasoning_tokens: 13
+          prompt_tokens_details:
+            cache_write_tokens: 256
+  recorded_at: 2026-10-16T19:50:51.888042+00:00

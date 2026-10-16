@@ -628,7 +628,7 @@ async def test_zai_field_mode_thinking_backfill(
         ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_london')]),
     ]
     provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
-    agent = Agent(ZaiModel('glm-5.1', provider=provider), tools=[get_weather])
+    agent = Agent(ZaiModel('glm-5.3', provider=provider), tools=[get_weather])
 
     result = await agent.run(message_history=history, model_settings=ZaiModelSettings(thinking=True))
 
