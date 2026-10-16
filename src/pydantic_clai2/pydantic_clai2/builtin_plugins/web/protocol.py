@@ -40,6 +40,7 @@ from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
 MONTY_TOOL = 'run_code'
 """The code mode tool whose cells make up the Monty panel."""
@@ -134,7 +135,7 @@ class Choice:
     description: str = ''
 
 
-DialogKind = Literal['choose', 'text', 'confirm', 'wait']
+DialogKind = Literal['choose', 'text', 'confirm', 'wait', 'view']
 
 
 @dataclass(kw_only=True)
@@ -158,11 +159,15 @@ class Dialog:
     initial: str = ''
     secret: bool = False
     """`text`: mask what is typed; the answer is never sent to any browser."""
+    multiline: bool = False
+    """`text`: take text with line breaks, in a text area."""
     yes: str = ''
     """`confirm`: the answer that confirms; `no`, the other, is the safe one."""
     no: str = ''
     shown: str = ''
     """`wait`: the latest text the waiting task showed, such as a sign-in link."""
+    text: str = ''
+    """`view`: the read-only text to show; any answer closes it."""
 
 
 @dataclass(kw_only=True)
@@ -451,6 +456,48 @@ class DialogClosed:
     id: str
 
 
+@dataclass(frozen=True, kw_only=True)
+class TurnUsage:
+    """Tokens, requests, and cost of one turn, or of all of them, as a `/usage` row shows them."""
+
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost: str | None
+    """In dollars, as `/cost` formats it; `None` when nothing could be priced."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class UsageReport:
+    """What `/usage` and `/cost` report about the retained history, from the same `session_usage`."""
+
+    turns: list[TurnUsage]
+    total: TurnUsage
+    unpriced: list[str]
+    """The models without price data, whose responses no cost counts."""
+
+
+def turn_usage(usage: RunUsage) -> TurnUsage:
+    """The browser's copy of one `/usage` row."""
+    return TurnUsage(
+        requests=usage.requests,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        cost=None if usage.cost is None else format_cost(usage.cost),
+    )
+
+
+def usage_report(usage: SessionUsage) -> UsageReport:
+    """The browser's copy of what `/usage` prints."""
+    return UsageReport(
+        turns=[turn_usage(turn) for turn in usage.turns], total=turn_usage(usage.total), unpriced=list(usage.unpriced)
+    )
+
+
 @dataclass(kw_only=True)
 class Notice:
     """A `/command`'s result, or another line the browser should show once."""
@@ -459,6 +506,8 @@ class Notice:
     text: str
     level: Literal['info', 'error'] = 'info'
     command: str | None = None
+    usage: UsageReport | None = None
+    """For `/usage` and `/cost`: the figures their text reports, which the page shows as a card."""
 
 
 @dataclass(kw_only=True)
@@ -505,6 +554,13 @@ class PluginsChanged:
     """A command ran, which may have changed the plugins or their settings; an open plugins panel lists them again."""
 
     type: Literal['plugins'] = 'plugins'
+
+
+@dataclass(frozen=True, kw_only=True)
+class SettingsChanged:
+    """A command ran, or a command's menu was edited, which may have changed CLAI's settings; open menus read them again."""
+
+    type: Literal['settings'] = 'settings'
 
 
 ItemMessage = (
@@ -572,6 +628,7 @@ ServerMessage = (
     | ThemeChanged
     | SessionsChanged
     | PluginsChanged
+    | SettingsChanged
     | TaskChanged
     | TaskItems
     | UpdateChanged
@@ -715,11 +772,15 @@ class MenuField:
     """Where the value comes from when not from the user."""
     action: bool
     """Whether choosing it runs an action, with dialogs, instead of editing a value."""
+    menu: bool
+    """Whether choosing it opens another menu, which the routes reach with `?menu=KEY`, instead of editing a value."""
+    button: str = ''
+    """What the action's button says; when empty, `Change…` for a row with a value or a secret, else `Open…`."""
 
 
 @dataclass(kw_only=True)
 class MenuInfo:
-    """A plugin's declared settings menu, with every row's current value."""
+    """A plugin's declared settings menu, or a command's, with every row's current value."""
 
     title: str
     fields: list[MenuField]

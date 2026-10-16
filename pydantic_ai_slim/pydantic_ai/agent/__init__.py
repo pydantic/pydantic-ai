@@ -3978,7 +3978,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # withhold a schema nor reveal a tool later, so every deferred unrevealed tool resolves
             # to `'withheld'` in the visibility table.
             model_request_parameters = models.resolve_request_tools(
-                model_request_parameters, model_profile.get('supported_native_tools', frozenset())
+                model_request_parameters,
+                model_profile.get('supported_native_tools', frozenset()),
+                unsupported_settings=model.unsupported_native_tool_settings,
             )
             # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose
             # tools are fixed at connect can never do — the model would be handed a `search_tools`

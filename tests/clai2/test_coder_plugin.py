@@ -70,7 +70,8 @@ def coder_host(*, terminal: bool = False, **settings: JsonValue) -> PluginHost[o
 def test_settings_source_validates_saves_and_resets() -> None:
     host = coder_host(sub_agents=False, instructions='Keep this guidance.')
     source = CoderSource(host)
-    unrestricted, sub_agents, folders, _skill_folders = source.rows()
+    unrestricted, sub_agents, folders, _skill_folders, skills = source.rows()
+    assert (source.current(skills), skills.display(source.current(skills))) == ('[]', 'All on')
     assert source.current(unrestricted) == 'false'
     assert source.apply(unrestricted, 'true') == 'Saved Unrestricted filesystem.'
     assert host.settings(CoderSettings).unrestricted_filesystem is True
