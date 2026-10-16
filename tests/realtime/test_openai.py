@@ -4746,6 +4746,60 @@ async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypa
     assert [frame['type'] for frame in second.sent] == ['session.update']
 
 
+async def test_a_tool_batch_response_request_lost_to_a_drop_is_not_asked_for_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `response.create` a caller's last tool result sends for its batch is taken back too when it fails.
+
+    The caller was told the result failed (and the session expects no reply for that batch), so the
+    reconnect mustn't ask for one.
+    """
+
+    class _DropsOnCreate(_DroppableWebSocket):
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                self.drop()
+            await super().send(data)
+
+    first, second = _DropsOnCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        events = conn.__aiter__()
+        call = {'type': 'function_call', 'id': 'fc1', 'call_id': 'call_1', 'name': 't', 'arguments': '{}'}
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        first.push(
+            {
+                'type': 'response.function_call_arguments.done',
+                'response_id': 'A',
+                'item_id': 'fc1',
+                'output_index': 0,
+                'call_id': 'call_1',
+                'name': 't',
+                'arguments': '{}',
+            }
+        )
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': [call]}))
+        while not isinstance(await anext(events), ToolCall):
+            pass
+        while conn._response_active:  # pyright: ignore[reportPrivateUsage]
+            await anext(events)
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(ToolResult(tool_call_id='call_1', output='42'))
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+        connect.release.set()
+        async for event in events:  # pragma: no branch
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                break
+
+    assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
 async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
