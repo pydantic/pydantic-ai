@@ -16,6 +16,7 @@ from pydantic_ai.messages import BinaryContent
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PENDING_BYTES = 32 * 1024 * 1024
 MAX_PIXELS = 25_000_000
+FORMATS = ('PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF')
 MARKER = re.compile(r'\[image:[0-9a-f]{8}\]')
 
 
@@ -55,8 +56,27 @@ def read_image(path: Path) -> BinaryContent:
     path = local_image_path(str(path))
     if path.stat().st_size > MAX_IMAGE_BYTES:
         raise ValueError('Image file exceeds the 10 MiB attachment limit.')
-    with Image.open(path, formats=['PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF']) as image:
+    with Image.open(path, formats=FORMATS) as image:
         return encode_image(image)
+
+
+def decode_images(blobs: Sequence[bytes]) -> list[BinaryContent]:
+    """Check and normalize uploaded image bytes within the limits pasted files get, as from a browser."""
+    images: list[BinaryContent] = []
+    size = 0
+    for data in blobs:
+        if len(data) > MAX_IMAGE_BYTES:
+            raise ValueError('Image exceeds the 10 MiB attachment limit.')
+        try:
+            with Image.open(BytesIO(data), formats=FORMATS) as image:
+                encoded = encode_image(image)
+        except (OSError, Image.DecompressionBombError) as exc:
+            raise ValueError('Only PNG, JPEG, GIF, WebP, BMP, and TIFF images are supported.') from exc
+        size += len(encoded.data)
+        if size > MAX_PENDING_BYTES:
+            raise ValueError('Images exceed the 32 MiB pending attachment limit.')
+        images.append(encoded)
+    return images
 
 
 def read_images(paths: Sequence[Path]) -> list[BinaryContent]:

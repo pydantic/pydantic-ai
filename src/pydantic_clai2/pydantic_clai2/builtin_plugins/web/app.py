@@ -17,9 +17,10 @@ from urllib.parse import parse_qs
 
 import anyio
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, JsonValue, ValidationError
+from pydantic import Base64Bytes, BaseModel, Field, JsonValue, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
@@ -43,10 +44,13 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch, TaskAction
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.ui.prompt.image_input import decode_images
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
 UNBUILT = 'The web UI is not built in this checkout: run `npm ci && npm run build` in src/pydantic_clai2/web-ui.'
+PROMPT_BYTES = 48 * 1024 * 1024
+"""The largest prompt request: room for the 32 MiB of images a prompt may carry, base64-encoded."""
 
 Scope = MutableMapping[str, object]
 Message = MutableMapping[str, object]
@@ -106,6 +110,12 @@ class Input(BaseModel):
     """A prompt or `/command` to enter."""
 
     text: str = Field(max_length=200_000)
+
+
+class Prompt(Input):
+    """A prompt or `/command` to enter, with images, base64-encoded, for a prompt."""
+
+    images: list[Base64Bytes] = Field(default=[], max_length=20)
 
 
 class Answer(BaseModel):
@@ -210,6 +220,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _tasks(app, remote)
     _panels(app, remote)
     _workspaces(app, remote)
+    _media(app, remote)
     _orchestrator(app, remote.orchestrator)
     _events(app, remote)
     if (static / 'assets').is_dir():
@@ -255,8 +266,11 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
         return Response(dump(remote.snapshot()), media_type='application/json')
 
     @app.post('/api/input')
-    async def send(body: Input) -> Entered:
-        return Entered(menu=_run(lambda: remote.send(body.text)))
+    async def send(request: Request) -> Entered:
+        body = await _read_prompt(request)
+        # Off the event loop: decoding and re-encoding a large image takes a while.
+        images = await _wait(anyio.to_thread.run_sync(decode_images, body.images))
+        return Entered(menu=_run(lambda: remote.send(body.text, images=images)))
 
     @app.post('/api/interrupt')
     async def interrupt() -> Interrupted:
@@ -286,6 +300,23 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/dialogs/{dialog_id}', status_code=204)
     async def answer_dialog(dialog_id: str, body: DialogAnswer) -> None:
         _run(lambda: remote.answer_dialog(dialog_id, body.value))
+
+
+async def _read_prompt(request: Request) -> Prompt:
+    try:
+        return Prompt.model_validate_json(await _limited_body(request))
+    except ValidationError as error:
+        raise RequestValidationError(error.errors(include_input=False)) from error
+
+
+async def _limited_body(request: Request) -> bytes:
+    """The request's body, refused once it passes `PROMPT_BYTES`, before it is all read."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > PROMPT_BYTES:
+            raise HTTPException(413, 'A prompt and its images may be at most 48 MiB.')
+    return bytes(body)
 
 
 def _answer(answer: Answer) -> AskUserAnswer:
@@ -419,6 +450,24 @@ def _workspaces(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/workspaces/{workspace_id}/open')
     async def open_one(workspace_id: str) -> WorkspaceOpened:
         return await _wait(open_workspace(remote.host.plugins, workspace_id))
+
+
+def _media(app: FastAPI, remote: Remote) -> None:
+    """Prompts' images, outside `/api/` as the page's `<img>` tags carry the token in the query, as assets do."""
+
+    @app.get('/media/{conversation_id}/{identifier}')
+    async def media(conversation_id: str, identifier: str) -> Response:
+        image = await _wait(remote.image(conversation_id, identifier))
+        return Response(
+            image.data,
+            media_type=image.media_type,
+            # An identifier names its bytes, so they never change.
+            headers={
+                'Cache-Control': 'private, max-age=86400, immutable',
+                'Content-Security-Policy': "default-src 'none'",
+                'X-Content-Type-Options': 'nosniff',
+            },
+        )
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:

@@ -1,12 +1,14 @@
 """`PluginHost.send_input`, `setting`, `interrupt`, `complete`, `sessions`, and the `on_command_end` moment."""
 
 import io
+import re
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import ClassVar
 
 import anyio
 import pytest
+from PIL import Image
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
@@ -14,7 +16,15 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, conversation_text
@@ -25,6 +35,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import CommandEnd, Plugin, PluginHost, SessionStart, TurnEnd
+from pydantic_clai2.ui.prompt.image_input import encode_image
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.clai2.test_tasks import task
@@ -112,6 +123,39 @@ async def test_send_input_drives_a_shell_without_an_editor(tmp_path: Path) -> No
     text = output.getvalue()
     assert '> /cost\n' in text and '> hello there\n' in text and 'Hello back' in text
     assert not host.interrupt(), 'nothing runs once the shell has exited'
+    await shell.loader.close('exit')
+
+
+async def test_send_input_with_images_takes_the_pasted_images_path(tmp_path: Path) -> None:
+    """A prompt's images queue with it as `[image:ID]` markers, as pasted ones do, and reach the model."""
+    seen: list[str | Sequence[UserContent]] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest) and isinstance(request.parts[0], UserPromptPart)
+        seen.append(request.parts[0].content)
+        yield 'Seen'
+
+    output = io.StringIO()
+    shell = remote_shell(tmp_path, Agent(FunctionModel(stream_function=respond)), output=output)
+    await shell.loader.load_all()
+    [host] = Recorder.hosts
+    red, blue = (encode_image(Image.new('RGB', (2, 2), color=color)) for color in ('red', 'blue'))
+    for refused in ('/cost', ' clear ', '!ls'):
+        with pytest.raises(ValueError, match='Images go with a prompt'):
+            host.send_input(refused, images=[red])
+    shell.images.notice = 'Pasted in the terminal.'
+    host.send_input(' describe ', images=[red])
+    host.send_input('', images=[blue])
+    assert shell.images.notice == 'Pasted in the terminal.', 'the terminal draft holds no new marker'
+    host.send_input('/exit')
+    with anyio.fail_after(10):
+        assert await shell.run() == 'exit'
+    assert seen == [['describe', red], ['', blue]], 'each prompt kept its own images while it waited'
+    assert re.search(r'> \[image:[0-9a-f]{8}\] describe\n', output.getvalue()), 'echoed as a pasted image is'
+    assert [turn.text for turn in Recorder.turns] == ['describe', '']
+    with pytest.raises(RuntimeError, match='no prompt to enter images at'):
+        PluginHost[None](name='bare', console=Console(file=io.StringIO()), settings={}).send_input('hi', images=[red])
     await shell.loader.close('exit')
 
 

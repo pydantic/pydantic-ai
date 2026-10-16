@@ -237,7 +237,17 @@ def test_the_item_log_follows_a_cell() -> None:
 def test_history_items() -> None:
     long = 'x' * (RESULT_CHARS + 5)
     messages = [
-        ModelRequest(parts=[UserPromptPart(['Look', BinaryContent(b'png', media_type='image/png')])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'Look',
+                        BinaryContent(b'png', media_type='image/png', identifier='shot'),
+                        BinaryContent(b'<svg/>', media_type='image/svg+xml'),
+                    ]
+                )
+            ]
+        ),
         ModelResponse(
             parts=[
                 ThinkingPart('plan'),
@@ -266,7 +276,8 @@ def test_history_items() -> None:
         ('tool', 'shell', 'error'),
         ('tool', 'grep', 'interrupted'),
     ]
-    assert items[0].text == 'Look\n[BinaryContent]'
+    # The page shows the PNG from its route; it names the SVG, which it does not draw.
+    assert (items[0].text, items[0].images) == ('Look\n[BinaryContent]', ['shot'])
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40

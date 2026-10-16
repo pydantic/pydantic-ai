@@ -16,6 +16,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
+from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -219,6 +220,7 @@ class PluginLoader(Generic[DepsT]):
         enabled: bool = True,
         submit_prompt: Callable[[str], None] | None = None,
         send_input: Callable[[str], None] | None = None,
+        send_images: Callable[[str, Sequence[BinaryContent]], None] | None = None,
         interrupt: Callable[[], bool] = lambda: False,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
@@ -229,8 +231,8 @@ class PluginLoader(Generic[DepsT]):
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
-        `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
-        and `commands` are handed to every host; see `PluginHost` for the defaults.
+        `conversation`, `status`, `submit_prompt`, `send_input`, `send_images`, `interrupt`, `sessions`, `setting`,
+        `tasks`, and `commands` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
@@ -242,6 +244,7 @@ class PluginLoader(Generic[DepsT]):
         self._status = status
         self._submit_prompt = submit_prompt
         self._send_input = send_input
+        self._send_images = send_images
         self._interrupt = interrupt
         self._sessions = sessions
         self._setting = setting
@@ -500,6 +503,7 @@ class PluginLoader(Generic[DepsT]):
             requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),
             submit_prompt=self._submit_prompt,
             send_input=self._send_input,
+            send_images=self._send_images,
             interrupt=self._interrupt,
             commands=self._commands,
             sessions=self._sessions,

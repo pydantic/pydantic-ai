@@ -2548,6 +2548,12 @@ prompt the keyboard does:
   A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
+- `self.host.send_input(text, images=[...])` enters a prompt with `BinaryContent` images, as
+  images pasted at the prompt go: each is staged with an `[image:ID]` marker before the text, which
+  the terminal echoes, it queues with its prompt, and the turn sends the model the text and the
+  images as given (the terminal's paste normalizes them to PNG first). Images with a `/command` or a
+  `!` line, or beyond the 32 MiB that may wait to be sent, raise `ValueError`; a host built without
+  `send_images=` raises `RuntimeError`.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
@@ -3738,7 +3744,8 @@ case-insensitive and includes text instructions in multimodal prompts.
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
 API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
 paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
-platform requirements and limits.
+platform requirements and limits. A plugin enters a prompt with images through
+`host.send_input(text, images=...)`, as the web UI's composer does.
 
 `turn_start.text` and `turn_end.text` contain the text caption with attachment
 markers removed, possibly an empty string for an image-only turn. A `turn_start`

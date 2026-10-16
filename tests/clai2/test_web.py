@@ -1,6 +1,7 @@
 """The `web` plugin end to end: a shell driven over HTTP, its WebSocket stream, and the access checks."""
 
 import asyncio
+import base64
 import html
 import io
 import re
@@ -18,6 +19,7 @@ import httpx
 import httpx2
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
+from PIL import Image
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
@@ -29,14 +31,14 @@ from websockets.typing import Origin
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins import web
-from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, live, remote as remote_module
+from pydantic_clai2.builtin_plugins.web import WebPlugin, WebSettings, app as app_module, live, remote as remote_module
 from pydantic_clai2.builtin_plugins.web.app import (
     HEADER,
     UNBUILT,
@@ -393,6 +395,77 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
     assert web_.post('/api/input', {'text': '   '}).json() == {'detail': 'Type a prompt or a /command.'}
     response = web_.post('/api/input', {'text': '!ls'})
     assert (response.status_code, response.json()) == (400, {'detail': 'Shell lines (!) run only in the terminal.'})
+
+
+def encoded_png(color: str) -> str:
+    buffer = io.BytesIO()
+    Image.new('RGB', (4, 3), color=color).save(buffer, format='PNG')
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def test_images_from_the_browser(make_web: 'MakeWeb') -> None:
+    """A prompt's images reach the model as pasted ones do; the page shows them from their route, saved or not."""
+    seen: list[str | Sequence[UserContent]] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest) and isinstance(request.parts[0], UserPromptPart)
+        seen.append(request.parts[0].content)
+        yield 'Seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=respond), deps_type=type(None)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        body = {'text': 'what is this?', 'images': [encoded_png('red')]}
+        assert web_.post('/api/input', body).json() == {'menu': None}
+        messages, _ = receive_until(socket, TurnEnded)
+        [started] = [message.item for message in messages if isinstance(message, TurnStarted)]
+        assert started is not None and started.text == 'what is this?'
+        [[text, red]] = seen
+        assert text == 'what is this?' and isinstance(red, BinaryContent) and red.media_type == 'image/png'
+        assert started.images == [red.identifier]
+        conversation = web_.shell.session.conversation_id
+        # Images alone; the first prompt's image now comes from the conversation's history.
+        web_.post('/api/input', {'text': '', 'images': [encoded_png('blue')]})
+        receive_until(socket, TurnEnded)
+        users = [item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'user']
+        assert [(user['text'], len(user['images'])) for user in users] == [('what is this?', 1), ('', 1)]
+        for identifier in (red.identifier, users[1]['images'][0]):
+            shown = web_.client.get(f'/media/{conversation}/{identifier}?token={TOKEN}')
+            assert (shown.status_code, shown.headers['content-type']) == (200, 'image/png')
+            assert shown.headers['content-security-policy'] == "default-src 'none'"
+        assert shown.content.startswith(b'\x89PNG')
+        assert web_.client.get(f'/media/{conversation}/{red.identifier}?token={TOKEN}').content == red.data
+        assert web_.client.get(f'/media/{conversation}/{red.identifier}').status_code == 403, 'the token is needed'
+        assert web_.client.get(f'/media/{conversation}/missing?token={TOKEN}').status_code == 404
+        # Once the shell holds another conversation, the first is read from where it is saved.
+        assert web_.post('/api/sessions/new').status_code == 204
+        receive_until(socket, Snapshot)
+        assert web_.client.get(f'/media/{conversation}/{red.identifier}?token={TOKEN}').content == red.data
+        assert web_.get(f'/api/sessions/{conversation}').json()['items'][0]['images'] == [red.identifier]
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_images_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
+    web_ = make_web(Agent(TestModel()))
+    image = encoded_png('red')
+    for text in ('/cost', '/set'):
+        response = web_.post('/api/input', {'text': text, 'images': [image]})
+        assert (response.status_code, response.json()['detail']) == (
+            400,
+            'Images go with a prompt, not with a /command or a ! shell line.',
+        )
+    response = web_.post('/api/input', {'text': 'x', 'images': [base64.b64encode(b'not an image').decode()]})
+    assert (response.status_code, response.json()['detail']) == (
+        400,
+        'Only PNG, JPEG, GIF, WebP, BMP, and TIFF images are supported.',
+    )
+    assert web_.post('/api/input', {'text': 'x', 'images': [1]}).status_code == 422
+    monkeypatch.setattr(app_module, 'PROMPT_BYTES', 100)
+    response = web_.post('/api/input', {'text': 'x', 'images': [image]})
+    assert (response.status_code, response.json()['detail']) == (413, 'A prompt and its images may be at most 48 MiB.')
 
 
 def test_completion_and_models(make_web: 'MakeWeb') -> None:

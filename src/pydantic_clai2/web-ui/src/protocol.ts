@@ -32,6 +32,8 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** A prompt's images, by identifier, served at `mediaUrl`. */
+  images: string[]
 }
 
 export interface Option {

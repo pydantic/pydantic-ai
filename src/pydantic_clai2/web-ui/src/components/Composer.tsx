@@ -1,10 +1,13 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { api, interrupt } from '../api'
+import { encoded, readImages, type Attachment } from '../media'
 import type { CompletionInfo } from '../protocol'
-import { ArrowUpIcon, ChevronIcon, CheckIcon, StopIcon } from './icons'
+import { ArrowUpIcon, ChevronIcon, CheckIcon, CloseIcon, ImageIcon, StopIcon } from './icons'
 
 export interface ComposerHandle {
   focus: () => void
+  /** Attach the images among `files`, as a paste or the file picker does. */
+  attach: (files: Iterable<File>) => void
 }
 
 interface Props {
@@ -23,6 +26,9 @@ interface Props {
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
+  /** The images going with the draft, held by the page as the draft is; without them, nothing can be attached. */
+  attachments?: Attachment[]
+  onAttachments?: (update: (current: Attachment[]) => Attachment[]) => void
   /** Where a message goes, and what stops the running turn: the session's by default. */
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
@@ -44,6 +50,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     onMenu,
     draft: text,
     onDraft: setText,
+    attachments = [],
+    onAttachments,
     chat,
     commands = true,
     label = 'Message CLAI',
@@ -55,9 +63,25 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [selected, setSelected] = useState(0)
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
   const request = useRef(0)
 
-  useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
+  const attach = useCallback(
+    async (files: Iterable<File>) => {
+      if (!onAttachments) return
+      try {
+        const { images, problem } = await readImages(files)
+        if (images.length) onAttachments((current) => [...current, ...images])
+        if (problem) onError(problem)
+      } catch (error) {
+        onError(error instanceof Error ? error.message : String(error))
+      }
+      area.current?.focus()
+    },
+    [onAttachments, onError],
+  )
+
+  useImperativeHandle(ref, () => ({ focus: () => area.current?.focus(), attach: (files) => void attach(files) }), [attach])
 
   // The composer moves from the new-session hero to the bottom bar when the first message lands; keep typing there.
   useEffect(() => area.current?.focus(), [])
@@ -112,26 +136,39 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   const send = async () => {
     const value = text.trim()
-    if (!value || disabled) return
+    const images = attachments
+    if ((!value && !images.length) || disabled) return
     setText('')
     setSuggestions([])
     // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
-    const handle = local && Object.hasOwn(local, value) ? local[value] : undefined
+    const handle = !images.length && local && Object.hasOwn(local, value) ? local[value] : undefined
     if (handle) {
       handle()
       return
     }
+    onAttachments?.(() => [])
     try {
       if (chat) await chat.send(value)
       else {
-        const entered = await api.send(value)
+        const entered = await api.send(value, encoded(images))
         if (entered.menu !== null) onMenu?.(entered.menu)
       }
     } catch (error) {
       setText(value)
+      onAttachments?.((current) => [...images, ...current])
       onError(error instanceof Error ? error.message : String(error))
     }
   }
+
+  // Image data, such as a screenshot, or copied image files; text pastes as text.
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...event.clipboardData.files]
+    if (!onAttachments || !files.length) return
+    if (!files.some((file) => file.type.startsWith('image/')) && event.clipboardData.getData('text/plain')) return
+    event.preventDefault()
+    void attach(files)
+  }
+  const empty = !text.trim() && !attachments.length
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggestions.length > 0) {
@@ -206,6 +243,23 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         </div>
       )}
       <div className={`composer ${disabled ? 'disabled' : ''}`}>
+        {attachments.length > 0 && (
+          <div className="attachments">
+            {attachments.map((image) => (
+              <div key={image.id} className="attachment">
+                <img src={image.url} alt={image.name} />
+                <button
+                  className="attachment-remove"
+                  onClick={() => onAttachments?.((current) => current.filter((other) => other.id !== image.id))}
+                  title={`Remove ${image.name}`}
+                  aria-label={`Remove ${image.name}`}
+                >
+                  <CloseIcon size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           ref={area}
           rows={1}
@@ -217,6 +271,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             void complete(event.target.value)
           }}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           onBlur={() => window.setTimeout(() => setSuggestions([]), 120)}
           aria-label={label}
           role="combobox"
@@ -255,9 +310,33 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               <span className="model-name">{model}</span>
             </span>
           )}
+          {onAttachments && (
+            <>
+              <button
+                className="icon-button attach"
+                onClick={() => picker.current?.click()}
+                disabled={disabled}
+                title="Attach images, or paste or drop them"
+                aria-label="Attach images"
+              >
+                <ImageIcon size={16} />
+              </button>
+              <input
+                ref={picker}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(event) => {
+                  void attach([...(event.target.files ?? [])])
+                  event.target.value = ''
+                }}
+              />
+            </>
+          )}
           {controls}
           {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
-          {running && !text.trim() ? (
+          {running && empty ? (
             <button
               className="send stop"
               onClick={() => void interrupt(onError, chat?.interrupt)}
@@ -267,7 +346,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               <StopIcon size={14} />
             </button>
           ) : (
-            <button className="send" onClick={() => void send()} disabled={!text.trim() || disabled} title="Send (Enter)">
+            <button className="send" onClick={() => void send()} disabled={empty || disabled} title="Send (Enter)">
               <ArrowUpIcon size={16} />
             </button>
           )}

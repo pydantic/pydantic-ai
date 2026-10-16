@@ -7,7 +7,15 @@ Run `/web` in a session to open it in your browser: a local web app with a sessi
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
 blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
 model picker, and a stop button. Scrolling up while output streams keeps your place; **Jump to latest** follows
-it again. The terminal and the browser drive the same session: a prompt typed in either runs once, and both
+it again.
+
+Paste an image into the composer (a screenshot, or a copied image file), drop image files anywhere on the
+conversation, or pick them with the image button: thumbnails show above the text, each with **×** to remove it,
+and Enter sends them with the text, or alone. They get the terminal's limits (10 MiB each, 32 MiB waiting to be
+sent; PNG, JPEG, GIF, WebP, BMP, or TIFF) and are sent as PNG; other files are refused. A `/command` takes no
+images. The prompt shows its images in the conversation, after a reload or `/resume` too, and in sessions
+started in the terminal; click one to see it larger. The terminal shows the prompt as it shows a pasted image,
+with an `[image:ID]` marker for each. The terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
 ends the web UI; `/web status` shows its address.
 

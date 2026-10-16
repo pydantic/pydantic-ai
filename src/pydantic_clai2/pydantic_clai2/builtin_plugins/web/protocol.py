@@ -19,6 +19,7 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     RetryPromptPart,
@@ -46,6 +47,9 @@ MONTY_TOOL = 'run_code'
 
 RESULT_CHARS = 20_000
 """The most of a tool result the browser receives; the model's copy is unchanged."""
+
+SHOWN_IMAGES = frozenset({'image/png', 'image/jpeg', 'image/gif', 'image/webp'})
+"""The image types the page shows from a prompt; it names any other attachment in the prompt's text."""
 
 ItemKind = Literal['user', 'assistant', 'thinking', 'tool']
 ToolState = Literal['running', 'done', 'error', 'interrupted']
@@ -95,6 +99,8 @@ class Item:
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
+    images: list[str] = field(default_factory=list[str])
+    """A prompt's images, by `BinaryContent.identifier`, served at `/media/CONVERSATION/IDENTIFIER`."""
 
 
 @dataclass(kw_only=True)
@@ -794,6 +800,13 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
     return text
 
 
+def shown_images(part: UserPromptPart) -> list[BinaryContent]:
+    """The images of a prompt the page shows as thumbnails."""
+    if isinstance(part.content, str):
+        return []
+    return [item for item in part.content if isinstance(item, BinaryContent) and item.media_type in SHOWN_IMAGES]
+
+
 def user_text(part: UserPromptPart) -> str:
     """A prompt's text, naming the attachments the browser does not show.
 
@@ -801,10 +814,18 @@ def user_text(part: UserPromptPart) -> str:
     """
     if isinstance(part.content, str):
         return part.content
+    shown = shown_images(part)
     return '\n'.join(
         item if isinstance(item, str) else f'[{type(item).__name__}]'
         for item in part.content
-        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX)) and item not in shown
+    )
+
+
+def prompt_item(part: UserPromptPart, *, item_id: str) -> Item:
+    """A prompt as the transcript shows it: its text, and its images by identifier."""
+    return Item(
+        id=item_id, kind='user', text=user_text(part), images=[image.identifier for image in shown_images(part)]
     )
 
 
@@ -816,7 +837,7 @@ def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
+                    items.append(prompt_item(part, item_id=f'h{len(items)}'))
                 elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'

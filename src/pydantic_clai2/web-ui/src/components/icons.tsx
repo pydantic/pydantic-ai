@@ -132,6 +132,13 @@ export const PaletteIcon = icon(
   </>,
 )
 export const CloseIcon = icon(<path d="M6 6l12 12M18 6 6 18" />)
+export const ImageIcon = icon(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="m21 16-5-5-9 9" />
+  </>,
+)
 export const GearIcon = icon(
   <>
     <circle cx="12" cy="12" r="3" />

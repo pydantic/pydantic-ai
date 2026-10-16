@@ -788,6 +788,7 @@ def create_shell(
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
         send_input=lambda text: shell.send_input(text),
+        send_images=lambda text, images: shell.send_input(text, images=images),
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
@@ -1114,16 +1115,24 @@ class _Shell(Generic[DepsT, OutputT]):
             raise ValueError(f'The cell failed:\n{cell.report()}')
         return cell.report() or '(no output)'
 
-    def send_input(self, text: str) -> None:
+    def send_input(self, text: str, *, images: Sequence[BinaryContent] = ()) -> None:
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
 
         A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
         editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
         used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+        `images` are staged as pasted ones are, their markers before the text, so they queue with it.
         """
         if self.prompt is not None and self.editor is None:
             raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
         text = expand_bare_command(text.strip())
+        if images:
+            if is_command_input(text) or shell_command(text) is not None:
+                raise ValueError('Images go with a prompt, not with a /command or a ! shell line.')
+            # The terminal's own paste notice, if any, stays: these markers are not in its draft.
+            notice = self.images.notice
+            text = self.images.attach(images) + text
+            self.images.notice = notice
         if not text or self.run_now(text):
             return
         if self.editor is not None:
@@ -1271,11 +1280,16 @@ class _Shell(Generic[DepsT, OutputT]):
             else:
                 self.console.print(notice, markup=False)
 
+    def _release_images(self) -> None:
+        """Drop staged images no draft or queued prompt names; prompts in the inbox keep theirs until read."""
+        if self.editor is not None:
+            self.images.retain([self.editor.buffer.text, *self.editor.queued_messages])
+        elif self._inbox.empty():
+            self.images.retain([])
+
     async def _read_loop(self) -> SessionEndReason:
         while True:
-            self.images.retain(
-                [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
-            )
+            self._release_images()
             try:
                 self.show_model()
                 self.status.workspace = self.session.workspace
