@@ -18,8 +18,9 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.plugins.menus import SettingsMenu
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -457,6 +458,161 @@ async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path
     assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
+TUNED = """
+\"\"\"Takes a level.\"\"\"
+
+from pydantic import BaseModel
+
+from pydantic_clai2.plugins import Plugin
+
+
+class TunedSettings(BaseModel):
+    level: int = 1
+
+
+class Tuned(Plugin[TunedSettings]):
+    pass
+"""
+
+
+async def test_plugins_catalog_saves_only_a_loaded_plugins_own_settings(tmp_path: Path) -> None:
+    """`host.plugins` is the loader; `save_settings` takes the loaded plugin's own model, as its menu would save."""
+
+    class Other(BaseModel):
+        level: int = 2
+
+    harness = Harness(tmp_path)
+    harness.write('plain')
+    (harness.store.plugins_dir / 'tuned.py').write_text(TUNED)
+    await harness.loader.load('plain')
+    await harness.loader.load('tuned')
+    loaded = harness.loader.entries()[0].loaded
+    assert loaded is not None and loaded.host.plugins is harness.loader
+    [plain, tuned] = harness.loader.listing()
+    assert (plain.name, plain.settings_model, plain.settings, plain.provides) == (
+        'plain',
+        None,
+        None,
+        '1 command, 4 hooks',
+    )
+    assert tuned.settings_model is not None and tuned.settings is not None
+    assert (tuned.description, tuned.origin, tuned.status) == ('Takes a level.', 'drop-in', 'on')
+
+    with pytest.raises(TypeError, match='tuned takes TunedSettings, not Other'):
+        await harness.loader.save_settings('tuned', Other())
+    with pytest.raises(ValueError, match='plain takes no settings'):
+        await harness.loader.save_settings('plain', NoSettings())
+    await harness.loader.save_settings('tuned', tuned.settings_model.model_validate({'level': 4}))
+    assert [saved.settings for saved in harness.store.plugins() if saved.id == 'tuned'] == [{'level': 4}]
+    await harness.loader.disable('tuned')
+    with pytest.raises(ValueError, match='tuned is not loaded'):
+        await harness.loader.save_settings('tuned', tuned.settings)
+
+
+DECLARED = """
+\"\"\"Declares its settings menu.\"\"\"
+
+from pydantic import BaseModel
+
+from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+
+
+class LevelSettings(BaseModel):
+    level: int = 1
+
+
+class Levels:
+    title = 'Levels'
+
+    def __init__(self, host):
+        self.host = host
+
+    def rows(self):
+        return [FieldRow(key='level', label='level', description='How much.', default='1')]
+
+    def current(self, row):
+        return str(self.host.settings(LevelSettings).level)
+
+    def problem(self, row, text):
+        return None
+
+    def apply(self, row, raw):
+        self.host.save_settings(LevelSettings(level=int(raw)))
+        return f'Saved {row.label}.'
+
+    def reset(self, row):
+        return 'Reset.'
+
+
+class Declared(Plugin[LevelSettings]):
+    def settings_menu(self):
+        return SettingsMenu(source=Levels(self.host))
+"""
+
+
+async def test_plugins_catalog_edits_only_a_declared_menu_one_edit_at_a_time(tmp_path: Path) -> None:
+    """`edit_settings` runs one edit on a declared menu and reloads after a change; other edits wait their turn."""
+    harness = Harness(tmp_path)
+    harness.write('plain')
+    (harness.store.plugins_dir / 'tuned.py').write_text(TUNED)
+    (harness.store.plugins_dir / 'declared.py').write_text(DECLARED)
+    for name in ('declared', 'plain', 'tuned'):
+        await harness.loader.load(name)
+    assert [(info.name, info.settings_menu) for info in harness.loader.listing()] == [
+        ('declared', True),
+        ('plain', False),
+        ('tuned', False),
+    ]
+    # Neither of the others declares a menu: nothing to edit through, nor to configure.
+    assert harness.loader.settings_menu('tuned') is None
+    with pytest.raises(ValueError, match='tuned declares no settings menu'):
+        await harness.loader.edit_settings('tuned', lambda menu: anyio.sleep(0))
+    with pytest.raises(ValueError, match='Plugin plain has no settings menu'):
+        await harness.loader.configure('plain')
+
+    before = harness.loader.entries()[0].loaded
+
+    async def edit(menu: SettingsMenu) -> str:
+        # While one edit runs, the menu is open: another, or the terminal's, is refused.
+        with pytest.raises(ValueError, match='settings menu of declared is already open'):
+            await harness.loader.configure('declared')
+        [row] = menu.source.rows()
+        assert menu.source.current(row) == '1'
+        return menu.source.apply(row, '7')
+
+    assert await harness.loader.edit_settings('declared', edit) == 'Saved level.'
+    # It saved new settings, so it loaded again with them.
+    after = harness.loader.entries()[0].loaded
+    assert after is not None and after is not before
+    menu = harness.loader.settings_menu('declared')
+    assert menu is not None and menu.source.current(menu.source.rows()[0]) == '7'
+    await harness.loader.disable('declared')
+    assert harness.loader.settings_menu('declared') is None
+
+
+async def test_concurrent_unloads_end_a_plugin_once(tmp_path: Path) -> None:
+    """Two browser tabs, or the panel and the terminal, may unload the same plugin at once."""
+    harness = Harness(tmp_path)
+    harness.write('slow', end_body="await __import__('anyio').lowlevel.checkpoint()")
+    await harness.loader.load_all()
+    await asyncio.gather(harness.loader.unload('slow'), harness.loader.unload('slow'))
+    assert harness.text.count('slow stopped exit') == 1
+
+
+async def test_plugin_changes_run_one_at_a_time(tmp_path: Path) -> None:
+    """A disable that arrives while a reload is running waits for it, so it ends off, as saved."""
+    harness = Harness(tmp_path)
+    harness.write('slow', end_body="await __import__('anyio').lowlevel.checkpoint()")
+    await harness.loader.load_all()
+    await asyncio.gather(harness.loader.reload('slow'), harness.loader.disable('slow'))
+    [slow] = harness.loader.listing()
+    assert slow.status == 'off'
+    assert harness.text.count('slow stopped exit') == 2
+    with pytest.raises(ValueError, match='slow is disabled; enable it before reloading'):
+        await harness.loader.reload('slow')
+
+
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('rude', turn_end_body="raise RuntimeError('late')")
@@ -808,6 +964,7 @@ async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
     StalledCleanup.__module__ = module.__name__
     module.__dict__['StalledCleanup'] = StalledCleanup
     monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr('pydantic_clai2.plugins.loader.FAILED_SESSION_END_TIMEOUT', 0.05)
     harness = Harness(tmp_path, builtin=(PluginSettings(id='stalled', factory=module.__name__),))
 
     async def load() -> None:

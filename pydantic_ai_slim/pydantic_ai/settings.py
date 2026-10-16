@@ -77,8 +77,8 @@ class ToolOrOutput:
     """Restricts function tools while keeping output tools and direct text/image output available.
 
     Use this when you want to control which function tools the model can use
-    in an agent run while still allowing the agent to complete with structured output,
-    text, or images.
+    in an agent run while still allowing all output tools and direct text/image output.
+    A plain list instead forces a call to one of the named function and/or output tools.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.
     """
@@ -284,6 +284,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * OpenAI Decisions
     """
 
     parallel_tool_calls: bool
@@ -308,7 +309,7 @@ class ModelSettings(TypedDict, total=False):
     """
 
     tool_choice: ToolChoice
-    """Control which function tools the model can use.
+    """Control which tools the model can use.
 
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation
     and examples.
@@ -317,14 +318,15 @@ class ModelSettings(TypedDict, total=False):
     * `'auto'`: All tools available, model decides whether to use them
     * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
     * `'required'`: Forces tool use; excludes output tools so the agent cannot produce a final response when set statically
-    * `list[str]`: Only specified tools; excludes output tools so the agent cannot produce a final response when set statically
+    * `list[str]`: Force a call to one of the specified function and/or output tools; name an output tool to let an agent run finish
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
-    Note: setting `'required'` or `list[str]` *statically* (via the `model_settings` argument
-    of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or the agent's own `model_settings`) raises a
-    `UserError`, because it would force a tool call on every step and prevent the agent from
-    producing a final response. To vary `tool_choice` per step (e.g. force a tool on the
-    first step only), return a callable from a capability's
+    Note: setting `'required'` *statically* (via the `model_settings` argument of
+    [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or the agent's own `model_settings`) raises a
+    `UserError`, because it excludes output tools and forces a function tool call on every step.
+    A static `list[str]` is accepted only when it names at least one output tool for the run;
+    otherwise it also prevents the agent from producing a final response. To vary `tool_choice`
+    per step (e.g. force a tool on the first step only), return a callable from a capability's
     [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] —
     those values are trusted to adapt across steps. For single API calls without an agent
     loop, use [`pydantic_ai.direct.model_request`][pydantic_ai.direct.model_request].
@@ -479,6 +481,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * OpenAI Decisions
     """
 
     thinking: ThinkingLevel
@@ -530,8 +533,8 @@ class ModelSettings(TypedDict, total=False):
     0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
-      and the growing conversation, with the provider's default retention. Uses the provider's
-      automatic caching mode where one exists; elsewhere the library places cache breakpoints.
+      and the growing conversation, with the provider's default retention. The library places cache
+      breakpoints, using the provider's automatic caching mode for the conversation where one exists.
     - `False`: Disable library-managed caching, the same as leaving the setting unset but also
       overriding a `cache` value in the model's default settings. Explicit
       [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
@@ -544,7 +547,8 @@ class ModelSettings(TypedDict, total=False):
 
     Explicit `CachePoint` markers in the message history can be combined with this setting; when
     a request would exceed the provider's maximum number of cache breakpoints, the oldest message
-    breakpoints are dropped first. Provider-specific cache settings (e.g. `anthropic_cache`,
+    breakpoints are dropped first (on OpenAI, the server drops the earliest breakpoints first, starting
+    with the instruction breakpoint). Provider-specific cache settings (e.g. `anthropic_cache`,
     `bedrock_cache_instructions`) take precedence: if any is set, including to `False`, this unified
     field is ignored entirely for that request.
 
@@ -553,8 +557,9 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (as `anthropic_cache`; as instruction, tool definition and message breakpoints on
-      the Bedrock and Vertex SDK clients)
+    * Anthropic (as `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and
+      `anthropic_cache`, with `anthropic_cache_messages` instead of `anthropic_cache` on the Bedrock
+      and Vertex SDK clients)
     * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
@@ -612,6 +617,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * OpenAI Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.

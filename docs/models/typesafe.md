@@ -140,7 +140,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from compact_when_window_fills import compact_when_window_fills
 
 agent = Agent(
-    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    FallbackModel('typesafe:jev-latest', '{{ openai:medium }}'),
     output_type=bool,
     instructions='Does the customer want a refund?',
     capabilities=[ProcessHistory(compact_when_window_fills)],

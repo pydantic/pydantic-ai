@@ -31,7 +31,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -72,7 +72,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
 )
 
@@ -124,7 +124,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore, continue_run
 
 store = InMemoryStepStore()
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -179,11 +179,11 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
 )
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -546,6 +546,9 @@ returns summaries without loading messages; search matches saved user/assistant
 text and metadata using Unicode case folding, including text entries within
 multimodal prompts. Search does not include tool output, reasoning, or discarded
 pre-compaction history. Unknown metadata schema versions are rejected.
+An application may set `ConversationSummary.checkout` to a `GitCheckout` (repository,
+name, checkout root, branch) for the workspace, so a browser can still group the
+conversation by repository after that folder is removed; the store saves it as given.
 
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not

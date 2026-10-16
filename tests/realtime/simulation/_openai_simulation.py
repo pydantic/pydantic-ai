@@ -198,8 +198,8 @@ class OpenAISimulation(Simulation):
         self._after_server(deliver, ticks)
 
     @step
-    def speech_stop(self, deliver: bool = True, ticks: int | None = None) -> None:
-        self.server.speech_stop()
+    def speech_stop(self, deliver: bool = True, ticks: int | None = None, commit: bool = True) -> None:
+        self.server.speech_stop(commit=commit)
         self._after_server(deliver, ticks)
 
     @step
@@ -293,14 +293,7 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
         return session is not None and session.active is not None
 
     def can_drop(self) -> bool:
-        session = self.server_session()
-        if session is None:
-            return False
-        # What xAI's native resumption does with a response in flight has never been recorded, so its drops
-        # are kept to the moments the recording covers: between responses, with nothing on the wire.
-        return self.openai_sim.openai.dialect != 'xai' or (
-            session.active is None and session.late_done is None and not self.openai_sim.server.network.in_flight()
-        )
+        return self.server_session() is not None
 
     @precondition(lambda self: self.active())
     @rule(chunks=st.integers(min_value=1, max_value=2), deliver=st.booleans(), ticks=TICKS)
@@ -358,9 +351,11 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
         self.run(lambda: self.openai_sim.speech_start(late=late, deliver=deliver, ticks=ticks))
 
     @precondition(lambda self: (session := self.server_session()) is not None and session.speaking is not None)
-    @rule(deliver=st.booleans(), ticks=TICKS)
-    def speech_stop(self, deliver: bool, ticks: int | None) -> None:
-        self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks))
+    @rule(deliver=st.booleans(), ticks=TICKS, commit=st.booleans())
+    def speech_stop(self, deliver: bool, ticks: int | None, commit: bool) -> None:
+        # xAI adds a turn's item when it hears speech start, so a stop it takes back is not modeled there.
+        commit = commit or self.openai_sim.openai.dialect == 'xai'
+        self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks, commit=commit))
 
     @precondition(lambda self: (session := self.server_session()) is not None and bool(session.pending_transcripts))
     @rule(fail=st.booleans(), deliver=st.booleans(), ticks=TICKS)
@@ -377,8 +372,7 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
     def reject_next(self, kind: Literal['content', 'response'], ticks: int | None) -> None:
         self.run(lambda: self.openai_sim.reject_next(kind=kind, ticks=ticks))
 
-    # A fault armed now can hit a send made mid-response, so it is left out where drops are restricted.
-    @precondition(lambda self: self.can_drop() and self.openai_sim.openai.dialect != 'xai')
+    @precondition(lambda self: self.can_drop())
     @rule(fault=st.sampled_from(['lost', 'ambiguous']), ticks=TICKS)
     def fail_next_send(self, fault: SendFault, ticks: int | None) -> None:
         self.run(lambda: self.openai_sim.fail_next_send(fault=fault, ticks=ticks))

@@ -28,7 +28,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import BubblewrapSandbox, Coder, SSHWorkspace
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[BubblewrapSandbox(SSHWorkspace('dev@build-box', working_dir='/srv/app')), Coder()],
 )
 result = agent.run_sync('Run the test suite and fix the first failure.')
