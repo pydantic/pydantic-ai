@@ -288,12 +288,12 @@ tool's 270-second foreground wait. A `run_command` given a longer timeout, throu
 ```python
 from datetime import timedelta
 
+from pydantic_ai_harness.coder import Coder
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
 from pydantic_ai.durable_exec.temporal import TemporalDurability
-from pydantic_ai_harness.coder import Coder
 
 agent = Agent(
     '{{ openai:medium }}',
