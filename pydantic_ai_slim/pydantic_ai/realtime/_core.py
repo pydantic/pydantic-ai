@@ -380,6 +380,9 @@ class SessionCore:
         """The recorded response and part index of each recent output item that spoke, for a barge-in to cut off."""
         self._pending_cuts: dict[str, int] = {}
         """Cuts of output items of responses still under way, applied once each is recorded."""
+        self.cut_responses: dict[str, ModelResponse] = {}
+        """Recorded responses a barge-in cut off since the session last took them, by provider response id: the
+        session's own record (what tools and chat spans read) follows them."""
         self._returns: dict[str, ModelRequest] = {}
         self._result_input: dict[str, InputId] = {}
         """The input that carried each tool call's result to the provider."""
@@ -844,6 +847,8 @@ class SessionCore:
         parts[index] = replace(part, interrupted_at_ms=heard_ms)
         # The same audio object, so the retained-audio budget still tracks it, and eviction still finds it.
         response.message = replace(message, parts=parts, state='interrupted')
+        if (provider_response_id := response.message.provider_response_id) is not None:
+            self.cut_responses[provider_response_id] = response.message
 
     def _open_response(self, response_id: str | None) -> _Response | None:
         """The open response content names; content naming none (Azure Voice Live's text) goes to the only one open."""

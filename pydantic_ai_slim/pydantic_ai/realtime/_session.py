@@ -1752,7 +1752,28 @@ class RealtimeSession:
         What a tool's `RunContext.messages` and a chat span's input show: the core's history (`all_messages()`)
         records a response only once it is over.
         """
+        self._follow_cut_responses()
         return [*self._seeded, *self._history]
+
+    def _follow_cut_responses(self) -> None:
+        """Record a response the core marked cut off by a barge-in as cut off here too, once this record has it.
+
+        Swapped for a copy, as the core does, so a snapshot already handed out doesn't change.
+        """
+        if self._core is None or not (cut_responses := self._core.cut_responses):
+            return
+        for index, message in enumerate(self._history):
+            if not isinstance(message, ModelResponse) or message.provider_response_id is None:
+                continue
+            if (cut := cut_responses.pop(message.provider_response_id, None)) is None:
+                continue
+            cut_speech = iter([part for part in cut.parts if isinstance(part, SpeechPart)])
+            parts: list[ModelResponsePart] = []
+            for part in message.parts:
+                if isinstance(part, SpeechPart):
+                    part = replace(part, interrupted_at_ms=next(cut_speech, part).interrupted_at_ms)
+                parts.append(part)
+            self._replace_recorded_message(index, replace(message, parts=parts, state=cut.state))
 
     def new_messages(self) -> list[ModelMessage]:
         """A snapshot of the messages created during this session (excluding the seeded history)."""

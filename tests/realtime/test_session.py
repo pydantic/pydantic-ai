@@ -1690,6 +1690,39 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
     assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
 
 
+async def test_a_tool_after_a_barge_in_on_a_finished_reply_sees_it_cut_off() -> None:
+    """A tool's `ctx.messages` (and a chat span's input) record the cut-off reply as `all_messages()` does."""
+    seen: list[ModelMessage] = []
+    agent: Agent[None, str] = Agent(deps_type=type(None))
+
+    @agent.tool
+    def recall(ctx: RunContext[None]) -> str:
+        seen.extend(ctx.messages)
+        return 'ok'
+
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone(provider_response_id='resp-a')],
+        [ToolCall(tool_call_id='t1', tool_name='recall', args='{}'), ResponseDone(provider_response_id='resp-b')],
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        conn.release.set()
+        _ = [event async for event in events]
+
+    def cuts(messages: list[ModelMessage]) -> list[tuple[str, list[int | None]]]:
+        return [
+            (message.state, [part.interrupted_at_ms for part in message.parts if isinstance(part, SpeechPart)])
+            for message in messages
+            if isinstance(message, ModelResponse) and message.provider_response_id == 'resp-a'
+        ]
+
+    assert cuts(seen) == cuts(session.all_messages()) == [('interrupted', [100])]
+
+
 async def test_interrupt_played_bytes_leaves_a_reply_from_before_a_reconnect_as_recorded() -> None:
     """The fresh conversation holds a reply from before a reconnect only as replayed text, which can't be truncated.
 
