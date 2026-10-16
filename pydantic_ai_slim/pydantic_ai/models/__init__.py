@@ -101,6 +101,7 @@ from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
+from ._speech import assistant_speech_text
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -2412,25 +2413,12 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if request_parts:
                 new_messages.append(replace(message, parts=request_parts))
         else:
-            # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
-            # short. Without an inline `[Interrupted]` marker, a standard model reads the fragment as a
-            # complete utterance and may repeat itself. The marker is written here, on the way to the
-            # model, and never persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
-            last_speech = max(
-                (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
-                default=None,
-            )
             response_parts: list[ModelResponsePart] = []
             for index, part in enumerate(message.parts):
                 if isinstance(part, SpeechPart):
-                    lines = [part.transcript] if part.transcript else []
-                    if part.interrupted_at_ms is not None:
-                        lines.append(f'[Interrupted after {part.interrupted_at_ms} ms]')
-                    elif message.state == 'interrupted' and index == last_speech:
-                        # The provider reported the interruption without an offset.
-                        lines.append('[Interrupted]')
-                    if lines:
-                        response_parts.append(TextPart(content='\n'.join(lines)))
+                    # The transcript, marked where a barge-in cut it off (see `assistant_speech_text`).
+                    if text := assistant_speech_text(message, index):
+                        response_parts.append(TextPart(content=text))
                     # Assistant audio without a transcript has nothing to send.
                 else:
                     response_parts.append(part)

@@ -375,6 +375,14 @@ Order matters, and the compiled lock puts these steps in the right place. In the
 workflow, `Setup Python` runs before your `steps:`, then the engine's install and agent
 steps. Your install therefore runs against the same interpreter the engine later uses.
 
+A step can also end a run that has nothing to do by appending
+`{"type":"noop","message":"..."}` to `$GH_AW_SAFE_OUTPUTS`. The engine reads that file
+before it starts CLAI 2 and exits with status 0 when it finds a `noop`, so no model request
+is made. gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. When a search query can express the condition, `skip-if-match` or
+`skip-if-no-match` also avoids scheduling the agent job.
+
 ## Credentials
 
 The provider segment of `engine.model` decides which repository secret the agent step

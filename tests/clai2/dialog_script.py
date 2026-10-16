@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic_clai2.plugins.menus import Option
 
-Kind = Literal['choose', 'text', 'confirm', 'wait']
+Kind = Literal['choose', 'text', 'confirm', 'wait', 'view']
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,10 +62,13 @@ class Asked:
     placeholder: str = ''
     initial: str = ''
     secret: bool = False
+    multiline: bool = False
     yes: str = ''
     no: str = ''
     shown: list[str] = field(default_factory=list[str])
     """Each text `wait`'s task passed to `show`, in order."""
+    text: str = ''
+    """What `view` showed."""
 
 
 class ScriptedDialogs:
@@ -73,7 +76,8 @@ class ScriptedDialogs:
 
     Each answer must suit the dialog it meets: `Pick` a `choose`, `Type` a `text`, `Confirm` a `confirm`,
     `Finish` a `wait`, and `Back` any of them. A mismatch, an option that was not offered, text the dialog's
-    `check` rejects, or running out of answers fails the test with `AssertionError`.
+    `check` rejects, or running out of answers fails the test with `AssertionError`. `view` asks nothing, so it
+    takes no answer: it is recorded and closes at once.
 
         dialogs = ScriptedDialogs([Pick(value='enter'), Type(text='secret'), Confirm(yes=True)])
         await choose_key(name='DEMO', label='Demo token', dialogs=dialogs)
@@ -119,6 +123,7 @@ class ScriptedDialogs:
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
         description: str = '',
+        multiline: bool = False,
     ) -> str | None:
         answer = self._next(
             Asked(
@@ -129,6 +134,7 @@ class ScriptedDialogs:
                 placeholder=placeholder,
                 initial=initial,
                 secret=secret,
+                multiline=multiline,
             )
         )
         if not isinstance(answer, Type):
@@ -137,6 +143,9 @@ class ScriptedDialogs:
         problem = check(text) if check is not None and text else None
         assert problem is None, f'{title!r} would not accept {text!r}: {problem}'
         return text
+
+    async def view(self, *, title: str, text: str) -> None:
+        self.asked.append(Asked(kind='view', title=title, text=text))
 
     async def confirm(self, *, title: str, yes: str, no: str, description: str = '') -> bool:
         answer = self._next(Asked(kind='confirm', title=title, yes=yes, no=no, description=description))
