@@ -44,7 +44,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered. Shipping one? [Going to Production](production.md) answers what teams ask first, from crash recovery and human approval to cost limits, tracing and deployment.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
 === "Coding agent" {#coding-agent}
 
@@ -467,6 +467,8 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 
 **See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
+
+**Ship it.** [Going to Production](production.md) answers what teams ask before shipping an agent, from crash recovery and human approval to cost limits, tracing and deployment.
 
 **Put it to work on a repository.** That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
 

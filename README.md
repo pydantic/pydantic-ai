@@ -33,7 +33,7 @@ View the complete documentation at [pydantic.dev/docs/ai](https://pydantic.dev/d
 
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered. Shipping one? [Going to Production](https://pydantic.dev/docs/ai/production/) answers what teams ask first, from crash recovery and human approval to cost limits, tracing and deployment.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
 ### Coding agent
 
@@ -348,6 +348,7 @@ For the annotated walkthrough and Logfire tracing, see the [same example in the 
 
 - [Install Pydantic AI](https://pydantic.dev/docs/ai/overview/install/) and put your own coding agent to work: install the [Pydantic AI skill](https://pydantic.dev/docs/ai/overview/coding-agent-skills/), point it at the [examples](https://pydantic.dev/docs/ai/examples/setup/) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build. No API key needed to start (there's a built-in [`'test'` model](https://pydantic.dev/docs/ai/guides/testing/#unit-testing-with-testmodel)), and the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one key for every model when you're ready.
 - See what your agent did: [instrument it](https://pydantic.dev/docs/ai/integrations/logfire/) with one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
+- Ship it: [Going to Production](https://pydantic.dev/docs/ai/production/) answers what teams ask before shipping an agent, from crash recovery and human approval to cost limits, tracing and deployment.
 - Read the [docs](https://pydantic.dev/docs/ai/core-concepts/agent/) and the [API reference](https://pydantic.dev/docs/ai/api/pydantic-ai/agent/).
 - Give your agent its batteries: [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/).
 - Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
