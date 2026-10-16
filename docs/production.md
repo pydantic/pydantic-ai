@@ -115,14 +115,14 @@ You attach durability to an ordinary agent as a [capability](capabilities/overvi
 
 A step that was in flight when the process died runs again from its start, so a tool with side effects should be safe to repeat, for example by passing an idempotency key to the API it calls.
 
-Pydantic AI supports [nine engines](durable_execution/overview.md): [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), [Prefect](durable_execution/prefect.md), [Restate](durable_execution/restate.md), [Kitaru](durable_execution/kitaru.md) and [Apache Airflow](durable_execution/airflow.md) in core, and [AWS Lambda durable functions](https://pydantic.dev/docs/ai/harness/aws-lambda/), [Absurd](https://pydantic.dev/docs/ai/harness/absurd/) and [pgtask](https://pydantic.dev/docs/ai/harness/pgtask/) in Pydantic AI Harness; the [backend builder](durable_execution/backends.md) integrates any other engine. DBOS runs in your process against Postgres or SQLite, and Absurd and pgtask need only Postgres; Temporal and Restate run a server that your workers or services connect to; Prefect and Airflow fit when you already orchestrate with them. Each engine's page says which calls it wraps for you and which you mark yourself, and an agent takes [one engine at a time](durable_execution/overview.md).
+The [service above](#end-to-end) uses DBOS because it runs in your process against Postgres or SQLite, with no server to operate; Temporal and Restate run a server that your workers connect to, and Prefect and Airflow fit when you already orchestrate with them. [Durable Execution](durable_execution/overview.md) lists every supported engine and links each one's page, which says which calls it wraps for you and which you mark yourself; an agent takes one engine at a time.
 
 ### What you get compared to a checkpointer {#checkpointer}
 
 In frameworks built around a checkpointer, one mechanism saves state after each step and covers crash recovery, pausing for a human and resuming a thread. Pydantic AI splits those jobs between pieces that compose on one agent:
 
 - **Crash recovery inside a run** comes from durable execution, at the granularity of a single model request or tool call. A crash in the middle of a long tool loop resumes at the model request or tool call that was running, with everything before it replayed from the journal.
-- **Saving and continuing between runs** comes from [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) (Harness): it saves a continuable snapshot at every settled step and when a run fails, so you can continue a run from its latest snapshot or fork it from any saved one, later and in another process if you like, with in-memory, file, SQLite, MongoDB or PostgreSQL stores, or your own.
+- **Saving and continuing between runs** comes from [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) (Harness): it saves a continuable snapshot at every settled step and when a run fails, so you can continue a run from its latest snapshot or fork it from any saved one, later and in another process if you like, with built-in stores or your own.
 - **Knowing whether a side effect happened** comes from the `StepPersistence` tool-effect ledger, which records when each tool call started and finished, so after a crash you can tell a call that completed from one whose effect is unknown, before deciding to run it again.
 - **Pausing for a human** needs no live process at all: [deferred tools](#approval) end the run cleanly and a later run picks it up.
 
@@ -167,7 +167,7 @@ For an agent with nobody watching, [`ToolCallJudge`](https://pydantic.dev/docs/a
 
 ## How do I keep conversation state? {#state}
 
-A conversation's state is its message history. Store [`result.new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] under a [`conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) in your own database, serialized with [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), and pass the history back as `message_history` on the next run. A `jsonb` column is enough; no schema migration is needed when Pydantic AI adds a message part.
+A conversation's state is its message history. Store [`result.new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] under a [`conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) in your own database, serialized with [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] (see [storing messages as JSON](message-history.md#storing-and-loading-messages-to-json)), and pass the history back as `message_history` on the next run. A `jsonb` column is enough; no schema migration is needed when Pydantic AI adds a message part.
 
 To skip writing that code, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) (Harness) stores runs for you, with continue and fork. For what an agent should remember about a user across conversations, [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) (Harness) keeps notes the agent writes itself. [Persistence](persistence.md) compares all of these, and [compaction](capabilities/compaction.md) keeps a long conversation inside the context window.
 
@@ -194,7 +194,7 @@ For budgets longer than one run, such as a daily ceiling, a monthly one or a per
 
 ## What happens when a provider is down? {#outages}
 
-[`FallbackModel`](models/overview.md#fallback-model) tries the next model when a request fails with an API error, or when a response fails a check you define:
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries the next model when a request fails with an API error, or when a response fails a check you define; see [Fallback Model](models/overview.md#fallback-model):
 
 ```python {title="production_fallback.py"}
 from pydantic_ai import Agent
@@ -203,7 +203,7 @@ from pydantic_ai.models.fallback import FallbackModel
 agent = Agent(FallbackModel('{{ anthropic:medium }}', '{{ openai:medium }}'))
 ```
 
-Underneath that, [transport retries](retries.md#transport-retries) retry rate limits and 5xx responses with backoff that respects `Retry-After`; [Retries](retries.md) explains how those layers multiply. The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
+Provider SDK clients already retry some failures on their own. For rate limits and 5xx responses with backoff that respects `Retry-After`, install a [retrying transport](retries.md#transport-retries) on the HTTP client; nothing retries at that layer by default. [Retries](retries.md) explains how the layers multiply. The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
 
 ## How do I see what happened? {#observability}
 
