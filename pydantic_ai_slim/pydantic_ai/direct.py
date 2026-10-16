@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import TracebackType
 
+import anyio
+
 from pydantic_ai.usage import RequestUsage
 
 from . import agent, messages, models, settings
@@ -144,6 +146,9 @@ async def model_request_batch(
     To submit requests now and collect their results in another process, use the `batch_*` methods of
     [`Model`][pydantic_ai.models.Model] directly; see [Batch processing](../batch.md).
 
+    Unlike [`model_request`][pydantic_ai.direct.model_request], the requests aren't instrumented with
+    OpenTelemetry/Logfire.
+
     Args:
         model: The model to send the requests to. We allow `str` here since the actual list of allowed models changes frequently.
         requests: The requests to send, each with its own messages, settings and parameters. Their `custom_id`s must be unique.
@@ -155,11 +160,8 @@ async def model_request_batch(
             [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with.
     """
     model_instance = models.infer_model(model)
-    if (provider_limit := model_instance.batch_max_requests) is None:
-        raise UserError(f'{type(model_instance).__name__} {model_instance.model_name!r} has no batch API.')
-    # Validates and resolves the settings the same way `BatchModel` does.
-    resolved = batch_models.BatchModel(
-        model_instance, batch_settings={'max_requests': provider_limit, **(batch_settings or {})}
+    resolved = batch_models._resolve_settings(  # pyright: ignore[reportPrivateUsage]
+        model_instance, batch_settings, max_requests=None
     )
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
@@ -219,7 +221,8 @@ async def _wait_for_batch(
 async def _cancel_batches(model: models.Model, batches: Sequence[batch_models.Batch]) -> None:
     """Cancel the batches that haven't ended, shielded so the cancellation that triggered it can't interrupt it."""
     cancels = [model.batch_cancel(batch) for batch in batches if batch.status != 'ended']
-    await asyncio.shield(asyncio.gather(*cancels, return_exceptions=True))
+    with anyio.CancelScope(shield=True):
+        await asyncio.gather(*cancels, return_exceptions=True)
 
 
 def model_request_sync(

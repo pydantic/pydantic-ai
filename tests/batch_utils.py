@@ -10,7 +10,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import timedelta
 
-from pydantic_ai.models.batch import Batch, BatchSettings, EncodedBatchRequest
+import anyio
+import anyio.lowlevel
+
+from pydantic_ai.models.batch import Batch, BatchRequest, BatchSettings, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
 
 FAST_BATCH_SETTINGS: BatchSettings = {
@@ -19,6 +22,8 @@ FAST_BATCH_SETTINGS: BatchSettings = {
     'max_poll_interval': timedelta(milliseconds=1),
 }
 """Tiny but nonzero submission and poll intervals, so a test never waits out a real timer."""
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 class SlowBatchTestModel(TestModel):
@@ -32,16 +37,34 @@ class SlowBatchTestModel(TestModel):
         super().__init__()
         self.pending_checks = pending_checks
         self.on_batch_call = on_batch_call
+        self.encoded = 0
         self.created: list[Batch] = []
         self.status_checks = 0
         self.canceled: list[str] = []
+        self._waiters: list[tuple[Callable[[], bool], anyio.Event]] = []
 
     def reset(self, pending_checks: int) -> None:
         """Clear recorded calls, for module-level reuse across tests."""
         self.pending_checks = pending_checks
+        self.encoded = 0
         self.created = []
         self.status_checks = 0
         self.canceled = []
+
+    async def wait_until(self, condition: Callable[[SlowBatchTestModel], bool]) -> None:
+        """Wait until `condition` holds, checked after every batch call, failing the test if it never does."""
+        event = anyio.Event()
+        self._waiters.append((lambda: condition(self), event))
+        self.notify_waiters()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await event.wait()
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        encoded = await super().batch_encode(request)
+        # Counted on return: the request is queued before its task next yields, so a waiter woken now sees it queued.
+        self.encoded += 1
+        self.notify_waiters()
+        return encoded
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         self._record('batch_create')
@@ -52,13 +75,21 @@ class SlowBatchTestModel(TestModel):
     async def batch_status(self, batch: Batch) -> Batch:
         self._record('batch_status')
         self.status_checks += 1
+        self.notify_waiters()
         if self.status_checks <= self.pending_checks:
             return replace(batch, status='in_progress')
         return await super().batch_status(batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
+        # A checkpoint first, so a cancellation that reaches the call stops it before it's recorded.
+        await anyio.lowlevel.checkpoint()
         self.canceled.append(batch.id)
         return await super().batch_cancel(batch)
+
+    def notify_waiters(self) -> None:
+        for condition, event in self._waiters:
+            if condition():
+                event.set()
 
     def _record(self, method: str) -> None:
         if self.on_batch_call is not None:

@@ -16,13 +16,14 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any
+from types import TracebackType
+from typing import Any, Self
 
 from pydantic import TypeAdapter
 from typing_extensions import Literal, TypeAlias, TypedDict  # noqa: UP035
 
 from .._run_context import RunContext
-from .._utils import is_str_dict
+from .._utils import cancel_and_drain, is_str_dict
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
@@ -166,9 +167,42 @@ class BatchSettings(TypedDict, total=False):
     """The longest wait between checks of a submitted batch. Defaults to 10 minutes."""
 
 
+@dataclass(frozen=True)
+class _ResolvedBatchSettings:
+    max_requests: int
+    max_wait: timedelta | None
+    poll_interval: timedelta
+    max_poll_interval: timedelta
+
+
+def _resolve_settings(
+    model: Model, settings: BatchSettings | None, *, max_requests: int | None
+) -> _ResolvedBatchSettings:
+    """Fill in the defaults of `settings` and validate them, defaulting to `max_requests` or else the provider limit."""
+    if (provider_limit := model.batch_max_requests) is None:
+        raise UserError(f'{type(model).__name__} {model.model_name!r} has no batch API.')
+    settings = settings or {}
+    resolved = _ResolvedBatchSettings(
+        max_requests=settings.get('max_requests', max_requests or provider_limit),
+        max_wait=settings.get('max_wait', timedelta(seconds=30)),
+        poll_interval=settings.get('poll_interval', timedelta(seconds=30)),
+        max_poll_interval=settings.get('max_poll_interval', timedelta(minutes=10)),
+    )
+    if resolved.max_requests <= 0:
+        raise UserError('`BatchSettings.max_requests` must be positive.')
+    if resolved.max_wait is not None and resolved.max_wait <= timedelta(0):
+        raise UserError('`BatchSettings.max_wait` must be positive.')
+    if resolved.poll_interval <= timedelta(0) or resolved.max_poll_interval < resolved.poll_interval:
+        raise UserError(
+            '`BatchSettings.poll_interval` must be positive and no longer than `BatchSettings.max_poll_interval`.'
+        )
+    return replace(resolved, max_requests=min(resolved.max_requests, provider_limit))
+
+
 _BATCH_ADAPTER = TypeAdapter(Batch)
 _TICKET_KEY = 'batch'
 _RESULTS_CACHE_SIZE = 32
+_EXITED_MESSAGE = '`BatchModel` exited while the request was waiting for its batch.'
 
 
 class _Ticket(TypedDict):
@@ -226,7 +260,10 @@ class BatchModel(WrapperModel):
     Under [durable execution](../durable_execution/overview.md), submitting a request and every check on its batch run
     as separate durable steps, so an interrupted run continues from the same batch when it's recovered.
 
-    Requests can't be streamed.
+    Requests can't be streamed, and the model needs an `asyncio` event loop.
+
+    Submissions and checks on a batch run as tasks shared by the requests waiting on them. Using the model as an async
+    context manager, for example through `async with agent:`, cancels any that are still running when it exits.
     """
 
     max_requests: int
@@ -249,22 +286,11 @@ class BatchModel(WrapperModel):
             batch_settings: When to submit queued requests and how often to check on submitted batches.
         """
         super().__init__(wrapped)
-        if (provider_limit := self.wrapped.batch_max_requests) is None:
-            raise UserError(f'{type(self.wrapped).__name__} {self.wrapped.model_name!r} has no batch API.')
-        settings: BatchSettings = batch_settings or {}
-        self.max_requests = settings.get('max_requests', 100)
-        self.max_wait = settings.get('max_wait', timedelta(seconds=30))
-        self.poll_interval = settings.get('poll_interval', timedelta(seconds=30))
-        self.max_poll_interval = settings.get('max_poll_interval', timedelta(minutes=10))
-        if self.max_requests <= 0:
-            raise UserError('`BatchSettings.max_requests` must be positive.')
-        if self.max_wait is not None and self.max_wait <= timedelta(0):
-            raise UserError('`BatchSettings.max_wait` must be positive.')
-        if self.poll_interval <= timedelta(0) or self.max_poll_interval < self.poll_interval:
-            raise UserError(
-                '`BatchSettings.poll_interval` must be positive and no longer than `BatchSettings.max_poll_interval`.'
-            )
-        self.max_requests = min(self.max_requests, provider_limit)
+        settings = _resolve_settings(self.wrapped, batch_settings, max_requests=100)
+        self.max_requests = settings.max_requests
+        self.max_wait = settings.max_wait
+        self.poll_interval = settings.poll_interval
+        self.max_poll_interval = settings.max_poll_interval
         # Queues hold futures, which belong to one event loop, so each loop gets its own.
         self._queues: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, _Queue]] = (
             weakref.WeakKeyDictionary()
@@ -272,10 +298,35 @@ class BatchModel(WrapperModel):
         self._submissions: set[asyncio.Task[None]] = set()
         # Every request waiting on a batch checks on it, so concurrent checks and the results are shared between them.
         self._polls: dict[
-            tuple[asyncio.AbstractEventLoop, str], asyncio.Future[tuple[Batch, dict[str, BatchResult] | None]]
+            tuple[asyncio.AbstractEventLoop, str], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
         ] = {}
         self._results: OrderedDict[str, dict[str, BatchResult]] = OrderedDict()
         self._abandoned: dict[str, set[str]] = {}
+        self._entered_count = 0
+
+    async def __aenter__(self) -> Self:
+        await super().__aenter__()
+        self._entered_count += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        self._entered_count -= 1
+        if self._entered_count == 0:
+            loop = asyncio.get_running_loop()
+            queues = self._queues.pop(loop, {})
+            for group in list(queues):
+                for _, future in _take(queues, group).requests:
+                    future.set_exception(UserError(_EXITED_MESSAGE))
+            await cancel_and_drain(
+                *(task for task in self._submissions if task.get_loop() is loop),
+                *(task for (task_loop, _), task in self._polls.items() if task_loop is loop),
+            )
+        return await super().__aexit__(exc_type, exc_val, exc_tb)
 
     async def request(
         self,
@@ -381,11 +432,16 @@ class BatchModel(WrapperModel):
         elif queue.timer is None and self.max_wait is not None:
             queue.timer = loop.call_later(self.max_wait.total_seconds(), submit)
         try:
-            return custom_id, await asyncio.shield(future)
+            # Waits without cancelling the future on cancellation, as the submission resolves it.
+            await asyncio.wait((future,))
         except asyncio.CancelledError:
             # Leaves the batch if it's still queued; a submitted batch has already taken the queue's requests.
             queue.requests = [(request, f) for request, f in queue.requests if f is not future]
             raise
+        if future.cancelled():
+            # The submission was cancelled, so there's no batch to wait for.
+            raise UserError(_EXITED_MESSAGE)
+        return custom_id, future.result()
 
     async def _submit(self, queue: _Queue) -> None:
         if not (requests := queue.requests):
@@ -436,9 +492,13 @@ class BatchModel(WrapperModel):
             return batch, results
         key = (asyncio.get_running_loop(), batch.id)
         if (poll := self._polls.get(key)) is None:
-            poll = self._polls[key] = asyncio.ensure_future(self._fetch(batch))
+            poll = self._polls[key] = asyncio.create_task(self._fetch(batch))
             poll.add_done_callback(lambda _: self._polls.pop(key, None))
-        return await asyncio.shield(poll)
+        # Waits without cancelling the shared poll when this request is cancelled.
+        await asyncio.wait((poll,))
+        if poll.cancelled():
+            raise UserError(_EXITED_MESSAGE)
+        return poll.result()
 
     async def _fetch(self, batch: Batch) -> tuple[Batch, dict[str, BatchResult] | None]:
         batch = await self.wrapped.batch_status(batch)

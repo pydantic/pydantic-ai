@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -91,8 +92,7 @@ async def test_flush_submits_without_waiting() -> None:
     agent = Agent(model)
 
     runs = [asyncio.create_task(agent.run(f'Hello {i}')) for i in range(2)]
-    while sum(len(queue.requests) for queues in model._queues.values() for queue in queues.values()) < 2:  # pyright: ignore[reportPrivateUsage]
-        await asyncio.sleep(0)
+    await wrapped.wait_until(lambda m: m.encoded == 2)
     assert wrapped.created == []
     await model.flush()
 
@@ -107,8 +107,7 @@ async def test_a_cancelled_request_leaves_the_queue_before_submission() -> None:
 
     kept = asyncio.create_task(agent.run('Keep me'))
     dropped = asyncio.create_task(agent.run('Drop me'))
-    while sum(len(queue.requests) for queues in model._queues.values() for queue in queues.values()) < 2:  # pyright: ignore[reportPrivateUsage]
-        await asyncio.sleep(0)
+    await wrapped.wait_until(lambda m: m.encoded == 2)
     dropped.cancel()
     with pytest.raises(asyncio.CancelledError):
         await dropped
@@ -208,8 +207,7 @@ async def test_abandoning_every_request_cancels_the_batch() -> None:
 async def test_cancelling_a_run_cancels_its_batch() -> None:
     wrapped = SlowBatchTestModel(pending_checks=1000)
     run = asyncio.create_task(Agent(BatchModel(wrapped, batch_settings=FAST_BATCH_SETTINGS)).run('Hello'))
-    while wrapped.status_checks == 0:
-        await asyncio.sleep(0)
+    await wrapped.wait_until(lambda m: m.status_checks > 0)
     run.cancel()
     with pytest.raises(asyncio.CancelledError):
         await run
@@ -280,13 +278,79 @@ async def test_model_request_batch_cancels_unfinished_batches_when_cancelled() -
             batch_settings=FAST_BATCH_SETTINGS,
         )
     )
-    while model.status_checks == 0:
-        await asyncio.sleep(0)
+    await model.wait_until(lambda m: m.status_checks > 0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
     assert model.canceled == [model.created[0].id]
+
+
+async def test_model_request_batch_cancels_unfinished_batches_under_an_anyio_cancel() -> None:
+    model = SlowBatchTestModel(pending_checks=1000)
+
+    async def send() -> None:
+        await model_request_batch(
+            model,
+            [BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])],
+            batch_settings=FAST_BATCH_SETTINGS,
+        )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(send)
+        await model.wait_until(lambda m: m.status_checks > 0)
+        tg.cancel_scope.cancel()
+
+    assert model.canceled == [model.created[0].id]
+
+
+async def test_exiting_the_model_ends_its_queued_and_running_work() -> None:
+    """Leaving `async with model:` fails queued requests and cancels in-flight submissions and checks."""
+    never = anyio.Event()
+
+    class HangingModel(SlowBatchTestModel):
+        submissions = 0
+
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            self.submissions += 1
+            self.notify_waiters()
+            if self.submissions == 2:
+                await never.wait()
+            return await super().batch_create(requests)
+
+        async def batch_status(self, batch: Batch) -> Batch:
+            await super().batch_status(batch)
+            await never.wait()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+    tasks_before = asyncio.all_tasks()
+    wrapped = HangingModel(pending_checks=1)
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None, 'max_requests': 1})
+    agent = Agent(model)
+    async with model:
+        checked = asyncio.create_task(agent.run('Check on me'))
+        await wrapped.wait_until(lambda m: m.status_checks == 1)
+        submitting = asyncio.create_task(agent.run('Hang on submission'))
+        await wrapped.wait_until(lambda m: isinstance(m, HangingModel) and m.submissions == 2)
+        model.max_requests = 2
+        queued = asyncio.create_task(agent.run('Queue me'))
+        await wrapped.wait_until(lambda m: m.encoded == 3)
+
+    for run in (queued, submitting, checked):
+        with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
+            await run
+    assert asyncio.all_tasks() - tasks_before == {asyncio.current_task()} - tasks_before
+
+
+async def test_only_the_outermost_exit_ends_queued_work() -> None:
+    wrapped = SlowBatchTestModel()
+    model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
+    async with model:
+        async with model:
+            run = asyncio.create_task(Agent(model).run('Hello'))
+            await wrapped.wait_until(lambda m: m.encoded == 1)
+        await model.flush()
+        assert (await run).output == 'success (no tool calls)'
 
 
 async def test_model_request_batch_validates_its_input() -> None:
@@ -374,8 +438,7 @@ async def test_requests_cancelled_before_submission_submit_nothing() -> None:
     wrapped = SlowBatchTestModel()
     model = BatchModel(wrapped, batch_settings={**FAST_BATCH_SETTINGS, 'max_wait': None})
     run = asyncio.create_task(Agent(model).run('Hello'))
-    while not any(model._queues.values()):  # pyright: ignore[reportPrivateUsage]
-        await asyncio.sleep(0)
+    await wrapped.wait_until(lambda m: m.encoded == 1)
     run.cancel()
     with pytest.raises(asyncio.CancelledError):
         await run
