@@ -336,6 +336,6 @@ def _edit(menu: FieldMenu, row: FieldRow, runners: Runners) -> str | None:
     raw = typed.value.strip()
     # Enter on the value it opened with saves nothing: in `/set`, saving would copy a value from the
     # project's settings file into your own.
-    if raw and raw == menu.initial(row):
+    if raw and raw == menu.initial(row).strip():
         return None
     return menu.apply(row, raw)
