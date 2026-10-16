@@ -82,6 +82,10 @@ class WebPlugin(Plugin[WebSettings]):
         super().__init__(host, settings)
         self.token = secrets.token_urlsafe(32)
         """Checked on every request; new each launch, so an old link stops working."""
+        self.port: int | None = None
+        """This launch's port, replacing the saved one, as `clai2 --web --port` sets it."""
+        self.listen: str | None = None
+        """This launch's address, replacing the saved one: loopback for a launcher's `clai2 --web --token-file`."""
         self.hub = Hub()
         terminal = (
             TerminalAnswerer(full_screen=host.full_screen, console=host.console) if host.console.is_terminal else None
@@ -151,7 +155,8 @@ class WebPlugin(Plugin[WebSettings]):
         """Start serving, once; return the address with this launch's token."""
         if self.url is not None:
             return self.url
-        address = f'[{self.settings.host}]' if ':' in self.settings.host else self.settings.host
+        host = self.settings.host if self.listen is None else self.listen
+        address = f'[{host}]' if ':' in host else host
 
         def app(port: int) -> ASGIApp:
             names = ('127.0.0.1', 'localhost', '[::1]', address)
@@ -161,7 +166,7 @@ class WebPlugin(Plugin[WebSettings]):
                 hosts |= frozenset(names)
             return create_app(remote=self.remote, token=self.token, hosts=hosts)
 
-        self.server = WebServer.serve(app, host=self.settings.host, port=self.settings.port)
+        self.server = WebServer.serve(app, host=host, port=self.settings.port if self.port is None else self.port)
         self.url = f'http://{address}:{self.server.port}/?token={self.token}'
         return self.url
 

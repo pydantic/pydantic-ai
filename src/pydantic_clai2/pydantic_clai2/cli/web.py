@@ -10,14 +10,17 @@ from rich.console import Console
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2._app import STOCK_PLUGINS, create_shell, create_stock_agent
+from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionEndReason
+from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace, workspace_directory
 
 WEB = 'web'
+LAUNCHER_HOST = '127.0.0.1'
 """The built-in plugin `--web` loads for this session, whether or not it is enabled."""
 
 
@@ -31,6 +34,8 @@ async def run_web(
     resume_from: ImportSource | None = None,
     session_id: str | None = None,
     fork_session: bool = False,
+    port: int | None = None,
+    token: str | None = None,
 ) -> None:
     """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl-C.
 
@@ -40,6 +45,11 @@ async def run_web(
     `project` is the launch directory's project file and `settings_for` the settings CLAI starts with
     beside a project file. Each session runs in its own directory: `resume` starts there, `/resume ID`
     moves there, and `/workspace DIRECTORY` starts a new session in another one (see `SessionWorkspace`).
+
+    `port` replaces the saved port for this launch. `token` replaces the token `web` makes, for a launcher
+    that keeps it, such as the `workspaces` plugin: CLAI then listens on 127.0.0.1 whatever the saved
+    address, prints the address without the token as `Web UI running at http://127.0.0.1:PORT/`, which
+    is how a launcher that passed port 0 learns the port, and opens no browser.
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
@@ -78,13 +88,22 @@ async def run_web(
                     resume=resume, resume_from=resume_from, session_id=session_id, fork=fork_session
                 )
             await shell.loader.load_all()
-            if not any(entry.name == WEB and entry.loaded is not None for entry in shell.loader.entries()):
+            if _loaded_web(shell.loader) is None:
                 await shell.loader.load(WEB)
+            web = _loaded_web(shell.loader)
+            assert web is not None, 'a failed load raises'
             if resume is not None:
                 shell.session.record_resumed()
             if notice:
                 console.print(notice, markup=False)
-            console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
+            web.port = port
+            if token is None:
+                console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
+            else:
+                # A launcher talks to it on this machine alone, whatever address the saved settings name.
+                web.token, web.listen = token, LAUNCHER_HOST
+                address, _, _ = (await web.start()).partition('?')
+                console.print(f'Web UI running at {address}', markup=False)
             console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
             reason = await shell.run()
         except get_cancelled_exc_class():
@@ -94,6 +113,11 @@ async def run_web(
             workers.cancel_scope.cancel()
             with CancelScope(shield=True):
                 await shell.loader.close(reason)
+
+
+def _loaded_web(loader: PluginLoader[None]) -> WebPlugin | None:
+    loaded = next((entry.loaded for entry in loader.entries() if entry.name == WEB), None)
+    return loaded.plugin if loaded is not None and isinstance(loaded.plugin, WebPlugin) else None
 
 
 async def _start_in(*, store: SettingsStore, conversation_id: str) -> ProjectSettings | None:

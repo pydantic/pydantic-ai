@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import os
 import re
 import socket
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 import anyio
 import httpx
 import pytest
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
@@ -82,6 +84,7 @@ from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.worktrees import Worktree
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -556,6 +559,9 @@ async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
         (['--web', '-p', 'hi'], '--web cannot be combined'),
         (['--web', '--agent', 'a:b'], '--web cannot be combined'),
         (['--web', '--resume'], '--web requires an explicit --resume SESSION-ID'),
+        (['--port', '8000'], '--port and --token-file need --web'),
+        (['--token-file', 'token'], '--port and --token-file need --web'),
+        (['--web', '--port', '70000'], '--port must be between 0 and 65535'),
     ],
 )
 def test_web_flag_rejects(
@@ -590,6 +596,95 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert (settings.model, settings.instructions, settings.request_limit) == ('test', 'Be brief.', 7), (
         'launch flags still win over a project file'
     )
+
+
+def test_web_flag_reads_a_private_token_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--token-file` hands `run_web` the token in a file only you can read, and `--port` the port."""
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_web(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
+    token = tmp_path / 'token'
+    token.write_text('a' * 40 + '\n')
+    token.chmod(0o600)
+    # Relative to where CLAI was started, though `--worktree` changes directory before the file is read.
+    monkeypatch.chdir(tmp_path)
+    elsewhere = tmp_path / 'checkout'
+    elsewhere.mkdir()
+
+    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+        os.chdir(elsewhere)
+        return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
+
+    monkeypatch.setattr(_cli, '_enter_worktree', enter_worktree)
+    argv = ['clai2', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
+    monkeypatch.setattr(sys, 'argv', argv)
+    _cli.run()
+    [call] = calls
+    assert (call['token'], call['port']) == ('a' * 40, 4567)
+    argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    for mode, text, error in (
+        (0o644, 'a' * 40, 'must belong to you and be readable by you alone'),
+        (0o600, 'short', 'must hold one URL-safe token of at least 32 characters'),
+    ):
+        token.write_text(text)
+        token.chmod(mode)
+        with pytest.raises(SystemExit):
+            _cli.run()
+        assert error in capsys.readouterr().err
+    token.unlink()
+    with pytest.raises(SystemExit):
+        _cli.run()
+    assert 'No such file' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('launcher_token', [False, True])
+async def test_run_web_on_a_launchers_port_and_token(
+    launcher_token: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launcher's port replaces the saved one; with its token, CLAI listens on loopback whatever the saved address,
+    prints the address without the token, and opens no browser."""
+    store = SettingsStore(tmp_path / 'config.db')
+    saved: dict[str, JsonValue] = {'host': 'localhost', 'port': 1}
+    store.save_plugin(PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings=saved))
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    token = 'b' * 43 if launcher_token else None
+    output = io.StringIO()
+    with anyio.fail_after(30):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=lambda project: Settings(model='test'),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    port=port,
+                    token=token,
+                )
+            )
+            while 'Press Ctrl-C' not in output.getvalue():
+                await anyio.sleep(0.01)
+            async with httpx.AsyncClient(trust_env=False) as client:
+                headers = {HEADER: token or 'wrong'}
+                state = await client.get(f'http://127.0.0.1:{port}/api/state', headers=headers)
+            assert state.status_code == (200 if token else 403)
+            group.cancel_scope.cancel()
+    found = re.search(r'Web UI running at (http://\S+)', output.getvalue())
+    assert found is not None
+    if token is None:
+        assert found[1].startswith(f'http://localhost:{port}/?token=') and len(opened) == 1
+    else:
+        assert found[1] == f'http://127.0.0.1:{port}/' and opened == []
+        assert token not in output.getvalue()
 
 
 def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
