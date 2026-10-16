@@ -1335,3 +1335,35 @@ class TestBackgroundTools:
             await agent.run('go')
 
         assert 'run_in_background' not in seen[0].parameters_json_schema['properties']
+
+
+
+    async def test_late_model_retry_consumes_background_tool_retry_budget(self) -> None:
+        attempts: list[tuple[int, bool]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            has_retry = any(
+                isinstance(part, RetryPromptPart) and part.tool_name == 'flaky'
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            if has_retry:
+                return ModelResponse(parts=[ToolCallPart(tool_name='flaky', args='{}')])
+            if _ack_seen(messages):
+                return ModelResponse(parts=[TextPart(content='waiting')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='flaky', args='{}')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
+
+        @agent.tool_plain(metadata={'background': True}, retries=2)
+        async def flaky(ctx: RunContext[None]) -> str:
+            attempts.append((ctx.retry, ctx.last_attempt))
+            await asyncio.sleep(0.05)
+            raise ModelRetry('try again')
+
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'flaky' exceeded max retries count of 2"):
+            await asyncio.wait_for(agent.run('go'), timeout=5)
+
+        assert attempts == [(0, False), (1, False), (2, True)]
+
