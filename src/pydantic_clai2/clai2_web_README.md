@@ -20,8 +20,8 @@ project or worktree from the sidebar, by default the current one, or any directo
 path. The header shows where the session works. `/workspace DIRECTORY` or `/resume ID` typed in a
 session moves that session instead, never while a turn, a background `/fork`, or a delegated task
 runs in it. `clai2 --web --resume ID` starts in that session's directory. A session left idle for
-an hour, with nothing running or queued and no browser showing it, closes; it stays saved, and
-clicking it resumes it. The launch directory's `.env` stays loaded.
+an hour, with nothing running or queued and no browser showing it, closes, except the one CLAI
+started with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
@@ -283,7 +283,8 @@ reloads and restarts. The session's own agent gets none of this. See
 
 ## Several live sessions
 
-`clai2 --web` keeps every session you open live in the one CLAI process: each runs its own turns in
+The web UI (`clai2 --web`, or `/web` from a terminal) keeps every session you open live in the one
+CLAI process: each runs its own turns in
 its own folder, with its own plugins and input queue, while the others run theirs. The page watches
 the sessions it shows over its one WebSocket.
 
@@ -327,8 +328,8 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
 optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
 the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
-opens no other sessions (`/web` from a terminal), both switch the one session instead, with `/resume`
-or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
+with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,

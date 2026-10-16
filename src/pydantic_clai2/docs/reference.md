@@ -2275,7 +2275,9 @@ The [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `clai2 --web`
 others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
-`.clai/settings.json`, and MCP project files. **New session** asks which folder.
+`.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
+asks which folder; with `/web`, it starts in the folder of the session you are
+looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
@@ -2296,10 +2298,12 @@ many sessions run at once.
   at a time, and its toolbar shows `N live` while more than one is. `/resume ID` of a
   session live in the browser shows that session in the terminal, even mid-turn,
   instead of copying it; the session shown before keeps running.
-- **`/reload` and `/update`** wait for the other sessions: while another session runs
-  a turn, they refuse, saying how many run, so try again when they finish. CLAI
-  restarts in the folder it started in, so they also refuse in a session that works
-  in another folder.
+- **`/reload` and `/update`** restart CLAI, so they run only in the session the
+  terminal shows, or under `clai2 --web` in the session it started with. Elsewhere
+  they refuse and say where to enter them. They also refuse while another session
+  runs a turn, saying how many run, so try again when they finish. With `/web` from
+  a terminal, CLAI restarts in the folder it started in, so they refuse in a shown
+  session that works in another folder.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 

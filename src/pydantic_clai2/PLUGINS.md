@@ -1250,8 +1250,9 @@ one, or waits for an answer, from the `live` message. Esc and the stop button in
 session only. The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
-there (`host.sessions.follows_workspace`); its plugins load again, each getting `on_session_end`
-and then `on_session_start`, as on `/plugins reload`. Nothing moves while a turn, a background
+there (`host.sessions.follows_workspace`); its session-scoped plugins load again, each getting
+`on_session_end` and then `on_session_start`, as on `/plugins reload`, and process-scoped ones
+stay loaded. Nothing moves while a turn, a background
 `/fork`, or a delegated task runs. `clai2 --web --resume ID` starts in that session's directory.
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
@@ -2350,7 +2351,7 @@ Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
+| `on_session_start` | CLAI has started, before the first prompt, the web UI opened a session, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
 | `on_session_end` | CLAI is quitting, the plugin is unloading, or its session closed for being idle | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
@@ -3540,7 +3541,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 
 class Turns(Plugin):
-    """Count finished turns per folder across every live session, and show how many run now."""
+    """Count finished turns across every live session, per folder, and show how many run now."""
 
     scope = 'process'
 
@@ -3558,7 +3559,7 @@ class Turns(Plugin):
     def _running(self) -> str:
         live = self.host.live
         running = 0 if live is None else sum(session.running for session in live.listing())
-        return f'{running} running'
+        return f'{running} running, {sum(self.finished.values())} done'
 ```
 
 What changes for a process-scoped plugin:
@@ -3593,8 +3594,8 @@ What changes for a process-scoped plugin:
 | `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
 | `current()` | the session being handled now, or `None` outside a moment, command, or run |
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
-| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in |
-| `await close(live_id)` | close a session `open` or `new` started, cancelling its turn; its plugins end with `'exit'`. Raises `ValueError` for a session its own driver runs, such as the terminal's |
+| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
+| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, `ValueError` for the session the terminal shows or the one `clai2 --web` started with, and `RuntimeError` where CLAI opens no other sessions |
 | `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
