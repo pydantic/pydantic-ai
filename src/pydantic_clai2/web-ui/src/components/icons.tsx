@@ -175,9 +175,23 @@ export const ExternalIcon = icon(
     <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
   </>,
 )
+export const InfoIcon = icon(
+  <>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v6M12 7.5h.01" />
+  </>,
+)
 export const KeyIcon = icon(
   <>
     <circle cx="8" cy="15" r="4" />
     <path d="m11 12 9-9M17 6l3 3M14 9l2 2" />
   </>,
 )
+export const ServerIcon = icon(
+  <>
+    <rect x="4" y="4" width="16" height="7" rx="2" />
+    <rect x="4" y="13" width="16" height="7" rx="2" />
+    <path d="M8 7.5h.01M8 16.5h.01" />
+  </>,
+)
+export const PlusIcon = icon(<path d="M12 5v14M5 12h14" />)
