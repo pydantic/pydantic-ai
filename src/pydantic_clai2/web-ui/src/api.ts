@@ -162,7 +162,8 @@ export function connect(onMessage: (message: ServerMessage) => void, onState: (s
     }
     if (!stopped) {
       timer = window.setTimeout(open, delay)
-      delay = Math.min(delay * 2, 8000)
+      // At most 2 seconds apart, so a page waiting on `/update`'s restart is back soon after CLAI is.
+      delay = Math.min(delay * 2, 2000)
     }
   }
   const open = () => {
