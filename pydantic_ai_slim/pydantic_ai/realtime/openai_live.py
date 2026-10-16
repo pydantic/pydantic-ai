@@ -1865,6 +1865,11 @@ class OpenAILiveModel(RealtimeModel):
         """Web search, which the delegated backend runs: the only native tool Live lets it have."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        # `WebSearchTool` is the only native tool Live supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
+
     @property
     def client(self) -> AsyncOpenAI:
         """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""

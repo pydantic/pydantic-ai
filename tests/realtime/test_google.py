@@ -532,6 +532,17 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
             pass  # pragma: no cover
 
 
+async def test_agent_realtime_session_rejects_web_search_domain_filters() -> None:
+    # Gemini Live's `google_search` takes no domain filters, so sending it would search the whole web.
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(UserError, match=r'`WebSearchTool.allowed_domains` not supported by this model'):
+        async with agent.realtime(
+            GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+            capabilities=[NativeTool(WebSearchTool(allowed_domains=['pydantic.dev']))],
+        ).session():
+            pass  # pragma: no cover
+
+
 def test_config_combines_function_and_native_tools() -> None:
     tools = [ToolDefinition(name='f', parameters_json_schema={'type': 'object'})]
     config = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]

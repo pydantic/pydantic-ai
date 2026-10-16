@@ -64,7 +64,7 @@ from pydantic_ai import (
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
@@ -73,6 +73,7 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     sanitize_messages,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -9253,6 +9254,38 @@ def _enqueuing_agent() -> Agent[object, str]:
         return 'started'
 
     return agent
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `pydantic_ai_enqueued_messages` activity at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    adapter = AGUIAdapter(
+        agent,
+        create_input(UserMessage(id='user-1', content='Go')),
+        ag_ui_version='0.1.19',
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert 'Reminder' not in json.dumps(events)
 
 
 @requires_ag_ui('0.1.19')
