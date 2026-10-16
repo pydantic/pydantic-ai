@@ -223,3 +223,16 @@ async def test_a_saved_request_a_run_sends_is_stored_again_with_its_run_metadata
     assert continued.messages[0] != conversation.messages[0]
     assert _entry_count(store) == 3
     assert await store.load(conversation.conversation_id) == continued
+
+
+async def test_a_results_conversation_can_be_saved_and_continued_from_directly() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    result = await agent.run('Hello')
+    await store.save(result.conversation)
+
+    result = await agent.run('Again', conversation=result.conversation)
+    await store.save(result.conversation)
+
+    assert result.conversation is result.conversation
+    assert result.conversation.revision == 1
