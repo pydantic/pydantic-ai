@@ -221,6 +221,12 @@ async def test_form_cancel_paths(tmp_path: Path) -> None:
     assert form.type == 'stdio' and form.name == ''
 
 
+async def test_an_empty_name_keeps_the_name(tmp_path: Path) -> None:
+    form = ServerForm(MCPStore(tmp_path / 'config'), name='local', server=stdio())
+    assert not await run_form(form, ScriptedDialogs([Pick(value='name'), Type(text=''), Back()]))
+    assert form.name == 'local'
+
+
 async def test_install_cancelled(tmp_path: Path) -> None:
     command, store = make(tmp_path, Script(lists=[], choices=[pick('cancel'), pick('cancel')], texts=[]))
     assert await command(['install']) == 'Exited custom server form.'

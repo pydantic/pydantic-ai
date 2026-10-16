@@ -325,7 +325,7 @@ async def _edit_row(form: ServerForm, row: str, dialogs: Dialogs, editor: Editor
             initial=form.name,
             check=form.name_problem,
         )
-        if name is not None:
+        if name:
             form.name = name
     elif row == TYPE:
         options = [Option(value=kind, label=kind, description=TYPE_DESCRIPTIONS[kind]) for kind in SERVER_TYPES]
