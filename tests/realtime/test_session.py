@@ -11515,7 +11515,7 @@ class _ToolBatchConnection(FakeRealtimeConnection):
         await asyncio.Event().wait()  # pragma: no cover
 
 
-def _requests_counted(session: RealtimeSession) -> int:
+def _requests_counted(session: _RealtimeSession) -> int:
     """The requests counted against `request_limit`: those made, and those under way or asked for."""
     return session.usage.requests + session._core.requests_ahead()  # pyright: ignore[reportPrivateUsage]
 
