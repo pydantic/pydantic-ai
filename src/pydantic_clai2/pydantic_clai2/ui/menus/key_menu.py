@@ -87,7 +87,7 @@ def build_keys_menu(*, names: list[str], message: str = '') -> Menu:
         'r': lambda menu, item: action('rename', item),
         'd': lambda menu, item: action('delete', item),
     }
-    footer = 'enter replace · a add · r rename · d delete · esc close'
+    footer = 'Enter replace - a add - r rename - d delete - Esc close'
     return slash_search(builder, footer=footer, key_source=menu_key, hotkeys=hotkeys)
 
 

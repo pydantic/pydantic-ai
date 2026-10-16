@@ -35,7 +35,7 @@ from pydantic_clai2.ui.menus.plugin_menu import Redrawable
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
-_HINT = 'a add · r rename · d sign out · [ ] reorder · enter sign in again · esc close'
+_HINT = 'Enter sign in again - a add - r rename - d sign out - [ ] reorder - Esc close'
 _ADD = 'add'
 _REDRAW = 'accounts:usage'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing new usage."""

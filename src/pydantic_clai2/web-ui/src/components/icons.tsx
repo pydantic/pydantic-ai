@@ -52,6 +52,12 @@ export const ArrowUpIcon = icon(
     <path d="m5 12 7-7 7 7" />
   </>,
 )
+export const ArrowDownIcon = icon(
+  <>
+    <path d="M12 5v14" />
+    <path d="m19 12-7 7-7-7" />
+  </>,
+)
 export const StopIcon = icon(<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />)
 export const TerminalIcon = icon(
   <>

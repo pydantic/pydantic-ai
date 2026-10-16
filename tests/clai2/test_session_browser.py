@@ -176,7 +176,7 @@ def test_search_sort_rename_delete_and_stable_refresh() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key('d')
     assert widget.confirm is not None
-    assert widget.footer() == 'Delete saved session: Other? y confirm / any other key cancel'
+    assert widget.footer() == 'Delete saved session: Other? y confirm - any other key cancel'
     widget.handle_key('n')
     assert len(entries) == 3
     widget.handle_key('d')
