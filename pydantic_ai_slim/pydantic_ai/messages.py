@@ -1436,6 +1436,12 @@ Accepted by `tool_kind` on [`ToolDefinition`][pydantic_ai.tools.ToolDefinition],
 and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
 """
 
+
+def _tool_kind_id(value: ToolKindLike | None) -> ToolPartKind | None:  # pyright: ignore[reportUnusedFunction]
+    """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
+    return value.id if isinstance(value, ToolKind) else value
+
+
 ArgsT_co = TypeVar('ArgsT_co', covariant=True, default=Any)
 """The arguments shape of a [`ToolKind`][pydantic_ai.messages.ToolKind] and of the typed call parts registered for it."""
 

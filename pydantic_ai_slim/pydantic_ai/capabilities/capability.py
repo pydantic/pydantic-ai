@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolKind,
     ToolKindLike,
     ToolPartKind,
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
@@ -269,7 +270,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
-            tool_kind=tool_kind.id if isinstance(tool_kind, ToolKind) else tool_kind,
+            tool_kind=_tool_kind_id(tool_kind),
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
@@ -365,7 +366,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
-            tool_kind=tool_kind.id if isinstance(tool_kind, ToolKind) else tool_kind,
+            tool_kind=_tool_kind_id(tool_kind),
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,

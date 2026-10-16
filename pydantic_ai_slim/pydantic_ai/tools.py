@@ -41,7 +41,11 @@ from ._run_context import AgentDepsT, RunContext
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind, ToolReturn
+from .messages import (
+    ToolPartKind,
+    ToolReturn,
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
+)
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -493,7 +497,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
-        self.tool_kind = _tool_kind_of(tool_kind)
+        self.tool_kind = _tool_kind_id(tool_kind)
         self.timeout = timeout
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
@@ -610,11 +614,6 @@ Distinct from [`ToolKind`][pydantic_ai.messages.ToolKind], which says what a too
 if TYPE_CHECKING:
     # TODO(v3): remove this deprecated alias and the `__getattr__` at the bottom of this module.
     ToolKind: TypeAlias = ToolDefinitionKind
-
-
-def _tool_kind_of(value: _messages.ToolKindLike | None) -> ToolPartKind | None:
-    """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
-    return value.id if isinstance(value, _messages.ToolKind) else value
 
 
 if TYPE_CHECKING:
@@ -892,7 +891,7 @@ class ToolDefinition:
 
     def __post_init__(self) -> None:
         if self.tool_kind is not None and self.tool_kind.__class__ is not str:
-            self.tool_kind = _tool_kind_of(self.tool_kind)
+            self.tool_kind = _tool_kind_id(self.tool_kind)
 
     @property
     def defer(self) -> bool:
