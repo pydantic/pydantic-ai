@@ -12,13 +12,13 @@ from pydantic_ai.workspaces import Workspace
 
 @dataclass(frozen=True)
 class ContextFile:
-    """A single instruction file discovered during walk-up."""
+    """A single instruction file discovered during walk-up or nested traversal."""
 
     directory: Path
     """The directory the file was found in."""
 
     path: Path
-    """The file's path."""
+    """The file's path, named after its target when it is a symlink to a file in the same directory."""
 
     content: str
     """The file's text content."""
