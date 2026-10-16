@@ -29,6 +29,7 @@ from ..messages import (
     CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -2259,7 +2260,7 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return {'retry': part.model_response()}
     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
         raise _unsynthesized_tool_availability_delta_error()
-    elif isinstance(part, InstructionDeltaPart):  # pragma: no cover
+    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
         raise _unprojected_instruction_delta_error()
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.

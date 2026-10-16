@@ -30,6 +30,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -2337,7 +2338,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                             else:
                                 user_content_params.append(content)
-                    elif isinstance(request_part, InstructionDeltaPart):
+                    elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
                         if not supports_tool_availability_delta:

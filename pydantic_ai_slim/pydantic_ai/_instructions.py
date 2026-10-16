@@ -11,7 +11,7 @@ from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
-    InstructionBaselineEntry,
+    InstructionBaselinePart,
     InstructionChangePolicy,
     InstructionDeltaPart,
     InstructionId,
@@ -241,23 +241,59 @@ def _normalize_append_parts(current: list[InstructionPart]) -> list[InstructionP
     return normalized
 
 
-def _recorded_instruction_state(
-    messages: Sequence[ModelMessage],
-) -> tuple[dict[str, InstructionBaselineEntry] | None, dict[str, str | None]]:
-    """The latest baseline in the post-compaction window, and each block's value after the deltas since."""
-    baseline: dict[str, InstructionBaselineEntry] | None = None
-    effective: dict[str, str | None] = {}
+def instruction_window(messages: Sequence[ModelMessage]) -> InstructionBaselinePart | None:
+    """The baseline of the instruction window `messages` end in, or `None` if they aren't in one.
+
+    The window starts at the latest [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]
+    after the latest compaction. An empty one ends the previous window and opens one with no blocks, whose
+    append-mode blocks are then delivered as changes rather than in the prefix.
+    """
+    baseline: InstructionBaselinePart | None = None
     for message in post_compaction_window(messages):
-        if not isinstance(message, ModelRequest):
-            continue
-        if message.instruction_baseline is not None:
-            baseline = message.instruction_baseline
-            effective = {instruction_id: entry.part.content or None for instruction_id, entry in baseline.items()}
-        if baseline is not None:
-            effective.update(
-                (part.id, part.content) for part in message.parts if isinstance(part, InstructionDeltaPart)
-            )
-    return baseline, effective
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, InstructionBaselinePart):
+                    baseline = part
+    return baseline
+
+
+def window_prefix(baseline: InstructionBaselinePart) -> list[InstructionPart]:
+    """The instruction parts every request in `baseline`'s window was sent: the baseline, minus empty blocks."""
+    return [part for part in baseline.instructions if part.content]
+
+
+def _recorded_instruction_values(
+    messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
+) -> dict[str, str | None]:
+    """Each append-mode block's value as the model last received it in `baseline`'s window."""
+    values: dict[str, str | None] = {
+        str(part.id): part.content or None
+        for part in baseline.instructions
+        if part.on_change == 'append' and part.id is not None
+    }
+    in_window = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if part is baseline:
+                    in_window = True
+                elif in_window and isinstance(part, InstructionDeltaPart):
+                    values[part.id] = part.content
+    return values
+
+
+def _continues_window(baseline: InstructionBaselinePart, current: list[InstructionPart]) -> bool:
+    """Whether `current` can be sent with `baseline`'s prefix, appending changes to its append-mode blocks.
+
+    Rewrite-mode blocks are sent as they are, so they must be unchanged, in the same order; a block whose
+    policy changed is one of them. An append-mode block whose id didn't survive deserialization (a source
+    namespace this version doesn't know) can't be tagged, so it can't anchor a window either.
+    """
+    if any(part.on_change == 'append' and part.id is None for part in baseline.instructions):
+        return False
+    return [part for part in baseline.instructions if part.on_change != 'append'] == [
+        part for part in current if part.on_change != 'append'
+    ]
 
 
 def update_instruction_history(
@@ -265,77 +301,59 @@ def update_instruction_history(
     instructions: list[InstructionPart] | None,
     targets: Sequence[ModelRequest],
 ) -> list[InstructionPart] | None:
-    """Preserve the initial prefix and append changed instruction blocks to the outgoing request.
+    """Preserve the instruction prefix and append changed instruction blocks to the outgoing request.
 
-    Run after history processing: only a baseline that survived processing can anchor the prefix.
-    Canonical records stay in history, independently of the provider's rendering of them. The baseline
-    and deltas are read from `messages` and recorded on each of `targets`: the requests that both this
-    request and the persisted history carry.
+    Run after history processing: only a baseline that survived processing can anchor the prefix. While
+    the rewrite-mode blocks stay the same, every request is sent the prefix its window opened with, and
+    each append-mode block's changes are recorded on `targets` as
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s. When the prefix has to change
+    anyway, the request opens a new window with the current values, which costs no more cache than the
+    change itself. `targets` are the requests that both this request and the persisted history carry.
     """
     normalized = _normalize_append_parts(instructions or [])
-
-    baseline, effective = _recorded_instruction_state(messages)
+    baseline = instruction_window(messages)
 
     if instructions is None:
-        # Unset parts preserve the recorded request text and end the structured append window.
-        for target in targets:
-            target.instruction_baseline = {} if baseline is not None else None
+        # Unset parts preserve the recorded request text and end the window, so its old changes stop applying.
+        if baseline is not None and baseline.instructions:
+            _record_baseline(targets, [])
         return None
-    if any(str(part.id) in effective and part.on_change != 'append' for part in normalized) or (
-        baseline is not None and any(entry.part.id is None for entry in baseline.values())
-    ):
-        # A changed policy or ambiguous identity can no longer address the old block safely, and
-        # neither can a baseline block from a source namespace this version doesn't know: models
-        # render its `<context id>` from the part's id, which didn't survive deserialization.
-        # Rebaseline the window so its old deltas cannot override the rewritten prefix.
+    if baseline is not None and not _continues_window(baseline, normalized):
         baseline = None
-        effective.clear()
-        for target in targets:
-            target.instruction_baseline = {}
+        if not any(part.on_change == 'append' for part in normalized):
+            # Nothing appends any more, so only end the window its blocks' old changes belong to.
+            _record_baseline(targets, [])
+            return normalized
     if baseline is None:
         if not any(part.on_change == 'append' for part in normalized):
-            # `normalized`, not `instructions`: a block downgraded to `'rewrite'` above must not be
-            # rendered as an append-mode block.
             return normalized
-        baseline = {
-            str(part.id): InstructionBaselineEntry(index=index, part=replace(part))
-            for index, part in enumerate(normalized)
-            if part.on_change == 'append'
-        }
-        for target in targets:
-            target.instruction_baseline = baseline
+        baseline = _record_baseline(targets, normalized)
     else:
-        current_parts: dict[str, list[InstructionPart]] = {}
-        for part in normalized:
-            if part.id is not None and (part.on_change == 'append' or str(part.id) in effective):
-                current_parts.setdefault(str(part.id), []).append(part)
-        current_values: dict[str, str | None] = {
-            instruction_id: InstructionPart.join(parts) for instruction_id, parts in current_parts.items()
-        }
+        recorded = _recorded_instruction_values(messages, baseline)
+        current = {str(part.id): part.content or None for part in normalized if part.on_change == 'append'}
         changes = [
-            _instruction_change(instruction_id, effective.get(instruction_id), current_values.get(instruction_id))
-            for instruction_id in dict.fromkeys([*effective, *current_values])
-            if effective.get(instruction_id) != current_values.get(instruction_id)
+            _instruction_change(instruction_id, recorded.get(instruction_id), current.get(instruction_id))
+            for instruction_id in dict.fromkeys([*recorded, *current])
+            if recorded.get(instruction_id) != current.get(instruction_id)
         ]
         if changes:
             for target in targets:
                 target.parts = [*target.parts, *changes]
 
-    # Non-opted-in instructions keep their current values. Initial append blocks retain their
-    # positions, including withdrawn ones; blocks first seen later are delivered only at the tail.
-    tracked = baseline.keys() | effective.keys()
-    prefix: list[InstructionPart] = [
-        part for part in normalized if part.on_change != 'append' and str(part.id) not in tracked
-    ]
-    # Parts keep only their content: each model renders the append-mode ones for its own delivery
-    # path in `Model.prepare_request`.
-    for entry in sorted(baseline.values(), key=lambda entry: entry.index):
-        prefix.insert(entry.index, entry.part)
-    prefix = [part for part in prefix if part.content]
+    # Parts keep only their content: each model renders the append-mode ones for its own delivery path in
+    # `Model.prepare_request`.
+    prefix = window_prefix(baseline)
     for target in targets:
         target.instructions = InstructionPart.join(prefix)
-        target.instruction_parts = prefix
     return prefix
+
+
+def _record_baseline(targets: Sequence[ModelRequest], instructions: list[InstructionPart]) -> InstructionBaselinePart:
+    """Open a window at this request, or close the current one when `instructions` is empty."""
+    baseline = InstructionBaselinePart(instructions=[replace(part) for part in instructions])
+    for target in targets:
+        target.parts = [*target.parts, baseline]
+    return baseline
 
 
 def _instruction_change(instruction_id: str, previous: str | None, content: str | None) -> InstructionDeltaPart:

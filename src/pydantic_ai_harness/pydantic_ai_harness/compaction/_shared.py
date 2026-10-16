@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkabl
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai.messages import (
     CompactionPart,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -92,7 +93,8 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
         (
             index
             for index, message in enumerate(messages)
-            if isinstance(message, ModelRequest) and message.instruction_baseline is not None
+            if isinstance(message, ModelRequest)
+            and any(isinstance(part, InstructionBaselinePart) for part in message.parts)
         ),
         default=0,
     )
@@ -126,6 +128,9 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         return [part.content]
     elif isinstance(part, InstructionDeltaPart):
         return [part.render()]
+    # Records what the request's instructions were made of, which are counted with the request.
+    elif isinstance(part, InstructionBaselinePart):
+        return []
     elif isinstance(part, ToolReturnPart):
         # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
         # they arrive here too.

@@ -30,6 +30,7 @@ from ...messages import (
     FilePart,
     ForceDownloadMode,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -759,7 +760,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
                         )
                     )
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
                 pass  # Operator instruction state stays in trusted server-side history.
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 flush_user_content()

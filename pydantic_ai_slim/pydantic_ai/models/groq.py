@@ -25,6 +25,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -654,7 +655,7 @@ class GroqModel(Model[AsyncGroq]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:

@@ -54,6 +54,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
@@ -2197,7 +2198,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
@@ -4044,7 +4045,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
-                    elif isinstance(part, InstructionDeltaPart):
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         if self.tool_addition_mode != 'with_definitions':

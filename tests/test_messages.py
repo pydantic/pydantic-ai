@@ -3106,8 +3106,6 @@ def test_speech_part_serialization_roundtrip():
                 ],
                 'timestamp': None,
                 'instructions': None,
-                'instruction_baseline': None,
-                'instruction_parts': None,
                 'kind': 'request',
                 'run_id': None,
                 'conversation_id': None,

@@ -51,6 +51,7 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
@@ -1019,27 +1020,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        if _has_instruction_deltas(messages):
-            # Compaction starts a fresh instruction window, as in `update_instruction_history`: deltas
-            # from before it are superseded even when no request since has recorded a new baseline.
-            baseline_index = max(
-                (
-                    index
-                    for index, message in enumerate(messages)
-                    if (isinstance(message, ModelRequest) and message.instruction_baseline is not None)
-                    or (
-                        isinstance(message, ModelResponse)
-                        and any(isinstance(part, CompactionPart) for part in message.parts)
-                    )
-                ),
-                default=0,
-            )
+        if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
-            messages = _render_instruction_deltas(
-                messages,
-                baseline_index=baseline_index,
-                inline_system=self.profile.get('supports_inline_system_prompts', False),
+            messages = _project_instruction_state(
+                messages, inline_system=self.profile.get('supports_inline_system_prompts', False)
             )
 
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
@@ -2620,51 +2605,75 @@ def _render_append_parts(parts: list[InstructionPart], *, inline_system: bool) -
     ]
 
 
-def _render_instruction_deltas(
-    messages: Sequence[ModelMessage], *, baseline_index: int, inline_system: bool
-) -> list[ModelMessage]:
-    """Render each delta in the current instruction window as a `SystemPromptPart`, dropping earlier ones.
+def _project_instruction_state(messages: Sequence[ModelMessage], *, inline_system: bool) -> list[ModelMessage]:
+    """Render instruction changes as `SystemPromptPart`s, and each request's instructions as it was sent.
 
-    Each block's text is folded forward from the window's baseline, so a delta can be rendered as a
-    diff against the text the model last received for its block. Only text earlier in `messages`
-    goes into that fold, so a request renders each delta identically on every later request.
+    Only the changes in the current window are rendered: a window opens at an
+    [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] or a compaction, and the
+    prefix moved there anyway, so earlier changes are superseded. Each block's text is folded forward from
+    the window's baseline, so a change can be rendered as a diff against the text the model last received
+    for its block; only text earlier in `messages` goes into that fold, so each change renders the same on
+    every later request.
+
+    The baseline parts themselves are dropped, and each request recorded in a window gets its
+    `instructions` rendered with that window's append-mode blocks tagged, for the adapters that read a
+    request's instructions from history rather than from the request parameters.
     """
-    baseline = messages[baseline_index] if baseline_index < len(messages) else None
-    sent: dict[str, str] = (
-        {
-            instruction_id: entry.part.content
-            for instruction_id, entry in baseline.instruction_baseline.items()
-            if entry.part.content
-        }
-        if isinstance(baseline, ModelRequest) and baseline.instruction_baseline
-        else {}
+    current_start = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if (
+                isinstance(message, ModelRequest)
+                and any(isinstance(part, InstructionBaselinePart) for part in message.parts)
+            )
+            or (isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts))
+        ),
+        default=0,
     )
-    rendered: list[ModelMessage] = []
+    window: InstructionBaselinePart | None = None
+    sent: dict[str, str] = {}
+    projected: list[ModelMessage] = []
     for index, message in enumerate(messages):
-        if not isinstance(message, ModelRequest) or not any(
-            isinstance(part, InstructionDeltaPart) for part in message.parts
-        ):
-            rendered.append(message)
+        if isinstance(message, ModelResponse):
+            if any(isinstance(part, CompactionPart) for part in message.parts):
+                window = None
+            projected.append(message)
             continue
         parts: list[ModelRequestPart] = []
         for part in message.parts:
-            if not isinstance(part, InstructionDeltaPart):
+            if isinstance(part, InstructionBaselinePart):
+                window = part
+                sent = {
+                    str(block.id): block.content
+                    for block in part.instructions
+                    if block.on_change == 'append' and block.id is not None and block.content
+                }
+            elif isinstance(part, InstructionDeltaPart):
+                if index >= current_start:
+                    text = part.render(inline_system=inline_system, previous=sent.get(part.id))
+                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
+                    if part.content is None:
+                        sent.pop(part.id, None)
+                    else:
+                        sent[part.id] = part.content
+            else:
                 parts.append(part)
-            elif index >= baseline_index:
-                text = part.render(inline_system=inline_system, previous=sent.get(part.id))
-                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-                if part.content is None:
-                    sent.pop(part.id, None)
-                else:
-                    sent[part.id] = part.content
-        rendered.append(replace(message, parts=parts))
-    return rendered
+        instructions = message.instructions
+        # The parts every request in the window was sent, as `update_instruction_history` builds them.
+        prefix = [block for block in window.instructions if block.content] if window is not None else []
+        if prefix and instructions == InstructionPart.join(prefix):
+            instructions = InstructionPart.join(_render_append_parts(prefix, inline_system=inline_system))
+        if parts != list(message.parts) or instructions != message.instructions:
+            message = replace(message, parts=parts, instructions=instructions)
+        projected.append(message)
+    return projected
 
 
-def _has_instruction_deltas(messages: Iterable[ModelMessage]) -> bool:
-    """Whether any request in `messages` carries an unprojected `InstructionDeltaPart`."""
+def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
+    """Whether any request in `messages` records instruction state that `prepare_messages` projects."""
     return any(
-        isinstance(part, InstructionDeltaPart)
+        isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
@@ -2672,9 +2681,9 @@ def _has_instruction_deltas(messages: Iterable[ModelMessage]) -> bool:
 
 
 def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """Explain how direct model callers can project canonical instruction changes."""
+    """Explain how direct model callers can project canonical instruction state."""
     return UserError(
-        '`InstructionDeltaPart` must be projected before calling this model. '
+        '`InstructionDeltaPart` and `InstructionBaselinePart` must be projected before calling this model. '
         'Call `model.prepare_messages(messages)` first and pass the result. `Agent` does this for you.'
     )
 

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -214,10 +215,10 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
         if truncate and len(transcript) > 500:  # cap the display excerpt like `UserPromptPart`
             transcript = transcript[:500] + '...'
         return f'Speech [{part.speaker}]: {transcript}'
-    # Tool-list bookkeeping rather than conversation, so there is no line to contribute.
+    # Tool-list and instruction bookkeeping rather than conversation, so there is no line to contribute.
     # Redundant against the union as it stands today, but kept explicit so the fallthrough
     # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, ToolAvailabilityDeltaPart):
+    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart)):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which
     # of its fields read as conversation, and a search index is not worth failing a run over,

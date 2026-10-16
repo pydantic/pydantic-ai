@@ -33,7 +33,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
-    _has_instruction_deltas,  # pyright: ignore[reportPrivateUsage]
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -66,7 +66,7 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
-from ._instructions import update_instruction_history
+from ._instructions import instruction_window, update_instruction_history, window_prefix
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -889,7 +889,6 @@ def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
         run_id=request.run_id,
         conversation_id=request.conversation_id,
         metadata=request.metadata,
-        instruction_baseline=request.instruction_baseline,
     )
 
 
@@ -978,10 +977,6 @@ def _apply_instruction_parts(
     """
     if instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
-        # Append-mode requests retain structured prefixes for replay; ordinary rewrite-mode
-        # history continues to record only the rendered instructions.
-        if request.instruction_parts is not None:
-            request.instruction_parts = instruction_parts
 
 
 async def _prepare_request_parameters(
@@ -1810,10 +1805,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
-        if instruction_parts is None and any(
-            isinstance(message, _messages.ModelRequest) and message.instruction_baseline is not None
-            for message in _messages.post_compaction_window(ctx.state.message_history)
-        ):
+        if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
             # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
             instruction_parts = []
 
@@ -1873,14 +1865,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_source = _get_history_instructions_source(ctx.state.message_history)
-        instruction_parts = (
-            instruction_source.instruction_parts
-            if instruction_source is not None and instruction_source.instruction_parts is not None
-            else [_messages.InstructionPart(content=instructions)]
-            if instructions
-            else None
-        )
+        instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
@@ -2107,7 +2092,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if instructions_target is not None:
                 _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
 
-            if _has_instruction_deltas(messages):
+            if _has_instruction_state(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
@@ -2938,6 +2923,26 @@ def _with_outgoing_reveal_state(
             loaded_capability_ids=parse_loaded_capabilities(messages),
         ),
     )
+
+
+def _resumed_instruction_parts(
+    history: list[_messages.ModelMessage], instructions: str | None
+) -> list[_messages.InstructionPart] | None:
+    """The instruction parts a suspended turn was sent, for its continuation to send again.
+
+    The history records the joined `instructions`, which is all a turn without append-mode blocks needs.
+    A turn in an `on_change='append'` window was sent its window's baseline, whose parts say which blocks
+    the model gets tagged, so those are used when they're still what the turn's instructions were made of.
+    """
+    if not instructions:
+        return None
+    source = _get_history_instructions_source(history)
+    end = next(index for index, message in enumerate(history) if message is source)
+    if (baseline := instruction_window(history[: end + 1])) is not None:
+        prefix = window_prefix(baseline)
+        if _messages.InstructionPart.join(prefix) == instructions:
+            return prefix
+    return [_messages.InstructionPart(content=instructions)]
 
 
 def _history_recording_targets(

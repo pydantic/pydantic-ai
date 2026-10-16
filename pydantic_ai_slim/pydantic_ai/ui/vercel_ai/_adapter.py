@@ -24,6 +24,7 @@ from ...messages import (
     FilePart,
     ForceDownloadMode,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -682,7 +683,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, ToolReturnPart):
                 # Tool returns are merged into the tool call in the assistant message
                 pass
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
                 pass  # Operator instruction state stays in trusted server-side history.
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 user_ui_parts.append(

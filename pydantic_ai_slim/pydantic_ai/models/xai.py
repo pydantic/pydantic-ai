@@ -22,6 +22,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -413,7 +414,7 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()

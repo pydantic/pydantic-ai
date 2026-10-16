@@ -125,7 +125,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 system_prompt.append(pai_message.instructions)
 
             for part in pai_message.parts:
-                if isinstance(part, messages.InstructionDeltaPart):
+                if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
                     raise _unprojected_instruction_delta_error()
                 if isinstance(part, messages.SystemPromptPart):
                     system_prompt.append(part.content)

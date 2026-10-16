@@ -29,6 +29,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -630,7 +631,7 @@ class MistralModel(Model[Mistral]):
                         tool_call_id=part.tool_call_id,
                         content=part.model_response(),
                     )
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()

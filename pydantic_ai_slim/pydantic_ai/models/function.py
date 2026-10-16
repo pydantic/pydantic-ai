@@ -17,6 +17,7 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -44,7 +45,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    _has_instruction_deltas,  # pyright: ignore[reportPrivateUsage]
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
@@ -425,7 +426,7 @@ class FunctionStreamedResponse(StreamedResponse):
 
 def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> None:
     """Reject canonical instruction changes before they reach the user's callback, like any adapter would."""
-    if _has_instruction_deltas(messages):
+    if _has_instruction_state(messages):
         raise _unprojected_instruction_delta_error()
 
 
@@ -452,7 +453,7 @@ def _estimate_usage(  # noqa: C901
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, InstructionDeltaPart):  # pragma: no cover
+                elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
                     raise _unprojected_instruction_delta_error()
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     if not allow_tool_availability_deltas:

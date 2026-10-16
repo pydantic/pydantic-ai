@@ -18,6 +18,7 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -408,7 +409,7 @@ class CohereModel(Model[AsyncClientV2]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
-            elif isinstance(part, InstructionDeltaPart):
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()

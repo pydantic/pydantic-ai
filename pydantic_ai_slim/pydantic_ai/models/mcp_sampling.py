@@ -2,19 +2,14 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import KW_ONLY, dataclass, replace
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from .. import _mcp, exceptions
 from .._run_context import RunContext
-from ..messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse
+from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    _render_append_parts,  # pyright: ignore[reportPrivateUsage]
-)
+from . import Model, ModelRequestParameters, StreamedResponse
 
 if TYPE_CHECKING:
     from mcp import ServerSession
@@ -56,20 +51,6 @@ class MCPSamplingModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        # MCP sampling reads the prefix from each request's `instructions` rather than from the prepared
-        # parameters, so render append-mode blocks there the same way `prepare_request` would.
-        inline_system = self.profile.get('supports_inline_system_prompts', False)
-        messages = [
-            replace(
-                message,
-                instructions=InstructionPart.join(
-                    _render_append_parts(message.instruction_parts, inline_system=inline_system)
-                ),
-            )
-            if isinstance(message, ModelRequest) and message.instruction_parts
-            else message
-            for message in messages
-        ]
         system_prompt, sampling_messages = _mcp.map_from_pai_messages(messages)
 
         model_settings, _ = self.prepare_request(model_settings, model_request_parameters)

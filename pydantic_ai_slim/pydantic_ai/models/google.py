@@ -24,6 +24,7 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -1272,7 +1273,7 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
-                    elif isinstance(part, InstructionDeltaPart):
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise _unsynthesized_tool_availability_delta_error()

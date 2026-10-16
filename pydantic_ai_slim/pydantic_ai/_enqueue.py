@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal, SupportsIndex, TypeAlias
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
@@ -110,6 +111,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
                 InstructionDeltaPart,
+                InstructionBaselinePart,
                 SpeechPart,
             ),
         ):

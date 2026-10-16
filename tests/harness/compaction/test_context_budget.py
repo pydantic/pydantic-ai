@@ -1582,8 +1582,10 @@ class TestInstructionDeltaCounting:
                 {'kind': 'response', 'parts': [{'part_kind': 'text', 'content': 'done'}]},
                 {
                     'kind': 'request',
-                    'parts': [{'part_kind': 'user-prompt', 'content': 'Continue.'}],
-                    'instruction_baseline': {},
+                    'parts': [
+                        {'part_kind': 'user-prompt', 'content': 'Continue.'},
+                        {'part_kind': 'instruction-baseline', 'instructions': []},
+                    ],
                     'instructions': 'C',
                 },
             ]

@@ -71,7 +71,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
-from pydantic_ai.messages import InstructionDeltaPart, ModelMessagesTypeAdapter
+from pydantic_ai.messages import InstructionBaselinePart, InstructionDeltaPart, ModelMessagesTypeAdapter
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -4581,7 +4581,7 @@ async def test_instruction_updates_use_recorded_values_on_temporal_replay(client
     assert _instruction_reads == ['A', 'B', 'B', 'A', None, 'C']
     assert _instruction_values == []
     assert isinstance(messages[0], ModelRequest)
-    assert messages[0].instruction_baseline is not None
+    assert any(isinstance(part, InstructionBaselinePart) for part in messages[0].parts)
     await Replayer(
         workflows=[InstructionUpdatesWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),

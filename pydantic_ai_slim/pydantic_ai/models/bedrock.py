@@ -43,6 +43,7 @@ from pydantic_ai import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelProfileSpec,
@@ -1467,7 +1468,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             if supports_tool_result_status:
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
-                    elif isinstance(part, InstructionDeltaPart):
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                         raise _unsynthesized_tool_availability_delta_error()
