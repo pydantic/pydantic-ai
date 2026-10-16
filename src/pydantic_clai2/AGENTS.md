@@ -140,7 +140,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   already holding a conversation, and `Session.resume` refuses one another session
   holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
   `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
-  `/reload` and `/update` (only the session CLAI started with restarts it), and close
+  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  CLAI started with, restarts it, never from another folder or while another session runs a
+  turn, and a failed `/reload` continues the shown session's conversation), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
   watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
   every live session (`CommandContext.adopt`) unless its project file sets it.
@@ -151,12 +153,25 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `live`. `SessionRuntime` (`runtime/session_runtime.py`) holds what each live session
   has: its `Session`, commands, `SessionPlugins`, status, interrupts, input queue,
   forks, and folder (`Session.workspace`, which plugins read as `host.workspace`).
+  `Terminal` holds what only the terminal has, whichever session it shows.
   A per-session value on `ClaiProcess` leaks between sessions; a process value on a
   runtime is built twice or closes with one session. Module-level mutable state is
   process state too, so keep it off modules. Never call `os.chdir` or read
   `Path.cwd()` for a session's folder after startup: pass `Session.workspace` (or
   `host.workspace`). `Path.cwd` stays only as the default of hosts built outside the
   shell, and for `--worktree` setup and cleanup around the session.
+- **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
+  owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
+  history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
+  their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
+  terminal's. `/resume` of a conversation another live session holds shows that one
+  (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
+  live, and the session CLAI started with is closed for idleness like any other while
+  hidden. Prompts queued for a session stay its own when the terminal shows another.
+  `clai2 --web` keeps its terminal on the session it started with. With one live
+  session nothing changes, and the toolbar adds `N live` only for more.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.

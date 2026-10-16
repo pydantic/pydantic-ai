@@ -106,7 +106,9 @@ in the reference.
 ## Updating
 
 Run `/update`. CLAI installs the newest build, then restarts into it with the same
-conversation open.
+conversation open. While other live sessions run turns, as ones the browser opened can,
+`/update` and `/reload` ask you to try again when they finish. They restart CLAI in the folder it started in,
+so a session from another folder shown in the terminal cannot run them.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.
@@ -263,6 +265,10 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 
 From your shell, `clai2 --resume` opens the same browser. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
+
+With `/web` running, the browser can open other sessions while this one runs. `/resume`
+of one of them shows it here, even mid-turn, instead of copying it; the session you
+left keeps running in the browser.
 
 ### Work in the background: `/fork`
 

@@ -1256,9 +1256,12 @@ and then `on_session_start`, as on `/plugins reload`. Nothing moves while a turn
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
 
-A session whose directory is gone opens read-only. With `/web` from a terminal, CLAI opens no
-other sessions: clicking one resumes it in the terminal's session, and a session saved in another
-directory opens read-only, since `/resume ID` refuses it there. Shell lines (`!`) run only in the terminal. A bare
+A session whose directory is gone opens read-only. With `/web` from a terminal, the browser opens
+sessions beside the terminal's in the same way, except that a session saved in another directory
+opens read-only, since the terminal's `/resume ID` refuses it. The terminal shows one live session
+at a time: `/resume ID` there of a session live in the browser shows that session, even mid-turn,
+instead of copying it, and the session shown before stays live. Shell lines (`!`) run only in the
+terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, `/system_prompt` its System prompt section, `/update` its About section,
@@ -1385,6 +1388,9 @@ restarts as a terminal session with the web UI running, though the browser does 
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
+In a terminal, `/update` and `/reload` are refused while other live sessions run turns, which
+the restart would end, and in a session from another folder the terminal shows, as CLAI
+restarts in the folder it started in.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
@@ -3490,9 +3496,10 @@ these rules works the same in both.
    plugin for each live session, so under the web UI several exist at once. Each is
    loaded and unloaded on its own: `on_session_start` when its session opens or the
    plugin is turned on, `on_session_end` when its session closes or the plugin is
-   turned off. A session the browser opened closes after it has sat idle for an hour:
-   no turn, no queued input, no fork or delegated task, and no browser or terminal
-   showing it. Opening it again resumes it in a new session, with new instances.
+   turned off. A session closes after it has sat idle for an hour: no turn, no queued
+   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   session `clai2 --web` started with never closes this way. Opening a closed session
+   again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its
    own folder. CLAI never changes the process's working directory after startup, so
    `Path.cwd()` is the folder CLAI started in, not the session's. Never call
@@ -3502,8 +3509,8 @@ these rules works the same in both.
    a dict, list, cache, or client at module level is shared by every live session.
    Keep state on `self`, set up in `__init__` or `on_session_start`. When sessions
    should share one thing, make the plugin process-scoped (below).
-4. **Do not assume a terminal.** A session the browser opened has none: its console
-   writes to a log, and nobody can press a key in it. Check
+4. **Do not assume a terminal.** A session the browser opened may have none: its
+   console writes to a log or nowhere, and nobody can press a key in it. Check
    `self.host.console.is_terminal` before reading keys or drawing on the screen, such
    as a menu in `host.full_screen()`, and skip that work when it is `False`. The
    built-in `ask_user` and `herdr` plugins do this.
@@ -3605,6 +3612,7 @@ A `LiveSession` is one live session:
 | `sessions` | the saved conversations its `/resume` lists |
 | `tasks` | its delegated tasks, or `None` |
 | `running` | whether a turn runs in it now |
+| `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
@@ -3612,8 +3620,9 @@ A `LiveSession` is one live session:
 | `interrupt()` | cancel its running turn or command; `False` when nothing was running |
 | `await complete(text)` | what Tab offers at its prompt for `text` |
 
-In a terminal without the web UI, `host.live` lists the one session, and `open` and
-`new` raise `RuntimeError`.
+With one session, as in a terminal where the web UI opened no other, `host.live`
+lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no
+other sessions, such as a headless `clai2 -p` run.
 
 ## Testing a plugin
 

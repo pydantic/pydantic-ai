@@ -479,7 +479,7 @@ class Script:
                 step = steps.pop(0)
                 return step if isinstance(step, str) else await step()
 
-        monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.PromptSession', Prompt)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 async def test_cancelled_turn_takes_forks_down(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

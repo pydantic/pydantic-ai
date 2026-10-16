@@ -7,13 +7,11 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.history import History
 from pydantic import ValidationError
 from rich.console import Console
 
@@ -87,13 +85,13 @@ from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, sy
 from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.menus.update_menu import update_menu
-from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
+from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
@@ -108,7 +106,7 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
-_RESTARTS = 'Restarts CLAI: enter it in the session CLAI started with'
+_RESTARTS = 'Restarts CLAI: enter it in the session the terminal shows'
 
 
 async def _default_model(
@@ -119,8 +117,14 @@ async def _default_model(
     return await models.resolve(saved) if isinstance(saved, str) else fallback
 
 
+_RESTART_ELSEWHERE = (
+    '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
+    'or with no terminal, in the session CLAI started with.'
+)
+
+
 def _refuse_restart(args: list[str]) -> str:
-    raise ValueError('/reload and /update restart CLAI. Enter them in the session CLAI started with.')
+    raise ValueError(_RESTART_ELSEWHERE)
 
 
 def _process(
@@ -169,7 +173,6 @@ def create_shell(
     )
     process = _process(process=process, store=store, builtin_plugins=builtin_plugins)
     store, conversations = process.store, process.conversations
-    transcript = transcript if transcript is not None else TranscriptBuffer()
     session = Session(
         agent,
         deps=deps,
@@ -359,7 +362,8 @@ def create_shell(
     def reset_screen() -> None:
         console.clear()
         # Forget the old output too, or a resize or the exit printout would show it again.
-        transcript.clear()
+        if shell.terminal is not None:
+            shell.terminal.transcript.clear()
         print_welcome(project, console)
 
     async def clear(_: list[str]) -> str:
@@ -394,8 +398,10 @@ def create_shell(
         Command(
             name='update',
             description='Install the newest CLAI from the updates.channel setting (stable or main)',
-            handler=updates.command,
-            menu=lambda: update_menu(context, updates, run=lambda text: shell.send_input(text)),
+            handler=lambda args: shell.update(args),
+            menu=lambda: update_menu(
+                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+            ),
         )
     )
     commands.register(
@@ -464,23 +470,6 @@ def create_shell(
     for plugin in plugins:
         if isinstance(plugin, CommandProvider):
             commands.register_many(plugin.get_commands(context))
-    images = ImageInput()
-    history = input_history(store.path.with_name('input-history'))
-    prompt = None
-    if not headless and not console.is_terminal:
-        prompt = PromptSession[str](
-            history=history,
-            completer=PromptCompleter(commands),
-            complete_while_typing=True,
-            style=COMPLETION_STYLE,
-            reserve_space_for_menu=6,
-            bottom_toolbar=lambda: FormattedText(
-                [
-                    (theme.color(style), text)
-                    for style, text in ([(theme.MUTED, images.notice)] if images.notice else status.toolbar())
-                ]
-            ),
-        )
     shell = SessionRuntime(
         process=process,
         agent=agent,
@@ -491,10 +480,6 @@ def create_shell(
         console=console,
         context=context,
         status=status,
-        prompt=prompt,
-        history=history,
-        transcript=transcript,
-        images=images,
         interrupts=Interrupts(signals=signals),
         screen=screen,
         sessions=sessions,
@@ -503,8 +488,6 @@ def create_shell(
         spinners=spinners,
         updates=updates,
     )
-    if prompt is not None:
-        prompt.key_bindings = images.bindings()
     commands.register(
         Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
     )
@@ -544,11 +527,32 @@ def create_shell(
         await render_history(messages, console=console, renderer=renderer)
 
     sessions.on_resume = show_resumed
+    sessions.show_live = shell.show_live
     shell.session.claim = lambda conversation_id: process.live.claim(conversation_id, holder=shell.live_session)
-    # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
-    TranscriptBuffer.rebind(transcript)
     process.live.add(shell)
+    # Headless, a session still edits prompts in a terminal console, but reads no lines from a pipe.
+    if not headless or console.is_terminal:
+        _show_in_terminal(shell, transcript=transcript, shows_others=not headless)
     return shell
+
+
+def _show_in_terminal(
+    shell: 'SessionRuntime[DepsT, OutputT]', *, transcript: TranscriptBuffer | None, shows_others: bool
+) -> None:
+    """Show `shell` in a new `Terminal`, keeping the output `transcript` retains, as across a reload.
+
+    With `shows_others`, `/resume` of a conversation another live session holds shows that session there;
+    `clai2 --web` keeps its terminal on the session it started with.
+    """
+    Terminal[DepsT, OutputT](
+        console=shell.console,
+        shows_others=shows_others,
+        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        history=input_history(shell.process.store.path.with_name('input-history')),
+    ).attach(shell)
+    # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
+    if transcript is not None:
+        TranscriptBuffer.rebind(transcript)
 
 
 def web_serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
@@ -578,7 +582,8 @@ class _ConversationFooter:
 class SessionRuntime(Generic[DepsT, OutputT]):
     """One live session and its prompt loop; one turn is one `TurnStart`, one agent run, one `TurnEnd`.
 
-    It reads input from the terminal's editor when its console is one, and otherwise from `send_input`.
+    While a `Terminal` shows it, it reads the terminal's editor, or its line prompt when the console is
+    not a terminal; otherwise it reads only what `send_input` gives it.
     """
 
     process: ClaiProcess[DepsT]
@@ -590,8 +595,6 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     console: Console
     context: CommandContext
     status: Status
-    prompt: PromptSession[str] | None
-    history: History
     interrupts: Interrupts
     screen: Screen
     sessions: Sessions[DepsT, OutputT]
@@ -599,12 +602,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     session_settings: SessionSettings[DepsT, OutputT]
     spinners: Spinners
     updates: Updates
-    transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
+    terminal: 'Terminal[DepsT, OutputT] | None' = None
+    """The terminal showing this session; `None` while it shows another, or in a CLAI without one."""
     images: ImageInput = field(default_factory=ImageInput)
+    """Images pasted for the next prompt: the terminal's while it shows this session."""
     submitted: list[str] | None = None
     """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
     editor: LivePrompt | None = None
+    """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
@@ -616,6 +622,18 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """Whether a turn runs: from its `TurnStart` until its run ends, before plugins hear `TurnEnd`."""
     _handling: bool = field(default=False, init=False, repr=False)
     """Whether input, a turn or a command, is being handled."""
+    _reading: CancelScope | None = field(default=None, init=False, repr=False)
+    """Cancelled to read again from where input comes now, as when the terminal starts or stops showing it."""
+
+    @property
+    def prompt(self) -> PromptSession[str] | None:
+        """The terminal's line prompt, while the terminal shows this session and its console is not a terminal."""
+        return self.terminal.prompt if self.terminal is not None else None
+
+    @property
+    def transcript(self) -> TranscriptBuffer | None:
+        """The output the terminal showing this session retains for redrawing."""
+        return self.terminal.transcript if self.terminal is not None else None
 
     @property
     def live_session(self) -> LiveRuntime:
@@ -647,9 +665,18 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 if resume is not None:
                     self.session.record_resumed()
                 for name in ('reload', 'update'):
-                    # Both restart CLAI, which only the session CLAI started with can do.
+                    # Both restart CLAI, which only the session the terminal shows, or CLAI started with, can do.
+                    restart = next(command for command in self.commands if command.name == name)
                     self.commands.unregister([name])
-                    self.commands.register(Command(name=name, description=_RESTARTS, handler=_refuse_restart))
+                    self.commands.register(
+                        Command(
+                            name=name,
+                            description=_RESTARTS,
+                            handler=lambda args, restart=restart: (
+                                restart.handler if self.terminal is not None else _refuse_restart
+                            )(args),
+                        )
+                    )
                 ready()
                 reason = await self.run()
         except get_cancelled_exc_class():
@@ -677,6 +704,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         finally:
             self._handling = False
             self.live_session.changed()
+
+    def handoff(self) -> WebHandoff | None:
+        """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
+        return None if self.updates.relaunch is None else web_serving(self.loader)
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
@@ -828,53 +859,127 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def request_reload(self, args: list[str]) -> str:
         if args:
             raise ValueError('Usage: /reload')
+        self._refuse_restart_while_others_run()
         self.reload_requested = True
         return 'Reloading CLAI2...'
 
+    async def update(self, args: list[str]) -> str:
+        """`/update`, refused while another live session runs a turn, which the restart would end."""
+        self._refuse_restart_while_others_run()
+        return await self.updates.command(args)
+
+    def _refuse_restart_while_others_run(self) -> None:
+        if (refusal := self.restart_refusal()) is not None:
+            raise ValueError(refusal)
+
+    def restart_refusal(self) -> str | None:
+        """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
+        if self.terminal is None and self.process.live.focused not in (None, self.live_session.id):
+            # The session CLAI started with, while the terminal shows another: the restart starts from that one.
+            return _RESTART_ELSEWHERE
+        home = self.terminal.home if self.terminal is not None else None
+        if home is not None and home is not self and self.session.workspace != home.session.workspace:
+            # The restart resumes this conversation where CLAI started, which works only in its own folder.
+            return (
+                f'CLAI restarts in {home.session.workspace}, where it started, and this session works in '
+                f'{self.session.workspace}; restart it from a session there.'
+            )
+        running = sum(
+            1 for session in self.process.live.listing() if session.running and session.id != self.live_session.id
+        )
+        if running > 1:
+            return f'{running} other sessions are running turns; try again when they finish.'
+        if running:
+            return '1 other session is running a turn; try again when it finishes.'
+        return None
+
     async def run(self) -> SessionEndReason:
+        """Take input until this session ends; with a terminal, until the session the terminal shows ends."""
+        if self.terminal is not None:
+            return await self.terminal.drive(self)
+        return await self.loop()
+
+    async def loop(self) -> SessionEndReason:
+        """Take input until this session ends, telling the terminal when it shows this session."""
+        reason: SessionEndReason = 'error'
         try:
             # Commands and turns run here: a process-scoped plugin's host follows this session meanwhile.
             with handling(self.loader.live_session):
                 async with self.process.tasks.opened(view=self.tasks) as owner:
                     if isinstance(self.agent, StockAgent):
                         self.session.delegations = owner
-                    return await self._run()
+                    # Reports a task left while no CLAI ran are known once the owner opened.
+                    if self.editor is not None and owner.reports(conversation_id=self.session.summary.id):
+                        self.editor.wake()
+                    reason = await self._read_loop()
+                    return reason
         finally:
             self.session.delegations = None
             await self.forks.close()
+            if self.terminal is not None:
+                self.terminal.ended(self, reason)
 
-    async def _run(self) -> SessionEndReason:
-        if self.console.is_terminal:
-            self.editor = LivePrompt(
-                console=self.console,
-                commands=self.commands,
-                history=self.history,
-                images=self.images,
-                interrupts=self.interrupts,
-                toolbar=self.status.toolbar,
-                steer=self.steer,
-                run_now=self.run_now,
-                transcript=self.transcript,
-                chords={'ctrl-x ctrl-s': self.speculation.toggle, 'ctrl-b': self.tasks.promote},
-                pinned=self.speculation.row,
-                spinner=self.spinners.active,
-                panel=lambda glyph: (*self.tasks.rows(glyph), *self.forks.rows(glyph)),
-            )
-            self.screen.editor = self.editor.suspended
-            try:
-                async with self.editor.opened():
-                    # Input a plugin entered while plugins loaded, before the editor existed.
-                    while not self._inbox.empty():
-                        self.editor.submit(self._inbox.get_nowait())
-                    self.tasks.wake = self.editor.wake
-                    if self.tasks.owner.reports(conversation_id=self.session.summary.id):
-                        self.editor.wake()
-                    return await self._read_loop()
-            finally:
-                self.tasks.wake = None
-                self.screen.editor = None
-                self.editor = None
-        return await self._read_loop()
+    def shown_in(self, terminal: 'Terminal[DepsT, OutputT] | None') -> None:
+        """Read the input of `terminal`, which shows this session now, and take its Ctrl-C; `None` stops that.
+
+        The terminal hands its console output over itself.
+        """
+        self.terminal = terminal
+        self.images = terminal.images if terminal is not None else ImageInput()
+        self.interrupts.focus(signals=terminal is not None)
+        if terminal is not None:
+            self.process.live.focused = self.live_session.id
+        self.bind(terminal.editor if terminal is not None else None)
+        self.live_session.changed()
+
+    def bind(self, editor: LivePrompt | None) -> None:
+        """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
+        if self.editor is not None and editor is None:
+            # Prompts queued for this session stay its own while the terminal shows another.
+            for text in self.editor.take_queued():
+                self._inbox.put_nowait(text)
+        self.editor = editor
+        self.screen.editor = editor.suspended if editor is not None else None
+        self.tasks.wake = editor.wake if editor is not None else None
+        if editor is not None:
+            # Input a plugin entered while the editor read for another session, or did not exist yet.
+            while not self._inbox.empty():
+                editor.submit(self._inbox.get_nowait())
+            if self.tasks.owner.reports(conversation_id=self.session.summary.id):
+                editor.wake()
+        if self._reading is not None:
+            self._reading.cancel()
+
+    async def show_live(self, conversation_id: str) -> str | None:
+        """Show in the terminal the other live session holding `conversation_id`; `None` when none does.
+
+        As `/resume` does, the terminal then shows that session's history; this one stays live.
+        """
+        other = self.process.live.runtime(conversation_id)
+        if (
+            self.terminal is None
+            or not self.terminal.shows_others
+            or other is None
+            or other is self
+            or not isinstance(other, SessionRuntime)
+        ):
+            return None
+        # Every session of a process runs the same agent, so it has the same types.
+        await self.terminal.show(cast('SessionRuntime[DepsT, OutputT]', other))
+        return ''
+
+    async def _next_input(self) -> str:
+        """The next input from where it comes now, which moves when the terminal starts or stops showing this session."""
+        while True:
+            with CancelScope() as self._reading:
+                try:
+                    if self.editor is not None:
+                        return await self.editor.read()
+                    if self.prompt is not None:
+                        return expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+                    return (await self._inbox.get()).strip()
+                finally:
+                    self._reading = None
 
     def steer(self, text: str) -> bool:
         """Enqueue steering in core and hand transcript feedback to the active turn."""
@@ -953,7 +1058,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
-        self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
+        self.status.status_segments = (*self.loader.status_segments(), self.updates.segment, self._live_segment)
+
+    def _live_segment(self) -> str:
+        """How many sessions are live in this CLAI, shown in the terminal once the browser opened others."""
+        live = len(self.process.live.listing())
+        return f'{live} live' if self.terminal is not None and live > 1 else ''
 
     async def _rewind(self) -> None:
         assert self.editor is not None
@@ -974,12 +1084,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 self.show_model()
                 self.status.workspace = self.session.workspace
                 self._show_status_segments()
-                if self.editor is not None:
-                    text = await self.editor.read()
-                elif self.prompt is not None:
-                    text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
-                else:
-                    text = (await self._inbox.get()).strip()
+                text = await self._next_input()
             except PromptRewind:
                 await self._rewind()
                 continue
@@ -1340,7 +1445,8 @@ async def _run_prompt(
     session.on_context_usage = context_usage
     session.on_context_window = context_window
     session.on_stream_event = observe
-    status_line = StatusLine(console, status, enabled=screen.editor is None, spinner=spinner)
+    # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
+    status_line = StatusLine(console, status, enabled=screen.editor is None and console.is_terminal, spinner=spinner)
 
     @asynccontextmanager
     async def take_screen() -> AsyncGenerator[None]:

@@ -5,7 +5,9 @@ import signal
 import threading
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from types import FrameType
+from typing import TypeAlias
 
 
 class Interrupts:
@@ -23,6 +25,8 @@ class Interrupts:
         self._last: float | None = None
         self.exit_requested = False
         self._cancel: Callable[[bool], None] | None = None
+        self._handler: _Handler | None = None
+        """The Ctrl-C handler of the operation `run` awaits now."""
 
     def press(self) -> bool:
         """Share the double-press window between running and input modes."""
@@ -43,9 +47,14 @@ class Interrupts:
         self._cancel(exit_on_repeat)
         return True
 
+    def focus(self, *, signals: bool) -> None:
+        """Take Ctrl-C, or give it up, also for the operation `run` awaits now: the terminal moved to or from it."""
+        self.signals = signals
+        if self._handler is not None:
+            self._take(self._handler) if signals else self._give(self._handler)
+
     async def run(self, operation: Awaitable[None]) -> bool:
         """Return false for user cancellation; propagate external task cancellation."""
-        handles = self.signals and threading.current_thread() is threading.main_thread()
         loop = asyncio.get_running_loop()
 
         async def invoke() -> None:
@@ -68,11 +77,11 @@ class Interrupts:
             # Cancelling from the loop keeps those steps whole and also wakes an idle selector.
             loop.call_soon_threadsafe(cancel, True)
 
-        previous = signal.getsignal(signal.SIGINT)
+        outer, self._handler = self._handler, _Handler(handle=on_signal)
+        handler = self._handler
         self._cancel = cancel
         try:
-            if handles:
-                signal.signal(signal.SIGINT, on_signal)
+            self._take(handler)
             try:
                 # `asyncio.wait` never forwards our own cancellation to `task`, so a
                 # `CancelledError` here is always external and must propagate.
@@ -87,5 +96,29 @@ class Interrupts:
             return True
         finally:
             self._cancel = None
-            if handles:
-                signal.signal(signal.SIGINT, previous)
+            self._give(handler)
+            self._handler = outer
+
+    def _take(self, handler: '_Handler') -> None:
+        if (
+            self.signals
+            and threading.current_thread() is threading.main_thread()
+            and signal.getsignal(signal.SIGINT) is not handler.handle
+        ):
+            handler.previous = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, handler.handle)
+
+    def _give(self, handler: '_Handler') -> None:
+        # Only a handler still installed is ours to remove: the session shown now may have replaced it.
+        if signal.getsignal(signal.SIGINT) is handler.handle:
+            signal.signal(signal.SIGINT, handler.previous)
+
+
+@dataclass(kw_only=True)
+class _Handler:
+    handle: Callable[[int, FrameType | None], None]
+    previous: '_SignalHandler' = signal.SIG_DFL
+    """What Ctrl-C did before `handle` took it."""
+
+
+_SignalHandler: TypeAlias = Callable[[int, FrameType | None], object] | int | signal.Handlers | None

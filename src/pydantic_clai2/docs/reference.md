@@ -2270,8 +2270,8 @@ no agent telemetry spans.
 clai2 --web
 ```
 
-The [web UI](../PLUGINS.md#web-this-session-in-your-browser) keeps several sessions
-live in one CLAI. Click any session in the sidebar and it opens live, even while
+The [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `clai2 --web` or
+`/web` in a terminal, keeps several sessions live in one CLAI. Click any session in the sidebar and it opens live, even while
 others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
@@ -2284,13 +2284,22 @@ many sessions run at once.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it. Its
-  conversation stays saved: click it to resume it. The session CLAI started with
-  never closes this way.
+  conversation stays saved: click it to resume it. The session `clai2 --web`
+  started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings
   a session's `.clai/settings.json` fixes.
 - **Read-only.** Only a session whose folder is gone, such as a removed worktree,
-  opens read-only.
+  opens read-only. With `/web` from a terminal, so does a session saved in another
+  folder than the one CLAI started in.
+- **The terminal.** With `/web` from a terminal, the terminal shows one live session
+  at a time, and its toolbar shows `N live` while more than one is. `/resume ID` of a
+  session live in the browser shows that session in the terminal, even mid-turn,
+  instead of copying it; the session shown before keeps running.
+- **`/reload` and `/update`** wait for the other sessions: while another session runs
+  a turn, they refuse, saying how many run, so try again when they finish. CLAI
+  restarts in the folder it started in, so they also refuse in a session that works
+  in another folder.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
