@@ -30,14 +30,14 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, with the single cache breakpoint anchored on the last durable user content:
+The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, led by the capability's single cache breakpoint:
 
 - The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- The `CachePoint` sits on the last durable user content, so the prefix it saves is a prefix of the next request and cache hits survive turn over turn. The reminder carries no breakpoint, so re-sending its mutable content never invalidates the cache.
+- The reminder opens with a `CachePoint`, which providers attach to the content right before it: the last user prompt, or in a tool loop the latest tool result. That content is what the next request starts with, so on Anthropic, Bedrock and OpenAI each request reads the previous one's prefix back from cache, tool results included, and only the reminder is sent uncached. On OpenRouter the breakpoint stops at the previous user message, so the assistant turns and tool results after it stay outside the explicit prefix.
 
-As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
+As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit prompt cache breakpoints, OpenRouter attaches it to the previous user message rather than to a tool result, and models without explicit breakpoints (such as Google's) ignore it. With Anthropic automatic caching (`anthropic_cache`), the automatic breakpoint lands on the reminder, which the next request doesn't contain; the `Planning` breakpoint right before it is the one the next request reads back. A request with no content before the reminder (an `instructions`-only first request) gets the reminder without a breakpoint, since there is no prefix to protect.
 
-Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
+A capability listed before `Planning` that also appends a tail part each request (for example `SystemReminders`) puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so its cache entry is only read back while that content stays the same. The earlier capability's own breakpoint still marks the durable history.
 
 ## Usage
 
@@ -190,7 +190,7 @@ from pydantic_ai_harness import Planning
 
 Planning(
     guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint anchored on the last durable user content ('5m' | '1h')
+    cache_ttl='5m',          # TTL for the cache breakpoint leading the plan reminder ('5m' | '1h')
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
     inject=True,             # surface the current plan as a cache-safe tail reminder

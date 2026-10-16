@@ -1325,12 +1325,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
-            # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
-            match mcp_tool.meta:
-                case {'ui': {'visibility': visibility}} if isinstance(visibility, list) and 'model' not in visibility:
-                    continue
-                case _:
-                    pass
+            if not _is_visible_to(mcp_tool, 'model'):
+                continue
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
@@ -1700,6 +1696,44 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             else [_resource_content_to_pai(c) for c in contents]
         )
 
+    async def call_tool_for_app(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call a tool for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
+
+        An MCP Apps page runs in the browser and can't reach the server, so the host relays its `tools/call`
+        requests. Call this from the endpoint your frontend forwards them to, and send the result back to the
+        page as is.
+
+        Only tools on this server that are visible to apps can be called: `_meta.ui.visibility` includes `"app"`,
+        or is omitted. `isError` results are returned rather than raised, and
+        [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply.
+
+        Args:
+            name: The name of the tool the page called.
+            arguments: The arguments the page passed.
+
+        Returns:
+            The MCP `CallToolResult` in wire format (camelCase keys): `content`, `structuredContent` and `_meta`
+            when the server sent them, and `isError`.
+
+        Raises:
+            MCPError: If `arguments` isn't an object or the tool isn't available to apps (code `INVALID_PARAMS`), or
+                the server returns a protocol error.
+        """
+        # The arguments come from the page's JSON, so their type is checked here rather than trusted.
+        if arguments is None:
+            arguments = {}
+        elif not _utils.is_str_dict(arguments):
+            raise MCPError(message='Tool arguments must be an object', code=mcp_types.INVALID_PARAMS)
+        async with self:
+            try:
+                tool = next((t for t in await self.list_tools() if t.name == name), None)
+                if tool is None or not _is_visible_to(tool, 'app'):
+                    raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
+                result = await self.client.call_tool(name=name, arguments=arguments, raise_on_error=False)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return _call_tool_result_to_wire(result)
+
     async def read_resource_for_app(self, uri: str) -> dict[str, Any]:
         """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
 
@@ -1909,6 +1943,19 @@ def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
             return uri
         case _:
             return None
+
+
+def _is_visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool:
+    """Whether `audience` can see `tool`, per MCP Apps (SEP-1865).
+
+    A server lists who can see a tool in `_meta.ui.visibility`, such as `["app"]` for a tool only its page calls.
+    A tool without that list is visible to both the model and the app.
+    """
+    match tool.meta:
+        case {'ui': {'visibility': visibility}} if isinstance(visibility, list):
+            return audience in visibility
+        case _:
+            return True
 
 
 def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:

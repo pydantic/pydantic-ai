@@ -40,6 +40,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Ins
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._background_completion import get_background_completion
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -101,10 +102,16 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
     so that sub-agent calls or resumed runs without a fresh prompt still work.
     """
     if ctx.prompt is not None:
+        completion = get_background_completion(ctx.prompt)
+        if completion is not None:
+            return completion.content
         return ctx.prompt if isinstance(ctx.prompt, str) else str(ctx.prompt)
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart):
+                completion = get_background_completion(part.content)
+                if completion is not None:
+                    return completion.content
                 return part.content if isinstance(part.content, str) else str(part.content)
     return None
 
@@ -116,19 +123,25 @@ def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
     sequence of parts, and a `str` written over it would send the model the
     replacement text alone -- the images, documents and audio the user attached
     would be gone, with nothing in the run to say so.
+    Singleton native background completions are rewritten in place, preserving
+    their metadata.
     """
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart):
-                if not isinstance(part.content, str):
-                    raise UserError(
-                        'An InputGuardrail returned GuardrailResult.replace() for a multimodal prompt. The prompt '
-                        f'holds {type(part.content).__name__} rather than text, so writing the replacement over it '
-                        'would drop the attached parts. Return GuardrailResult.allow() or GuardrailResult.block() '
-                        'for prompts that are not plain text, or guard the output instead.'
-                    )
-                part.content = new_content
-                return True
+                if isinstance(part.content, str):
+                    part.content = new_content
+                    return True
+                completion = get_background_completion(part.content)
+                if completion is not None:
+                    completion.content = new_content
+                    return True
+                raise UserError(
+                    'An InputGuardrail returned GuardrailResult.replace() for a multimodal prompt. The prompt '
+                    f'holds {type(part.content).__name__} rather than text, so writing the replacement over it '
+                    'would drop the attached parts. Return GuardrailResult.allow() or GuardrailResult.block() '
+                    'for prompts that are not plain text, or guard the output instead.'
+                )
     return False
 
 

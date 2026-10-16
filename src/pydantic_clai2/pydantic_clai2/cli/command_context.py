@@ -53,6 +53,20 @@ class CommandContext:
         """Whether the project file sets `key`, so a saved value only lasts for this session."""
         return key in self.project.overrides
 
+    def use_project(self, project: ProjectSettings, settings: Settings) -> None:
+        """Adopt another directory's project file and the settings CLAI starts with there, applying each one."""
+        self.project = project
+        self.settings = settings
+        if settings.model:
+            self.store.add_model(name=settings.model)
+        for key in SETTING_FIELDS:
+            self.apply_setting(key, settings)
+
+    def setting(self, key: str) -> JsonValue:
+        """The effective value of `key`, such as `run.code_mode`, as JSON; `KeyError` for an unknown key."""
+        field = SETTING_FIELDS[key]
+        return self.settings.model_dump(mode='json', include={field})[field]
+
     def set_setting(self, args: list[str]) -> str:
         """Validate, persist, and apply a preference to the current conversation."""
         if len(args) == 1 and args[0] in SETTING_FIELDS:

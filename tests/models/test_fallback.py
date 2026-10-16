@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
-from dirty_equals import IsJson
+from dirty_equals import IsJson, IsOneOf
 from pydantic import BaseModel
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    AgentStreamEvent,
     FinishReason,
     InstructionId,
     InstructionPart,
@@ -388,7 +389,11 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function:failure_response:,function:success_response:',
+                        'chat function:success_response:',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
@@ -617,7 +622,11 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function::failure_response_stream,function::success_response_stream',
+                        'chat function::success_response_stream',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::success_response_stream',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]}],
@@ -1651,7 +1660,11 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                        'chat function:prompted_output_func:',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:prompted_output_func:',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
@@ -2181,6 +2194,49 @@ async def test_response_handler_not_triggered() -> None:
 
     result = await agent.run('hello')
     assert result.output == snapshot('primary response')
+
+
+async def test_response_handler_not_applied_to_streamed_requests_warns() -> None:
+    """Response handlers can't judge a streamed response, so each way of streaming warns and accepts it."""
+
+    async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'primary response'
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return any(isinstance(part, TextPart) and 'primary' in part.content for part in response.parts)
+
+    fallback = FallbackModel(
+        FunctionModel(primary_response, stream_function=primary_stream),
+        FunctionModel(fallback_response),
+        fallback_on=reject_primary,
+    )
+    agent = Agent(model=fallback)
+    warning = '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests'
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('fallback response')
+
+    async def event_stream_handler(_ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    with pytest.warns(UserWarning, match=warning):
+        result = await agent.run('hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('primary response')
+
+    listening_agent = Agent(model=fallback)
+
+    @listening_agent.on_event
+    async def _(_ctx: RunContext[Any], _event: AgentStreamEvent) -> None:
+        pass
+
+    with pytest.warns(UserWarning, match=warning):
+        result = await listening_agent.run('hello')
+    assert result.output == snapshot('primary response')
+
+    with pytest.warns(UserWarning, match=warning):
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == snapshot('primary response')
 
 
 async def test_response_handler_all_fail() -> None:
