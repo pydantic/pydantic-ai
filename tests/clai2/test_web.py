@@ -6,7 +6,7 @@ import io
 import re
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -49,6 +49,9 @@ from pydantic_clai2.builtin_plugins.web.app import (
     create_app,
 )
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    DialogClosed,
+    DialogOpened,
+    DialogShown,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -65,11 +68,15 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
     TurnStarted,
 )
-from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.rendering import theme as terminal_theme
+from tests.clai2.test_session_browser import git, repository
+from tests.clai2.test_tasks import task
 
 TOKEN = 'secret-token'
 HOSTS = frozenset({'testserver'})
@@ -304,8 +311,8 @@ def test_theme(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
-def test_a_repl_cell_from_the_browser(make_web: 'MakeWeb') -> None:
-    """`/repl` from the browser runs the user's cell in the session's REPL: shown as theirs, and not a turn."""
+def test_a_monty_cell_from_the_browser(make_web: 'MakeWeb') -> None:
+    """`/monty` from the browser runs the user's cell in the session's Monty sandbox: shown as theirs, and not a turn."""
     pytest.importorskip('pydantic_monty')
     web_ = make_web(Agent(TestModel()))
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
@@ -313,9 +320,9 @@ def test_a_repl_cell_from_the_browser(make_web: 'MakeWeb') -> None:
         running = web_.run()
         web_.post('/api/input', {'text': '/set run.code_mode true'})
         receive_until(socket, Notice)
-        web_.post('/api/input', {'text': '/repl x = 6 * 7\nprint(x)'})
+        web_.post('/api/input', {'text': '/monty x = 6 * 7\nprint(x)'})
         messages, notice = receive_until(socket, Notice)
-        assert (notice.command, notice.text) == ('/repl x = 6 * 7\nprint(x)', '42')
+        assert (notice.command, notice.text) == ('/monty x = 6 * 7\nprint(x)', '42')
         [cell] = [message.item for message in messages if isinstance(message, ItemAdded)]
         assert (cell.name, cell.by_user) == ('run_code', True)
         assert not any(isinstance(message, TurnStarted | TurnEnded) for message in messages)
@@ -462,11 +469,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
 
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
-        assert [(entry['title'], entry['state'], entry['current']) for entry in projects[0]['sessions']] == [
+        [here] = projects[0]['worktrees']
+        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
             ('first', 'completed', True)
         ]
-        assert [project['name'] for project in projects[1:]] == ['else']
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['sessions'][0]['id'] == elsewhere.id
+        assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
+            ('Removed folders', ['else'])
+        ]
+        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -519,12 +529,101 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
                 messages=[],
             )
         )
-    sessions = {entry['title']: entry['state'] for entry in web_.get('/api/sessions').json()[-1]['sessions']}
-    assert sessions == {'Live': 'busy', 'Dead': 'cancelled'}
+    [removed] = web_.get('/api/sessions').json()[-1]['worktrees']
+    assert {entry['title']: entry['state'] for entry in removed['sessions']} == {'Live': 'busy', 'Dead': 'cancelled'}
     web_.plugin.remote.running = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
-    current = web_.get('/api/sessions').json()[0]['sessions'][0]
+    current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Each repository is one project, its checkouts nested in it, removed worktrees included.
+
+    A removed worktree keeps the checkout saved with its sessions; an older one without it is placed by
+    where it was. Folders outside Git are their own project, and removed ones no project claims are last.
+    """
+    web_ = make_web(Agent(TestModel()))
+    worktrees = tmp_path / 'worktrees' / 'alpha'
+    repo, feature, gone = tmp_path / 'code' / 'alpha', worktrees / 'feature', worktrees / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'fix/gone', str(gone))
+    saved = git_checkout(project_identity(str(gone.resolve())))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    workspaces = {
+        'Removed here': (tmp_path / 'one' / 'x', None),
+        'Removed elsewhere': (tmp_path / 'two' / 'x', None),
+        'Plain': (plain, None),
+        'Before recording': (worktrees / 'old' / 'src', None),
+        'Recorded': (gone / 'src', saved),
+        'Deleted subfolder': (repo / 'deleted', None),
+        'Main': (repo, None),
+        'Feature': (feature, None),
+    }
+    for title, (workspace, checkout) in workspaces.items():
+        summary = ConversationSummary(workspace=str(workspace.resolve()), title=title, checkout=checkout)
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    web_.plugin.host.status.workspace = str(feature.resolve())
+
+    projects = web_.get('/api/sessions').json()
+    shown = [
+        (
+            project['name'],
+            project['current'],
+            [
+                (w['label'], w['current'], w['missing'], [entry['title'] for entry in w['sessions']])
+                for w in project['worktrees']
+            ],
+        )
+        for project in projects
+    ]
+    one, two = (str((tmp_path / name / 'x').resolve()) for name in ('one', 'two'))
+    assert shown == [
+        (
+            'alpha',
+            True,
+            [
+                ('feature', True, False, ['Feature']),
+                ('main', False, False, ['Main', 'Deleted subfolder']),
+                ('fix/gone', False, True, ['Recorded']),
+                ('old', False, True, ['Before recording']),
+            ],
+        ),
+        ('plain', False, [('plain', False, False, ['Plain'])]),
+        (
+            'Removed folders',
+            False,
+            [(two, False, True, ['Removed elsewhere']), (one, False, True, ['Removed here'])],
+        ),
+    ]
+    # A search lists only matching sessions, in the same places.
+    [found] = web_.get('/api/sessions?q=Before').json()
+    assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
+
+
+def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Each listing resolves again a folder removed or recreated since the last one, as `/resume` does."""
+    web_ = make_web(Agent(TestModel()))
+    folder = (tmp_path / 'folder').resolve()
+    folder.mkdir()
+    summary = ConversationSummary(workspace=str(folder), title='Folder')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def shown() -> list[tuple[str, bool]]:
+        return [
+            (worktree['label'], worktree['missing'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            if [entry['title'] for entry in worktree['sessions']] == ['Folder']
+        ]
+
+    assert shown() == [('folder', False)]
+    folder.rmdir()
+    assert shown() == [('folder', True)]
+    folder.mkdir()
+    assert shown() == [('folder', False)]
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:
@@ -539,9 +638,12 @@ PANEL_PLUGINS = """
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+import asyncio
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.plugins.menus import FieldRow, Option, SettingsMenu
 
 
 class SampleSettings(BaseModel):
@@ -576,6 +678,111 @@ class OpaqueSettings(BaseModel):
 
 class Opaque(Plugin[OpaqueSettings]):
     \"\"\"Settings JSON Schema cannot describe.\"\"\"
+
+
+class DeclaredSettings(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    colour: Literal['red', 'blue'] = 'red'
+    size: int = Field(default=2, ge=1)
+    token: str | None = None
+
+
+class DeclaredSource:
+    title = 'Declared settings'
+
+    def __init__(self, host):
+        self.host = host
+
+    def rows(self):
+        # Like a source that reads the keyring or `/keys`, it must never be read on the event loop.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError('rows() read on the event loop')
+        return (
+            FieldRow(
+                key='colour',
+                label='Colour',
+                description='Which colour.',
+                default='red',
+                choices=('red', 'blue'),
+                choice_labels={'red': 'Red', 'blue': 'Blue'},
+                allow_custom=False,
+            ),
+            FieldRow(key='size', label='Size', description='How big.', default='2', note='a note'),
+            FieldRow(key='token', label='Token', description='Set by an action.', default='(not set)', secret=True),
+        )
+
+    def current(self, row):
+        settings = self.host.settings(DeclaredSettings)
+        values = {'colour': settings.colour, 'size': str(settings.size), 'token': '(set)' if settings.token else '(not set)'}
+        return values[row.key]
+
+    def _updated(self, row, text):
+        return DeclaredSettings.model_validate({**self.host.settings(DeclaredSettings).model_dump(), row.key: text})
+
+    def problem(self, row, text):
+        try:
+            self._updated(row, text)
+        except ValueError as error:
+            return error.errors()[0]['msg'] if isinstance(error, ValidationError) else str(error)
+        return None
+
+    def apply(self, row, raw):
+        self.host.save_settings(self._updated(row, raw))
+        return f'Saved {row.label}.'
+
+    def reset(self, row):
+        data = self.host.settings(DeclaredSettings).model_dump()
+        data.pop(row.key)
+        self.host.save_settings(DeclaredSettings.model_validate(data))
+        return f'Reset {row.label}.'
+
+
+class Declared(Plugin[DeclaredSettings]):
+    \"\"\"A plugin that declares its settings menu.\"\"\"
+
+    def __init__(self, host, settings):
+        if settings.size == 13:
+            raise RuntimeError('unlucky size')
+        super().__init__(host, settings)
+
+    def settings_menu(self):
+        return SettingsMenu(source=DeclaredSource(self.host), actions={'token': self._token})
+
+    async def _token(self, dialogs):
+        how = await dialogs.choose(
+            title='Token',
+            options=[Option(value='type', label='Type one', description='Paste it.'), Option(value='sign_in', label='Sign in')],
+            current='type',
+            description='How to get one.',
+        )
+        if how is None:
+            return []
+        if how == 'sign_in':
+
+            async def sign_in(show):
+                show('Open https://example.com/device and enter ABCD.')
+                await asyncio.sleep(0.05)
+
+            return ['Signed in.'] if await dialogs.wait(title='Signing in', description='Finish there.', task=sign_in) else []
+        typed = await dialogs.text(
+            title='Token',
+            label='Token',
+            initial='ignored',
+            secret=True,
+            check=lambda text: None if text.startswith('tok') else 'Tokens start with tok.',
+            description='Find it at https://example.com/tokens.',
+        )
+        if not typed:
+            return []
+        if not await dialogs.confirm(title='Replace the token?', yes='Replace', no='Keep', description='Others use it.'):
+            return ['Kept the token.']
+        self.host.save_settings(self.host.settings(DeclaredSettings).model_copy(update={'token': typed}))
+        return ['Saved the token.']
 """
 
 
@@ -588,7 +795,7 @@ def panel_plugins(tmp_path: Path) -> list[PluginSettings]:
     return [
         *(
             PluginSettings(id=name.lower(), factory=f'panel:{name}', path=str(path))
-            for name in ('Sample', 'Plain', 'Opaque')
+            for name in ('Sample', 'Plain', 'Opaque', 'Declared')
         ),
         PluginSettings(id='broken', factory='broken', path=str(broken), enabled=False),
         PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
@@ -608,7 +815,7 @@ def loaded_plugin(web_: Web, name: str) -> object:
 def test_the_plugins_panel_lists_every_plugin_with_a_form_for_its_settings(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     rows = plugin_rows(web_)
-    assert sorted(rows) == ['ask_user', 'broken', 'opaque', 'plain', 'sample', 'web']
+    assert sorted(rows) == ['ask_user', 'broken', 'declared', 'opaque', 'plain', 'sample', 'web']
     sample = rows['sample']
     assert (sample['description'], sample['status'], sample['origin'], sample['source']) == (
         'A plugin with settings and a menu of its own.',
@@ -632,6 +839,10 @@ def test_the_plugins_panel_lists_every_plugin_with_a_form_for_its_settings(make_
     assert (rows['opaque']['status'], rows['opaque']['form']) == ('on', None)
     assert (rows['broken']['status'], rows['broken']['form']) == ('off', None)
     assert (rows['ask_user']['status'], rows['ask_user']['included_in']) == ('included', 'web')
+    # A declared menu replaces the schema form; an undeclared one does not count as declared.
+    declared = rows['declared']
+    assert (declared['has_menu'], declared['settings_menu'], declared['form']) == (True, True, None)
+    assert (sample['settings_menu'], rows['plain']['settings_menu']) == (False, False)
     web_row = rows['web']
     assert web_row['serving'] is True
     assert isinstance(web_row['form'], dict) and web_row['form']['values'] == {
@@ -988,3 +1199,317 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
             socket.receive_text()
         assert closed.value.code == 1013
     assert hub.clients == 0
+
+
+def menu_fields(web_: Web, name: str) -> dict[str, dict[str, JsonValue]]:
+    response = web_.get(f'/api/plugins/{name}/fields')
+    assert response.status_code == 200, response.text
+    menu = TypeAdapter(dict[str, JsonValue]).validate_python(response.json())
+    fields = TypeAdapter(list[dict[str, JsonValue]]).validate_python(menu['fields'])
+    return {str(field['key']): field for field in fields}
+
+
+def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    first = loaded_plugin(web_, 'declared')
+    fields = menu_fields(web_, 'declared')
+    assert fields['colour'] == {
+        'key': 'colour',
+        'label': 'Colour',
+        'description': 'Which colour.',
+        'value': 'red',
+        'default': 'red',
+        'choices': [
+            {'value': 'red', 'label': 'Red', 'description': ''},
+            {'value': 'blue', 'label': 'Blue', 'description': ''},
+        ],
+        'allow_custom': False,
+        'secret': False,
+        'note': '',
+        'action': False,
+    }
+    assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        # A value the menu rejects is reported with its own message, and nothing is saved or reloaded.
+        rejected = web_.post('/api/plugins/declared/fields/size', {'value': '0'})
+        assert (rejected.status_code, rejected.json()['detail']) == (400, 'Input should be greater than or equal to 1')
+        assert loaded_plugin(web_, 'declared') is first
+        edited = web_.post('/api/plugins/declared/fields/size', {'value': '5'})
+        assert edited.status_code == 200
+        body = edited.json()
+        assert body['messages'] == ['Saved Size.']
+        assert [field['value'] for field in body['menu']['fields']] == ['red', '5', '(not set)']
+        receive_until(socket, PluginsChanged)
+        # The plugin loaded again with what it saved.
+        again = loaded_plugin(web_, 'declared')
+        assert again is not first
+        # Empty text resets, as an empty edit in the terminal menu does.
+        assert web_.post('/api/plugins/declared/fields/size', {'value': ' '}).json()['messages'] == ['Reset Size.']
+        assert web_.post('/api/plugins/declared/fields/size', {}).json()['menu']['fields'][1]['value'] == '2'
+    # The page's own plugin is never edited from it.
+    assert web_.post('/api/plugins/web/fields/host', {'value': 'x'}).json()['detail'] == remote_module.SERVING
+    assert web_.post('/api/plugins/declared/fields/nope', {'value': '1'}).status_code == 404
+    assert web_.post('/api/plugins/declared/fields/size/action').status_code == 404
+    # A plugin without a declared menu, or one that is off, has no fields here.
+    assert web_.get('/api/plugins/sample/fields').status_code == 404
+    assert web_.get('/api/plugins/broken/fields').status_code == 404
+    assert web_.get('/api/plugins/unknown/fields').status_code == 404
+    assert web_.post('/api/plugins/sample/fields/mode', {'value': 'slow'}).status_code == 400
+    # Saved, but the plugin refuses to load with it: the error is the answer, and it shows as failed.
+    failed = web_.post('/api/plugins/declared/fields/size', {'value': '13'})
+    assert failed.status_code == 400 and 'unlucky size' in failed.json()['detail']
+    assert plugin_rows(web_)['declared']['status'] == 'failed'
+
+
+def test_a_settings_menu_action_asks_through_browser_dialogs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    with (
+        ThreadPoolExecutor(1) as pool,
+        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+    ):
+        socket.receive_text()
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        choose = receive_until(socket, DialogOpened)[1].dialog
+        assert (choose.kind, choose.title, choose.current, choose.description) == (
+            'choose',
+            'Token',
+            'type',
+            'How to get one.',
+        )
+        assert [(option.value, option.label, option.description) for option in choose.options] == [
+            ('type', 'Type one', 'Paste it.'),
+            ('sign_in', 'Sign in', ''),
+        ]
+        # A browser that connects now sees the open dialog in its snapshot.
+        assert [dialog['id'] for dialog in web_.get('/api/state').json()['dialogs']] == [choose.id]
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': 'other'}).status_code == 400
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': 'type'}).status_code == 204
+        assert receive_until(socket, DialogClosed)[1].id == choose.id
+        text = receive_until(socket, DialogOpened)[1].dialog
+        # A secret never starts with text in it.
+        assert (text.kind, text.secret, text.initial, text.label, text.description) == (
+            'text',
+            True,
+            '',
+            'Token',
+            'Find it at https://example.com/tokens.',
+        )
+        rejected = web_.post(f'/api/dialogs/{text.id}', {'value': 'nope'})
+        assert (rejected.status_code, rejected.json()['detail']) == (400, 'Tokens start with tok.')
+        assert web_.post(f'/api/dialogs/{text.id}', {'value': ' tok-1 '}).status_code == 204
+        confirm = receive_until(socket, DialogOpened)[1].dialog
+        assert (confirm.kind, confirm.yes, confirm.no, confirm.description) == (
+            'confirm',
+            'Replace',
+            'Keep',
+            'Others use it.',
+        )
+        # While the action runs, the menu is open: another edit of the same plugin waits its turn.
+        busy = web_.post('/api/plugins/declared/fields/size', {'value': '3'})
+        assert (busy.status_code, busy.json()['detail']) == (
+            400,
+            'The settings menu of declared is already open; finish there first.',
+        )
+        assert web_.post(f'/api/dialogs/{confirm.id}', {'value': 'yes'}).status_code == 204
+        done = action.result(timeout=10)
+        assert done.status_code == 200
+        assert done.json()['messages'] == ['Saved the token.']
+        assert done.json()['menu']['fields'][2]['value'] == '(set)'
+        # Answering what is no longer open is a 404.
+        assert web_.post(f'/api/dialogs/{confirm.id}', {'value': 'yes'}).status_code == 404
+
+        # Backing out of the first dialog saves nothing.
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        choose = receive_until(socket, DialogOpened)[1].dialog
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': None}).status_code == 204
+        assert action.result(timeout=10).json()['messages'] == []
+
+        # A wait shows what its task shows, and closes when the task ends.
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        choose = receive_until(socket, DialogOpened)[1].dialog
+        assert web_.post(f'/api/dialogs/{choose.id}', {'value': 'sign_in'}).status_code == 204
+        waiting = receive_until(socket, DialogOpened)[1].dialog
+        assert (waiting.kind, waiting.description) == ('wait', 'Finish there.')
+        shown = receive_until(socket, DialogShown)[1]
+        assert (shown.id, shown.text) == (waiting.id, 'Open https://example.com/device and enter ABCD.')
+        assert action.result(timeout=10).json()['messages'] == ['Signed in.']
+
+
+def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
+    with (
+        ThreadPoolExecutor(1) as pool,
+        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+    ):
+        socket.receive_text()
+        action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
+        receive_until(socket, DialogOpened)
+        web_.portal.call(web_.plugin.stop)
+        assert action.result(timeout=10).json()['messages'] == []
+    assert web_.plugin.remote.dialogs.dialogs == []
+
+
+def follow_workspaces(
+    web_: Web, settings: Callable[[ProjectSettings], Settings] = lambda project: resolve_settings(project.overrides)
+) -> SessionWorkspace:
+    """Wire the shell as `clai2 --web` does, so each session runs in its own directory."""
+    shell = web_.shell
+    workspace = SessionWorkspace(
+        session=shell.session,
+        context=shell.context,
+        loader=shell.loader,
+        status=shell.status,
+        settings=settings,
+        keep='web',
+    )
+    workspace.attach(sessions=shell.sessions, commands=shell.commands)
+    return workspace
+
+
+def saved_in(web_: Web, workspace: Path, title: str) -> str:
+    summary = ConversationSummary(workspace=str(workspace), title=title)
+    return web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[])).id
+
+
+REPO_CONTEXT = PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context')
+
+
+def test_sessions_continue_in_their_own_directories(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under `clai2 --web`, opening a session moves CLAI into its directory, and a new one asks where it runs."""
+    launch, other, gone = tmp_path / 'launch', tmp_path / 'other', tmp_path / 'gone'
+    launch.mkdir()
+    (other / '.clai').mkdir(parents=True)
+    (other / '.clai' / 'settings.json').write_text('{"instructions": "Work in other.", "model": "test"}')
+    monkeypatch.chdir(launch)
+    web_ = make_web(
+        Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)), extra=[REPO_CONTEXT]
+    )
+    follow_workspaces(web_)
+    shell = web_.shell
+    here = saved_in(web_, launch.resolve(), 'Here')
+    there = saved_in(web_, other.resolve(), 'There')
+    lost = saved_in(web_, gone, 'Lost')
+    plugin = web_.plugin
+    repo_context = shell.loader._loaded['repo_context']  # pyright: ignore[reportPrivateUsage]
+    assert web_.get('/api/state').json()['follows_workspace'] is True
+    assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
+    assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+
+        assert web_.post(f'/api/sessions/{there}/open').status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id, snapshot.session.workspace) == (there, str(other.resolve()))
+        assert Path.cwd() == other.resolve()
+        assert (shell.context.settings.instructions, shell.session.instructions) == ('Work in other.',) * 2
+        assert (shell.session.model, 'test' in shell.context.store.models()) == ('test', True)
+        loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
+        assert list(loaded) == ['repo_context', 'web'], 'the page keeps its plugin, still after the others'
+        assert (loaded['web'].plugin, loaded['repo_context'] is repo_context) == (plugin, False)
+
+        assert web_.post('/api/sessions/new', {'workspace': str(launch)}).status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.items, snapshot.session.workspace) == ([], str(launch.resolve()))
+        assert snapshot.session.id not in (here, there) and Path.cwd() == launch.resolve()
+        assert (shell.context.settings.instructions, shell.session.model) == ('', resolve_settings({}).model), (
+            "the other project's settings are gone"
+        )
+        assert receive_until(socket, Notice)[1].text == f'New session in {launch.resolve()}.'
+
+        (tmp_path / 'file').touch()
+        for workspace, problem in (
+            ('relative', 'absolute path'),
+            (str(gone), 'does not exist'),
+            (str(tmp_path / 'file'), 'is not a directory'),
+        ):
+            refused = web_.post('/api/sessions/new', {'workspace': workspace})
+            assert (refused.status_code, problem in refused.json()['detail']) == (400, True)
+        assert web_.post(f'/api/sessions/{lost}/open').status_code == 204
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.level, notice.text) == ('error', f'{gone} does not exist.')
+
+        assert web_.post(f'/api/sessions/{here}/open').status_code == 204
+        assert receive_until(socket, Snapshot)[1].session.id == here
+        copy = web_.post(f'/api/sessions/{there}/fork').json()['id']
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id, snapshot.session.workspace) == (copy, str(other.resolve()))
+
+        assert receive_until(socket, Notice)[1].text.startswith('Resumed There (fork)')
+        web_.post('/api/input', {'text': '/workspace'})
+        assert receive_until(socket, Notice)[1].text == f'This session works in {other.resolve()}.'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_session_moves_only_between_turns(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A move waits for whatever runs; a project file that does not load, or the current directory, changes nothing."""
+    broken = tmp_path / 'broken'
+    (broken / '.clai').mkdir(parents=True)
+    (broken / '.clai' / 'settings.json').write_text('{"model": 1}')
+    monkeypatch.chdir(tmp_path)
+    web_ = make_web(Agent(TestModel()))
+    workspace = follow_workspaces(web_, lambda project: Settings(model=None))
+    shell = web_.shell
+    shell.session._running = True  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='Switch directories once it ends'):
+        web_.portal.call(workspace.move, str(broken))
+    shell.session._running = False  # pyright: ignore[reportPrivateUsage]
+    workspace.busy = shell.background_running
+    record = task(conversation_id=shell.session.conversation_id)
+    shell.tasks.owner.records[record.id] = record
+    with pytest.raises(RuntimeError, match='Switch directories once it ends'):
+        web_.portal.call(workspace.move, str(broken))
+    del shell.tasks.owner.records[record.id]
+    with pytest.raises(ValueError, match=r'settings\.json'):
+        web_.portal.call(workspace.move, str(broken))
+    plugin = web_.plugin
+    web_.portal.call(workspace.move, str(tmp_path))
+    assert (Path.cwd(), shell.session.workspace) == (tmp_path, str(tmp_path.resolve()))
+    (tmp_path / 'next').mkdir()
+    web_.portal.call(workspace.move, str(tmp_path / 'next'))
+    assert (Path.cwd(), shell.session.model) == ((tmp_path / 'next').resolve(), None)
+    loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
+    assert loaded['web'].plugin is plugin
+    web_.portal.call(lambda: shell.loader.restart(project=(), keep='absent'))
+    assert loaded['web'].plugin is not plugin, 'a plugin not named to keep loads again too'
+
+
+def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """Without `clai2 --web`, CLAI works where it started: no `/workspace`, and a session saved elsewhere is read-only."""
+    web_ = make_web(Agent(TestModel()))
+    shell = web_.shell
+    elsewhere = saved_in(web_, tmp_path, 'Elsewhere')
+    assert not shell.sessions.follows_workspace and 'workspace' not in shell.commands
+    assert web_.get('/api/state').json()['follows_workspace'] is False
+    assert web_.get(f'/api/sessions/{elsewhere}').json() | {'items': []} == {
+        'id': elsewhere,
+        'title': 'Elsewhere',
+        'workspace': str(tmp_path),
+        'items': [],
+        'openable': False,
+        'missing': False,
+    }
+    with pytest.raises(ValueError, match='Select it in /resume to confirm'):
+        web_.portal.call(shell.sessions.resume, elsewhere)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        first = shell.session.conversation_id
+        web_.post('/api/input', {'text': '/workspace'})
+        assert receive_until(socket, Notice)[1].text == 'Unknown command /workspace. Use /help.'
+        refused = web_.post('/api/sessions/new', {'workspace': str(tmp_path)})
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            f'This CLAI works in {shell.session.workspace}. Start CLAI in {tmp_path.resolve()}.',
+        )
+        assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 204
+        snapshot = receive_until(socket, Snapshot)[1]
+        assert (snapshot.session.id != first, snapshot.session.workspace) == (True, shell.session.workspace)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)

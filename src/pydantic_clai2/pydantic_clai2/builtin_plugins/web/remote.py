@@ -2,8 +2,9 @@
 
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path, PurePath
 from typing import Literal
 
 from anyio import get_cancelled_exc_class, to_thread
@@ -22,13 +23,18 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    Choice,
     CompletionInfo,
     EventTranslator,
     Item,
     ItemAdded,
     ItemLog,
+    MenuEdited,
+    MenuField,
+    MenuInfo,
     Notice,
     Palette,
     PluginForm,
@@ -52,6 +58,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
     TurnStarted,
     Usage,
+    Worktree,
     history_items,
     user_text,
 )
@@ -69,8 +76,10 @@ from pydantic_clai2.plugins import (
     TurnOutcome,
 )
 from pydantic_clai2.plugins.loader import PluginError
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
-from pydantic_clai2.runtime.repl_cells import is_repl_cell
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+from pydantic_clai2.runtime.monty_cells import is_monty_cell
+from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
+from pydantic_clai2.runtime.session_workspace import workspace_directory
 
 THEME = 'display.theme'
 CODE_MODE = 'run.code_mode'
@@ -99,6 +108,8 @@ class Remote:
         self.answerer = answerer
         self.workers = Workers(publish=hub.publish, history=lambda task_id: self.task_catalog.history(task_id))
         """The delegated tasks, which the plugin's `on_task_event` keeps up to date."""
+        self.dialogs = BrowserDialogs(publish=hub.publish)
+        """Where the settings menus opened in this page ask their questions."""
         self.running = False
         self._translator = EventTranslator()
         """One for the whole load, so item IDs stay unique across turns in a browser that keeps them all."""
@@ -127,9 +138,11 @@ class Remote:
             running=self.running,
             status=self.status(),
             questions=self.answerer.questions,
+            dialogs=self.dialogs.dialogs,
             theme=self.theme(),
             tasks=self.tasks(),
             task_items=self.workers.items(),
+            follows_workspace=self.host.sessions is not None and self.host.sessions.follows_workspace,
         )
 
     def theme(self) -> ThemeInfo:
@@ -181,7 +194,7 @@ class Remote:
         return ctx.conversation_id == self.host.conversation.conversation_id and DelegationTasks.child_id() is None
 
     def observe(self, event: AgentStreamEvent, *, usage: RunUsage, by_user: bool = False) -> None:
-        """Send `event` to browsers; `by_user` marks a `/repl` cell's run, which is not a turn and has no usage to show."""
+        """Send `event` to browsers; `by_user` marks a `/monty` cell's run, which is not a turn and has no usage to show."""
         if not by_user:
             self._usage = usage
         for message in self._translator.translate(event):
@@ -311,8 +324,9 @@ class Remote:
             notice=info.notice,
             provides=info.provides,
             has_menu=info.has_menu,
+            settings_menu=info.settings_menu,
             terminal=self.host.console.is_terminal,
-            form=_form(info),
+            form=None if info.settings_menu else _form(info),
             serving=info.name == self.host.name,
         )
 
@@ -359,6 +373,60 @@ class Remote:
     def open_plugin_menu(self, name: str) -> None:
         """Open a plugin's own settings menu in the terminal, as `/plugins configure NAME` typed there does."""
         self.host.send_input(f'/plugins configure {self._plugin(name).name}')
+
+    async def plugin_menu(self, name: str) -> MenuInfo:
+        """A plugin's declared settings menu, with every row's current value."""
+        menu = self.plugin_catalog.settings_menu(self._plugin(name).name)
+        if menu is None:
+            raise LookupError(f'{name} declares no settings menu here; open its own in the terminal.')
+        # Its source may read the keyring or files, so it runs off the loop, as the terminal's menu does.
+        return await to_thread.run_sync(_menu_info, menu)
+
+    async def edit_menu(self, name: str, key: str, value: str | None) -> MenuEdited:
+        """Set a row of a plugin's declared menu to `value`, or reset it with `None` or empty text, as its menu does.
+
+        Raises `ValueError` with the row's own message when the menu rejects the value; nothing is saved then.
+        """
+
+        async def edit(menu: SettingsMenu) -> list[str]:
+            row = await to_thread.run_sync(_row, menu, key)
+            text = (value or '').strip()
+            if not text:
+                return [await to_thread.run_sync(menu.source.reset, row)]
+            if (problem := await to_thread.run_sync(menu.source.problem, row, text)) is not None:
+                raise ValueError(problem)
+            return [await to_thread.run_sync(menu.source.apply, row, text)]
+
+        return await self._edit(name, edit)
+
+    async def run_menu_action(self, name: str, key: str) -> MenuEdited:
+        """Run what a row of a plugin's declared menu does when chosen, asking through this page's dialogs."""
+
+        async def edit(menu: SettingsMenu) -> list[str]:
+            action = menu.actions.get(key)
+            if action is None:
+                raise LookupError(f'{name} has no action {key}.')
+            return list(await action(self.dialogs))
+
+        return await self._edit(name, edit)
+
+    async def _edit(self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]]) -> MenuEdited:
+        """One edit, after which the plugin loads again if it saved new settings; shown here and in the terminal."""
+        if name == self.host.name:
+            raise ValueError(SERVING)
+        catalog = self.plugin_catalog
+        try:
+            messages = await catalog.edit_settings(name, edit)
+        except PluginError as error:
+            raise ValueError(str(error)) from error
+        finally:
+            self.hub.publish(PluginsChanged())
+        menu = catalog.settings_menu(name)
+        return MenuEdited(messages=messages, menu=None if menu is None else await to_thread.run_sync(_menu_info, menu))
+
+    def answer_dialog(self, dialog_id: str, value: str | None) -> None:
+        """Answer a settings menu's open dialog, or cancel it with `None`."""
+        self.dialogs.answer(dialog_id, value)
 
     # The sidebar's workers: the delegated tasks.
 
@@ -410,31 +478,43 @@ class Remote:
         return self.host.sessions
 
     async def projects(self, query: str = '') -> list[Project]:
-        """Saved sessions grouped by repository, the current one's project first."""
+        """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
         entries = await self.catalog.listing(query=query)
         workspaces = {entry.workspace for entry in entries} | {self.host.status.workspace}
-        unknown = [workspace for workspace in workspaces if workspace and workspace not in self._identities]
-        if unknown:
-            found = await to_thread.run_sync(lambda: [project_identity(workspace) for workspace in unknown])
-            self._identities.update(zip(unknown, found))
+        known = dict(self._identities)
+
+        def resolve() -> dict[str, ProjectIdentity]:
+            # A folder removed or recreated since it was last listed resolves again: one stat each, Git only for those.
+            return {
+                workspace: project_identity(workspace)
+                for workspace in workspaces
+                if (identity := known.get(workspace)) is None or Path(workspace).exists() == identity.missing
+            }
+
+        self._identities.update(await to_thread.run_sync(resolve))
         # Checking whether another process runs a session can spawn a program (`tasklist` on Windows).
         running = [entry for entry in entries if entry.outcome == 'running']
         busy: set[str] = (
             await to_thread.run_sync(lambda: {entry.id for entry in running if _busy(entry)}) if running else set()
         )
-        here = self._identity(self.host.status.workspace).key
-        projects: dict[str, Project] = {}
+        # Every workspace seen so far, not only this search's, tells where a removed folder belonged.
+        places = placements(entries, identities=self._identities)
+        here = places[self.host.status.workspace]
+        checkouts: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
-            identity = self._identity(entry.workspace)
-            project = projects.setdefault(
-                identity.key,
-                Project(key=identity.key, name=identity.name, current=identity.key == here, sessions=[]),
+            identity = places[entry.workspace]
+            _, sessions = checkouts.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
+            sessions.append(self._entry(entry, busy=entry.id in busy))
+        projects = [
+            Project(
+                key=key,
+                name=next(iter(found.values()))[0].name,
+                current=key == here.key,
+                worktrees=_worktrees(found, here=here),
             )
-            project.sessions.append(self._entry(entry, busy=entry.id in busy))
-        return sorted(projects.values(), key=lambda project: not project.current)
-
-    def _identity(self, workspace: str) -> ProjectIdentity:
-        return self._identities.get(workspace) or ProjectIdentity(key=workspace, name=workspace, root=workspace)
+            for key, found in checkouts.items()
+        ]
+        return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
     def _entry(self, summary: ConversationSummary, *, busy: bool) -> SessionEntry:
         current = summary.id == self.host.conversation.conversation_id
@@ -456,18 +536,40 @@ class Remote:
 
     async def transcript(self, conversation_id: str) -> Transcript:
         saved = await self.catalog.saved(conversation_id)
+        openable = self._continuable(saved.summary.workspace)
         return Transcript(
             id=saved.summary.id,
             title=saved.summary.title,
             workspace=saved.summary.workspace,
             items=history_items(saved.messages),
-            openable=saved.summary.workspace == self.host.status.workspace,
+            openable=openable,
+            missing=self.catalog.follows_workspace and not openable,
         )
+
+    def _continuable(self, workspace: str) -> bool:
+        """Whether `/resume` continues a session saved in `workspace`: here, or there while CLAI follows sessions."""
+        if workspace == self.host.status.workspace:
+            return True
+        if not self.catalog.follows_workspace:
+            return False
+        try:
+            workspace_directory(workspace)
+        except ValueError:
+            return False
+        return True
 
     def open(self, conversation_id: str) -> None:
         self.host.send_input(f'/resume {conversation_id}')
 
-    def new(self) -> None:
+    def new(self, workspace: str | None = None) -> None:
+        """Start a new session, in the directory `workspace` names when CLAI follows sessions' directories."""
+        if workspace is not None:
+            directory = str(workspace_directory(workspace))
+            if directory != self.host.status.workspace:
+                if not self.catalog.follows_workspace:
+                    raise ValueError(f'This CLAI works in {self.host.status.workspace}. Start CLAI in {directory}.')
+                self.host.send_input(f'/workspace {directory}')
+                return
         self.host.send_input('/new')
 
     async def rename(self, conversation_id: str, title: str) -> None:
@@ -478,13 +580,34 @@ class Remote:
         """Copy a session and switch to the copy."""
         copy = await self.catalog.fork(conversation_id)
         self.hub.publish(SessionsChanged())
-        if copy.workspace == self.host.status.workspace:
+        if self._continuable(copy.workspace):
             self.open(copy.id)
         return copy.id
 
     async def delete(self, conversation_id: str) -> None:
         await self.catalog.delete(conversation_id)
         self.hub.publish(SessionsChanged())
+
+
+def _worktrees(
+    found: Mapping[str, tuple[ProjectIdentity, list[SessionEntry]]], *, here: ProjectIdentity
+) -> list[Worktree]:
+    """A project's checkouts, the current one first, each labelled by its branch or else its folder.
+
+    A label two of them share, such as two removed folders of one name, shows the folder's path instead.
+    """
+    labels = {root: identity.checkout or PurePath(root).name or root for root, (identity, _) in found.items()}
+    worktrees = [
+        Worktree(
+            root=root,
+            label=labels[root] if list(labels.values()).count(labels[root]) == 1 else root,
+            current=(identity.key, root) == (here.key, here.root),
+            missing=identity.missing,
+            sessions=sessions,
+        )
+        for root, (identity, sessions) in found.items()
+    ]
+    return sorted(worktrees, key=lambda worktree: not worktree.current)
 
 
 def _usage(usage: RunUsage) -> Usage:
@@ -500,6 +623,36 @@ def _form(info: PluginInfo) -> PluginForm | None:
     except PydanticInvalidForJsonSchema:  # A type JSON Schema cannot express; its own menu or `/plugins add` still can.
         return None
     return PluginForm(json_schema=schema, values=info.settings.model_dump(mode='json', by_alias=True))
+
+
+def _menu_info(menu: SettingsMenu) -> MenuInfo:
+    """Every row of `menu` with its current value; reads the menu's source, so call it off the loop."""
+    source = menu.source
+    return MenuInfo(
+        title=source.title,
+        fields=[
+            MenuField(
+                key=row.key,
+                label=row.label or row.key,
+                description=row.description,
+                value=source.current(row),
+                default=row.default,
+                choices=[Choice(value=choice, label=row.display(choice)) for choice in row.choices],
+                allow_custom=row.allow_custom,
+                secret=row.secret,
+                note=row.note,
+                action=row.key in menu.actions,
+            )
+            for row in source.rows()
+        ],
+    )
+
+
+def _row(menu: SettingsMenu, key: str) -> FieldRow:
+    row = next((row for row in menu.source.rows() if row.key == key), None)
+    if row is None:
+        raise LookupError(f'{menu.source.title} has no setting {key}.')
+    return row
 
 
 def _busy(summary: ConversationSummary) -> bool:
@@ -521,8 +674,8 @@ class Observer(AbstractCapability[None]):
     remote: Remote
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
-        # A `/repl` cell is not a turn: its result comes as the command's, and its events as any run's.
-        if not self.remote.foreground(ctx) or is_repl_cell(ctx):
+        # A `/monty` cell is not a turn: its result comes as the command's, and its events as any run's.
+        if not self.remote.foreground(ctx) or is_monty_cell(ctx):
             return await handler()
         self.remote.run_started(ctx.prompt)
         try:
@@ -538,4 +691,4 @@ class Observer(AbstractCapability[None]):
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if self.remote.foreground(ctx):
-            self.remote.observe(event, usage=ctx.usage, by_user=is_repl_cell(ctx))
+            self.remote.observe(event, usage=ctx.usage, by_user=is_monty_cell(ctx))

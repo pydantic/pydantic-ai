@@ -26,13 +26,13 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import SkillDefinition, Skills
-from pydantic_clai2.builtin_plugins.coder_folders import is_folder_name, run_coder_flow
+from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import repository_directories
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime._session import supports_local_workspace
-from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -153,7 +153,7 @@ class CoderSource(Generic[DepsT]):
             FieldRow(
                 key='agent_folders',
                 label='Agent folders',
-                description='Manage sub-agent definition folders.\nEnter opens the folder list.\nAn empty list turns disk agents off.',
+                description='Manage sub-agent definition folders.\nChoosing it opens the folder list.\nAn empty list turns disk agents off.',
                 default='[]',
                 choice_labels={
                     '[]': 'None (off)',
@@ -314,8 +314,6 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         for notice in self._skill_notices:
             self.host.console.print(terminal_text(notice), style=theme.color(theme.WARNING), markup=False)
 
-    async def configure(self) -> str:
-        if not self.host.console.is_terminal:
-            return 'Configure Coder from a terminal: /plugins configure coder'
-        messages = await run_worker(lambda: run_coder_flow(CoderSource(self.host)))
-        return '\n'.join(messages) or 'No Coder settings changed.'
+    def settings_menu(self) -> SettingsMenu:
+        source = CoderSource(self.host)
+        return SettingsMenu(source=source, actions={'agent_folders': partial(edit_agent_folders, source)})
