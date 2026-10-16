@@ -509,7 +509,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
             assert found is not None
             async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
                 sent = await client.post('/api/input', json={'text': f'/workspace {launch}'})
-                assert sent.status_code == 204
+                assert sent.json() == {'menu': None}
                 while 'New session in' not in output.getvalue():
                     await anyio.sleep(0.01)
             group.cancel_scope.cancel()
