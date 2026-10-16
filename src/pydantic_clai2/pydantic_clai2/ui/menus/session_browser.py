@@ -308,12 +308,12 @@ class SessionBrowser:
         if self.mode in ('search', 'rename'):
             return plain(f'{self.mode}: {self.buffer} - Enter apply - Esc cancel')
         if self.mode == 'preview':
-            return 'Up/Down scroll - Esc back - Ctrl-C close'
+            return 'Up/Down scroll - Esc back - Ctrl+C close'
         if self.mode == 'projects':
-            return 'Enter/Right open project - Up/Down move - / search - h archived - Esc/Ctrl-C close'
+            return 'Enter/Right open project - Up/Down move - / search - h archived - Esc/Ctrl+C close'
         return (
             'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - r rename - '
-            'd delete - a archive - h archived - m more - Ctrl-C close'
+            'd delete - a archive - h archived - m more - Ctrl+C close'
         )
 
     def handle_key(self, key: str) -> str | None:

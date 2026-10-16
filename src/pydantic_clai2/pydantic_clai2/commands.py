@@ -99,7 +99,7 @@ class Command:
     live: bool = False
     """Keep the editor live while the handler runs, as it is during a turn.
 
-    The working spinner shows, Esc or Ctrl-C cancels, and Enter queues a follow-up. Only for
+    The working spinner shows, Esc or Ctrl+C cancels, and Enter queues a follow-up. Only for
     handlers that may take a while and only print through the console: one that reads keys or
     opens a menu needs the suspended editor every other command gets.
     """

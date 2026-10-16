@@ -54,7 +54,7 @@ async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
 
 
 async def test_signal_cancels_from_the_loop() -> None:
-    """Ctrl-C can land inside an asyncio callback, such as `asyncio.shield` settling its result, which must finish first."""
+    """Ctrl+C can land inside an asyncio callback, such as `asyncio.shield` settling its result, which must finish first."""
 
     async def operation() -> None:
         current = asyncio.current_task()

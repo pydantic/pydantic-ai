@@ -17,7 +17,7 @@ LOOPBACK = frozenset({'127.0.0.1', 'localhost', '::1'})
 
 
 class _Server(uvicorn.Server):
-    """A uvicorn server that leaves CLAI's Ctrl-C handling alone."""
+    """A uvicorn server that leaves CLAI's Ctrl+C handling alone."""
 
     @contextmanager
     def capture_signals(self) -> Generator[None]:

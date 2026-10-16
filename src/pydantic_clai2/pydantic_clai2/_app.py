@@ -241,7 +241,7 @@ async def chat(
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
-    Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
+    Esc cancels the current turn; Ctrl+C also clears idle input. Ctrl+D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
@@ -1326,7 +1326,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 if self.interrupts.press():
                     return 'exit'
                 self.console.print(
-                    'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+                    'Input cleared. Press Ctrl+C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
                 )
                 continue
             except EOFError:
@@ -1537,7 +1537,7 @@ def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Work
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
     console.print(
-        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl+C interrupts a turn.',
         style=theme.color(theme.MUTED),
     )
     _report_project(project, console)
