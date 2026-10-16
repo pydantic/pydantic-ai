@@ -1566,6 +1566,70 @@ async def test_run_stream_cancel_during_debounce_from_another_task():
     assert result.response.state == 'interrupted'
 
 
+@pytest.mark.parametrize('stream_method', ['stream_text', 'stream_response'])
+async def test_run_stream_outer_cancel_during_debounce_lets_source_cleanup_finish(
+    stream_method: Literal['stream_text', 'stream_response'],
+):
+    """An outer `anyio` cancel landing on a debounced pull lets the source's shielded cleanup finish.
+
+    The cancelled scope keeps re-cancelling the consumer while the debounce teardown waits for the pull it cancelled.
+    A plain `await` on that pull would forward each re-cancel into the source natively and interrupt its cleanup.
+    """
+    source_waiting = anyio.Event()
+    cleanup_started = anyio.Event()
+    cleanup_permitted = anyio.Event()
+    cleanup_finished = anyio.Event()
+    sources: list[AsyncGenerator[str]] = []
+    source_tasks: list[asyncio.Task[object] | None] = []
+
+    async def tokens() -> AsyncGenerator[str]:
+        try:
+            yield 'first'
+            source_tasks.append(asyncio.current_task())
+            source_waiting.set()
+            await anyio.sleep_forever()
+        finally:
+            cleanup_started.set()
+            with anyio.CancelScope(shield=True):
+                await cleanup_permitted.wait()
+                cleanup_finished.set()
+
+    def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        iterator = tokens()
+        sources.append(iterator)
+        return iterator
+
+    scope = anyio.CancelScope()
+
+    async def cancel_during_pull() -> None:
+        await source_waiting.wait()
+        scope.cancel()
+        await cleanup_started.wait()
+        await anyio.lowlevel.checkpoint()
+        cleanup_permitted.set()
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    try:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(cancel_during_pull)
+                with scope:
+                    async with agent.run_stream('hello') as result:
+                        stream = result.stream_text() if stream_method == 'stream_text' else result.stream_response()
+                        async for _ in stream:  # pragma: no branch
+                            pass
+                assert cleanup_finished.is_set(), 'Model source cleanup was interrupted during teardown'
+
+        assert scope.cancelled_caught
+        # The debouncer pulls the source in a task of its own: that pull is what teardown has to wait for.
+        [source_task] = source_tasks
+        assert source_task is not asyncio.current_task()
+    finally:
+        cleanup_permitted.set()
+        for iterator in sources:
+            await iterator.aclose()
+
+
 def test_run_stream_sync_rejects_already_entered_result():
     """Passing an already-entered `StreamedRunResult` (the old constructor arg) raises a clear error."""
     with pytest.raises(TypeError, match='now takes the `run_stream\\(\\)` context manager'):

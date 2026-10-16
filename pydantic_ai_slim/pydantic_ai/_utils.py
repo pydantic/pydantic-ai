@@ -411,9 +411,12 @@ async def _cleanup_temporal_group(
 ) -> None:
     """Clean up pending task and async iterator after group_by_temporal exits."""
     if task:
-        task.cancel('Cancelling group_by_temporal pending task')
+        # A plain `await task` would forward each re-cancel of an outer `anyio` scope into the pull natively,
+        # interrupting the source's shielded cleanup. The drain discards the pull's outcome, so read it back to
+        # keep propagating a source failure.
+        await cancel_and_drain(task, msg='Cancelling group_by_temporal pending task')
         with suppress(asyncio.CancelledError, StopAsyncIteration):
-            await task
+            task.result()
     aclose = getattr(aiterator, 'aclose', None)
     if aclose is not None:  # pragma: no branch
         await aclose()

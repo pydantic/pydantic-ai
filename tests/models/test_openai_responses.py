@@ -18685,3 +18685,91 @@ async def test_responses_provider_details_hook_builtin_wins_collisions(allow_mod
         'finish_reason': 'completed',
         'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
     }
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_azure_responses_provider_details_hook_content_filters(
+    allow_model_requests: None, azure_api_key: str, stream: bool
+):
+    """VCR test: one `_process_provider_details` override reads Azure's `content_filters`, streamed or not.
+
+    Azure reports `content_filters` on the complete response; in a stream, only the terminal
+    `response.completed` event carries them (`response.created` and `response.in_progress` report `null`).
+    """
+
+    class ContentFiltersModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'content_filters': (response.model_extra or {}).get('content_filters')}
+
+    provider = AzureProvider(
+        azure_endpoint='https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/', api_key=azure_api_key
+    )
+    agent = Agent(model=ContentFiltersModel('gpt-5.4', provider=provider))
+
+    prompt = 'What is the capital of France? Answer in one word.'
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            output = await result.get_output()
+        messages = result.all_messages()
+    else:
+        run_result = await agent.run(prompt)
+        output = run_result.output
+        messages = run_result.all_messages()
+
+    assert 'Paris' in output
+    model_response = messages[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details is not None
+    content_filters = model_response.provider_details['content_filters']
+    assert [content_filter['source_type'] for content_filter in content_filters] == snapshot(['prompt', 'completion'])
+    assert content_filters[0]['content_filter_results']['jailbreak'] == snapshot({'detected': False, 'filtered': False})
+
+
+@pytest.mark.parametrize('resumed', [False, True])
+async def test_responses_stream_provider_details_hook_builtin_wins_collisions(
+    allow_model_requests: None, resumed: bool
+):
+    """When streaming, built-in provider details win over colliding keys returned by the hook, as without streaming.
+
+    A stream resumed with `starting_after` has no `response.created`, so its built-in `timestamp` only comes from the
+    terminal response, which must still win over the hook's.
+
+    Mocked: no real response makes a hook collide with a built-in key.
+    """
+
+    class CollidingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'finish_reason': 'custom', 'timestamp': 'custom', 'custom': response.id}
+
+    response = response_message([])
+    first_event: resp.ResponseStreamEvent = (
+        resp.ResponseInProgressEvent(response=response, type='response.in_progress', sequence_number=0)
+        if resumed
+        else resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0)
+    )
+    stream = [
+        first_event,
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=1,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = CollidingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    # A resumed stream is only ever a background job's, so it's also stamped as one.
+    assert streamed.get().provider_details == {
+        'finish_reason': 'completed',
+        'custom': '123',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        **({'background': True} if resumed else {}),
+    }
