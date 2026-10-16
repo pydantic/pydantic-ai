@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
@@ -1403,6 +1404,22 @@ async def test_instruction_updates_direct_function_model_requires_projection(str
         else:
             await model.request(messages, None, ModelRequestParameters())
     assert calls == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    'part', [InstructionDeltaPart(id='agent', content='Updated.'), InstructionBaselinePart(instructions=[])]
+)
+async def test_instruction_updates_direct_test_model_requires_projection(stream: bool, part: ModelRequestPart):
+    """`TestModel` estimates usage from the messages it's given, which rejects unprojected instruction state."""
+    model = TestModel()
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Continue.'), part])]
+    with pytest.raises(UserError, match='prepare_messages'):
+        if stream:
+            async with model.request_stream(messages, None, ModelRequestParameters()):
+                pass  # pragma: no cover
+        else:
+            await model.request(messages, None, ModelRequestParameters())
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
