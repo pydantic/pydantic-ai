@@ -31,6 +31,7 @@ from pydantic_clai2.builtin_plugins.web.chat_commands import (
     SHARED,
     orchestrator_help,
     parse,
+    picks_session_model,
     registered,
     result_notice,
     saved_models,
@@ -326,7 +327,7 @@ class Orchestrator:
         The prompt runs CLAI's as it runs the session's, and `command_ended` shows the result here.
         """
         name, args = parse(text)
-        if name in SHARED and await registered(self.host, name):
+        if name in SHARED and not picks_session_model(name, args) and await registered(self.host, name):
             self._entered.append(text)
             try:
                 self.host.send_input(text)
@@ -354,6 +355,10 @@ class Orchestrator:
             return await orchestrator_help(self.host)
         if name == 'stop':
             return '' if self.interrupt() else 'The orchestrator is not working.'
+        if picks_session_model(name, args):
+            raise ValueError(
+                f"/{name} model picks the session's model, in a session; /model NAME picks the orchestrator's."
+            )
         if await registered(self.host, name):
             raise ValueError(f'/{name} works in a session, not in the orchestrator chat. See /help.')
         raise ValueError(f'Unknown command /{name}. Use /help.')

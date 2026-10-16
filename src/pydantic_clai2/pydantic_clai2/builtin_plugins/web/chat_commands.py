@@ -44,6 +44,11 @@ FOLLOW = ('session', 'default')
 """What `/model` takes in the orchestrator chat to follow the session's model again."""
 
 
+def picks_session_model(name: str, args: list[str]) -> bool:
+    """Whether a `SHARED` command picks the session's model all the same: `/set model NAME` is `/model NAME` there."""
+    return name in ('set', 'settings') and args[:1] == ['model']
+
+
 def parse(text: str) -> tuple[str, list[str]]:
     """A `/command`'s name and arguments; a bare `/` asks for help, as at the prompt."""
     name, *args = text.removeprefix('/').split() or ['help']

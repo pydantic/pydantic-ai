@@ -358,6 +358,10 @@ def test_the_orchestrator_chats_own_commands(make_web: MakeWeb) -> None:
         for text, error in [
             ('/model a b', 'Usage: /model [NAME|session]'),
             ('/model add openai:gpt-5', '/model add works in a session, not in the orchestrator chat.'),
+            (
+                '/set model openai:gpt-5',
+                "/set model picks the session's model, in a session; /model NAME picks the orchestrator's.",
+            ),
             ('/new now', 'Usage: /new'),
             ('/fork', '/fork works in a session, not in the orchestrator chat. See /help.'),
             ('/resume', '/resume works in a session, not in the orchestrator chat. See /help.'),
