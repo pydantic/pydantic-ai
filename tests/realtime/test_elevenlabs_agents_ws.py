@@ -126,8 +126,9 @@ async def test_tool_round_and_followup_turn(
                         await session.send('Thanks, that is all.')
                     else:
                         break
-            if realtime_recording:  # pragma: no cover  # only while recording
-                await anyio.sleep(5)  # let the second report reach the recording
+            # Only while recording: let the second report reach the recording.
+            if realtime_recording:  # pragma: no cover
+                await anyio.sleep(5)
             # The session counts a report into `usage` as it arrives, and into the window fraction just after.
             while session.context_window_used != _TURN_TWO_CONTEXT_TOKENS / _CONTEXT_LIMIT_TOKENS:
                 await anyio.sleep(0.05)

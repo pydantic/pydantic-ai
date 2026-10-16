@@ -1222,7 +1222,7 @@ async def test_tool_sync_requires_parameter_descriptions() -> None:
     recorder = RestRecorder(agent_json())
     model = _model(recorder)
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
-    with pytest.raises(UserError, match=r'requires a description for every tool parameter, and `city` has none'):
+    with pytest.raises(UserError, match=r"requires a description for every tool parameter, and 'city' has none"):
         async with _connect(model, tools=[bare], model_settings=settings):
             pass  # pragma: no cover
     assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
@@ -1258,10 +1258,10 @@ async def test_tool_sync_validation_reports_every_offender_and_writes_nothing() 
             pass  # pragma: no cover
     message = str(exc_info.value)
     assert "Cannot sync tool 'set_language'" in message
-    assert '`language` has none' in message
-    assert '`region` has none' in message
+    assert "'language' has none" in message
+    assert "'region' has none" in message
     assert "Cannot sync tool 'add_items'" in message
-    assert '`items` uses a JSON Schema feature' in message
+    assert "'items' uses a JSON Schema feature" in message
     assert 'get_weather' not in message
     # Only the preflight ran: no tool listing, no creates, no agent re-point.
     assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
@@ -1319,7 +1319,7 @@ def test_elevenlabs_parameters_dialect_conversion() -> None:
             'properties': {'tags': {'type': 'array', 'description': 'Tags', 'items': {'type': 'string'}}},
         },
     )
-    with pytest.raises(UserError, match=r'`tags\[\]` has none'):
+    with pytest.raises(UserError, match=r"'tags\[\]' has none"):
         rt_elevenlabs._tool_config(array_without_item_description)  # pyright: ignore[reportPrivateUsage]
 
 
@@ -1379,7 +1379,7 @@ def test_elevenlabs_parameters_reject_inexpressible_shapes() -> None:
             'properties': {'value': {'anyOf': [{'type': 'string'}, {'type': 'integer'}], 'description': 'V'}},
         },
     )
-    with pytest.raises(UserError, match=r'parameter `value` uses a JSON Schema feature'):
+    with pytest.raises(UserError, match=r"parameter 'value' uses a JSON Schema feature"):
         rt_elevenlabs._tool_config(union_tool)  # pyright: ignore[reportPrivateUsage]
 
     recursive_tool = ToolDefinition(

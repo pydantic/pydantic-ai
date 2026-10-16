@@ -677,13 +677,13 @@ def _convert_parameters(schema: dict[str, Any], *, path: str, root: bool, proble
         if (value := schema.get(key)) is not None:
             result[key] = value
     if 'type' not in result:
-        subject = f'parameter `{path}`' if path else 'the parameters schema'
+        subject = f'parameter {path!r}' if path else 'the parameters schema'
         problems.append(
             f'{subject} uses a JSON Schema feature the ElevenLabs tool dialect cannot express '
             '(a union of types, or a recursive reference)'
         )
     if not root and not result.get('description'):
-        problems.append(f'ElevenLabs requires a description for every tool parameter, and `{path}` has none')
+        problems.append(f'ElevenLabs requires a description for every tool parameter, and {path!r} has none')
     if isinstance(items := schema.get('items'), dict):
         items = cast('dict[str, Any]', items)
         result['items'] = _convert_parameters(items, path=f'{path}[]', root=False, problems=problems)
