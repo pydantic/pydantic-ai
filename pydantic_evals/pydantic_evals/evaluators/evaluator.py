@@ -344,9 +344,9 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
         if name is None:
             raise TypeError(
                 f'Function evaluator {self.get_default_evaluation_name()!r} cannot be serialized, as it is identified '
-                'by its function name and only a named function has one, not a lambda, `functools.partial` or other '
-                'callable object. To save a dataset to a file, use a function defined with `def` or an `Evaluator` '
-                'subclass instead.'
+                'by its name, which only a plain function defined with `def` has, not a lambda, bound method, '
+                '`functools.partial` or other callable. To save a dataset to a file, use a plain function or an '
+                '`Evaluator` subclass instead.'
             )
         options = {'evaluation_name': self.evaluation_name, 'version': self.version}
         arguments = {key: value for key, value in options.items() if value is not None}

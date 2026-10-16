@@ -75,6 +75,14 @@ class AsyncCallable:
         return ctx.output == 'HELLO'
 
 
+@dataclass
+class PrefixCheck:
+    prefix: str
+
+    def check(self, ctx: EvaluatorContext[str, str, None]) -> bool:
+        return ctx.output.startswith(self.prefix)  # pragma: no cover
+
+
 class Deferred:
     """An awaitable that isn't a coroutine, like an `asyncio.Task`."""
 
@@ -382,6 +390,7 @@ def test_from_dict():
         pytest.param(lambda ctx: True, id='lambda'),  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
         pytest.param(partial(has_prefix, prefix='H'), id='partial'),
         pytest.param(AsyncCallable(), id='callable-object'),
+        pytest.param(PrefixCheck('H').check, id='bound-method'),
     ],
 )
 def test_unnamed_function_not_serializable(tmp_path: Path, function: EvaluatorFunc[str, str, Any]):
@@ -424,6 +433,10 @@ def test_duplicate_names():
             "Duplicate evaluator name: 'exact_match'. An evaluator function is identified by its name, so it must be "
             'different from the names of the other `custom_evaluator_types`. Rename the function.'
         )
+
+    # Passing the same function twice is the same mistake as passing a class twice, not a name clash.
+    with pytest.raises(ValueError, match="Duplicate evaluator class name: 'exact_match'"):
+        Dataset[str, str, Any].from_dict({'name': 'ds', 'cases': []}, custom_evaluator_types=[exact_match, exact_match])
 
     def Equals(ctx: EvaluatorContext[str, str, Any]) -> bool:
         return True  # pragma: no cover

@@ -1334,23 +1334,29 @@ def _evaluator_types(
 ) -> list[type[Evaluator[InputsT, OutputT, MetadataT]]]:
     """Replace each evaluator function with an evaluator type that loads it, so it can be registered like a class."""
     evaluator_types: list[type[Evaluator[InputsT, OutputT, MetadataT]]] = []
+    # The class or function behind each name, to tell a function sharing its name apart from one passed twice.
+    sources: dict[str, set[int]] = {}
     function_names: list[str] = []
     for evaluator_type in custom_evaluator_types:
         if isinstance(evaluator_type, type):
             evaluator_types.append(evaluator_type)
+            # Anything else is rejected when the registry is built.
+            if issubclass(evaluator_type, BaseEvaluator):
+                sources.setdefault(evaluator_type.get_serialization_name(), set()).add(id(evaluator_type))
+        elif isinstance(evaluator_type, BaseEvaluator):
+            raise TypeError(
+                f'{evaluator_type!r} cannot be used in `custom_evaluator_types`, which takes evaluator classes and '
+                'functions, not evaluator instances.'
+            )
         else:
             function_type = _function_evaluator_type(evaluator_type)
             evaluator_types.append(function_type)
-            function_names.append(function_type.get_serialization_name())
+            name = function_type.get_serialization_name()
+            function_names.append(name)
+            sources.setdefault(name, set()).add(id(evaluator_type))
 
-    names = [
-        evaluator_type.get_serialization_name()
-        for evaluator_type in evaluator_types
-        # Anything else is rejected when the registry is built.
-        if issubclass(evaluator_type, BaseEvaluator)
-    ]
     for name in function_names:
-        if names.count(name) > 1:
+        if len(sources[name]) > 1:
             raise ValueError(
                 f'Duplicate evaluator name: {name!r}. An evaluator function is identified by its name, so it must be '
                 'different from the names of the other `custom_evaluator_types`. Rename the function.'
@@ -1370,8 +1376,8 @@ def _function_evaluator_type(
     if name is None:
         raise TypeError(
             f'{function!r} cannot be used in `custom_evaluator_types`, as an evaluator function is identified by its '
-            'name and only a named function has one, not a lambda, `functools.partial` or other callable object. '
-            'Use a function defined with `def` or an `Evaluator` subclass instead.'
+            'name, which only a plain function defined with `def` has, not a lambda, bound method, `functools.partial` '
+            'or other callable. Use a plain function or an `Evaluator` subclass instead.'
         )
 
     # Not instantiated itself (see `__new__`), so the fields only describe the serialized arguments.

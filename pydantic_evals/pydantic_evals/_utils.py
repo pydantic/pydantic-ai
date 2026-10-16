@@ -87,9 +87,12 @@ def get_function_serialization_name(func: Callable[..., Any]) -> str | None:
 
     Returns:
         The function's `__name__`, or `None` if it doesn't have one that identifies it: a lambda has the name
-        `<lambda>`, while a `functools.partial` and other callable objects have no name, and the name of the function
-        a partial wraps doesn't capture its bound arguments.
+        `<lambda>` and a `functools.partial` or other callable object has no name, while a bound method's name
+        doesn't identify the instance it's bound to, just like the name of the function a partial wraps doesn't
+        capture its bound arguments.
     """
+    if inspect.ismethod(func):
+        return None
     name = getattr(func, '__name__', None)
     return name if isinstance(name, str) and name.isidentifier() else None
 
