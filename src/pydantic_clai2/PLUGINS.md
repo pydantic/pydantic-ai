@@ -2453,13 +2453,17 @@ named after something the user names, such as a skill, sets `overridable=True`:
 it gives way to any other command with its name, registered before or after it,
 and CLAI prints one line saying which command is hidden.
 
-A command whose bare form opens a settings menu can declare it with `menu=`, a
-zero-argument callable returning a `SettingsMenu` (see
-[Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)). The terminal
-still runs `handler`; the web UI shows that menu in the page when the bare command is
-typed there, editing the same values through the same `FieldSource`, with its actions
-asking through the page's dialogs. `/set`, `/theme`, `/spinner`, `/model`, and `/effort`
-declare theirs.
+A command whose bare form opens a menu can declare `menu=`, a zero-argument callable
+returning a `SettingsMenu` (see
+[Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)) over what the
+command changes. The terminal still runs `handler`, and its own menu may offer more;
+the web UI shows the declared menu in the page when the bare command is typed there,
+with its actions asking through the page's dialogs, so its edits must save and apply as
+the command's do. `/set` declares the `/set` menu itself; `/theme` and `/spinner`
+declare its `display.theme` and `display.spinner` rows, without the terminal pickers'
+previews or `/spinner`'s speed. `/model` declares the saved models, each opening the
+menu `/model settings NAME` shows, without its picker's fallback-chain editors, and
+`/effort` the active model's `/model settings` menu.
 A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
 which loads the plugin again after an edit; `menu=` is for a command's menu over
 something else.
