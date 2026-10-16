@@ -1429,6 +1429,7 @@ jobs:
           --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
           coverage run -m pytest
           tests/test_mcp.py
+          tests/test_mcp_apps.py
           tests/models/test_mcp_sampling.py
           tests/test_conftest.py
         env:
