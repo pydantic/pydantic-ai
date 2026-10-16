@@ -164,8 +164,10 @@ Gotchas:
 
 ## DelegationReports
 
-Delivers finished background-task reports from a `DelegationTasks` owner into a parent run, as
-automated, untrusted task data rather than user messages.
+Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each
+report is a framework notice (`SystemPromptPart`) followed by the child's output as framed
+`<task-output ...>` data in a `UserPromptPart`; `is_task_report(part)` identifies that part by its
+metadata, so hosts can keep it out of user-prompt listings.
 
 ```python
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
