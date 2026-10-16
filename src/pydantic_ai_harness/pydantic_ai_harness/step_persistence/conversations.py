@@ -11,7 +11,7 @@ import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from typing import Literal
 from uuid import uuid4
@@ -35,13 +35,29 @@ class ConversationConflict(ValueError):
 
 
 @dataclass(frozen=True, kw_only=True)
+class GitCheckout:
+    """The Git checkout a conversation's workspace was in, so a browser can group it after the folder is gone."""
+
+    repository: str
+    """The repository's common Git directory, the same for each of its worktrees."""
+    name: str
+    """The repository's display name."""
+    root: str
+    """The checkout's top-level folder."""
+    branch: str = ''
+    """The checked-out branch, or a label for a detached checkout."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class ConversationSummary:
     """Browser metadata. Naming edits do not change activity or content revision."""
 
     schema_version: Literal[1] = 1
     id: str = field(default_factory=lambda: str(uuid4()))
     workspace: str
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    checkout: GitCheckout | None = None
+    """The Git checkout `workspace` was in when saved; `None` outside Git or when the application records none."""
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     revision: int = 0
     title: str = 'New session'
     subtitle: str = ''
@@ -169,7 +185,7 @@ class SqliteConversationStore:
         updated = replace(
             summary,
             revision=summary.revision + 1,
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
             message_count=len(messages),
             total_tokens=sum(m.usage.total_tokens for m in messages if isinstance(m, ModelResponse)),
         )

@@ -36,7 +36,7 @@ shared = RunUsage()
 
 async def main():
     async with agent.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         usage=shared,
         usage_limits=UsageLimits(total_tokens_limit=100_000),
     ).session() as session:
@@ -86,9 +86,13 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
 
-The session creates an `invoke_agent` span with cumulative usage and conversation content, subject
-to the normal content-redaction setting. Nested provider-response spans have the OpenTelemetry name
-`chat {model}` but display as `response {model}` in Logfire. `execute_tool` spans represent tools;
+The session creates an `invoke_agent` span with the session's usage and conversation content, subject
+to the normal content-redaction setting. Like a [classic agent run span](../logfire.md#aggregated-usage-attribute-names),
+it reports only what the session itself spent: a total carried in with `usage=` and a delegated run's tokens
+still count toward `session.usage`, but not toward the span, so agent run spans can be added up without
+counting anything twice. Nested provider-response spans have the OpenTelemetry name
+`chat {model}` but display as `response {model}` in Logfire. On OpenAI, Azure OpenAI, and xAI, a response span's input
+messages don't include [retained audio](history.md#retaining-audio) for now; its output does. `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
 spans mark those boundaries. A tool round can produce several response spans within one turn.
 
@@ -127,7 +131,7 @@ See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy cont
 ## Gateway trace propagation
 
 Routing through the [Pydantic AI Gateway](../gateway.md) — e.g.
-`agent.realtime('gateway/openai:gpt-realtime')` — is provider configuration, documented on the
+`agent.realtime('gateway/{{ openai:realtime }}')` — is provider configuration, documented on the
 [OpenAI](openai.md#gateway) and [Gemini](gemini.md#gateway) pages. When a span is active during the
 WebSocket handshake, Pydantic AI propagates
 [W3C trace context](https://www.w3.org/TR/trace-context/) so gateway spans can join the trace.
@@ -145,7 +149,7 @@ agent = Agent()
 
 async def main():
     with logfire.span('voice call'):
-        async with agent.realtime('openai:gpt-realtime').session() as session:
+        async with agent.realtime('{{ openai:realtime }}').session() as session:
             await session.send('Say hello.')
 ```
 

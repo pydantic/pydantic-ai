@@ -4,19 +4,21 @@ import asyncio
 import dataclasses
 import sys
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
 
+import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._context_size import context_tokens
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
@@ -80,7 +82,7 @@ async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentS
     # settlement signal the stream consumer awaits before yielding the event, so consumers never
     # observe a decision event whose listeners are still mutating it. A list per id keeps repeated
     # emissions of one object (a capability re-emitting on behalf of another) exactly-once each.
-    settled = asyncio.Event()
+    settled = anyio.Event()
     ctx._pending_immediate_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
     try:
         capability = ctx.root_capability
@@ -149,9 +151,14 @@ class AnchoredEvidence:
     """Capabilities loaded inside the anchored window but not in `loaded_capability_ids`."""
 
 
-def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
-    """The latest response's `total_tokens` over `context_window`, or `None` when it can't be calculated.
+ToolNamePath: TypeAlias = tuple[str | Mapping[str, str], ...]
+"""The name-changing wrappers a tool listing passes through: a prefix, or a map from inner to exposed names."""
 
+
+def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
+    """The latest response's context size over `context_window`, or `None` when it can't be calculated.
+
+    The context size is the response's `context_tokens`.
     Shared by [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] and
     [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
     """
@@ -159,7 +166,7 @@ def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_
         return None
     for message in reversed(messages):
         if isinstance(message, _messages.ModelResponse):
-            tokens = message.usage.total_tokens
+            tokens = context_tokens(message)
             return tokens / context_window if tokens else None
     return None
 
@@ -195,7 +202,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
-    """Messages exchanged in the conversation so far."""
+    """Persistent messages exchanged in the conversation so far.
+
+    Mutating this list rewrites the run's message history. Model request hooks that only need to
+    change the current request should instead assign a new sequence to
+    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages].
+    """
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
     tracer: Tracer = field(default_factory=NoOpTracer)
@@ -205,7 +217,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict[str, int])
-    """Number of retries for each tool so far."""
+    """Number of retries for each tool so far, keyed by the name the model calls the tool by."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -231,13 +243,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
-    """"Unique identifier for the agent run."""
+    """Unique identifier for the agent run.
+
+    The `run_id` argument to `Agent.run` (etc.), or a fresh UUID7. Inside a durable workflow or flow,
+    the default is derived from the workflow or flow run instead, so it stays the same when the engine
+    re-executes the run.
+    """
     conversation_id: str | None = None
     """Unique identifier for the conversation this run belongs to.
 
     A conversation spans potentially multiple agent runs that share message history.
     Resolved at the start of `Agent.run` (etc.) from the explicit `conversation_id`
-    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7.
+    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7
+    (inside a durable workflow or flow, a UUID derived from `run_id`).
     """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
@@ -246,8 +264,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Populated before each model request, after all model settings layers
     (model defaults, agent-level, capability, and run-level) have been merged.
-    Available in model request hooks (`before_model_request`, `wrap_model_request`,
-    `after_model_request`). Currently `None` in tool hooks, output validators,
+    Available throughout the model-request lifecycle. An outer `wrap_model_request` sees the
+    initially resolved value before calling its handler and the final `before_model_request`
+    value after the handler returns. Currently `None` in tool hooks, output validators,
     and during agent construction.
 
     During a realtime session this holds the merged
@@ -288,8 +307,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
 
-    _pending_immediate_dispatches: dict[int, list[asyncio.Event]] = field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    _pending_immediate_dispatches: dict[int, list[anyio.Event]] = field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Per-event-id settlement signals for buffered events dispatched immediately, shared across the run.
 
@@ -432,6 +451,27 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
     """The capability whose hook is currently being dispatched, if any."""
 
+    _tool_name_path: ToolNamePath = field(default=(), repr=False, compare=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The name-changing wrappers a tool listing has passed through, outermost first: a
+    `PrefixedToolset`'s prefix, or a `RenamedToolset`'s map from inner to exposed names. `retries`
+    is keyed by the name the model calls a tool by, while `FunctionToolset` holds the tool under
+    its own name, so `FunctionToolset.get_tools` applies this path to find the count its tool's
+    `prepare` reads as `retry`.
+
+    `PrefixedToolset.get_tools` and `RenamedToolset.get_tools` push it, and `DurableDynamicToolset`
+    attaches the path it was listed under to its validate and call units, which list the toolset
+    again. The built-in sites that hand the context to user code strip it first (see
+    `without_tool_name_path`): a tool's `prepare`, `.prepared()` and `.filtered()` callbacks,
+    `DynamicToolset` factories, durable tool validators and bodies, and a dynamic toolset's
+    instructions during durable discovery. That keeps a context handed to an unrelated toolset from
+    attributing its counts to the wrong names. A custom toolset's own `get_tools` under a wrapper
+    still receives it, so an unrelated toolset it lists with that context reads its tools' counts
+    under the wrapper's names. Excluded from equality because it is listing bookkeeping, not run
+    state.
+    """
+
     @property
     def model_id(self) -> str | None:
         """The identifier from which the run's active `model` was resolved.
@@ -505,10 +545,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def context_window_used(self) -> float | None:
         """Fraction of the model's context window occupied as of the most recent model response.
 
-        Computed as the latest response's reported
-        [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] (input, including cached tokens,
-        plus output) over the active model's
-        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. This estimates how full
+        Computed as the latest response's reported input tokens (including cached tokens) plus output
+        tokens over the active model's
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response a provider
+        merged from several requests (Google long decode), whose usage sums their input tokens, the
+        input is the first request's. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size, and the value can exceed `1.0` when the last response came from a model with a larger
         window. Useful to trigger history compaction, e.g. in a
@@ -635,8 +676,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         owned by loaded deferred capabilities.
 
         Only fully populated once the turn's tools have been resolved during model-request
-        preparation, so it is reliable in model-request hooks (`before_model_request`,
-        `wrap_model_request`, `after_model_request`) and tool hooks. In earlier hooks like
+        preparation, so it is reliable throughout the wrapped model-request lifecycle and in
+        tool hooks. In earlier hooks like
         `before_run` it falls back to `discovered_tool_names` (reconstructed from history).
         See [hook ordering](../hooks.md#hook-ordering) for how timing affects what you see.
         """
@@ -933,6 +974,25 @@ def _run_context_init_with_capability_loaded(
 # keyword is invisible to `replace()`, and `@wraps` keeps `inspect.signature` resolving to the real
 # one. `TemporalRunContext` defines its own `__init__` and is unaffected either way.
 RunContext.__init__ = _run_context_init_with_capability_loaded
+
+
+def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunContext[AgentDepsT]:
+    """A copy of the context with the given tool name path.
+
+    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields: a custom
+    `TemporalRunContext` subclass keeps the extra keys its payload adds outside them.
+    """
+    return _utils.replace_no_init(ctx, _tool_name_path=path)
+
+
+def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, str]) -> RunContext[AgentDepsT]:
+    """The context to list a wrapped toolset's tools with, for a wrapper that prefixes or renames them."""
+    return with_tool_name_path(ctx, (*ctx._tool_name_path, layer))  # pyright: ignore[reportPrivateUsage]
+
+
+def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
+    return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

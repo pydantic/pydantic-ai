@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -70,6 +71,7 @@ _JUDGE_INSTRUCTIONS = (
 
 _TRUNCATED = ' [truncated]'
 _ELIDED = '\n[...]\n'
+_EARLIER_ELIDED = '[...]\n'
 
 _PROMPT_HEADER = "Review the running agent's recent trajectory and deliver your verdict."
 
@@ -144,7 +146,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     window: int = 20_000
     """Sliding token window: each evaluation sees at most this many tokens of the trajectory
     (estimated at ~4 characters per token), rendered as a transcript. A longer transcript keeps
-    the original request (up to half the window) followed by the most recent tail."""
+    the request that started this run (up to half the window) followed by the most recent tail."""
 
     name: str | None = None
     """Name used to attribute steering messages. Defaults to the judge `agent`'s `name`
@@ -227,7 +229,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         self._collect_finished()
         self._steps += 1
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
-            prompt = _judge_prompt([*request_context.messages, response], self.window)
+            prompt = _judge_prompt([*request_context.messages, response], self.window, ctx.run_id)
             self._task = asyncio.create_task(self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}')
         return response
 
@@ -366,18 +368,17 @@ def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
     return replace(limits, request_limit=limits.request_limit + 1)
 
 
-def _judge_prompt(messages: Sequence[ModelMessage], window: int) -> str:
+def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | None) -> str:
     """The judge's user prompt: the rendered trajectory, clamped to the window.
 
-    When the transcript exceeds the window, the original request is kept ahead of the most
-    recent tail: the judge measures drift against the goal, so the goal must survive tool
-    results that would otherwise push it out. The request takes at most half the window and
-    is truncated with a marker beyond that.
+    When the transcript exceeds the window, the request that started this run is kept ahead of
+    the most recent tail: the judge measures drift against the goal, so the goal must survive
+    tool results that would otherwise push it out. The request takes at most half the window and
+    is truncated with a marker beyond that. Earlier runs in the history are context, so they are
+    the first to be dropped.
     """
-    request, rest = _render_transcript(messages)
-    request = html.escape(request, quote=False)
-    rest = html.escape(rest, quote=False)
-    transcript = f'{request}\n{rest}' if request and rest else request or rest
+    earlier, request, rest = (html.escape(part, quote=False) for part in _render_transcript(messages, run_id))
+    transcript = '\n'.join(part for part in (earlier, request, rest) if part)
     max_chars = window * _CHARS_PER_TOKEN
     if len(transcript) <= max_chars:
         return _prompt_with(transcript)
@@ -386,9 +387,10 @@ def _judge_prompt(messages: Sequence[ModelMessage], window: int) -> str:
         return _prompt_with(transcript[-max_chars:])
     if len(request) > request_budget:
         request = request[: request_budget - len(_TRUNCATED)] + _TRUNCATED
+    current = f'{request}\n{rest}' if rest else request
+    if len(current) + len(_EARLIER_ELIDED) <= max_chars:
+        return _prompt_with(f'{_EARLIER_ELIDED}{current}' if earlier else current)
     remaining = max_chars - len(request)
-    if len(rest) < remaining:
-        return _prompt_with(f'{request}\n{rest}' if rest else request)
     return _prompt_with(f'{request}{_ELIDED}{rest[len(_ELIDED) - remaining :]}')
 
 
@@ -396,14 +398,34 @@ def _prompt_with(transcript: str) -> str:
     return f'{_PROMPT_HEADER}\n\n<trajectory>\n{transcript}\n</trajectory>'
 
 
-def _render_transcript(messages: Sequence[ModelMessage]) -> tuple[str, str]:
-    """Render the trajectory as judge-readable lines, split into the original request and the rest.
+def _render_transcript(messages: Sequence[ModelMessage], run_id: str | None) -> tuple[str, str, str]:
+    """Render the trajectory as judge-readable lines: earlier runs, this run's request, and the rest.
 
-    The original request is the user prompts and user speech sent before the agent's first
-    response or tool activity, including responses that render nothing (thinking only). System prompts and thinking parts are omitted: the judge evaluates observable
-    behavior (what was asked, said, called, and returned), not the agent's configuration or
-    private reasoning.
+    This run starts at the first request carrying `run_id`. Messages before it come from earlier
+    runs passed as history; when no message carries `run_id` (history without run ids), the whole
+    history is treated as this run. The request is the user prompts and user speech sent before
+    the agent's first response or tool activity in this run, including responses that render
+    nothing (thinking only). System prompts and thinking parts are omitted: the judge evaluates
+    observable behavior (what was asked, said, called, and returned), not the agent's
+    configuration or private reasoning.
     """
+    start = _run_start(messages, run_id)
+    earlier_request, earlier_rest = _render_lines(messages[:start])
+    request, rest = _render_lines(messages[start:])
+    return '\n'.join([*earlier_request, *earlier_rest]), '\n'.join(request), '\n'.join(rest)
+
+
+def _run_start(messages: Sequence[ModelMessage], run_id: str | None) -> int:
+    """Index of this run's first request, or 0 when no request carries `run_id`."""
+    if run_id is not None:
+        for index, message in enumerate(messages):
+            if isinstance(message, ModelRequest) and message.run_id == run_id:
+                return index
+    return 0
+
+
+def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str]]:
+    """Render messages as lines, split into the opening user request and everything after it."""
     request: list[str] = []
     lines: list[str] = []
     user_lines = request
@@ -432,7 +454,7 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> tuple[str, str]:
                 lines.append(f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}')
             elif isinstance(part, SpeechPart) and part.transcript:
                 (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
-    return '\n'.join(request), '\n'.join(lines)
+    return request, lines
 
 
 @runtime_checkable

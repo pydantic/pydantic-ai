@@ -10,7 +10,7 @@ A repo accumulates CE for whatever coding assistant worked in it: instruction
 files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree, and assets under
 `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks). An agent that
 loads only the top-level instruction file misses the ancestor context and has no
-idea the rest of the setup exists, so it can neither honor it nor translate it.
+idea the rest of the setup exists, so it cannot honor all of it.
 
 ## The solution
 
@@ -40,20 +40,22 @@ print(result.output)
 
 Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to
 `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest
-context first, most specific last. Files are deduped by visited path and by content
-hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing identical
-content load once.
+context first, most specific last. Files are deduped by the path a symlink resolves
+to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
+sharing identical content load once. Where the workspace can resolve symlinks, a
+symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
+reaches the model as `AGENTS.md`.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
 walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
-### 2. Asset inventory (on by default)
+### 2. Asset inventory (off by default)
 
-Exposes one tool, `inventory_agent_context()`, that reports where the repo's CE
+Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's CE
 assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each,
 the `skills/` (SKILL.md), `agents/` (`.md`), and `settings.json` (hooks) it
 contains. It returns a structured `AgentContextInventory`; it locates assets and
-does not parse them, leaving translation to the orchestrator.
+does not parse them.
 
 Rename the tool with `inventory_tool_name`, or scope which roots it scans with
 `asset_roots`.
@@ -88,6 +90,7 @@ result = agent.run_sync('List the source directory.')
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run.
+As with the walk-up, a symlinked instruction file is named after its target.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
@@ -124,7 +127,7 @@ RepoContext(
     home_dir=None,                  # str | Path | None -- shallowest workspace dir to stop walk-up at, inclusive
     filenames=('CLAUDE.md', 'AGENTS.md'),
     autoload_instructions=True,     # Strategy 1
-    expose_inventory_tool=True,     # Strategy 2
+    expose_inventory_tool=False,    # Strategy 2
     inventory_tool_name='inventory_agent_context',
     nested_traversal=False,         # Strategy 3
     nested_inject='pointer',        # 'pointer' | 'contents'
@@ -139,7 +142,7 @@ RepoContext(
 ## Scope
 
 `RepoContext` locates and loads CE; it does not parse skill/sub-agent frontmatter
-or hook bodies, and it does not rewrite or translate assets. Strategy 1 reads its
+or hook bodies, and it does not modify assets. Strategy 1 reads its
 files once per run, so mid-run edits to those files are not reloaded.
 
 ## Further reading
