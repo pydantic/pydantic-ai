@@ -1,0 +1,158 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 5332fc59-33f7-4aff-9b36-921094c5c221
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "445"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Use lookup with q="x" and follow its instructions, then answer.
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: lookup
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties:
+                    q:
+                      type: string
+                  required:
+                  - q
+                  type: object
+              description: Look something up. Must be called twice.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "449"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 609
+        output:
+          message:
+            content:
+            - toolUse:
+                input:
+                  q: x
+                name: lookup
+                toolUseId: tooluse_tsINJ2jKZhTiN6eHaU8rLs
+                type: tool_use
+            role: assistant
+        stopReason: tool_use
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 579
+          outputTokens: 52
+          serverToolUsage: {}
+          totalTokens: 631
+  recorded_at: 2026-10-15T23:52:55.197767+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 7bb6fe54-e1ea-44b5-a41e-c154e55e01cf
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "822"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Use lookup with q="x" and follow its instructions, then answer.
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: tooluse_tsINJ2jKZhTiN6eHaU8rLs
+              name: lookup
+              input:
+                q: x
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_tsINJ2jKZhTiN6eHaU8rLs
+              content:
+              - text: partial; call lookup again with q="y" to get the answer
+              status: success
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: lookup
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties:
+                    q:
+                      type: string
+                  required:
+                  - q
+                  type: object
+              description: Look something up. Must be called twice.
+        additionalModelRequestFields:
+          tool_choice:
+            type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "409"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 859
+        output:
+          message:
+            content:
+            - text: "Now following the instruction, I'll call lookup again with q=\"y\":"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 657
+          outputTokens: 24
+          serverToolUsage: {}
+          totalTokens: 681
+  recorded_at: 2026-10-15T23:52:56.127024+00:00
