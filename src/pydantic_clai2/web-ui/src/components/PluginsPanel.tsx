@@ -24,18 +24,21 @@ const enabled = (row: PluginRow) => row.status === 'on' || row.status === 'idle'
 export function PluginsPanel({
   version,
   running,
+  initial = null,
   onClose,
   onError,
   onNotice,
 }: {
   version: number
   running: boolean
+  /** The plugin to show first, such as the one a side panel asks to set up. */
+  initial?: string | null
   onClose: () => void
   onError: (message: string) => void
   onNotice: (message: string) => void
 }) {
   const [rows, setRows] = useState<PluginRow[] | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(initial)
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState<string | null>(null)
   const request = useRef(0)

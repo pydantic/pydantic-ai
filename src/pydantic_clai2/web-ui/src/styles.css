@@ -164,6 +164,25 @@ pre {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw);
 }
 
+/* A plugin's side panel takes the last column; on a narrow screen it covers the page instead. */
+@media (min-width: 761px) {
+  .app.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
+  }
+
+  .app.with-monty.with-side-panel {
+    grid-template-columns: 268px minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
+
+  .app.no-sidebar.with-monty.with-side-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 34vw) var(--side-panel-width);
+  }
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -1589,6 +1608,14 @@ pre {
     box-shadow: var(--shadow);
   }
 
+  .app .side-panel {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(var(--side-panel-width), 100vw);
+    z-index: 30;
+    box-shadow: var(--shadow);
+  }
+
   .column,
   .bottom,
   .hero {
@@ -1945,6 +1972,111 @@ pre {
 
 .monty-input textarea::placeholder {
   color: var(--faint);
+}
+
+/* Plugins' side panels */
+
+.side-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.side-panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.side-panel-resize:hover,
+.side-panel.resizing .side-panel-resize {
+  background: color-mix(in srgb, var(--lithium) 45%, transparent);
+}
+
+/* A frame would take the pointer from a drag that crosses it. */
+.side-panel.resizing .side-panel-frame {
+  pointer-events: none;
+}
+
+.side-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.side-panel-title {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.side-panel-head .badge {
+  margin-right: auto;
+}
+
+.side-panel-head a.icon-button {
+  text-decoration: none;
+}
+
+.side-panel-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+
+.side-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 18px;
+  overflow-y: auto;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.side-panel-body p {
+  margin: 0;
+}
+
+.side-panel-body .primary,
+.side-panel-body .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.side-panel-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.side-panel-label {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.side-panel-link a {
+  color: var(--link);
+  font: 11.5px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  word-break: break-all;
 }
 
 /* Plugins panel */
