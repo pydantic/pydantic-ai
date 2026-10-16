@@ -347,16 +347,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def _handle_tool_call(self, event: ToolCallEvent) -> AsyncIterator[BaseChunk]:
         part = event.part
-        # The call event arrived; we own the input-chunk lifecycle from here. Drop the
-        # stash so `_handle_tool_result` doesn't double-emit a backfill chunk.
-        self._streamed_call_parts.pop(part.tool_call_id, None)
-
-        # `args_valid is None` covers resume of non-`ToolApproved` deferred results
-        # (`ToolDenied`, `ModelRetry`, direct return) and the output-tool
-        # end-strategy-skipped path. The original `tool-input-available` already fired
-        # on the first agent run; re-emitting here would be misleading.
+        # `args_valid is None`: the call wasn't validated because it won't run here. On resume of
+        # a non-`ToolApproved` deferred result (`ToolDenied`, `ModelRetry`, direct return), the
+        # original `tool-input-available` already fired on the first agent run, so nothing is
+        # emitted. For a call skipped because a final result was already processed, the input
+        # streamed in this run: keep the stash so `_handle_tool_result` backfills the chunk.
         if event.args_valid is None:
             return
+
+        # We own the input-chunk lifecycle from here. Drop the stash so `_handle_tool_result`
+        # doesn't double-emit a backfill chunk.
+        self._streamed_call_parts.pop(part.tool_call_id, None)
 
         # SDK v6+ supports `tool-input-error`, so we suppress `tool-input-available` on
         # validation failure and let `_handle_tool_result` emit the dedicated error chunk
@@ -469,12 +470,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
         streamed_part = self._streamed_call_parts.pop(tool_call_id, None)
 
-        # Backfill `tool-input-available` if `_handle_tool_call` never fired for this call —
-        # happens when the agent raises before yielding the call event (e.g. output-tool
-        # `UnexpectedModelBehavior` with no prior `final_result`). The base class then
-        # synthesizes a `ToolReturnPart(outcome='failed')` for the pending call, which
-        # arrives here; without the backfill, v5/v6 frontends would transition
-        # `input-streaming` -> `output-error` with no input announcement in between.
+        # Backfill `tool-input-available` if `_handle_tool_call` didn't emit it for this
+        # streamed call. Two cases:
+        # - The call was skipped because a final result was already processed: its call
+        #   event is unvalidated (`args_valid is None`), so `_handle_tool_call` kept the
+        #   stash, and the stub return arrives here.
+        # - The agent raised before yielding the call event (e.g. output-tool
+        #   `UnexpectedModelBehavior` with no prior `final_result`). The base class then
+        #   synthesizes a `ToolReturnPart(outcome='failed')` for the pending call, which
+        #   arrives here.
+        # Without the backfill, v5/v6 frontends would move the call out of `input-streaming`
+        # with no input announcement in between.
         # `invalidated_part is not None` means `_handle_tool_call` deliberately suppressed
         # the chunk for the v6 invalidated path — don't backfill in that case.
         if streamed_part is not None and invalidated_part is None:

@@ -10,9 +10,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent, CancellationToken, RunCancelled, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, ToolOutput, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
@@ -3472,6 +3472,71 @@ async def test_run_stream_on_complete_error():
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_skipped_tool_returns():
+    """A function tool call skipped under `end_strategy='early'` streams its input and its recorded return.
+
+    Without them, the AI SDK leaves the call part in `input-streaming`, which isn't valid client history.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"location": "Paris"}', tool_call_id='call-weather'),
+            1: DeltaToolCall(name='final_result', json_args='{"value": "done"}', tool_call_id='call-output'),
+        }
+
+    class Output(BaseModel):
+        value: str
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=ToolOutput(Output), end_strategy='early'
+    )
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        # Skipped: an output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Weather?')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert [event for event in events if event['type'].startswith('tool-')] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call-weather', 'toolName': 'get_weather'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-weather', 'inputTextDelta': '{"location": "Paris"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'call-output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-output', 'inputTextDelta': '{"value": "done"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-output',
+                'toolName': 'final_result',
+                'input': {'value': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call-output', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-weather',
+                'toolName': 'get_weather',
+                'input': {'location': 'Paris'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'call-weather',
+                'output': 'Tool not executed - a final result was already processed.',
+            },
         ]
     )
 

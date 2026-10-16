@@ -316,6 +316,8 @@ Tool approval responses are trusted from the request by design, matching the pro
 
 When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the raw arguments) plus an `error_text` field rendered from the message that will be sent back to the model. When the validation failure is retryable, the agent retries the call (subject to the tool's `retries` setting) and emits a new `tool-input-(available|error)` for each attempt; when a custom validator raises [`ToolFailed`](../tools-advanced.md#tool-failed), the failure is terminal and no retry follows.
 
+A call that isn't executed because a final result was already processed (see [`end_strategy`](../output.md#parallel-output-tool-calls)) isn't validated either. It gets `tool-input-available` with its raw arguments, followed by `tool-output-available` carrying the "not executed" return recorded in message history.
+
 ## System prompts and instructions
 
 Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.
