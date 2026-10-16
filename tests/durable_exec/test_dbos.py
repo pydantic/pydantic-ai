@@ -4979,11 +4979,11 @@ timed_out_agent = Agent(
 )
 
 
-_timed_out_run_contexts: list[RunContext[None]] = []
+_timed_out_run_contexts: list[RunContext[object]] = []
 
 
 @timed_out_agent.instructions
-def capture_timed_out_run_context(ctx: RunContext[None]) -> str:
+def capture_timed_out_run_context(ctx: RunContext[object]) -> str:
     _timed_out_run_contexts.append(ctx)
     return 'Call the tool.'
 
