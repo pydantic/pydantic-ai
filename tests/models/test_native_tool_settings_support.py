@@ -227,15 +227,25 @@ class TestGoogle:
         assert str(exc_info.value) == snapshot(
             'Native tool setting(s) `WebSearchTool.allowed_domains` not supported by this model. '
             'Sending the tool without them would drop the restriction they set. Remove the settings, use a model '
-            'that supports them, or provide a local fallback that applies them itself, with the settings on the native '
-            "tool rather than the capability, which disables its local fallback when they're set: e.g. "
+            'that supports them, or provide a local fallback that applies them itself (e.g. '
+            "`WebFetch(allowed_domains=[...], local=True)`). `WebSearch`'s own constraint fields disable its `local` "
+            'fallback, so for a search fallback put them on the native tool: '
             '`WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`.'
         )
 
     def test_restricted_web_fetch_without_fallback_raises(self):
         params = ModelRequestParameters(native_tools=[WebFetchTool(max_uses=3, blocked_domains=['example.com'])])
-        with pytest.raises(UserError, match=r'`WebFetchTool.blocked_domains`, `WebFetchTool.max_uses` not supported'):
+        with pytest.raises(UserError) as exc_info:
             self.model().prepare_request(None, params)
+        assert str(exc_info.value) == snapshot(
+            'Native tool setting(s) `WebFetchTool.blocked_domains`, `WebFetchTool.max_uses` not supported by this '
+            'model. '
+            'Sending the tool without them would drop the restriction they set. Remove the settings, use a model '
+            'that supports them, or provide a local fallback that applies them itself (e.g. '
+            "`WebFetch(allowed_domains=[...], local=True)`). `WebSearch`'s own constraint fields disable its `local` "
+            'fallback, so for a search fallback put them on the native tool: '
+            '`WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`.'
+        )
 
     def test_restricted_optional_web_search_is_dropped(self):
         params = ModelRequestParameters(native_tools=[WebSearchTool(blocked_domains=['example.com'], optional=True)])
