@@ -461,6 +461,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and (compaction_part := compaction_part_from_payload(part.data)) is not None
                         ):
                             builder.add(compaction_part)
+                        elif part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
+                            # The event stream emits the delta after the tool result that caused it, so
+                            # the AI SDK attaches it to the assistant message. Adding it here lands it on
+                            # the request carrying that tool return, matching the server-side history.
+                            builder.add(tool_availability_delta_from_payload(part.data))
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name

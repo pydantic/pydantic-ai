@@ -11655,6 +11655,88 @@ async def test_tool_availability_delta_stream_matches_dumped_data_part() -> None
     assert chunk == {'type': data_part.type, 'data': data_part.data}
 
 
+def _reduce_stream_to_assistant_message(events: list[dict[str, Any]], message_id: str) -> UIMessage:
+    """Rebuild the assistant `UIMessage` a frontend holds after the stream, like the AI SDK's `processUIMessageStream`.
+
+    Covers only the chunk types the tests using it emit: steps, text, tool input/output and data parts.
+    """
+    parts: list[dict[str, Any]] = []
+    texts: dict[str, dict[str, Any]] = {}
+    tools: dict[str, dict[str, Any]] = {}
+    for event in events:
+        event_type = event['type']
+        if event_type == 'start-step':
+            parts.append({'type': 'step-start'})
+        elif event_type == 'text-start':
+            texts[event['id']] = {'type': 'text', 'text': '', 'state': 'streaming'}
+            parts.append(texts[event['id']])
+        elif event_type == 'text-delta':
+            texts[event['id']]['text'] += event['delta']
+        elif event_type == 'text-end':
+            texts[event['id']]['state'] = 'done'
+        elif event_type == 'tool-input-start':
+            tools[event['toolCallId']] = {
+                'type': f'tool-{event["toolName"]}',
+                'toolCallId': event['toolCallId'],
+                'state': 'input-streaming',
+            }
+            parts.append(tools[event['toolCallId']])
+        elif event_type == 'tool-input-available':
+            tools[event['toolCallId']].update(state='input-available', input=event['input'])
+        elif event_type == 'tool-output-available':
+            tools[event['toolCallId']].update(state='output-available', output=event['output'])
+        elif event_type.startswith('data-'):
+            parts.append({'type': event_type, 'data': event['data']})
+    return UIMessage.model_validate({'id': message_id, 'role': 'assistant', 'parts': parts})
+
+
+async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A reveal survives the next turn when the client rebuilds history from the event stream.
+
+    The stream emits `data-tool-availability-delta` after the tool result, so the AI SDK keeps it on
+    the assistant message. Loading it back must restore the delta next to the tool return that caused
+    it, as in the server-side history, so the revealed tool stays available.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='reveal', json_args='{}', tool_call_id='reveal-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def reveal() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools=['new_tool'])
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Reveal the tool')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    assistant_message = _reduce_stream_to_assistant_message(events, 'assistant-1')
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+
+    assert [[part.part_kind for part in message.parts] for message in loaded] == [
+        [part.part_kind for part in message.parts] for message in server_history
+    ]
+
+    def deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
+        return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
+
+    assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
+    assert deltas(loaded) == deltas(server_history)
+
+
 @pytest.mark.parametrize('tool_call_id', ['', '   ', '\t\n'])
 def test_tool_availability_delta_treats_blank_tool_call_id_as_absent(tool_call_id: str):
     ui_messages = [
