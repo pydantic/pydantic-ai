@@ -100,8 +100,9 @@ async def _sign_in(
     if name == 'github-copilot':
         return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=dialogs)
     if (login := plugins.get(name)) is not None:
-        if dialogs is not None:
-            raise ValueError(f'Sign in to {account(name, profile)} in the terminal: /login {account(name, profile)}.')
+        if dialogs is not None:  # Its handler asks in the terminal, with no dialogs to ask through.
+            target = account(name, profile)
+            raise ValueError(f'Sign in to {target} in the terminal: /login {target}.')
         return await _plugin_login(login, profile=profile, store=store)
     from pydantic_clai2.models import key_profiles
 

@@ -435,7 +435,8 @@ class _ModelResolver:
             self.store,
             sign_in=lambda target, dialogs: self.login([target], dialogs),
             plugins=self.logins,
-            forget=self.codex_auth().forget,
+            # Read when an account signs out, on the loop: the menu itself is built in a worker thread.
+            forget=lambda account: self.codex_auth().forget(account),
         )
 
     async def resolve(self, name: str) -> Model | str:

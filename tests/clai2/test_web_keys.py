@@ -326,6 +326,10 @@ def test_adding_an_account_from_the_page_signs_in_behind_its_waiting_screen(
             web_.portal.call(called_back.set)
             assert receive_until(socket, DialogClosed)[1].id == waiting.id
             done = action.result(timeout=10).json()
-    assert done['messages'][0].startswith('Codex connected.')
-    assert [row['key'] for row in done['menu']['fields']] == ['openai-codex', ADD]
-    assert 'Codex connected.' in terminal(web_)
+        assert done['messages'][0].startswith('Codex connected.')
+        assert [row['key'] for row in done['menu']['fields']] == ['openai-codex', ADD]
+        assert 'Codex connected.' in terminal(web_)
+        # Signing out from the page drops the login.
+        left = answered(web_, socket, '/api/commands/accounts/fields/openai-codex/action', 'sign-out', 'yes').json()
+        assert left['messages'] == ['Signed out of openai-codex.']
+        assert not has_credentials(account='openai-codex')
