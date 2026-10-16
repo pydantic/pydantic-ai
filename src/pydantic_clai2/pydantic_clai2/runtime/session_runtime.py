@@ -44,6 +44,7 @@ from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import provider_of
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
@@ -138,7 +139,7 @@ def create_shell(
         if settings is not None
         else Settings(model=None)
     )
-    process = process or ClaiProcess.open(store, console=console)
+    process = process or ClaiProcess.open(store)
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
     session = Session(
@@ -155,7 +156,7 @@ def create_shell(
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
     session.instructions = settings.instructions
-    models = process.models.for_session(console=console)
+    models = ModelResolver(console=console, store=store, codex_providers=process.codex_providers)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))

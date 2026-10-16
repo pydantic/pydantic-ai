@@ -1,7 +1,7 @@
 """Model names to models: provider integrations loaded on demand, accounts, profiles, and `chain:` fallbacks."""
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -18,6 +18,7 @@ from pydantic_clai2.plugins import (
 )
 
 if TYPE_CHECKING:
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_clai2.auth import CodexAuth
     from pydantic_clai2.models.accounts import Account
 
@@ -43,23 +44,15 @@ class ModelResolver:
     """Where a plugin sign-in saves its models."""
     pool_accounts: Callable[[], bool] = lambda: False
     """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
-    shared: 'ModelResolver | None' = None
-    """The process's resolver, whose Codex providers this one uses."""
+    codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
+    """The native Codex provider per account, which the process's sessions share; sign-ins prompt on `console`."""
     _auth: 'CodexAuth | None' = None
-
-    def for_session(self, *, console: Console) -> 'ModelResolver':
-        """A resolver for one session's plugins and settings, sharing this one's store and Codex providers.
-
-        Its sign-ins prompt on `console`, the session's own.
-        """
-        return ModelResolver(console=console, store=self.store, shared=self)
 
     def codex_auth(self) -> 'CodexAuth':
         if self._auth is None:
             from pydantic_clai2.auth import CodexAuth
 
-            shared = self.shared
-            self._auth = shared.codex_auth().for_console(self.console) if shared else CodexAuth(self.console)
+            self._auth = CodexAuth(self.console, providers=self.codex_providers)
         return self._auth
 
     async def login(self, args: list[str]) -> str:

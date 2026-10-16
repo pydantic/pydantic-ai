@@ -1,6 +1,5 @@
 """`SessionRuntime`: live sessions built over the `ClaiProcess` whose stores and services they share."""
 
-import asyncio
 import io
 import signal
 from collections.abc import AsyncIterator
@@ -18,6 +17,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TaskEvent
+from pydantic_clai2.runtime._session import resolve_model_name
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.tasks import TaskRouter, Tasks
@@ -67,7 +67,7 @@ async def test_a_runtime_without_a_terminal_serves_input_over_the_process_stores
     assert saved.summary.workspace == str((tmp_path / 'project').resolve())
 
 
-def test_runtimes_share_the_process_services(tmp_path: Path) -> None:
+async def test_runtimes_share_the_process_services(tmp_path: Path) -> None:
     """One task owner, one naming worker and one Codex sign-in, whichever session uses them."""
     process = ClaiProcess.open(SettingsStore(tmp_path / 'config.db'))
     a, _ = runtime_over(process, tmp_path / 'a')
@@ -78,15 +78,12 @@ def test_runtimes_share_the_process_services(tmp_path: Path) -> None:
     assert a.sessions.namer is b.sessions.namer is process.namer
     assert a.sessions.naming is not b.sessions.naming
     assert process.tasks.owner.directory == tmp_path / 'sessions.db.tasks'
-    consoles = Console(file=io.StringIO()), Console(file=io.StringIO())
-    first, second = (process.models.for_session(console=console) for console in consoles)
-    assert first.store is second.store is process.store
-    # Each session's sign-in prompts on its own console; every account's provider, and its refresh, is shared.
-    assert (first.codex_auth().console, second.codex_auth().console) == consoles
-    assert first.codex_auth() is first.codex_auth()
-    provider = first.codex_auth().account_provider('openai-codex')
-    assert second.codex_auth().account_provider('openai-codex') is provider
-    assert process.models.codex_auth().provider is provider
+    # Every account's Codex provider, and so its token refresh, is built once for all sessions.
+    assert await resolve_model_name(a.session.resolve_model, 'openai-codex:gpt-5') is not None
+    provider = process.codex_providers['openai-codex']
+    assert await resolve_model_name(b.session.resolve_model, 'openai-codex:gpt-5') is not None
+    assert list(process.codex_providers) == ['openai-codex']
+    assert process.codex_providers['openai-codex'] is provider
     assert not (a.interrupts.signals or b.interrupts.signals)
     alone, _ = runtime_over(ClaiProcess.open(SettingsStore(tmp_path / 'other.db')), tmp_path / 'alone')
     assert alone.tasks.owner is not process.tasks.owner
@@ -199,37 +196,46 @@ async def test_only_the_signalling_session_installs_the_ctrl_c_handler() -> None
     terminal, background = Interrupts(signals=True), Interrupts(signals=False)
     original = signal.getsignal(signal.SIGINT)
     seen: dict[str, object] = {}
-    gates = {name: asyncio.Event() for name in ('terminal', 'background', 'background_started', 'terminal_started')}
+    results: dict[str, bool] = {}
+    started = {'terminal': anyio.Event(), 'background': anyio.Event()}
+    release = {'terminal': anyio.Event(), 'background': anyio.Event()}
+    done = {'terminal': anyio.Event(), 'background': anyio.Event()}
 
-    async def run(interrupts: Interrupts, name: str) -> bool:
+    async def run(interrupts: Interrupts, name: str) -> None:
         async def operation() -> None:
-            gates[f'{name}_started'].set()
-            await gates[name].wait()
+            started[name].set()
+            await release[name].wait()
             seen[name] = signal.getsignal(signal.SIGINT)
 
-        return await interrupts.run(operation())
+        results[name] = await interrupts.run(operation())
+        done[name].set()
 
-    # The background run starts first and ends while the terminal's still runs.
-    first = asyncio.create_task(run(background, 'background'))
-    await gates['background_started'].wait()
-    assert signal.getsignal(signal.SIGINT) == original
-    second = asyncio.create_task(run(terminal, 'terminal'))
-    await gates['terminal_started'].wait()
-    installed = signal.getsignal(signal.SIGINT)
-    assert installed != original
-    gates['background'].set()
-    assert await first
-    assert signal.getsignal(signal.SIGINT) == installed
-    gates['terminal'].set()
-    assert await second
-    assert seen == {'background': installed, 'terminal': installed}
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            # The background run starts first and ends while the terminal's still runs.
+            group.start_soon(run, background, 'background')
+            await started['background'].wait()
+            assert signal.getsignal(signal.SIGINT) == original
+            group.start_soon(run, terminal, 'terminal')
+            await started['terminal'].wait()
+            installed = signal.getsignal(signal.SIGINT)
+            assert installed != original
+            release['background'].set()
+            await done['background'].wait()
+            assert signal.getsignal(signal.SIGINT) == installed
+            release['terminal'].set()
+            await done['terminal'].wait()
+            assert seen == {'background': installed, 'terminal': installed}
+    assert results == {'background': True, 'terminal': True}
     assert signal.getsignal(signal.SIGINT) == original
 
     # A session without signals is still cancelled from a key or the browser.
-    for gate in gates.values():
-        gate.clear()
-    cancelled = asyncio.create_task(run(background, 'background'))
-    await gates['background_started'].wait()
-    assert background.cancel(exit_on_repeat=False)
-    assert not await cancelled
+    started['background'] = anyio.Event()
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(run, background, 'background')
+            await started['background'].wait()
+            assert signal.getsignal(signal.SIGINT) == original
+            assert background.cancel(exit_on_repeat=False)
+    assert results['background'] is False
     assert signal.getsignal(signal.SIGINT) == original
