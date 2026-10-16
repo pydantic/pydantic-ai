@@ -217,7 +217,7 @@ class Parent:
 
     @property
     def orchestrator(self) -> Orchestrator:
-        return self.web.remote.orchestrator
+        return self.web.service.orchestrator
 
 
 @asynccontextmanager
@@ -447,7 +447,8 @@ async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
     model = orchestrating(repository)
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, model=model) as made:
         orchestrator = made.orchestrator
-        with made.web.hub.subscribe() as queue:
+        with made.web.service.hub.subscribe() as client:
+            queue = client.queue
             await orchestrator.send('Say hi in a new workspace, then clean up.')
             seen = await converse(orchestrator, queue, [1, None, 0])
         end = seen[-1]

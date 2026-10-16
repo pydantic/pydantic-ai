@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class
+from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -21,6 +21,7 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
@@ -78,7 +79,7 @@ from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
-from pydantic_clai2.ui.menus.set_menu import set_command
+from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
 from pydantic_clai2.ui.menus.task_menu import open_tasks
@@ -175,6 +176,11 @@ def create_shell(
     context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
+    async def default_model() -> Model | str | None:
+        """The model a new session starts with: the saved `model` setting, else the agent's own."""
+        saved = (await to_thread.run_sync(store.overrides)).get('model')
+        return await models.resolve(saved) if isinstance(saved, str) else agent.model
+
     def fast(args: list[str]) -> str:
         if args not in ([], ['on'], ['off']):
             raise ValueError('Usage: /fast [on|off]')
@@ -248,6 +254,7 @@ def create_shell(
         handler=lambda args: set_command(context, args),
         complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
         during_turn=True,
+        menu=lambda: settings_menu(context),
     )
     commands.register(set_)
     commands.register(replace(set_, name='settings', description='Alias of /set'))
@@ -258,6 +265,7 @@ def create_shell(
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
             during_turn=True,
+            menu=lambda: settings_menu(context, keys=('display.theme',), title='Theme'),
             args_during_turn=True,
         )
     )
@@ -383,6 +391,7 @@ def create_shell(
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
         running=lambda: shell.turning,
+        default_model=default_model,
         queued=lambda: shell.queued,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
@@ -401,6 +410,7 @@ def create_shell(
             handler=lambda args: spinner_command(context, spinners, args),
             complete=lambda args: spinner_completions(spinners, args),
             during_turn=True,
+            menu=lambda: settings_menu(context, keys=('display.spinner',), title='Working animation'),
         )
     )
     commands.register(

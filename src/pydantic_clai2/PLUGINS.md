@@ -1235,7 +1235,11 @@ starts in that session's directory. A new session from the browser runs where th
 sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
 moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
 gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
-directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
+directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
+command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
+opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
+window's General section, the others a dialog. Its edits go through the menu's own source, as in
+the terminal, which prints what each one saved. Any other bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
@@ -1270,8 +1274,11 @@ mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the
 the browser at its next status update, which an idle session sends only when a prompt or command
 runs; reloading the page shows it at once.
 
-The **Plugins** panel (the puzzle button in the sidebar's footer, ⌘, or `/plugins` typed in the
-composer) is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
+The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
+left; each has its own address, `#settings/general` or `#settings/plugins`. **General** is `/set`'s
+menu, from `host.command_menu('set')`, grouped by the part of each key before its dot.
+The **Plugins** section (the puzzle button in the sidebar's footer, or `/plugins` typed in the
+composer), called the plugins panel below, is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
 status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
 `/plugins disable` do, without opening its settings menu. A plugin that is on shows its settings:
 
@@ -1372,6 +1379,8 @@ async with WebClient(url='http://127.0.0.1:8765/', token=token) as client:
 `ServerMessage`s. It sends the token in the header, and as the WebSocket's query parameter with the
 server's own `Origin`, never through a proxy. Failures raise what the server raised: `LookupError`
 (404), `RuntimeError` (409), `ValueError` (400 and 422), and `PermissionError` (403, a wrong token).
+A bare command that declares its menu (`host.command_menu`), such as `/set`, would open that menu
+in a page, so `send` raises `ValueError` for it and nothing runs; send it with arguments instead.
 
 `SessionView(client)` follows the stream as the page does: `items` (the transcript, the running turn
 included), `running`, `questions`, `dialogs`, `notices` (command results), `last_turn` (how it ended,
@@ -2485,6 +2494,19 @@ named after something the user names, such as a skill, sets `overridable=True`:
 it gives way to any other command with its name, registered before or after it,
 and CLAI prints one line saying which command is hidden.
 
+A command whose bare form opens a menu can declare `menu=`, a zero-argument callable
+returning a `SettingsMenu` (see
+[Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)) over what the
+command changes. The terminal still runs `handler`, and its own menu may offer more;
+the web UI shows the declared menu in the page when the bare command is typed there,
+with its actions asking through the page's dialogs, so its edits must save and apply as
+the command's do. `/set` declares the `/set` menu itself; `/theme` and `/spinner`
+declare its `display.theme` and `display.spinner` rows, without the terminal pickers'
+previews or `/spinner`'s speed.
+A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
+which loads the plugin again after an edit; `menu=` is for a command's menu over
+something else.
+
 A command can start a turn with `self.host.submit_prompt(text)`: the text runs
 as the next prompt once the command returns, ahead of anything queued in the
 editor, and goes through `on_turn_start` like typed input, without being echoed.
@@ -2512,7 +2534,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2525,7 +2547,8 @@ prompt the keyboard does:
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
-  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead.
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead,
+  or show the menu the command declares (`command_menu`, below) yourself.
   A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
@@ -2533,6 +2556,15 @@ prompt the keyboard does:
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
   CLAI's settings, such as one built in a test without `setting=`.
+- `await self.host.default_model()` is the model a new session starts with: the saved `model`
+  setting, resolved as `/model NAME` does, else the agent's own. Use it for an agent of your own
+  that works for the whole process rather than one session. It returns `None` on a host without
+  CLAI's settings, such as one built in a test without `default_model=`.
+- `self.host.command_menu(NAME)` builds the `SettingsMenu` bare `/NAME` opens, as the command
+  declares it with `Command.menu`, or returns `None` for a command that declares none, an unknown
+  or unavailable one, and on a host without a shell. Edit it as the terminal would, through its
+  `source` (`problem`, `apply`, `reset`, off the event loop) and its `actions` with your own
+  `Dialogs`; edits apply at once, as the terminal's menu applies them.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu open over the cancelled turn or command closes with
   it, as it does for Ctrl-C; a headless `-p` run is not cancelled.

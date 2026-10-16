@@ -44,6 +44,8 @@ export interface State {
   sessionsVersion: number
   /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
   pluginsVersion: number
+  /** Bumped after every command, or edit of a command's menu, which may have changed CLAI's settings. */
+  settingsVersion: number
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
   theme: ThemeInfo | null
@@ -68,6 +70,7 @@ export const initial: State = {
   dialogs: [],
   sessionsVersion: 0,
   pluginsVersion: 0,
+  settingsVersion: 0,
   turnStartedAt: null,
   theme: null,
   followsWorkspace: false,
@@ -246,8 +249,13 @@ export function reduce(state: State, message: ServerMessage): State {
       return { ...state, sessionsVersion: state.sessionsVersion + 1 }
     case 'plugins':
       return { ...state, pluginsVersion: state.pluginsVersion + 1 }
+    case 'settings':
+      return { ...state, settingsVersion: state.settingsVersion + 1 }
     case 'orchestrator':
       // The orchestrator chat keeps its own state, with `reduceOrchestrator`.
+      return state
+    case 'live':
+      // This page shows one session at a time; the sidebar's live dots read `live` separately.
       return state
   }
 }

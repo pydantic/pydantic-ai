@@ -50,10 +50,19 @@ of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
 web UI, the Monty panel's input runs `/monty` too.
 
+<!-- From #10442 -->
+The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
+on its left, each with its own address (`#settings/general`, `#settings/plugins`) to link or
+reload. **General** holds the settings `/set` changes, grouped as their keys are (Display, Run,
+Sessions, ...): each change is checked, saved, and applied at once, and the terminal prints what it
+saved; a change made in the terminal shows here too. `/set` or `/settings` typed in the composer
+opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
+in the terminal.
+
 <!-- From #10289 -->
-The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
-composer) turns plugins on and off and edits their settings, saved and applied at once, as
-`/plugins` does in the terminal. A plugin that declares its settings menu shows it there, sign-ins
+The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
+footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and
+applied at once, as `/plugins` does in the terminal. A plugin that declares its settings menu shows it there, sign-ins
 and `/keys` entries included, as dialogs in the page; any other plugin's own menu opens in the
 terminal.
 
@@ -217,3 +226,59 @@ deletes a session, and archiving removes no folder or worktree. It needs `worksp
 the chat offers to do in one click, and uses the session's model. Its conversation is kept across
 reloads and restarts. The session's own agent gets none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
+
+## Several live sessions
+
+`clai2 --web` keeps every session you open live in the one CLAI process: each runs its own turns in
+its own folder, with its own plugins and input queue, while the others run theirs. The page watches
+the sessions it shows over its one WebSocket.
+
+### Wire protocol
+
+Sessions are named by their conversation ID, the `id` the sidebar lists.
+
+- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`) carry `"session": "<conversation id>"` and go only to the
+  connections watching that session. A `snapshot` names its session in `session.id`.
+- **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
+  and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and
+  carry no `session`; every `snapshot` lists the open dialogs.
+- `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
+  conversation, or changes state:
+  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
+  `queued` means input waits while that session's turn runs; `asking` means a question its turn
+  asked waits for the user.
+- The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
+  watches. The server answers with a `snapshot` for each newly watched live session. An ID that is not
+  live yet stays watched: its `snapshot` comes once it opens. A connection that never sends `watch`
+  (an older page, `web/client.py`) watches the default session, as before, and gets its `snapshot`
+  when another session becomes the default. A watched session is never closed for being idle.
+- When a live session switches conversation (`/new` or `/resume` typed in it), its watchers get a
+  `snapshot` for the new ID, and `live` changes.
+
+Routes for one live session, `{id}` its conversation ID; each answers 404 when it is not live:
+
+| Route | Does |
+|---|---|
+| `GET /api/sessions/{id}/state` | its `snapshot` |
+| `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
+| `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
+| `GET /api/sessions/{id}/complete?text=…` | Tab completions |
+| `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
+| `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
+| `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
+| `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer a settings menu's dialog, as `/api/dialogs/…` |
+
+`POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
+one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
+optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
+the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
+opens no other sessions (`/web` from a terminal), both switch the one session instead, with `/resume`
+or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+delete) and `/api/tasks/{task_id}/…` are unchanged.
+
+The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
+`/api/switch`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the default session: the
+one this page last opened or started while it stays live, else the most recently opened.
+`/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
+orchestrators of other CLAI versions use them.
