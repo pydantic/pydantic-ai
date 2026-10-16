@@ -500,7 +500,8 @@ async def test_nested_run_measures_inherited_deadline_with_parent_clock():
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
-async def test_timeout_requires_asyncio():
+@pytest.mark.parametrize('timeout', [0, LONG_TIMEOUT])
+async def test_timeout_requires_asyncio(timeout: float):
     """Expiry is scheduled on the asyncio event loop, so under another backend `timeout=` fails before the run starts."""
     requests = 0
 
@@ -512,5 +513,39 @@ async def test_timeout_requires_asyncio():
     agent = Agent(FunctionModel(model_func))
 
     with pytest.raises(UserError, match='`timeout=` requires the asyncio event loop'):
-        await agent.run('go', timeout=LONG_TIMEOUT)
+        await agent.run('go', timeout=timeout)
     assert requests == 0
+
+
+@dataclass
+class _AdjustableClock(AbstractCapability[object]):
+    """A run clock the test moves forward, to pass a deadline without waiting for it."""
+
+    now: datetime = _FIXED_NOW
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        return lambda: self.now
+
+
+async def test_task_outliving_a_timed_run_does_not_inherit_its_deadline():
+    """A task spawned inside a timed run copies its context, but once the run is over its deadline no longer applies."""
+    clock = _AdjustableClock()
+    agent = Agent(TestModel(), capabilities=[clock])
+    sub_agent = Agent(TestModel())
+    run_finished = asyncio.Event()
+    background: list[asyncio.Task[str]] = []
+
+    async def later_untimed_run() -> str:
+        await run_finished.wait()
+        return (await sub_agent.run('later')).output
+
+    @agent.tool_plain
+    async def spawn() -> str:
+        background.append(asyncio.create_task(later_untimed_run()))
+        return 'spawned'
+
+    await agent.run('go', timeout=LONG_TIMEOUT)
+    # The finished run's deadline passes before the task it spawned starts an agent run of its own.
+    clock.now += timedelta(seconds=LONG_TIMEOUT * 2)
+    run_finished.set()
+    assert await background[0] == 'success (no tool calls)'

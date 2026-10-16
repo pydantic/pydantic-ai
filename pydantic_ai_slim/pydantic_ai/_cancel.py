@@ -314,31 +314,47 @@ def take_run_binding() -> RunBinding | None:
     return binding
 
 
-_current_run_deadline: ContextVar[datetime | None] = ContextVar('pydantic_ai.run_deadline', default=None)
-"""The deadline of the agent run whose context this is, inherited by agent runs started inside it."""
+@dataclasses.dataclass
+class _InheritedDeadline:
+    """A run's deadline and clock as runs started inside it inherit them, while that run is active."""
 
-_current_run_clock: ContextVar[Callable[[], datetime]] = ContextVar('pydantic_ai.run_clock', default=_utils.now_utc)
-"""The clock the run's deadline is measured against: replay-safe inside a durable workflow."""
+    deadline: datetime
+    clock: Callable[[], datetime] | None
+    active: bool = True
+
+
+_current_run_deadline: ContextVar[_InheritedDeadline | None] = ContextVar('pydantic_ai.run_deadline', default=None)
+"""The deadline of the agent run whose context this is, inherited by agent runs started inside it.
+
+A task spawned inside the run copies this context and can outlive the run, so the run marks it
+inactive on exit: a finished run's deadline no longer applies to agent runs that task starts.
+"""
+
+
+def _active_run_deadline() -> _InheritedDeadline | None:
+    inherited = _current_run_deadline.get()
+    return inherited if inherited is not None and inherited.active else None
 
 
 def current_run_clock() -> Callable[[], datetime]:
     """The clock that remaining run time is measured against in this context."""
-    return _current_run_clock.get()
+    inherited = _active_run_deadline()
+    return inherited.clock if inherited is not None and inherited.clock is not None else _utils.now_utc
 
 
 def inherited_run_deadline() -> datetime | None:
-    """The deadline a run started in this context inherits from the run it was started inside of."""
-    return _current_run_deadline.get()
+    """The deadline a run started in this context inherits from the active run it was started inside of."""
+    inherited = _active_run_deadline()
+    return inherited.deadline if inherited is not None else None
 
 
 @contextmanager
 def provide_run_deadline(deadline: datetime, clock: Callable[[], datetime] | None = None) -> Generator[None]:
-    """Make `deadline` (and the clock it's measured against) the one runs started in this context inherit."""
-    deadline_token = _current_run_deadline.set(deadline)
-    clock_token = _current_run_clock.set(clock) if clock is not None else None
+    """Make `deadline` (and the clock it's measured against, the system clock by default) the one runs started in this context inherit."""
+    inherited = _InheritedDeadline(deadline, clock)
+    token = _current_run_deadline.set(inherited)
     try:
         yield
     finally:
-        if clock_token is not None:
-            _current_run_clock.reset(clock_token)
-        _current_run_deadline.reset(deadline_token)
+        inherited.active = False
+        _current_run_deadline.reset(token)

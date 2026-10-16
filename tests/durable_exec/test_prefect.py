@@ -2498,7 +2498,6 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
         'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
-        'deadline',  # a time bound on the run rather than an input to a task; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
@@ -2757,6 +2756,51 @@ async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:
     original, retried = attempts
     assert original['left'] != original['right']
     assert retried == original
+
+
+@pytest.mark.parametrize('retry_timeout', [3600, 1800])
+async def test_flow_retry_replays_tool_result_only_under_the_same_deadline(retry_timeout: int) -> None:
+    """A tool that can read the run's deadline replays its result on a flow retry only if the retry has the same deadline."""
+    tool_runs: list[datetime | None] = []
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('budgeted_work')])
+
+    toolset = FunctionToolset[object](id='deadline_replay_toolset')
+
+    @toolset.tool
+    async def budgeted_work(ctx: RunContext[object]) -> str:
+        tool_runs.append(ctx.deadline)
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'deadline_replay_agent_{retry_timeout}',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability[object]()],
+    )
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go', run_id='budgeted-run', timeout=3600 if attempts == 1 else retry_timeout)
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'done'
+    if retry_timeout == 3600:
+        # Same recorded start time and timeout: the retry replays the tool's result.
+        assert len(tool_runs) == 1
+    else:
+        # A shorter budget is a different deadline, so the tool runs again under it.
+        first, retried = tool_runs
+        assert first is not None and retried is not None
+        assert retried == first - timedelta(seconds=3600 - retry_timeout)
 
 
 async def test_timeout_in_flow() -> None:
