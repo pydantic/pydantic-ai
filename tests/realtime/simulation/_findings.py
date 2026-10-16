@@ -68,7 +68,7 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
+ALL = frozenset({'openai', 'azure', 'xai', 'elevenlabs', 'gemini', 'gpt-live'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai', 'elevenlabs'})
 GEMINI = frozenset({'gemini'})
 

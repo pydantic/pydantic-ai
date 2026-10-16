@@ -24,9 +24,9 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
     such as `https://api.eu.residency.elevenlabs.io` to keep the connection inside a region.
     """
 
-    # TODO(elevenlabs-launch): this class is shape-compatible with the `ElevenLabsProvider` in #7964 (same
-    # constructor, `api_key`, `base_url`, `client`), so the two branches merge into one shared provider. See
-    # LAUNCH_CHECKLIST.md "Coexisting with #7964" for how `realtime_model_profile` is split between them.
+    # TODO(elevenlabs-launch): #7964's `ElevenLabsAgentsProvider` (name `'elevenlabs-agents'`) is this class with
+    # another `name` and `realtime_model_profile`. Move the shared constructor/properties into one private base
+    # both subclass; see scratch/LAUNCH_CHECKLIST.md "Coexisting with #7964".
 
     @property
     def name(self) -> str:
