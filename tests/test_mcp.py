@@ -113,6 +113,9 @@ with try_import() as imports_successful:
     from pydantic_ai.messages import TextContent
     from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
+with try_import() as openai_imports_successful:
+    from pydantic_ai.providers.openai import OpenAIProvider
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
@@ -1608,6 +1611,31 @@ class TestMCPToolsetIntegration:
             async with toolset:
                 assert toolset.is_running
         assert 'sampling_handler' not in str(caught[0].message)
+
+    @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+    async def test_agent_sampling_model_outlives_entered_agent(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """A sampling model set inside `async with agent:` keeps its client open after the agent context exits.
+
+        With `defer_model_check=True` the agent context enters a model it infers from the model ID and closes
+        that model's client on exit, so MCP sampling must get its own model rather than that one.
+        """
+        monkeypatch.setenv('OPENAI_API_KEY', 'test')
+        # Give each inferred provider its own HTTP client; the autouse test fixture shares one per test.
+        monkeypatch.setattr('pydantic_ai.providers._openai_compatible.create_async_httpx2_client', httpx2.AsyncClient)
+        toolset = MCPToolset(fastmcp_server)
+        agent = Agent('openai-responses:gpt-4o', toolsets=[toolset], defer_model_check=True)
+        async with agent:
+            agent.set_mcp_sampling_model()
+
+        sampling_model = toolset.sampling_model
+        assert sampling_model is not None
+        provider = sampling_model.provider
+        assert isinstance(provider, OpenAIProvider)
+        assert not provider.client.is_closed()
+        async with sampling_model:
+            pass
 
     async def test_sampling_and_elicitation_do_not_warn_on_legacy_session(
         self, fastmcp_server: FastMCP[None], as_legacy_mcp_session: None

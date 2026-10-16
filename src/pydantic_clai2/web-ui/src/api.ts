@@ -5,6 +5,7 @@ import type {
   MenuEdited,
   MenuInfo,
   OrchestratorState,
+  PanelInfo,
   PluginAction,
   PluginRow,
   Project,
@@ -90,6 +91,7 @@ export const api = {
   runAction: (name: string, key: string) =>
     call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}/action`),
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
+  panels: () => call<PanelInfo[]>('GET', '/api/panels'),
   workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
   openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
 }

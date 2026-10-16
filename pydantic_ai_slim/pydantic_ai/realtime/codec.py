@@ -336,6 +336,10 @@ class SessionUsage:
     `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
     which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
     but attributed to no `ModelResponse`.
+
+    A response-scoped report read as the session closes, after its response was recorded, goes into the run total
+    only: there's no response left to add it (or its `provider_details`) to. On a provider whose responses aren't
+    requests (GPT-Live), it still counts as one, against `request_limit` too.
     """
 
     context_window_used: float | None = None
@@ -519,8 +523,9 @@ class RealtimeConnection(ABC):
         it has stopped reading the connection and before it reports the session's usage, whenever the
         session owns the provider session (not on a WebRTC sideband, where ending it would end the browser's
         call). A provider that already ended the session, or went away, has nothing more to ask: yield what
-        it reported that the session hasn't taken yet, if anything. Only session-scoped usage belongs here:
-        there is no response left to attribute anything else to.
+        it reported that the session hasn't taken yet, if anything. Its usage counts toward the session, but
+        is attributed to no response, as none is left to take it; a response-scoped report (a request the model
+        made, on a provider whose responses aren't requests) also counts as that request.
 
         The session bounds how long it iterates, and stops at a transport error; everything yielded until
         then is recorded. It skips this when the session is closing because it was cancelled.

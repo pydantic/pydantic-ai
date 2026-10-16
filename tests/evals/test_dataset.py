@@ -899,6 +899,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
             ],
             span_id=_any_span_id,
             trace_id=_any_trace_id,
+            dataset_name='example',
         )
     )
 

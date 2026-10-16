@@ -18,6 +18,9 @@ interface Props {
   placeholder: string
   /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
   local?: Readonly<Record<string, () => void>>
+  /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
+  draft: string
+  onDraft: (draft: string) => void
   /** Where a message goes, and what stops the running turn: the session's by default. */
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
@@ -28,10 +31,23 @@ interface Props {
 
 /** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { running, meter, controls, model, disabled, placeholder, local, chat, commands = true, label = 'Message CLAI', onError },
+  {
+    running,
+    meter,
+    controls,
+    model,
+    disabled,
+    placeholder,
+    local,
+    draft: text,
+    onDraft: setText,
+    chat,
+    commands = true,
+    label = 'Message CLAI',
+    onError,
+  },
   ref,
 ) {
-  const [text, setText] = useState('')
   const [suggestions, setSuggestions] = useState<CompletionInfo[]>([])
   const [selected, setSelected] = useState(0)
   const [models, setModels] = useState<string[] | null>(null)
@@ -96,7 +112,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (!value || disabled) return
     setText('')
     setSuggestions([])
-    const handle = local?.[value]
+    // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
+    const handle = local && Object.hasOwn(local, value) ? local[value] : undefined
     if (handle) {
       handle()
       return

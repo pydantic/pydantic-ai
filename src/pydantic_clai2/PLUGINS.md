@@ -215,7 +215,7 @@ in the configured keyring backend, not plugin settings. Plugins that need an API
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
 backend exists, credentials go to a per-account `0600` file under the user's CLAI config
 directory instead. None of this changes plugin APIs. See
-[Codex authentication](README.md#codex-authentication) for storage and security
+[Codex authentication](docs/reference.md#codex-authentication) for storage and security
 details.
 
 ### GitHub Copilot subscriptions
@@ -491,6 +491,15 @@ its link, where Esc cancels it. From the web UI's plugins panel, **Change…** o
 row asks each step as a dialog in the page. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
+In the [web UI](#web-this-session-in-your-browser), the plugin adds a **Logfire live view** side
+panel: the project's live view filtered to the current conversation's trace
+(`?q=trace_id='...'`), with the latest run's details open (`traceId` and `spanId`), so it follows
+each new turn. The project's page comes from Logfire's `/v1/info` for the write token the plugin
+sends with, asked once per load when the panel first shows; without a token, or with sending off,
+the panel says how to set a project up. Logfire's `frame-ancestors` admits no `http://127.0.0.1`
+port today, so the panel opens the live view in a window beside the web UI. The panel lives in
+`pydantic_clai2.builtin_plugins.logfire_live`.
+
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
@@ -542,7 +551,7 @@ helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
 wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
-to stock built-ins. See [telemetry](README.md#telemetry-and-references).
+to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 ## Linear: issues and projects
 
@@ -927,7 +936,7 @@ to keep. This includes existing linked worktrees. Removal uses Git without
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
 elsewhere, or `/workspace`, moves CLAI to that session's directory. Plugins do not own worktree cleanup.
-See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
+See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
 
@@ -1032,23 +1041,32 @@ are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 upgrade never loads new definitions without your say. Old
 `pydantic_ai_harness.coder:Coder` declarations load through this module and are
 not rewritten. `/plugins configure coder` edits this list; see
-[Agent folders](README.md#agent-folders). The same settings menu also opens in
+[Agent folders](docs/reference.md#agent-folders). The same settings menu also opens in
 the [web UI](#web-this-session-in-your-browser)'s plugins panel, where the Agent
 folders row's **Change…** button asks the folder list, its edits, and the
 directory browser as dialogs in the page.
 
-`skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
+`skill_folders` is a JSON list of [Agent Skills](docs/reference.md#agent-skills) folders,
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
 "~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
 declarations that omit it; `~/` means your home directory, a relative path is in
-the project, and `[]` turns skills off. `coder` binds harness `Skills` with
+the project, and `[]` turns skills off. Each relative folder is followed by the
+same folder in each directory above the launch directory, up to the git root,
+nearest first (`CoderSettings.skill_libraries(parents=...)`); outside a git
+repository only the launch directory is used. `coder` binds harness `Skills` with
 `missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
-folder is skipped and the earlier of two skills with one name wins. It reads the
+folder is skipped, a folder that is a file or a single skill package is skipped
+with a notice, and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. A folder setting that fails, such as a path to one skill
-instead of its parent folder, prints `Skills are off: ...` and leaves skills
-out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
+model's catalog. A `/skill-name` command reads them again when it runs, so it
+sends the current `SKILL.md`, and fails with a message when the skill is gone.
+Only skills with `user_invocable` (no `user-invocable: false`) get a command;
+harness leaves skills with `disable-model-invocation: true` out of the model's
+catalog. Since CLAI hides library warnings, `coder` prints the skills whose
+frontmatter fields harness ignores as a startup notice. A folder that cannot be
+read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
+setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
@@ -1060,7 +1078,7 @@ update the task inspector rather than entering the parent's transcript. Core hoo
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 
-See [managed tasks](README.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
+See [managed tasks](docs/reference.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
 Ctrl+B, independent histories, explicit resume, completion-report provenance, and
 workspace restrictions. Supplied agents and headless calls are unchanged. Do not
 hold a parent's `RunContext` or call its event emitter after that run has ended;
@@ -1087,7 +1105,7 @@ A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
 repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
-[Project settings](README.md#project-settings).
+[Project settings](docs/reference.md#project-settings).
 
 Some plugins already include others. `coder` includes task delegation, so while
 `coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
@@ -1110,7 +1128,7 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn. A
+`summarization_model`; see the [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 
 ```text
@@ -1217,13 +1235,14 @@ browser's light or dark mode, and any other palette paints the page as it paints
 with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
 and a change made in the terminal shows in the browser once the command ends.
 
-The **REPL** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
-cells: each cell's code as the model writes it, the tools it calls from the sandbox as they run
-(speculative launches marked), and what it printed and returned. Code mode keeps the REPL with
-the session between turns and on resume, so cells are numbered across the session, as a
-notebook numbers them, until a `restart: true` clears it. Its input runs your own cell with
-`/repl` between turns, shown as yours; your next prompt tells the model what you ran. A saved
-session keeps no sandbox call log, so its cells list the calls found in their code.
+The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
+cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes
+it, the tools it calls from the sandbox as they run (speculative launches marked), and what it
+printed and returned. Code mode keeps Monty's state with the session between turns and on resume,
+so cells are numbered across the session, as a notebook numbers them, until a `restart: true`
+clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
+prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
+the calls found in their code.
 
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
@@ -1250,6 +1269,13 @@ status, origin, and description, and a switch that turns it on or off as `/plugi
   for a list of strings, and JSON for anything else. Each change is validated by the model and
   saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
   in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+
+Plugins' [side panels](#show-a-page-beside-the-conversation-get_side_panels) each get a button
+at the top right; Cmd/Ctrl+Shift+L toggles the first one, such as `observability`'s Logfire live
+view. A panel sits on the right, resized by dragging its left edge; the browser remembers which
+one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
+others open in a window beside this one, which follows the panel as its page changes. The page's
+own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot
@@ -2136,7 +2162,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+`/update`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
@@ -2208,17 +2234,19 @@ contributes nothing:
 | `get_status_segments()` | text appended to the status row |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
+| `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
-runtime: the console, the conversation, the status row, the full screen, and its
-saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
+runtime: the console, the conversation, the status row, the full screen, its
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
+saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`
 
-Seven `async` methods fire outside the agent run, in the shell:
+Eight `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2229,6 +2257,7 @@ Seven `async` methods fire outside the agent run, in the shell:
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+| `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2251,12 +2280,21 @@ command is running.
 `on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
 opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
 the text the command returned, which the shell printed (empty when it returned none, as for a
-menu closed without changes; what the command printed itself, such as the history `/resume`
-replays, is not in it), and `error` the exception it failed with, which the shell showed
+menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
+command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
 instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
 with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
+
+`on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
+event from the task's own run (text, thinking, tool calls and results), its
+`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
+it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
+shows. It fires for every stream event of every running task, down to each text and thinking
+delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
+elsewhere. A failure is printed and the task goes on.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2420,7 +2458,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2433,8 +2471,8 @@ prompt the keyboard does:
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
-  where only the keyboard closes it; send `/model NAME` or `/resume ID` instead. A headless `-p`
-  run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead.
+  A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
   which reads its prompts line by line.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
@@ -2442,7 +2480,8 @@ prompt the keyboard does:
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
   CLAI's settings, such as one built in a test without `setting=`.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
-  `False` when nothing was running. A menu stays open, and a headless `-p` run is not cancelled.
+  `False` when nothing was running. A menu open over the cancelled turn or command closes with
+  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
@@ -2451,7 +2490,7 @@ prompt the keyboard does:
   session persistence: `listing(query=...)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
   refuses the current conversation and one running in another CLAI. As in `/resume`, a fork gets
-  its own copy of the session's `run_code` REPL, and a deleted session's REPL is deleted with it. Like opening `/resume`,
+  its own copy of the session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
@@ -2470,6 +2509,17 @@ prompt the keyboard does:
   its settings changed; it refuses while that plugin's menu is open elsewhere. Adding and removing
   declarations, and a menu a plugin did not declare, go through the prompt:
   `send_input('/plugins configure NAME')`.
+- `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
+  conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
+  such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
+  `-p` run; with an agent other than CLAI's stock one; and on a host built outside the shell. Read
+  it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
+  each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
+  (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
+  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
+  `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
+  `send_input` would. An ID from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
@@ -2990,6 +3040,43 @@ text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
 
+### Show a page beside the conversation: `get_side_panels()`
+
+The [web UI](#web-this-session-in-your-browser) shows each `SidePanel` as a button at the top
+right that opens a resizable panel on the right. A panel names itself (`id`, `title`, and
+`icon`, `panel` or `traces`) and has a `view`: an async function returning a `PanelView`, an
+`http` or `https` `url` to show, or a `note` saying why there is none, such as how to set the
+plugin up. With no `url`, the panel shows the note and a button that opens the plugin's settings.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import PanelView, Plugin, SidePanel
+
+
+class Dashboard(Plugin):
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        return (SidePanel(id='board', title='Dashboard', view=self.board),)
+
+    async def board(self) -> PanelView:
+        return PanelView(url=f'https://dash.example.com/sessions/{self.host.session_id}')
+```
+
+The page asks for every view when it connects, when the conversation changes, when a turn starts
+or ends, after each command, and, while a turn runs with a panel or its window open, every few
+seconds, so the page can follow the conversation. Keep `view` quick: cache what needs the network.
+A view that raises, or takes more than ten seconds, shows that in the panel instead, and a `url`
+that is not a well-formed `http` or `https` address with a host is refused.
+
+Only `https` pages, or `http` pages on `127.0.0.1` or `localhost`, can be framed: the web UI's
+own `Content-Security-Policy` allows no others. For those, the server reads the response headers,
+at the page's address without the query, until it has them once, and frames the page only when
+its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Options`, lets the
+web UI's address show it; a browser would draw an error box instead. The server follows no
+redirect, so a page that redirects or answers an error is not framed, nor one that does not
+answer within five seconds; those are read again next time. Otherwise the panel offers to open the page in a
+window beside CLAI's, and points that window at the view's new `url` as it changes.
+
 ### Offer a spinner: `get_spinners()`
 
 Adds a working animation to `/spinner`. The user selects it there or with
@@ -3241,7 +3328,7 @@ The connection is saved in the configured Python keyring backend after selection
 
 ## Saved API keys
 
-Startup [`.env` loading](README.md#environment-variables) makes values available to
+Startup [`.env` loading](docs/reference.md#environment-variables) makes values available to
 providers and plugins that read the environment. It does not import credentials
 into `/keys` or replace a plugin's saved-key picker.
 
@@ -3515,7 +3602,7 @@ The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
 saved workspace paths are unchanged. Selecting a session resumes immediately in
 the current directory, without confirmation. See
-[Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
+[Saved sessions](docs/reference.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
@@ -3525,7 +3612,7 @@ case-insensitive and includes text instructions in multimodal prompts.
 
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
 API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
-paths attaches local files. See [Pasting images](README.md#pasting-images) for
+paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
 platform requirements and limits.
 
 `turn_start.text` and `turn_end.text` contain the text caption with attachment
@@ -3556,4 +3643,4 @@ with `plugin_settings` merged over their stock settings. Saved, drop-in, and pro
 plugins never load. Each plugin gets `session_start` when the context opens and
 `session_end` when it closes, with reason `error` if the block raised. No turn hooks
 fire, no `/commands` run, and nothing renders: the host runs the agent. See
-[The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).
+[The stock agent in your own code](docs/reference.md#the-stock-agent-in-your-own-code).

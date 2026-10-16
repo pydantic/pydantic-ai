@@ -138,10 +138,17 @@ export const OrchestratorIcon = icon(
     <path d="m7 7 3.2 3.2M17 7l-3.2 3.2M12 14.5V18" />
   </>,
 )
+export const TracesIcon = icon(<path d="M3 12h4l3-8 4 16 3-8h4" />)
+export const PanelIcon = icon(
+  <>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M15 4v16" />
+  </>,
+)
 export const ExternalIcon = icon(
   <>
     <path d="M14 4h6v6" />
-    <path d="m20 4-9 9" />
-    <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+    <path d="M20 4 11 13" />
+    <path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />
   </>,
 )

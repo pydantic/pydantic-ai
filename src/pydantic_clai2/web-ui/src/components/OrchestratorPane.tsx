@@ -24,6 +24,8 @@ const CHAT = { send: orchestrator.send, interrupt: orchestrator.interrupt }
 export function OrchestratorPane({ view, model, connected, onShowSidebar, onError }: Props) {
   const { chat, enabled } = view
   const [enabling, setEnabling] = useState(false)
+  // `Composer` leaves its draft to its owner.
+  const [draft, setDraft] = useState('')
   const report = useCallback((error: unknown) => onError(error instanceof Error ? error.message : String(error)), [onError])
   const openWorkspace = useCallback((id: string) => void openWorkspacePage(id).catch(report), [report])
 
@@ -58,6 +60,8 @@ export function OrchestratorPane({ view, model, connected, onShowSidebar, onErro
       chat={CHAT}
       commands={false}
       label="Message the orchestrator"
+      draft={draft}
+      onDraft={setDraft}
       onError={onError}
     />
   )

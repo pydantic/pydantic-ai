@@ -42,11 +42,11 @@ Two sub-agents, one orchestrator:
 from pydantic_ai import Agent
 from pydantic_ai_harness import DynamicWorkflow
 
-reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
-summarizer = Agent('openai:gpt-5', name='summarizer', description='Summarizes findings.')
+reviewer = Agent('{{ openai:medium }}', name='reviewer', description='Reviews code for bugs.')
+summarizer = Agent('{{ openai:medium }}', name='summarizer', description='Summarizes findings.')
 
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[DynamicWorkflow(agents=[reviewer, summarizer])],
 )
 ```
@@ -87,7 +87,7 @@ class Score(BaseModel):
     value: int
     reason: str
 
-critic = Agent('openai:gpt-5', name='critic', description='Scores an answer 0-10.', output_type=Score)
+critic = Agent('{{ openai:medium }}', name='critic', description='Scores an answer 0-10.', output_type=Score)
 ```
 
 Inside the script the model reads the fields by subscript, the way it would read a JSON object:
@@ -179,7 +179,7 @@ The catalog is fixed when a run starts, which keeps it in the prompt-cache prefi
 
 ```python
 workflow = DynamicWorkflow(agents=[reviewer])
-orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
+orchestrator = Agent('{{ openai:medium }}', deps_type=MyDeps, capabilities=[workflow])
 
 # later, from the host or from another tool:
 workflow.reveal(fixer)

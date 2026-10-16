@@ -53,7 +53,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
 from .._workspace import RejectWorkspaceInContainer
 from ._model import DBOSModel
-from ._utils import StepConfig
+from ._utils import StepConfig, using_durable_sleep
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -371,7 +371,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> Generator[None]:
         # Override with DBOSModel and DBOSMCPToolset in the toolsets.
-        # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
+        # Use the configured parallel execution mode for deterministic event ordering during DBOS replay,
+        # and durable `DBOS.sleep_async` for agent-graph waits in workflow code.
         # A per-run `event_stream_handler` is stashed on a `ContextVar` that `DBOSModel` reads inside its
         # step (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
         # the model and re-registering its DBOS steps. When no per-run handler is given, keep whatever an
@@ -384,6 +385,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             with (
                 super().override(model=self._model, toolsets=merged_toolsets, tools=[]),
                 self.parallel_tool_call_execution_mode(self._parallel_execution_mode),
+                using_durable_sleep(),
             ):
                 yield
         finally:

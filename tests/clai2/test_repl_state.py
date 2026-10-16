@@ -37,7 +37,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime import repl_state
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.repl_cells import NOTE_CHARS, ReplCell
+from pydantic_clai2.runtime.monty_cells import NOTE_CHARS, MontyCell
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
@@ -229,13 +229,13 @@ async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch
 
 
 async def test_the_session_catalog_forks_and_deletes_the_state(workspace: Path) -> None:
-    """A fork or delete from `host.sessions`, as the web UI's sidebar makes, treats the REPL as `/resume` does."""
+    """A fork or delete from `host.sessions`, as the web UI's sidebar makes, treats the Monty state as `/resume` does."""
     script = Script()
     await turn(workspace, script, 'set', session_id=SESSION_ID)
     service = catalog(workspace)
     copy = await service.fork(SESSION_ID)
     await turn(workspace, script, 'get', resume=copy.id)
-    assert script.results[-1] == '42', 'the copy continues from the REPL the original had'
+    assert script.results[-1] == '42', 'the copy continues from the Monty state the original had'
 
     await service.delete(SESSION_ID)
     assert not dump(workspace, SESSION_ID).exists()
@@ -398,7 +398,7 @@ class Asker:
             yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
 
-def repl_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> '_Shell[None, str]':
+def monty_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> '_Shell[None, str]':
     return create_shell(
         Agent(FunctionModel(asker.respond, stream_function=asker.stream)),
         deps=None,
@@ -413,18 +413,18 @@ def repl_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> '_Sh
     )
 
 
-async def test_a_user_cell_runs_in_the_session_repl(workspace: Path) -> None:
-    """`/repl` runs the user's own cell in the REPL code mode keeps, and the next prompt tells the model."""
+async def test_a_user_cell_runs_in_the_session_monty(workspace: Path) -> None:
+    """`/monty` runs the user's own cell in the Monty sandbox code mode keeps, and the next prompt tells the model."""
     asker = Asker('x + 1')
-    shell = repl_shell(workspace, asker)
-    assert await shell.commands.execute_async('/repl x = 41') == '(no output)'
-    assert await shell.commands.execute_async('/repl print("x is", x)\nx') == 'x is 41\n-> 41'
+    shell = monty_shell(workspace, asker)
+    assert await shell.commands.execute_async('/monty x = 41') == '(no output)'
+    assert await shell.commands.execute_async('/monty print("x is", x)\nx') == 'x is 41\n-> 41'
     assert shell.session.messages == [], 'cells stay out of the conversation'
 
     await shell.run_turn(TurnStart(text='what is x + 1?'), headless=True)
     assert asker.results == ['42']
     [prompt] = asker.prompts
-    assert prompt.count('Between turns, the user ran this cell in your `run_code` REPL') == 2
+    assert prompt.count('Between turns, the user ran this cell in Monty, the sandbox your `run_code` runs in') == 2
     assert 'x = 41' in prompt and prompt.endswith('what is x + 1?')
 
     # Told once: the next prompt carries no note.
@@ -433,46 +433,46 @@ async def test_a_user_cell_runs_in_the_session_repl(workspace: Path) -> None:
 
 
 async def test_a_failing_cell_is_reported_not_retried(workspace: Path) -> None:
-    shell = repl_shell(workspace, Asker('pass'))
+    shell = monty_shell(workspace, Asker('pass'))
     with pytest.raises(ValueError, match='The cell failed') as failed:
-        await shell.commands.execute_async('/repl 1 / 0')
+        await shell.commands.execute_async('/monty 1 / 0')
     assert 'ZeroDivisionError' in str(failed.value)
 
 
 async def test_notes_stay_with_their_conversation(workspace: Path) -> None:
     asker = Asker('pass')
-    shell = repl_shell(workspace, asker)
-    await shell.commands.execute_async('/repl y = 1')
+    shell = monty_shell(workspace, asker)
+    await shell.commands.execute_async('/monty y = 1')
     await shell.commands.execute_async('/new')
     await shell.run_turn(TurnStart(text='fresh'), headless=True)
     assert asker.prompts == ['fresh'], 'a cell run in another conversation is not mentioned'
 
 
-async def test_repl_refusals(workspace: Path) -> None:
-    shell = repl_shell(workspace, Asker('pass'), code_mode=False)
-    with pytest.raises(ValueError, match='Usage: /repl CODE'):
-        await shell.commands.execute_async('/repl   ')
+async def test_monty_refusals(workspace: Path) -> None:
+    shell = monty_shell(workspace, Asker('pass'), code_mode=False)
+    with pytest.raises(ValueError, match='Usage: /monty CODE'):
+        await shell.commands.execute_async('/monty   ')
     with pytest.raises(ValueError, match='Code mode is off'):
-        await shell.commands.execute_async('/repl x = 1')
-    on = repl_shell(workspace, Asker('pass'))
+        await shell.commands.execute_async('/monty x = 1')
+    on = monty_shell(workspace, Asker('pass'))
     on.session.repl_states = None
     with pytest.raises(ValueError, match='saves no sessions'):
-        await on.commands.execute_async('/repl x = 1')
+        await on.commands.execute_async('/monty x = 1')
 
 
 async def test_no_cell_runs_during_a_turn(workspace: Path) -> None:
-    shell = repl_shell(workspace, Asker('pass'))
+    shell = monty_shell(workspace, Asker('pass'))
     shell.session._running = True  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(RuntimeError, match='A turn is running'):
-        await shell.session.run_in_repl('x = 1')
+        await shell.session.run_in_monty('x = 1')
 
 
 def test_a_cell_report_reads_its_result() -> None:
-    assert ReplCell(code='', returned='not json').report() == 'not json'
-    assert ReplCell(code='', returned='[1, 2]').report() == '[1, 2]'
-    assert ReplCell(code='', returned='{"result": {"a": 1}}').report() == '-> {"a": 1}'
-    assert ReplCell(code='', returned='{"result": "text"}').report() == '-> text'
-    assert ReplCell(code='', returned=None).report() == ''
-    long = ReplCell(code='x', returned='y' * (NOTE_CHARS + 3)).note()
+    assert MontyCell(code='', returned='not json').report() == 'not json'
+    assert MontyCell(code='', returned='[1, 2]').report() == '[1, 2]'
+    assert MontyCell(code='', returned='{"result": {"a": 1}}').report() == '-> {"a": 1}'
+    assert MontyCell(code='', returned='{"result": "text"}').report() == '-> text'
+    assert MontyCell(code='', returned=None).report() == ''
+    long = MontyCell(code='x', returned='y' * (NOTE_CHARS + 3)).note()
     assert long.endswith('\n... 3 more characters') and 'It returned:' in long
-    assert ReplCell(code='x', returned='', failed=True).note().endswith('It failed:\n(nothing)')
+    assert MontyCell(code='x', returned='', failed=True).note().endswith('It failed:\n(nothing)')
