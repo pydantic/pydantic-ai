@@ -39,6 +39,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1822,6 +1823,45 @@ def test_test_model_same_name_calls_get_distinct_ids_and_both_run():
         'pyd_ai_tool_call_id__add__2',
         'pyd_ai_tool_call_id__add__2__2',
     ]
+
+
+def test_approval_request_uses_post_validation_arguments():
+    class RewriteAmount(AbstractCapability[Any]):
+        async def after_tool_validate(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            return {**args, 'amount': 50}
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('charge', {'amount': 100}, tool_call_id='charge-1')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[RewriteAmount()],
+    )
+
+    executed_amount: list[int] = []
+
+    @agent.tool
+    def charge(ctx: RunContext[Any], amount: int) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        executed_amount.append(amount)
+        return str(amount)
+
+    result = agent.run_sync('charge it')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.approvals[0].args == {'amount': 50}
+
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'charge-1': ToolApproved()}),
+    )
+    assert result.output == 'Done!'
+    assert executed_amount == [50]
 
 
 def test_tool_raises_approval_required():
