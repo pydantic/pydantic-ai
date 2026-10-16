@@ -4,10 +4,11 @@ import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from textwrap import dedent
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast, get_args
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
 from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
@@ -400,8 +401,6 @@ def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | N
     return cast('ModelProfile', translated)
 
 
-_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(get_args(DocumentMediaType))
-
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
     'supports_text_output': True,
@@ -412,7 +411,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_audio_input': False,
     'supports_image_input': True,
     'supports_document_input': True,
-    'supported_document_media_types': _DOCUMENT_MEDIA_TYPES,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
     'supports_audio_file_input': True,
     'supports_video_input': True,
     'default_structured_output_mode': 'tool',

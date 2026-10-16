@@ -2,19 +2,19 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from ._utils import is_text_like_media_type
 from .messages import AudioUrl, BinaryContent, DocumentMediaType, DocumentUrl, FileUrl, ImageUrl, VideoUrl
-from .profiles import (
-    _DOCUMENT_MEDIA_TYPES,  # pyright: ignore[reportPrivateUsage]
-    ModelProfile,
-)
+
+if TYPE_CHECKING:
+    from .profiles import ModelProfile
 
 FileInputKind = Literal['image', 'document', 'audio', 'video']
 """The kinds of file the profile's file-input flags cover."""
 
-KNOWN_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = _DOCUMENT_MEDIA_TYPES
+KNOWN_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(get_args(DocumentMediaType))
+"""Every `DocumentMediaType`: the default for `ModelProfile.supported_document_media_types`."""
 
 TEXT_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(
     media_type for media_type in KNOWN_DOCUMENT_MEDIA_TYPES if is_text_like_media_type(media_type)
