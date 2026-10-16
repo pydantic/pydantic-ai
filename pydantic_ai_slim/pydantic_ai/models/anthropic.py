@@ -586,7 +586,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     cache breakpoint to the last cacheable block and moves it forward as conversations grow.
 
     Where the model profile's `supports_auto_cache` is `False`, such as on the legacy `AsyncAnthropicBedrock`
-    client with models before Claude Opus 4.7, this falls back to per-block caching on the last user message.
+    client with models not documented to support it, this falls back to per-block caching on the last user message.
     If the last content block already has `cache_control` from an explicit `CachePoint`, it is preserved.
 
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
@@ -1111,25 +1111,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(client, AsyncAnthropicBedrock):
             # AWS grants the 1-hour cache TTL to only a subset of Claude models, and withholds structured output
             # from some that have it on the direct API, matching `BedrockConverseModel`.
-            # The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't
-            # serve from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting
-            # place a breakpoint on the last block there instead. A `supports_auto_cache` the user sets in
-            # `profile=` is the override, for models this list doesn't know yet.
-            user_profile = self._profile
-            auto_cache_overridden = (
-                user_profile is not None and not callable(user_profile) and 'supports_auto_cache' in user_profile
-            )
             _profile = merge_profile(
                 _profile,
                 AnthropicModelProfile(
                     supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name),
                     supports_json_schema_output=_profile.get('supports_json_schema_output', False)
                     and not bedrock_lacks_claude_structured_output(self._model_name),
-                    supports_auto_cache=_profile.get('supports_auto_cache', False)
-                    and (auto_cache_overridden or bedrock_claude_supports_automatic_caching(self._model_name)),
                 ),
             )
         return cast(AnthropicModelProfile, _profile)
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Narrow `supports_auto_cache` by model on the legacy Bedrock client, before the user's `profile=` applies.
+
+        The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
+        from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a
+        breakpoint on the last block there instead. Narrowing the default rather than the resolved profile lets
+        a `supports_auto_cache` the user sets explicitly win, for models this list doesn't know yet.
+        """
+        if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
+            self._model_name
+        ):
+            return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+        return profile
 
     @property
     def tool_addition_mode(self) -> Literal['by_reference'] | None:

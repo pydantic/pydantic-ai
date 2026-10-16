@@ -15,6 +15,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
 from ...conftest import try_import
@@ -62,7 +63,7 @@ class Case:
     client: str
     expected: _Breakpoints
     model_name: str = 'claude-sonnet-4-5'
-    profile: dict[str, Any] | None = None
+    profile: dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 CASES = [
@@ -75,7 +76,7 @@ CASES = [
     Case('bedrock-sonnet-4-5', 'bedrock', _LAST_BLOCK, model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0'),
     Case('bedrock-opus-4-8', 'bedrock', _AUTOMATIC, model_name='us.anthropic.claude-opus-4-8'),
     Case('bedrock-opus-5-5', 'bedrock', _AUTOMATIC, model_name='global.anthropic.claude-opus-5-5'),
-    # The profile is the override, both ways.
+    # An explicit `supports_auto_cache` in either `profile=` form is the override, both ways.
     Case(
         'bedrock-profile-on',
         'bedrock',
@@ -83,7 +84,28 @@ CASES = [
         model_name='us.anthropic.claude-sonnet-4-6',
         profile={'supports_auto_cache': True},
     ),
+    Case(
+        'bedrock-callable-profile-on',
+        'bedrock',
+        _AUTOMATIC,
+        model_name='us.anthropic.claude-sonnet-4-6',
+        profile=lambda default: {**default, 'supports_auto_cache': True},
+    ),
+    # A callable that leaves the flag alone keeps the narrowed default.
+    Case(
+        'bedrock-callable-profile-untouched',
+        'bedrock',
+        _LAST_BLOCK,
+        model_name='us.anthropic.claude-sonnet-4-6',
+        profile=lambda default: default,
+    ),
     Case('api-profile-off', 'api', _LAST_BLOCK, profile={'supports_auto_cache': False}),
+    Case(
+        'api-callable-profile-off',
+        'api',
+        _LAST_BLOCK,
+        profile=lambda default: {**default, 'supports_auto_cache': False},
+    ),
 ]
 
 
@@ -119,7 +141,7 @@ async def test_automatic_caching_by_client(allow_model_requests: None, case: Cas
         model = AnthropicModel(
             case.model_name,
             provider=AnthropicProvider(anthropic_client=clients[case.client]()),
-            profile=cast(AnthropicModelProfile | None, case.profile),
+            profile=cast('AnthropicModelProfile | Callable[[ModelProfile], ModelProfile] | None', case.profile),
         )
         await Agent(model, model_settings=settings).run('Hello')
 

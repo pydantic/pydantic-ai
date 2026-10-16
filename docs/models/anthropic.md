@@ -277,7 +277,7 @@ print(f'Cache hit ratio: {result2.response.usage.cache_hit_ratio}')
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
 
-The `AsyncAnthropicBedrockMantle`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients support automatic caching. The legacy `AsyncAnthropicBedrock` client supports it on the models that Bedrock's `InvokeModel` API [serves from its Messages API infrastructure](https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy#api-model-ids), Claude Opus 4.7 and later, and rejects it on earlier models. On those, `anthropic_cache` falls back to per-block caching on the last user message, which gives multi-turn conversations the same benefit.
+The `AsyncAnthropicBedrockMantle`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients support automatic caching. The legacy `AsyncAnthropicBedrock` client uses it on the models Anthropic [documents](https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy#api-model-ids) as served from the Messages API infrastructure. On other models, `anthropic_cache` falls back to per-block caching on the last user message, which gives multi-turn conversations the same benefit.
 
 Whether a model uses automatic caching comes from its [profile](overview.md#models-and-providers)'s `supports_auto_cache`, for both `anthropic_cache` and the unified `cache` setting. If Pydantic AI doesn't yet know that a model or platform supports it, set the flag yourself:
 
