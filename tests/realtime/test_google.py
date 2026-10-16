@@ -183,6 +183,22 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
     return GoogleRealtimeConnection(cast('AsyncSession', session))
 
 
+async def test_google_send_that_fails_answering_lost_tool_calls_takes_its_input_back() -> None:
+    """An input whose send fails while answering the calls a resumed session lost never went out."""
+
+    class _RefusesToolResponses(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            raise ConnectionClosed(None, None)
+
+    conn = _conn(_RefusesToolResponses())
+    conn._unanswered_lost_tool_calls = [('lookup', 'call-1')]  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ConnectionClosed):
+        await conn.send('Hello')
+    # The typed turn asks for no reply any more: nothing about it is pending.
+    assert conn._lifecycle.take_pending() == []  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._unanswered == []  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() -> None:
     dial, _ = _dialer()  # every re-dial fails
     conn = GoogleRealtimeConnection(
@@ -667,6 +683,7 @@ def test_ws_trace_context_does_not_duplicate_a_differently_cased_header() -> Non
     assert headers == {'Traceparent': 'preset'}
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_ws_connect_lock_is_per_event_loop() -> None:
     # The lock is process-wide by intent (it guards a replacement of the `google.genai.live.ws_connect`
     # module global), but an `anyio.Lock` binds to the loop it is first used on, so one shared instance

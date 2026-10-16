@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -22,6 +23,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     FilePart,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -40,6 +42,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Instrumentation,
@@ -47,6 +50,8 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -62,6 +67,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.decision import DecisionHandOff, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -86,6 +92,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
@@ -110,6 +117,10 @@ try:
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.durable_exec.temporal._model_errors import (
+        model_errors_as_application_errors,
+        rebuilt_model_errors,
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -406,7 +417,7 @@ async def test_logfire_plugin(client: Client):
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
-    elif isinstance(interceptor.tracer, _ProxyTracer):
+    elif isinstance(interceptor.tracer, _ProxyTracer):  # pragma: lax no cover
         assert interceptor.tracer.instrumenting_module_name == 'temporalio'  # pragma: lax no cover
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
@@ -878,7 +889,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134191)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134214)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1063,6 +1074,9 @@ def test_temporal_run_context_serialization_is_exhaustive():
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
     }
+    carried_only_when_set = {
+        '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
     all_fields = set(RunContext.__dataclass_fields__)
@@ -1070,11 +1084,50 @@ def test_temporal_run_context_serialization_is_exhaustive():
     overlap = serialized & intentionally_unserialized
     assert not overlap, f'Fields both serialized and excluded: {overlap}'
 
-    uncategorized = all_fields - (serialized | intentionally_unserialized)
+    uncategorized = all_fields - (serialized | intentionally_unserialized | carried_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+async def test_temporal_run_context_carries_tool_name_path():
+    """A toolset listed in an activity under a wrapper reads its tool's count by the wrapper's names.
+
+    The path crosses as JSON and comes back in the shape the toolsets read. A payload without it, from a worker that
+    predates it or a custom `serialize_run_context` that omits it, still loads and lists the tool by the name its
+    toolset holds it under, as before the path existed.
+
+    A unit test, not a workflow or recorded test: a workflow run shows only the count the toolset reads, not the
+    payload that crossed the activity boundary or whether an older payload still loads.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+    seen: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    async def record(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        seen.append(ctx.retry)
+        return tool_def
+
+    @toolset.tool(prepare=record)
+    async def fail(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), retries={'outer_x': 1})
+    wire = to_jsonable_python(
+        TemporalRunContext.serialize_run_context(
+            with_tool_name_layer(with_tool_name_layer(ctx, 'outer'), {'fail': 'x'})
+        )
+    )
+    assert wire['_tool_name_path'] == ['outer', {'fail': 'x'}]
+    older_wire: dict[str, object] = {key: value for key, value in wire.items() if key != '_tool_name_path'}
+
+    for payload in (wire, older_wire):
+        await toolset.get_tools(TemporalRunContext.deserialize_run_context(payload, deps=None))
+
+    assert seen == [1, 0]
+    assert '_tool_name_path' not in TemporalRunContext.serialize_run_context(ctx)
 
 
 @dataclass
@@ -2986,3 +3039,183 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
         ):
             # The error is raised before reaching here.
             pass  # pragma: no cover
+
+
+# --- Model errors crossing the activity boundary ---
+
+
+def _activity_error(cause: BaseException) -> ActivityError:
+    """An `ActivityError` caused by `cause`, as workflow code receives it."""
+    error = ActivityError(
+        'Activity task failed',
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity='worker',
+        activity_type='model_request',
+        activity_id='1',
+        retry_state=None,
+    )
+    error.__cause__ = cause
+    return error
+
+
+def _crossed(error: ModelAPIError) -> BaseException:
+    """The error workflow code sees after a model activity raised `error`."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    with pytest.raises(BaseException) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+    return rebuilt.value
+
+
+def test_model_http_error_crosses_with_its_fields():
+    error = ModelHTTPError(
+        503,
+        'gpt-test',
+        body={'error': 'overloaded'},
+        headers={'Retry-After': '7'},
+        suggested_model_id='gpt-better',
+    )
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert (rebuilt.status_code, rebuilt.model_name, rebuilt.body, rebuilt.headers, rebuilt.suggested_model_id) == (
+        503,
+        'gpt-test',
+        {'error': 'overloaded'},
+        {'retry-after': '7'},
+        'gpt-better',
+    )
+    assert rebuilt.retry_after == 7.0
+    assert str(rebuilt) == str(error)
+    assert isinstance(rebuilt.__cause__, ActivityError)
+
+
+def test_model_api_error_crosses_with_its_type():
+    rebuilt = _crossed(ModelAPIError('gpt-test', 'connection reset'))
+    assert type(rebuilt) is ModelAPIError
+    assert (rebuilt.model_name, rebuilt.message) == ('gpt-test', 'connection reset')
+
+
+def test_a_body_that_is_not_json_crosses_as_a_string():
+    class Opaque:
+        def __str__(self) -> str:
+            return 'opaque body'
+
+    rebuilt = _crossed(ModelHTTPError(500, 'gpt-test', body=Opaque()))
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert rebuilt.body == 'opaque body'
+
+
+def test_decision_hand_offs_cross_with_their_fields():
+    rebuilt = _crossed(DecisionHandOff('decider', 'search', 0.4, 'handed off'))
+    assert isinstance(rebuilt, DecisionHandOff)
+    assert (rebuilt.model_name, rebuilt.route, rebuilt.probability, rebuilt.message) == (
+        'decider',
+        'search',
+        0.4,
+        'handed off',
+    )
+
+    unsure = _crossed(UnsureRoute('decider', 'search', {'search': 0.4, 'reply': 0.6}, 0.5))
+    assert isinstance(unsure, UnsureRoute)
+    assert (unsure.probabilities, unsure.threshold) == ({'search': 0.4, 'reply': 0.6}, 0.5)
+
+
+def test_a_subclass_with_plain_reduce_state_crosses_with_it():
+    """State without a custom `__setstate__` is restored by `BaseException.__setstate__`, as pickle restores it."""
+
+    class StatefulModelError(ModelAPIError):
+        extra: int | None = None
+
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            return self.__class__, (self.model_name, self.message), {'extra': self.extra}
+
+    # Only Pydantic AI's own classes cross, so present this one as one of them.
+    StatefulModelError.__module__ = 'pydantic_ai.exceptions'
+    error = StatefulModelError('gpt-test', 'boom')
+    error.extra = 5
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, StatefulModelError)
+    assert rebuilt.extra == 5
+
+
+def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
+    recursive: list[object] = []
+    recursive.append(recursive)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(500, 'gpt-test', body=recursive)
+
+
+def test_the_application_error_keeps_the_type_temporal_retries_on():
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+    assert raised.value.type == 'ModelHTTPError'
+    assert not raised.value.non_retryable
+
+
+def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationModelError):
+        with model_errors_as_application_errors():
+            raise error
+
+    def reduce_to_a_name(self: ModelAPIError) -> str:
+        return 'not a reduce tuple'
+
+    monkeypatch.setattr(ModelAPIError, '__reduce__', reduce_to_a_name)
+    with pytest.raises(ModelAPIError):
+        with model_errors_as_application_errors():
+            raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def reduce_to_wrong_args(self: ModelHTTPError) -> tuple[type[ModelHTTPError], tuple[str, ...]]:
+        return ModelHTTPError, ('too', 'many', 'args', 'here')
+
+    monkeypatch.setattr(ModelHTTPError, '__reduce__', reduce_to_wrong_args)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+
+
+@pytest.mark.parametrize(
+    'details',
+    [
+        pytest.param((), id='no-details'),
+        pytest.param(('text',), id='not-a-dict'),
+        pytest.param(({'other': 1},), id='no-model-error'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 'os', 'qualname': 'error'}},), id='outside-pydantic-ai'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 3, 'qualname': 'error'}},), id='malformed'),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'Missing'}},),
+            id='missing-class',
+        ),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'UserError'}},),
+            id='not-a-model-error',
+        ),
+    ],
+)
+def test_other_activity_failures_are_raised_unchanged(details: tuple[object, ...]):
+    activity_error = _activity_error(ApplicationError('failed', *details, type='Whatever'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error
+
+
+def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
+    activity_error = _activity_error(TimeoutError('timed out'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error

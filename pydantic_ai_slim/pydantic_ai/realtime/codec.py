@@ -38,7 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
-from ._lifecycle import LifecycleEvent, TaggedEvent
+from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -336,6 +336,10 @@ class SessionUsage:
     `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
     which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
     but attributed to no `ModelResponse`.
+
+    A response-scoped report read as the session closes, after its response was recorded, goes into the run total
+    only: there's no response left to add it (or its `provider_details`) to. On a provider whose responses aren't
+    requests (GPT-Live), it still counts as one, against `request_limit` too.
     """
 
     context_window_used: float | None = None
@@ -371,9 +375,9 @@ class ConversationCreated:
 class ConversationItemCreated:
     """An OpenAI-protocol server reported a conversation item.
 
-    xAI uses `replayed=True` for item events emitted during the resume handshake. The session consumes
-    those items and remembers their newly assigned IDs so any follow-on content or tool events aren't
-    appended or executed again.
+    A connection that resumes a provider-side conversation marks the items the provider replays into it
+    with `replayed=True`. The session consumes those items and remembers their newly assigned IDs so any
+    follow-on content or tool events aren't appended or executed again.
     """
 
     _: KW_ONLY
@@ -448,8 +452,10 @@ class RealtimeConnection(ABC):
     """A live connection to a realtime model.
 
     Providers implement this to handle protocol-specific framing (WebSocket frames,
-    HTTP/2 messages, etc.). Content is fed in via [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send]
-    and events are consumed by iterating the connection.
+    HTTP/2 messages, etc.). Content is fed in via [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send],
+    and what the model does comes out of [`frames`][pydantic_ai.realtime.codec.RealtimeConnection.frames]: the
+    codec events, with the [lifecycle events][pydantic_ai.realtime.lifecycle] that say which response, spoken
+    turn, and input each is about. Iterating the connection yields the codec events alone.
     """
 
     transport_errors: ClassVar[tuple[type[Exception], ...]] = ()
@@ -467,8 +473,13 @@ class RealtimeConnection(ABC):
     """
 
     @abstractmethod
-    async def send(self, content: RealtimeInput) -> None:
+    async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent] | None:
         """Feed content into the session.
+
+        Returns the [lifecycle events][pydantic_ai.realtime.lifecycle] the send itself settles, if any: where the
+        input joined the conversation, say, for a provider that sends no acknowledgement to report it in. (An
+        [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] has them in
+        [`take_pending`][pydantic_ai.realtime.lifecycle.InferredLifecycle.take_pending].)
 
         Concrete connections accept provider-specific data and control inputs. OpenAI accepts audio,
         text, images, tool results, manual turn controls, cancellation, and truncation; Gemini accepts
@@ -480,35 +491,47 @@ class RealtimeConnection(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        """Iterate over events received from the model."""
+    def frames(self) -> AsyncIterator[RealtimeFrame]:
+        """Iterate over what the model does, a [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.RealtimeFrame] at a time.
+
+        Each frame holds the codec events one message from the provider makes, in order, with the
+        [lifecycle events][pydantic_ai.realtime.lifecycle] about them, and ends once the connection is gone for
+        good: by then every response it started has ended (as `'lost'` if nothing else ended it). A protocol
+        that identifies nothing itself can have an
+        [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] make its frames.
+        """
         raise NotImplementedError
 
-    _lifecycle_version: ClassVar[int] = 1
-    """Which version of the lifecycle contract this connection's events follow (see `_lifecycle.py`).
-
-    Version 1 is the codec vocabulary alone. A connection on version 2 also yields identified lifecycle
-    events from `_lifecycle_events()`.
-    """
-
-    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
-        """Every event, codec and lifecycle alike, a frame at a time, each with whether it is stale.
-
-        A frame is what one provider message (or one transition of the connection's own, such as a
-        reconnect) makes, so a consumer can apply it whole. A stale event is a codec event about a response
-        that has already ended (a repeated or late terminal, content trailing it): the codec stream
-        (`__aiter__`) carries it, the lifecycle stream (`_lifecycle_events()`) leaves it out. A version 1
-        connection has no lifecycle events and no stale ones: each codec event is a frame of its own.
-        """
-        async for event in self:
-            yield [(event, False)]
-
-    async def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
-        """Iterate over the codec events together with the lifecycle events, on a version 2 connection."""
-        async for frame in self._tagged_frames():
-            for event, stale in frame:
-                if not stale:
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        """Iterate over the codec events received from the model, stale ones included (see `frames`)."""
+        async for frame in self.frames():
+            for event in frame:
+                if isinstance(event, StaleEvent):
+                    yield event.event
+                elif not isinstance(event, LifecycleEvent):
                     yield event
+
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
+        """End the provider session, yielding the usage the provider reports only as it ends.
+
+        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+
+        The session iterates this once while closing, after
+        it has stopped reading the connection and before it reports the session's usage, whenever the
+        session owns the provider session (not on a WebRTC sideband, where ending it would end the browser's
+        call). A provider that already ended the session, or went away, has nothing more to ask: yield what
+        it reported that the session hasn't taken yet, if anything. Its usage counts toward the session, but
+        is attributed to no response, as none is left to take it; a response-scoped report (a request the model
+        made, on a provider whose responses aren't requests) also counts as that request.
+
+        The session bounds how long it iterates, and stops at a transport error; everything yielded until
+        then is recorded. It skips this when the session is closing because it was cancelled.
+
+        The default yields nothing, for providers that report all usage as it happens or that end the
+        session by closing the transport.
+        """
+        return
+        yield  # pragma: no cover
 
     @property
     def model_name(self) -> str | None:
@@ -532,7 +555,7 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: providers with native session resumption (Gemini Live, xAI) have nothing to
+        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
         replay, and one that can't seed a session at all has nowhere to put it.
         """
 
@@ -595,11 +618,11 @@ class RealtimeConnection(ABC):
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 
-        Otherwise it only brings back the finalized conversation. Native session resumption (xAI Grok Voice) restores the in-flight generation server-side, and
-        Gemini Live settles the cut turn in the connection before its
-        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so in
-        both the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and
-        trusts `state_restored`. Local replay (OpenAI, Azure OpenAI) restores only finalized turns, so
+        Otherwise it only brings back the finalized conversation. Gemini Live settles the cut turn in the
+        connection before its
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so the
+        [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and trusts
+        `state_restored`. Local replay (OpenAI, Azure OpenAI, xAI) restores only finalized turns, so
         the session settles the interrupted turn itself and reports `state_restored=False`. Defaults to
         `True`; the OpenAI connection overrides it.
         """

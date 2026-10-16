@@ -22,6 +22,7 @@ from .concurrency import (
     ConcurrencyLimit,
     ConcurrencyLimiter,
 )
+from .conversation import Conversation, ConversationTypeAdapter
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -43,6 +44,7 @@ from .exceptions import (
     ModelRetry,
     PydanticAIDeprecationWarning,
     RunCancelled,
+    RunTimedOut,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
@@ -99,6 +101,7 @@ from .messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestAttempt,
     ModelRequestPart,
     ModelRequestState,
     ModelResponse,
@@ -253,6 +256,7 @@ __all__ = (
     'FallbackExceptionGroup',
     'IncompleteToolCall',
     'RunCancelled',
+    'RunTimedOut',
     'MessageHistoryMutatedWarning',
     'PydanticAIDeprecationWarning',
     'SkipModelRequest',
@@ -306,6 +310,7 @@ __all__ = (
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
+    'ModelRequestAttempt',
     'ModelRequestPart',
     'ModelRequestState',
     'ModelResponse',
@@ -420,6 +425,8 @@ __all__ = (
     'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'Conversation',
+    'ConversationTypeAdapter',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
 

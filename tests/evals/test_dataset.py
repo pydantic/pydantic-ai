@@ -4,10 +4,9 @@ import asyncio
 import inspect
 import json
 import math
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -77,12 +76,6 @@ needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logf
 _any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_duration: float = IsNumber()  # type: ignore[assignment]
-
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 if logfire_import_successful():
@@ -906,6 +899,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
             ],
             span_id=_any_span_id,
             trace_id=_any_trace_id,
+            dataset_name='example',
         )
     )
 
@@ -1607,6 +1601,38 @@ async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInpu
     report = await example_dataset.evaluate(sync_task)
     assert report.name == 'sync_task'
     assert len(report.cases) == 2
+
+
+async def test_evaluate_wrapped_partial_task_name():
+    """A task wrapped with `@wraps` around a partial infers the underlying function's name."""
+
+    def add(value: int, offset: int = 0) -> int:
+        return value + offset
+
+    @wraps(partial(add, offset=2))
+    async def wrapped_task(value: int) -> int:
+        return partial(add, offset=2)(value)
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = await dataset.evaluate(wrapped_task, progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'add'
+
+
+def test_evaluate_sync_wrapped_partial_task_name():
+    """`evaluate_sync` infers the same underlying name for a `@wraps`-wrapped partial task."""
+
+    def add(value: int, offset: int = 0) -> int:
+        return value + offset
+
+    @wraps(partial(add, offset=2))
+    def wrapped_task(value: int) -> int:
+        return partial(add, offset=2)(value)
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = dataset.evaluate_sync(wrapped_task, progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'add'
 
 
 async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):

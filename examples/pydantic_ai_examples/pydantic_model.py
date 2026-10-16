@@ -11,6 +11,7 @@ import logfire
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -24,7 +25,7 @@ class MyModel(BaseModel):
 
 model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-5.2')
 print(f'Using model: {model}')
-agent = Agent(model, output_type=MyModel)
+agent = Agent(model, output_type=MyModel, capabilities=[Caching()])
 
 if __name__ == '__main__':
     result = agent.run_sync('The windy city in the US of A.')

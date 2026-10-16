@@ -19,21 +19,28 @@ from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
 
 import httpx2
-from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
+from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
+from .._http import (
+    DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    ConnectPoolTimeoutCap,
+    create_async_httpx2_client as create_async_httpx2_client,
+    legacy_httpx,
+)
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -47,6 +54,7 @@ from ..messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestAttempt,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
@@ -86,11 +94,12 @@ from ..profiles import (
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
+from ._prompt_cache import snap_cache_setting, split_cache_setting
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -134,6 +143,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'github-copilot',
         'heroku',
         'litellm',
+        'meta',
         'moonshotai',
         'nebius',
         'ollama',
@@ -153,6 +163,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'azure',
         'deepseek',
         'fireworks',
+        'meta',
         'nebius',
         'openai-codex',
         'openrouter',
@@ -241,6 +252,20 @@ class ModelRequestParameters:
     after checking that the model's profile supports thinking.
     """
 
+    cache: CacheSetting | None = None
+    """Resolved unified prompt-caching configuration for this request.
+
+    Set by the base `Model.prepare_request()` from the unified `cache` field in `ModelSettings`,
+    after checking that the model's profile supports caching configuration
+    ([`supports_cache`][pydantic_ai.profiles.ModelProfile.supports_cache]) and snapping a retention
+    to a supported tier. `None` means the setting is unset or the model's profile doesn't support caching
+    configuration.
+
+    Like [`thinking`][pydantic_ai.models.ModelRequestParameters.thinking], this is the requested
+    unified value: provider-specific cache settings take precedence in the model's request mapping
+    without changing it.
+    """
+
     def visibility_of(self, tool_name: str) -> ToolVisibility:
         """The resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility] for `tool_name`.
 
@@ -295,6 +320,12 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class _ModelRequestUsageLedger:
+    responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
+
+
 @dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
@@ -314,6 +345,22 @@ class ModelRequestContext:
 
     model: Model
     messages: list[ModelMessage]
+    """Messages to send for this model request.
+
+    This is an independently owned shallow list, so top-level mutations and assignments change
+    only the current request. To rewrite the persistent
+    message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
+    instead, or update both explicitly when both effects are intended.
+
+    Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
+    added to the message history, but this is deprecated and emits a warning.
+
+    This is an independent top-level list, not an independent object graph. Retained messages
+    and their parts may be the same objects as those in persistent history. Filtering, reordering,
+    or assigning the outer sequence is request-only, but mutating a contained message or part in
+    place can affect persistent history. Construct replacements down to the level being changed
+    when isolation is required.
+    """
     model_settings: ModelSettings | None
 
     model_request_parameters: ModelRequestParameters
@@ -353,6 +400,40 @@ class ModelRequestContext:
     and non-streaming requests share the same hooks — so this field is how a hook can tell them
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
+
+    _usage_response_ledger: _ModelRequestUsageLedger = field(
+        default_factory=_ModelRequestUsageLedger, repr=False, compare=False
+    )
+
+    @property
+    def _usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The model responses whose usage was counted for this request.
+
+        Empty until the model responds. It includes responses a hook later replaced and the partial response
+        of a stream the consumer stopped, and can hold more than one response when a continued response was
+        partly billed before an error hook recovered.
+        Request contexts copied with `dataclasses.replace()` see the same responses.
+
+        Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
+        `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _usage_attempts(self) -> tuple[ModelRequestAttempt, ...]:
+        """The attempts of a request that failed with no response to carry them.
+
+        Filled from a `FallbackExceptionGroup` when every model of a `FallbackModel` failed on a non-streaming
+        request, before any `on_model_request_error` hook runs and before `wrap_model_request` unwinds. A
+        streamed request has none: `FallbackModel` only rejects responses outside streaming, so its failed
+        stream attempts were never billed. Attempts that preceded a
+        response are on that response's `failed_attempts` instead, and a nested `FallbackModel`'s attempts
+        are already flattened into its outer group, so each attempt appears once. An attempt with `usage`
+        was billed. Request contexts copied with `dataclasses.replace()` see the same attempts.
+
+        Private for now, like `_usage_responses`: read by the Pydantic AI Harness's `SpendLimits`.
+        """
+        return tuple(self._usage_response_ledger.attempts)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -482,6 +563,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client the provider created if it can't be used on the running event loop.
+
+        An agent calls this at the start of each run, so that a model the run uses without entering it gets a new
+        client when the run is on a different event loop than the client was last used on. See
+        [`Provider`][pydantic_ai.providers.Provider]. A model that wraps others calls it on each of them.
+        """
+        if (provider := self.provider) is not None:
+            provider._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
+
     @property
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
@@ -503,16 +594,74 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             cls.resolve_cache_retention = legacy
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve prompt cache retention requested by provider-specific model settings.
+        """Resolve prompt cache retention requested by model settings.
 
-        The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
-        are currently considered; a future unified cache setting is not yet an input. If multiple active settings
+        The model's default settings are merged with the per-request `model_settings`. Both the unified
+        [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and provider-specific
+        settings are considered, as far as they change what's sent to the provider. If multiple active settings
         request different retention periods, the longest period wins because any longer-lived cache breakpoint can
-        keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
-        `None`, in which case the provider's
+        keep the corresponding prompt prefix available. Models without an active retention setting return `None`,
+        in which case the provider's
         [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention] applies.
         """
-        return None
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        return self._max_cache_retention(*self._effective_cache_settings(merged))
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        """The cache settings that take effect on a request with these (merged) settings.
+
+        The base implementation only knows the unified `cache` setting. Models with provider-specific cache
+        settings return those instead when any is present, since they take precedence over the unified one.
+        """
+        cache = self._resolved_cache_setting(merged_settings.get('cache'))
+        if not cache:
+            return (cache,)
+        retention, _ = split_cache_setting(cache)
+        if retention is True and (tiers := self.profile.get('supported_cache_retentions', ())):
+            # The provider's default retention is its shortest tier.
+            retention = tiers[0]
+        return (retention,)
+
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
+        return False
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
+
+        That is, neither the unified `cache` setting (including `cache=False`, which turns caching off on purpose)
+        nor a provider-specific cache setting. Used by prompt-cache health to tell users how to enable caching.
+        Models that also cache implicitly, without any configuration, override this to return `False`.
+        """
+        if not self.profile.get('supports_cache', False):
+            return False
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        return 'cache' not in merged and not self._has_provider_cache_settings(merged)
+
+    def _resolve_cache(
+        self, model_settings: ModelSettings | None, params: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Resolve the unified `cache` setting into `params.cache` and strip it from `model_settings`.
+
+        Parameters that already carry a resolved value keep it when the settings have none. The value is
+        snapped to a retention tier the model's profile supports, and `None` when the profile doesn't support
+        caching configuration.
+        """
+        if model_settings and 'cache' in model_settings:
+            requested: CacheSetting | None = model_settings['cache']
+            stripped = {k: v for k, v in model_settings.items() if k != 'cache'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
+        else:
+            requested = params.cache
+        return model_settings, replace(params, cache=self._resolved_cache_setting(requested))
+
+    def _resolved_cache_setting(self, cache: CacheSetting | None) -> CacheSetting | None:
+        """The unified `cache` value snapped to this model's supported retentions, or `None` if unset or not configurable."""
+        if cache is None or not self.profile.get('supports_cache', False):
+            return None
+        if cache is False:
+            return False
+        return snap_cache_setting(cache, self.profile.get('supported_cache_retentions', ()))
 
     @deprecated(
         '`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead.',
@@ -539,10 +688,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @staticmethod
     def _max_cache_retention(
-        *cache_settings: bool | Literal['5m', '1h'] | None,
+        *cache_settings: CacheSetting | None,
     ) -> timedelta | None:
         if '1h' in cache_settings:
             return timedelta(hours=1)
+        if '30m' in cache_settings:
+            return timedelta(minutes=30)
         if any(cache_settings):
             return timedelta(minutes=5)
         return None
@@ -756,6 +907,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
+        model_settings, params = self._resolve_cache(model_settings, params)
+
         if native_tools := params.native_tools:
             # Deduplicate native tools
             params = replace(
@@ -843,7 +996,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume.
+        `TextPart`s that any model can consume, and puts the tool results in each request in the
+        order of the calls they answer, so the request bytes (and the provider's prompt cache)
+        don't depend on the order a history happened to store them in.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -860,6 +1015,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
+        # history was authored with, and an announcement opening the first request is not part of it.
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -916,9 +1075,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
-            messages = _wrap_non_leading_system_prompts(messages)
+            messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
-        return messages
+        return _order_tool_results_by_call(messages)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -1115,6 +1274,8 @@ class StreamedResponse(ABC):
     state: ModelResponseState = field(default='complete', init=False)
     """Lifecycle state of the response."""
     metadata: dict[str, Any] | None = field(default=None, init=False)
+    failed_attempts: list[ModelRequestAttempt] | None = field(default=None, init=False)
+    """Earlier attempts at this request that failed before this stream was opened, see [`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]."""
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
@@ -1211,6 +1372,10 @@ class StreamedResponse(ABC):
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
+                        raise
+                except ModelAPIError as e:
+                    # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+                    if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
                         raise
                 else:
                     # Only natural `StopAsyncIteration` on a stream that wasn't
@@ -1320,6 +1485,7 @@ class StreamedResponse(ABC):
             finish_reason=self.finish_reason,
             state=state,
             metadata=self.metadata,
+            failed_attempts=self.failed_attempts,
         )
 
     @property
@@ -1509,13 +1675,13 @@ class CompletedStreamedResponse(StreamedResponse):
         pass
 
     def get(self) -> ModelResponse:
+        response = self.response
         if isinstance(self._replay_events, list):
-            return replace(
-                self.response,
-                parts=self._parts_manager.get_parts(),
-                state=super().get().state,
-            )
-        return self.response
+            response = replace(response, parts=self._parts_manager.get_parts(), state=super().get().state)
+        # A `FallbackModel` that fell back to the model producing this stream records its attempts here.
+        if self.failed_attempts:
+            response = replace(response, failed_attempts=[*self.failed_attempts, *(response.failed_attempts or [])])
+        return response
 
     @property
     def usage(self) -> RequestUsage:
@@ -1784,7 +1950,9 @@ def infer_model(  # noqa: C901
         from .openai_codex import OpenAICodexModel
 
         return OpenAICodexModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
+    # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
+    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API.
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
@@ -1819,6 +1987,13 @@ def infer_model(  # noqa: C901
         if not isinstance(provider, SystemOneProvider):
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
+    elif model_kind == 'openai-decisions':
+        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from .openai_decisions import OpenAIDecisionsModel
+
+        if not isinstance(provider, OpenAIDecisionsProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1845,11 +2020,14 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
     providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+    Each call creates a new client instance. A provider that calls this itself, because you didn't pass
+    an `http_client`, closes the client when the provider (or agent) exits. A client you create with it
+    and pass as `http_client` is yours to close.
 
-    The default timeouts match those of OpenAI,
+    The default timeouts and connection pool limits match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+    A number of seconds passed as an individual request's timeout can shorten the client's `connect`
+    timeout and its pool timeout (`timeout`), but never lengthen them.
 
     Raises:
         ImportError: If legacy `httpx` is not installed.
@@ -1865,7 +2043,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
+        limits=httpx.Limits(
+            max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        ),
         headers={'User-Agent': get_user_agent()},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
     )
 
 
@@ -2348,12 +2530,14 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
-    parts those are is `_standing_system_prompt_count`'s
-    question, and it is not simply "everything in the first request".
+    parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
+    in the first request". The caller counts them on the history as authored and passes
+    `standing_prompt_count`, because rendering a `ToolAvailabilityDeltaPart` can put an announcement
+    in front of the first request, where counting again would take it for the standing prompt.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2368,7 +2552,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
     for offset, msg in enumerate(messages[first_request_idx:]):
-        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
@@ -2380,6 +2564,47 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
             changed = True
         else:
             new_messages.append(msg)
+
+    return new_messages if changed else messages
+
+
+def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Order the tool results in each request by the order of the calls they answer.
+
+    The order results are stored in depends on how they were produced: `end_strategy='early'` stores output
+    tool results first, and a UI client such as AG-UI rebuilds them in the order the tools completed. The
+    provider's prompt cache is keyed on the bytes sent, so the same exchange has to render the same way
+    whichever path built the history. Only the positions holding a `ToolReturnPart` or `RetryPromptPart` that
+    answers a call in the immediately preceding `ModelResponse` are refilled, in call order; every other part
+    keeps its position, and results answering the same call keep their relative order.
+
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    previous: ModelMessage | None = None
+    for message in messages:
+        if isinstance(message, ModelRequest) and isinstance(previous, ModelResponse):
+            call_order: dict[str, int] = {}
+            for part in previous.parts:
+                if isinstance(part, ToolCallPart):
+                    call_order.setdefault(part.tool_call_id, len(call_order))
+            answers = [
+                (index, part)
+                for index, part in enumerate(message.parts)
+                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_call_id in call_order
+            ]
+            slots = [index for index, _ in answers]
+            results = sorted((part for _, part in answers), key=lambda part: call_order[part.tool_call_id])
+            if any(message.parts[index] is not result for index, result in zip(slots, results)):
+                parts = list(message.parts)
+                for index, result in zip(slots, results):
+                    parts[index] = result
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+        previous = message
 
     return new_messages if changed else messages
 
@@ -2592,9 +2817,6 @@ def _announce_tool_availability_delta_messages(
     runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
     cached prefix ahead of it survives.
     """
-    # If truncation promotes a never-sent delta request to first position, its announcement may
-    # hoist with the standing prompt. All parts still precede the same assistant response, and the
-    # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
     is_first_kept_request = True
@@ -2628,12 +2850,12 @@ def _announce_tool_availability_delta_messages(
             # so the announcements sort to the back. One exception: system prompts opening the
             # history's first request are the agent's standing prompt, which the adapters lift into
             # the provider's dedicated system field based on exactly this position, so they stay at
-            # the front.
-            request = replace(message, parts=replacement_parts)
-            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
+            # the front. They're counted on the authored parts: an announcement is never part of the
+            # standing prompt, even when its delta opened the request.
+            keep = _standing_system_prompt_count(message) if is_first_kept_request else 0
             head, tail = replacement_parts[:keep], replacement_parts[keep:]
             tail.sort(key=_tool_results_first_sort_key)
-            transformed.append(replace(request, parts=[*head, *tail]))
+            transformed.append(replace(message, parts=[*head, *tail]))
             is_first_kept_request = False
 
     return transformed if changed else messages

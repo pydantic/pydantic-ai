@@ -1,5 +1,6 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
+import os
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
@@ -40,6 +41,7 @@ from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersis
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
+    GitCheckout,
     SqliteConversationStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
@@ -47,6 +49,7 @@ from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sessions import PersistencePlugin
+from tests.clai2.test_session_browser import repository
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
@@ -78,7 +81,7 @@ async def test_multi_turn_restart_new_and_compaction(tmp_path: Path) -> None:
     restarted = saved_session(tmp_path)
     await restarted.resume(first_id)
     assert restarted.messages == compacted
-    restarted.clear()
+    await restarted.clear()
     assert restarted.summary.id != first_id
     assert restarted.messages == []
     assert (await store.get(conversation_id=first_id)).messages == compacted
@@ -158,7 +161,59 @@ async def test_recover_latest_frontier_without_replaying_tools(tmp_path: Path) -
     assert 'No tools were replayed' in notice
 
 
-async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Path) -> None:
+async def test_busy_session_resumes_as_a_fork_of_its_latest_step(tmp_path: Path) -> None:
+    first = saved_session(tmp_path)
+    await first.prompt('first')
+    store, steps = first.conversations, first.step_store
+    assert store is not None and steps is not None
+    # This process is alive, so the session is busy in it.
+    head = await store.save(
+        summary=replace(first.summary, outcome='running', run_id='live', owner_pid=os.getpid()), messages=first.messages
+    )
+    frontier = [*first.messages, ModelResponse(parts=[ToolCallPart('slow', {'x': 1}, tool_call_id='t1')])]
+    await steps.save_snapshot(
+        ContinuableSnapshot(
+            run_id='live', step_index=2, messages=frontier, state='interrupted', conversation_id=head.id
+        )
+    )
+    second = saved_session(tmp_path)
+    notice = await second.resume(head.id)
+    fork = second.summary
+    assert notice == (
+        f'Session is busy in process {os.getpid()}. Resumed a fork of it instead: first (fork) ({fork.id}). '
+        'The original keeps running there and may still change files. No tools were replayed.'
+    )
+    assert fork.id != head.id
+    assert (fork.workspace, fork.outcome, fork.owner_pid, fork.run_id) == (head.workspace, 'ready', None, None)
+    assert second.messages == [*frontier[:-1], replace(frontier[-1], state='interrupted')]
+    assert (await store.get(conversation_id=fork.id)).messages == second.messages
+    await second.prompt('continue in the fork')
+    original = await store.get(conversation_id=head.id)
+    assert original.summary == head
+    assert original.messages == first.messages
+
+
+async def test_failed_fork_save_leaves_session_unchanged(tmp_path: Path) -> None:
+    class FullDisk(SqliteConversationStore):
+        async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:
+            if summary.title.endswith('(fork)'):
+                raise OSError('disk full')
+            return await super().save(summary=summary, messages=messages)
+
+    store = FullDisk(database=tmp_path / 'sessions.db')
+    first = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await first.prompt('first')
+    head = await store.save(summary=replace(first.summary, outcome='running', owner_pid=os.getpid()), messages=[])
+    second = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await second.prompt('mine')
+    previous, summary = second.messages, second.summary
+    with pytest.raises(OSError, match='disk full'):
+        await second.resume(head.id)
+    assert (second.messages, second.summary) == (previous, summary)
+    assert not second.running
+
+
+async def test_cancellation_persists_and_live_session_resumes_as_a_fork(tmp_path: Path) -> None:
     entered = anyio.Event()
 
     class Pause(AbstractCapability[None]):
@@ -178,8 +233,9 @@ async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Pa
         async with anyio.create_task_group() as group:
             group.start_soon(session.prompt, 'interrupted prompt')
             await entered.wait()
-            with pytest.raises(ConversationConflict, match='busy'):
-                await other.resume(session.summary.id)
+            assert 'Resumed a fork of it instead' in await other.resume(session.summary.id)
+            assert other.summary.id != session.summary.id
+            assert other.messages == [replace(session.messages[0], state='interrupted')]
             with pytest.raises(RuntimeError):
                 await session.resume(session.summary.id)
             with pytest.raises(RuntimeError):
@@ -345,6 +401,35 @@ async def test_resume_from_another_directory_runs_in_this_session_directory(tmp_
     await second.prompt('second')
     await second.prompt('third')
     assert working_dirs == [str(original.resolve()), str(elsewhere.resolve()), str(elsewhere.resolve())]
+
+
+async def test_a_session_saved_in_a_git_checkout_records_it(tmp_path: Path) -> None:
+    """The checkout is saved with the session, so the browsers still place it once its worktree is removed."""
+    repo, linked, plain = tmp_path / 'repo', tmp_path / 'linked', tmp_path / 'plain'
+    repository(repo, linked=linked, branch='feature')
+    (linked / 'src').mkdir()
+    plain.mkdir()
+    agent = Agent(TestModel(custom_output_text='answer'))
+    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(agent, deps=None, conversations=conversations, workspace=linked / 'src')
+    await session.prompt('first')
+    checkout = GitCheckout(
+        repository=str((repo / '.git').resolve()), name='repo', root=str(linked.resolve()), branch='feature'
+    )
+    assert session.summary.checkout == checkout
+    await session.commit_messages([])
+    assert (await conversations.get(conversation_id=session.conversation_id)).summary.checkout == checkout
+    await session._fork()  # pyright: ignore[reportPrivateUsage]
+    assert session.summary.checkout == checkout
+
+    # Elsewhere it keeps the checkout it saved; outside Git, a session records none.
+    elsewhere = Session(agent, deps=None, conversations=conversations, workspace=plain)
+    await elsewhere.resume(session.conversation_id, allow_other_workspace=True)
+    await elsewhere.prompt('second')
+    assert elsewhere.summary.checkout == checkout
+    await elsewhere.clear()
+    await elsewhere.prompt('third')
+    assert elsewhere.summary.checkout is None
 
 
 @pytest.mark.parametrize(
@@ -571,6 +656,8 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     await session.prompt('enabled')
     bound = session.agent
     assert bound is not agent
+    # Logfire Agent Control addresses an agent by its name, so a rebuild keeps it.
+    assert agent.name == bound.name == 'clai2'
     assert model.last_model_request_parameters is not None
     assert 'delegate_task' in {tool.name for tool in model.last_model_request_parameters.function_tools}
     session.plugins = [coder]

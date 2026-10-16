@@ -8,15 +8,15 @@ from urllib.parse import parse_qs, urlsplit
 import anyio
 import pytest
 from pydantic import SecretStr
-from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import slack_app
 from pydantic_clai2.builtin_plugins import slack as slack_plugin
 from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.pkce import PKCEFlow, PKCESignIn, Tokens
+from tests.clai2.dialog_script import Asked, Back, Finish, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, pick, typed
-from tests.clai2.slack_shell import CLOSE, ESC, Shell, script, shell
+from tests.clai2.slack_shell import Shell, script, shell
 
 pytestmark = pytest.mark.anyio
 
@@ -24,7 +24,10 @@ APP = '4717091972327.12139745453623'
 
 
 class Browser:
-    """Stands in for the user's browser: records what was opened, and whether it opened."""
+    """Stands in for the user's browser: records what was opened, and whether it opened.
+
+    Reloading the plugin imports its module again, so set this up after any reload.
+    """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, *, opens: bool | None = True) -> None:
         self.opened: list[str] = []
@@ -35,7 +38,7 @@ class Browser:
                 raise webbrowser.Error('no browser')
             return opens
 
-        monkeypatch.setattr(slack_plugin.webbrowser, 'open', open_url)
+        monkeypatch.setattr(slack_plugin, 'open_browser', open_url)
 
 
 class SlackAccount:
@@ -78,19 +81,18 @@ def signed_in_tokens(
     )
 
 
-def set_up(monkeypatch: pytest.MonkeyPatch, *waiting: object, client_id: TextInputResult | None = None) -> None:
-    """Choose browser sign-in, then the Slack app row, answering the Client ID and the waiting screen."""
-    script(
-        monkeypatch,
-        lists=[pick('auth'), pick('client_id')],
-        choices=[pick('browser'), *waiting],  # pyright: ignore[reportArgumentType]
-        texts=[client_id or typed(f'  {APP} ')],
-    )
+CLIENT_ID = Asked(
+    kind='text',
+    title="Paste your CLAI Slack app's Client ID (Basic Information > App Credentials)",
+    label='Client ID',
+    placeholder='Looks like 1234567890.1234567890',
+    description=f'To create the app, open this URL, pick a workspace, and click Create:\n\n{slack_app.create_app_url()}',
+)
 
 
-async def browser_shell(*, signed_in: bool = False) -> Shell:
+async def browser_shell(*, signed_in: bool = False, client_id: str | None = APP) -> Shell:
     app = await shell()
-    app.host().save_settings(slack_plugin.SlackSettings(auth='browser', client_id=APP))
+    app.host().save_settings(slack_plugin.SlackSettings(auth='browser', client_id=client_id))
     if signed_in:
         save_codex_credentials(account=slack_app.ACCOUNT, value=signed_in_tokens().stored())
     await app.plugins.reload('slack')
@@ -100,9 +102,15 @@ async def browser_shell(*, signed_in: bool = False) -> Shell:
 async def test_setting_up_the_app_opens_its_manifest_then_signs_in_behind_a_waiting_screen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """In the terminal: choose browser sign-in, then the Slack app row, answering the Client ID and the waiting screen."""
     browser = Browser(monkeypatch)
     account = SlackAccount(monkeypatch)
-    set_up(monkeypatch, UNTIL_CLOSED)
+    script(
+        monkeypatch,
+        lists=[pick('auth'), pick('client_id')],
+        choices=[pick('browser'), UNTIL_CLOSED],
+        texts=[typed(f'  {APP} ')],
+    )
     app = await shell()
     message = await app.plugins.command(['configure', 'slack'])
     assert message.splitlines() == [
@@ -136,56 +144,68 @@ def test_the_manifest_makes_a_public_mcp_client_with_every_scope_slack_documents
     assert 'bot' not in config['oauth_config']['scopes']
 
 
-@pytest.mark.parametrize('opens', [False, None])
-async def test_without_a_browser_the_setup_still_takes_the_client_id(
+@pytest.mark.parametrize('opens', [True, False, None])
+async def test_setting_up_the_app_asks_for_the_client_id_with_the_create_link_then_signs_in(
     monkeypatch: pytest.MonkeyPatch, opens: bool | None
 ) -> None:
-    browser = Browser(monkeypatch, opens=opens)
+    """As the web UI runs it: the link to create the app is in the dialog, whether or not a browser opened."""
     SlackAccount(monkeypatch)
-    set_up(monkeypatch, UNTIL_CLOSED)
-    app = await shell()
-    assert 'Signed in to Slack.' in await app.plugins.command(['configure', 'slack'])
+    app = await browser_shell(client_id=None)
+    browser = Browser(monkeypatch, opens=opens)
+    messages, dialogs = await app.act('client_id', [Type(text=f'  {APP} '), Finish()])
+    assert messages == [
+        'Saved Slack app.',
+        'Signed in to Slack. Tokens are kept in the OS credential store and renew themselves.',
+    ]
     assert browser.opened == [slack_app.create_app_url()]
+    client_id, waiting = dialogs.asked
+    assert client_id == CLIENT_ID
+    assert (waiting.kind, waiting.title) == ('wait', 'Signing in to Slack')
+    [shown] = waiting.shown
+    assert 'https://slack.com/oauth/v2_user/authorize?' in shown
+    assert app.source().settings.client_id == APP
+    assert await app.turn_token() == 'xoxe.xoxp-signed'
     await app.plugins.close('exit')
 
 
-@pytest.mark.parametrize(
-    ('answer', 'expected'),
-    [(ESC, []), (typed('  '), []), (typed('xoxp-not-an-id'), ["String should match pattern '^\\d+\\.\\d+$'"])],
-)
-async def test_a_cancelled_or_invalid_client_id_changes_nothing(
-    monkeypatch: pytest.MonkeyPatch, answer: TextInputResult, expected: list[str]
+@pytest.mark.parametrize('answer', [Back(), Type(text='  ')])
+async def test_a_cancelled_or_empty_client_id_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, answer: Back | Type
 ) -> None:
-    Browser(monkeypatch)
     account = SlackAccount(monkeypatch)
-    set_up(monkeypatch, client_id=answer)
-    app = await shell()
-    assert (await app.plugins.command(['configure', 'slack'])).splitlines() == ['Saved Sign-in.', *expected]
+    app = await browser_shell(client_id=None)
+    Browser(monkeypatch)
+    messages, _ = await app.act('client_id', [answer])
+    assert messages == []
     assert app.source().settings.client_id is None
     assert account.scopes == []
     await app.plugins.close('exit')
 
 
-@pytest.mark.parametrize('cancel', [CLOSE, pick(None)])
-async def test_esc_or_cancel_on_the_waiting_screen_stops_the_sign_in(
-    monkeypatch: pytest.MonkeyPatch, cancel: object
-) -> None:
+async def test_the_client_id_dialog_refuses_what_is_not_a_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = await browser_shell(client_id=None)
     Browser(monkeypatch)
+    with pytest.raises(AssertionError, match=r"would not accept 'xoxp-not-an-id': String should match pattern"):
+        await app.act('client_id', [Type(text='xoxp-not-an-id')])
+    assert app.source().settings.client_id is None
+    await app.plugins.close('exit')
+
+
+async def test_backing_out_of_the_waiting_screen_stops_the_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
     account = SlackAccount(monkeypatch, waits=True)
-    set_up(monkeypatch, cancel)
-    app = await shell()
-    assert (await app.plugins.command(['configure', 'slack'])).splitlines()[-1] == 'Slack sign-in cancelled.'
+    app = await browser_shell()
+    messages, _ = await app.act('account', [Back()])
+    assert messages == ['Slack sign-in cancelled.']
     assert account.cancelled
     assert load_codex_credentials(account=slack_app.ACCOUNT) is None
     await app.plugins.close('exit')
 
 
 async def test_a_refused_sign_in_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    Browser(monkeypatch)
     SlackAccount(monkeypatch, answer=UserError('Authorization failed: access_denied'))
-    set_up(monkeypatch, UNTIL_CLOSED)
-    app = await shell()
-    assert (await app.plugins.command(['configure', 'slack'])).splitlines()[-1] == 'Authorization failed: access_denied'
+    app = await browser_shell()
+    messages, _ = await app.act('account', [Finish()])
+    assert messages == ['Authorization failed: access_denied']
     await app.plugins.close('exit')
 
 
@@ -216,11 +236,11 @@ async def test_signing_in_again_asks_for_write_scopes_once_writing_is_allowed(mo
 
 
 async def test_changing_the_client_id_does_not_create_another_app(monkeypatch: pytest.MonkeyPatch) -> None:
-    browser = Browser(monkeypatch)
     account = SlackAccount(monkeypatch)
     app = await browser_shell(signed_in=True)
-    script(monkeypatch, lists=[pick('client_id')], choices=[UNTIL_CLOSED], texts=[typed('111.222')])
-    assert 'Signed in to Slack.' in await app.plugins.command(['configure', 'slack'])
+    browser = Browser(monkeypatch)
+    messages, _ = await app.act('client_id', [Type(text='111.222'), Finish()])
+    assert messages[-1].startswith('Signed in to Slack.')
     assert browser.opened == []
     assert app.source().settings.client_id == '111.222'
     assert account.scopes == [slack_app.READ_SCOPES]
@@ -253,11 +273,11 @@ async def test_signing_out_with_no_app_set_up_just_says_so() -> None:
     await app.plugins.close('exit')
 
 
-async def test_signing_in_needs_the_app_first(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_signing_in_needs_the_app_first() -> None:
     app = await shell()
     app.host().save_settings(slack_plugin.SlackSettings(auth='browser'))
-    script(monkeypatch, lists=[pick('account')])
-    assert await app.plugins.command(['configure', 'slack']) == 'Set up the Slack app first (Slack app row).'
+    messages, _ = await app.act('account', [])
+    assert messages == ['Set up the Slack app first (Slack app row).']
     await app.plugins.close('exit')
 
 

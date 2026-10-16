@@ -6,9 +6,9 @@ import importlib.metadata
 import json
 import re
 import warnings
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Required
 
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
 from ..._utils import is_str_dict
 from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
@@ -76,6 +76,9 @@ UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 
 TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
 """Activity type for tool availability changes stored as AG-UI ActivityMessages."""
+
+ENQUEUED_MESSAGES_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_enqueued_messages'
+"""Activity type for messages delivered into the run by `RunContext.enqueue`, stored as AG-UI ActivityMessages."""
 
 
 class FileActivityContent(TypedDict, total=False):

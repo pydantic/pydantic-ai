@@ -23,11 +23,11 @@ provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, Union, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, Union, assert_never, cast
 
 import pydantic
 import pydantic_core
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from . import messages as _messages
 from ._utils import copy_dataclass_fields

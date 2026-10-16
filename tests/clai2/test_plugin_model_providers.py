@@ -115,13 +115,14 @@ async def test_plugin_models_take_the_settings_from_providers_controls(tmp_path:
     await loader.load_all()
     model = 'claude-test:claude-fable-5-1'
     assert loader.settings_model(model) == 'anthropic:claude-fable-5-1'
+    # Another account takes the same controls.
+    assert loader.settings_model('claude-test@work:claude-fable-5-1') == 'anthropic:claude-fable-5-1'
     assert loader.settings_model('claude-test') == 'claude-test'
     assert loader.settings_model('echo-test:x') == 'echo-test:x'
 
     context = CommandContext(
         settings=Settings(model=None),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
         settings_model=loader.settings_model,
     )
@@ -169,7 +170,6 @@ def test_completions_and_the_add_model_menu_offer_plugin_models(tmp_path: Path) 
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
         plugin_models=lambda: ('echo-test:hello',),
     )

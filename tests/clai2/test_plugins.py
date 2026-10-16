@@ -151,6 +151,7 @@ def test_a_plugin_that_overrides_nothing_contributes_nothing() -> None:
     assert loaded.summary() == 'nothing yet'
     assert not loaded.plugin.has_configure
     assert not loaded.plugin.has_render
+    assert loaded.plugin.render(FunctionToolCallEvent(part=ToolCallPart(tool_name='shout', args={}))) is None
 
 
 async def test_a_plugin_without_a_settings_menu_says_so() -> None:

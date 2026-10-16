@@ -83,8 +83,23 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
         child.add_done_callback(_pending_stops.discard)
         # The child already bounds itself by `grace`; the margin lets its cleanup (e.g. a
         # provider's "may still be running" log) finish before we return, instead of racing it.
-        with anyio.move_on_after(grace + _STOP_SETTLE, shield=True):
-            await asyncio.shield(child)
+        try:
+            with anyio.move_on_after(grace + _STOP_SETTLE, shield=True):
+                await asyncio.shield(child)
+        except asyncio.CancelledError:
+            # A native cancel thrown into this wait takes as `__context__` the exception each frame the
+            # throw resumes is handling, here the cancellation that started this stop. AnyIO cancel scopes
+            # follow `__context__` and would claim it as their own. Re-raised from a step that resumed
+            # normally, it keeps no such context. The shield stops the caller's cancelled scope from
+            # cancelling every checkpoint; a repeated native cancel folds into this one.
+            with anyio.CancelScope(shield=True):
+                while True:
+                    try:
+                        await asyncio.sleep(0)
+                    except asyncio.CancelledError:
+                        continue
+                    break
+            raise
     else:
         with anyio.move_on_after(grace, shield=True):
             async with anyio.create_task_group() as group:
@@ -99,17 +114,13 @@ async def command_deadline(
     output: Callable[[], tuple[str, str]] = lambda: ('', ''),
 ) -> AsyncGenerator[None, None]:
     """Bound only the command phase, after sandbox acquisition; stop on timeout or cancellation."""
-    stopped = False
     with anyio.move_on_after(timeout) as scope:
         try:
             yield
         except BaseException:
             await stop_shielded(stop)
-            stopped = True
             raise
     if scope.cancelled_caught:
-        if not stopped:
-            await stop_shielded(stop)
         stdout, stderr = output()
         raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
 

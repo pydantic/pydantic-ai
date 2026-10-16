@@ -18,11 +18,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from itertools import count
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
 from pydantic_ai.exceptions import ModelHTTPError, UserError
@@ -1202,13 +1201,13 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'content': [],
                     'tool_calls': [
                         {
-                            'function': {'name': 'get_photo', 'arguments': {}},
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
                             'id': 'photo1',
                             'type': 'function',
                             'index': 0,
                         },
                         {
-                            'function': {'name': 'get_photo', 'arguments': {}},
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
                             'id': 'photo2',
                             'type': 'function',
                             'index': 0,
