@@ -1260,7 +1260,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             second = last_two_requests[1]
             if (
                 all(
-                    p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' or p.part_kind == 'retry-feedback'
+                    # TODO(v3): remove `RetryPromptPart`
+                    isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
                     for p in most_recent.parts
                 )
                 and second.instructions is not None

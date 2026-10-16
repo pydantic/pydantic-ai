@@ -1906,32 +1906,6 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[s
     return error_details_ta.dump_python(errors, mode='json', exclude=exclude)
 
 
-def _validation_error_description(
-    errors: list[pydantic_core.ErrorDetails], *, include_input: Literal['all', 'nested']
-) -> str:
-    """Render Pydantic error details as the JSON block a model is shown.
-
-    `ctx` is always dropped: it can hold arbitrary objects that don't survive serialization, and it
-    repeats what `msg` already says.
-
-    `include_input` decides how much of the offending value is echoed back, and the answer depends on
-    what channel the text is bound for:
-
-    - `'all'` — a tool call's arguments are worth echoing next to the error. This text reaches the
-      model as that call's own result.
-    - `'nested'` — the JSON a structured-output retry complains about is already in the model's
-      context, so top-level errors drop it while a nested error keeps the offending sub-value a long
-      generated document doesn't make obvious.
-    """
-    if include_input == 'all':
-        exclude = {'__all__': {'ctx'}}
-    else:
-        exclude = {i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(errors)}
-    json_errors = error_details_ta.dump_json(errors, exclude=exclude, indent=2)
-    plural = len(errors) != 1
-    return f'{len(errors)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
-
-
 # TODO(v3): remove RetryPromptPart
 @deprecated(
     '`RetryPromptPart` is deprecated and will be removed in v3. Build the part the retry belongs to: '
@@ -2013,8 +1987,19 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            description = _validation_error_description(
-                self.content, include_input='all' if self.tool_name is not None else 'nested'
+            # For NativeOutput retries (no `tool_name`) the generated JSON is already in the model's
+            # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
+            # so the model sees what arguments it sent alongside the error.
+            if self.tool_name is None:
+                exclude = {
+                    i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
+                }
+            else:
+                exclude = {'__all__': {'ctx'}}
+            json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
+            plural = isinstance(self.content, list) and len(self.content) != 1
+            description = (
+                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
         return f'{description}\n\nFix the errors and try again.'
 

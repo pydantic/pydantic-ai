@@ -26,14 +26,12 @@ from pydantic_core import ErrorDetails
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._output import build_retried_tool_return
-from pydantic_ai._tool_execution import tool_bound_retry_part
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     PydanticAIDeprecationWarning,
-    ToolRetryError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -1017,20 +1015,6 @@ def test_a_retried_tool_return_generates_a_call_id_when_it_is_given_none():
     assert (part.tool_name, part.content, part.outcome) == ('count_things', 'try again', 'retried')
 
 
-def test_a_retry_answering_a_tool_call_cannot_carry_tool_less_feedback():
-    """`ToolRetryError` carries either part, so the tool-call path checks rather than assumes.
-
-    Every retry raised while handling a call is built from that call's name and id, so the tool-less
-    part never arrives — but the type system can't say so, and the five call sites go on to read
-    `tool_name` / `tool_call_id`. The check is a raised error rather than an `assert` because
-    `python -O` strips the statement and would let the wrong part through silently.
-    """
-    error = ToolRetryError(RetryFeedbackPart(content='no good', cause='model_retry'))
-
-    with pytest.raises(RuntimeError, match=r'cannot carry a `RetryFeedbackPart`'):
-        tool_bound_retry_part(error)
-
-
 class Nested(BaseModel):
     x: int
 
@@ -1089,6 +1073,62 @@ async def test_an_unrendered_feedback_part_reaching_a_model_directly_raises():
 
     with pytest.raises(UserError, match=r'Call `model.prepare_messages\(messages\)` first'):
         await model.request(messages, None, ModelRequestParameters())
+
+
+def test_a_legacy_retry_prompt_part_keeps_its_pre_deprecation_text():
+    """What a direct `Model.request()` sends for a tool-less legacy part, and what other legacy readers show.
+
+    Validation errors keep the old header and suffix. A tool call's errors echo its input, while output
+    retries drop a top-level `input` the model already has in context.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('a',), 'msg': 'Field required', 'input': {'b': 1}},
+        {'type': 'int_parsing', 'loc': ('n', 'x'), 'msg': 'Input should be a valid integer', 'input': 'bad'},
+    ]
+    assert legacy_retry_prompt_part(errors).model_response() == snapshot("""\
+2 validation errors:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Field required"
+  },
+  {
+    "type": "int_parsing",
+    "loc": [
+      "n",
+      "x"
+    ],
+    "msg": "Input should be a valid integer",
+    "input": "bad"
+  }
+]
+```
+
+Fix the errors and try again.\
+""")
+    assert legacy_retry_prompt_part(errors[:1], tool_name='lookup').model_response() == snapshot("""\
+1 validation error:
+```json
+[
+  {
+    "type": "missing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Field required",
+    "input": {
+      "b": 1
+    }
+  }
+]
+```
+
+Fix the errors and try again.\
+""")
 
 
 @openai_installed
