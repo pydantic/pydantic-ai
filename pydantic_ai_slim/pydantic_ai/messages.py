@@ -3584,8 +3584,9 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
                 clean_messages[-1] = merged_message
             else:
                 # A single request can hold user-facing parts between its tool results too: content enqueued
-                # during a parallel tool call sits right after that call's result in history.
-                parts = sorted(message.parts, key=_tool_results_first_sort_key)
+                # during a parallel tool call sits right after that call's result in history. Only results
+                # answering a call move; a plain `RetryPromptPart` is user text and keeps its place.
+                parts = sorted(message.parts, key=lambda part: 0 if _is_tool_result_part(part) else 1)
                 if any(part is not original for part, original in zip(parts, message.parts)):
                     message = replace(message, parts=parts)
                 clean_messages.append(message)
