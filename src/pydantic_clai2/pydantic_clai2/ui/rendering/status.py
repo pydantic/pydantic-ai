@@ -40,6 +40,8 @@ class Status:
     workspace: str = ''
     """The session's working directory; hidden while empty."""
     context_tokens: int | None = None
+    context_estimated: bool = False
+    """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
     context_window: int | None = None
     """Known context capacity for the latest request; `None` when unresolved."""
     context_alert: bool = False
@@ -59,6 +61,7 @@ class Status:
     def clear_conversation(self) -> None:
         """Forget the figures of a conversation the shell switched away from."""
         self.context_tokens = None
+        self.context_estimated = False
         self.context_window = None
         self.context_alert = False
         self.output_tokens = None
@@ -94,7 +97,8 @@ class Status:
         return (self.subagent() or self)._segments(frame, self._plugin_text())
 
     def _segments(self, frame: str, plugins: str) -> tuple[str, str, str, str, str, str, str]:
-        context = f'{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.context_window)}'
+        estimated = '~' if self.context_estimated else ''
+        context = f'{estimated}{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.context_window)}'
         output = f'~{math.ceil(self.streamed_chars / 4):,}'
         output_label = 'streamed tokens'
         if self.output_tokens is not None:

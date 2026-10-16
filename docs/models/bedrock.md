@@ -124,6 +124,14 @@ To keep forced tool output, turn thinking off with `thinking=False` where the mo
 See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
 and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
 
+The output mode is chosen on the run's first request and kept for the rest of the run (except behind a
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
+setting that changes from step to step doesn't add or remove the output tool between requests and
+[invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
+output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. Models other than
+Claude don't accept output tools alongside thinking, so there a request that thinks switches to
+[`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+
 ### Custom HTTP headers
 
 Use [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] to add HTTP headers to
@@ -401,7 +409,7 @@ agent = Agent(model)
 
 These boto3 retries are Bedrock's provider SDK retry layer — boto3 counts from the other side, so `Config(retries={'max_attempts': N})` allows `1 + N` total attempts — and there is no `httpx2` transport layer beneath boto3, so this is the only retry layer between the agent's retry budgets and the network. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
 
-Bedrock uses boto3's built-in retry mechanisms. You can configure retry behavior by passing a custom boto3 client with retry settings:
+Bedrock uses boto3's built-in retry mechanisms, which are configured per client, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on Bedrock. You can configure retry behavior by passing a custom boto3 client with retry settings:
 
 ```python
 import boto3
