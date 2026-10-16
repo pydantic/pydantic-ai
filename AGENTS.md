@@ -61,7 +61,7 @@ Use `Agent.override()` primarily for temporary substitutions, especially in test
 
 For application model selection, set a default with `Agent(model=...)`. Pass `model=` to a run method for a per-run choice. Use [`SelectModel`](docs/capabilities/select-model.md) or a [custom selection capability](docs/capabilities/custom.md#selecting-the-model) for reusable dynamic selection.
 
-Do not wrap ordinary production runs in `Agent.override(model=...)` to supply a missing model or implement routing. An active override supersedes an explicit run model and skips capability selection.
+Do not wrap ordinary production runs in `Agent.override(model=...)` to supply a missing model or implement routing. An active `Agent.override(model=...)` supersedes an explicit run model and skips capability selection.
 
 # Requirements of all contributions
 
