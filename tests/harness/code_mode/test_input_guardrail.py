@@ -46,22 +46,16 @@ STREAMED_TIERS = [
 ]
 
 
-async def undecided(prompt: str) -> GuardrailResult:
-    """A guard that only a cancellation ends."""
-    return await asyncio.Future[GuardrailResult]()
-
-
-def retrying_first_response() -> Hooks[None]:
-    """Reject the first model response with `ModelRetry`, which cancels a parallel guard still deciding."""
+def retrying_first_response(retried: asyncio.Event) -> Hooks[None]:
+    """Reject the first model response with `ModelRetry`, setting `retried` as it does."""
     hooks = Hooks[None]()
-    retried: list[bool] = []
 
     @hooks.on.after_model_request
     async def retry_first_response(
         ctx: RunContext[None], request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
-        if not retried:
-            retried.append(True)
+        if not retried.is_set():
+            retried.set()
             raise ModelRetry('try again')
         return response
 
@@ -236,8 +230,14 @@ class TestCodeModeInputGuardrail:
         assert run.calls_at_verdict is None
         assert run.calls == []
 
-    async def test_parallel_guard_cancelled_by_a_retried_first_request_does_not_hold_later_calls(self):
+    @pytest.mark.parametrize('blocks', [False, True], ids=['allow', 'block'])
+    async def test_parallel_guard_deciding_after_a_retried_first_request(self, blocks: bool):
         run = GuardedRun()
+        retried = asyncio.Event()
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await retried.wait()
+            return GuardrailResult.block('blocked') if blocks else GuardrailResult.allow()
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
@@ -253,21 +253,25 @@ class TestCodeModeInputGuardrail:
             deps_type=type(None),
             capabilities=[
                 CodeMode[None](),
-                InputGuardrail[None](guard=undecided, parallel=True),
-                retrying_first_response(),
+                InputGuardrail[None](guard=guard, parallel=True),
+                retrying_first_response(retried),
             ],
         )
         agent.tool_plain(run.ping)
 
         result = await agent.run('go')
 
-        assert result.output == 'done'
-        assert run.calls == [1]
+        assert (result.output, run.calls) == (('blocked', []) if blocks else ('done', [1]))
 
-    async def test_retry_adopts_launches_released_by_a_guard_cancelled_undecided(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_retry_adopts_launches_held_for_a_parallel_guard(self, monkeypatch: pytest.MonkeyPatch):
         run = GuardedRun()
         run.watch_verdict_wait(monkeypatch)
         code_mode = CodeMode[None](speculate=['ping'])
+        retried = asyncio.Event()
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await retried.wait()
+            return GuardrailResult.allow()
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             # Request 1 launches both calls and is retried while they wait; request 2 repeats the snippet.
@@ -283,7 +287,11 @@ class TestCodeModeInputGuardrail:
         agent = Agent(
             FunctionModel(stream_function=stream),
             deps_type=type(None),
-            capabilities=[code_mode, InputGuardrail[None](guard=undecided, parallel=True), retrying_first_response()],
+            capabilities=[
+                code_mode,
+                InputGuardrail[None](guard=guard, parallel=True),
+                retrying_first_response(retried),
+            ],
         )
         agent.tool_plain(run.ping)
 

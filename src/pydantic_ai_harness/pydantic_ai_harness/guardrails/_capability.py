@@ -312,17 +312,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         self._parallel_verdict = guard_task
         handler_task: asyncio.Task[ModelResponse] = asyncio.create_task(run_handler())
         try:
-            done, _ = await asyncio.wait(
-                {guard_task, handler_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if guard_task in done:
-                await guard_task
-                return await handler_task
-
-            response = await handler_task
+            # The verdict comes first, even when the handler finished or raised before it: a
+            # `ModelRetry`, a `SkipModelRequest` or an error an outer capability recovers from would
+            # otherwise continue the run without one. `asyncio.wait` rather than `await`, so a
+            # cancellation of this call reaches the guard only through the drain below.
+            await asyncio.wait({guard_task})
             await guard_task
-            return response
+            return await handler_task
         finally:
             for task in (guard_task, handler_task):
                 if not task.done():
@@ -366,8 +362,8 @@ async def input_guardrails_allow(ctx: RunContext[object]) -> bool:
         if not verdict.done():
             # `asyncio.wait` rather than `await`: cancelling this waiter must not cancel the guard.
             await asyncio.wait({verdict})
-        # A guard cancelled undecided, as when the first model request is retried, never blocks the
-        # prompt, so the call runs as it would without the guard.
+        # A guard cancelled before it decided never blocked the prompt, so the call runs as it would
+        # without the guard.
         if not verdict.cancelled() and verdict.exception() is not None:
             return False
     return True
