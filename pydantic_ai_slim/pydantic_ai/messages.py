@@ -6,7 +6,6 @@ import hashlib
 import html
 import mimetypes
 import os
-import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -24,7 +23,6 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
-    NamedTuple,
     Self,
     TypeAlias,
     TypeGuard,
@@ -1443,16 +1441,18 @@ and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-
 _ToolPartClass: TypeAlias = 'type[ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart]'
 
 
-class _TypedToolPart(NamedTuple):
-    cls: _ToolPartClass
-    base: _ToolPartClass
-    payload_field: str
+_ToolPartT = TypeVar('_ToolPartT', bound='ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart')
 
+_TYPED_CALL_PARTS: dict[tuple[str, str], type[ToolCallPart | NativeToolCallPart]] = {}
+"""Registry: (base `part_kind`, `tool_kind`) → the typed call part subclass registered for it.
 
-_TYPED_TOOL_PARTS: dict[tuple[str, str], _TypedToolPart] = {}
-"""Registry: (base `part_kind`, `tool_kind`) → the typed subclass registered for it.
+Populated by `_register_typed_tool_part` from the `__init_subclass__` of the two call part classes.
+"""
 
-Populated by `_register_typed_tool_part` from the `__init_subclass__` of the four tool part classes.
+_TYPED_RETURN_PARTS: dict[tuple[str, str], type[ToolReturnPart | NativeToolReturnPart]] = {}
+"""Registry: (base `part_kind`, `tool_kind`) → the typed return part subclass registered for it.
+
+Populated by `_register_typed_tool_part` from the `__init_subclass__` of the two return part classes.
 """
 
 _REGISTERED_TOOL_KINDS: set[str] = set()
@@ -1460,9 +1460,10 @@ _REGISTERED_TOOL_KINDS: set[str] = set()
 
 
 def _register_typed_tool_part(
-    cls: _ToolPartClass,
-    base: _ToolPartClass,
-    payload_field: str,
+    cls: type[_ToolPartT],
+    base: type[_ToolPartT],
+    registry: dict[tuple[str, str], type[_ToolPartT]],
+    payload_field: Literal['args', 'content'],
     *,
     namespace: str | None,
     tool_kind: str | None,
@@ -1524,16 +1525,16 @@ def _register_typed_tool_part(
             'when it falls back to the base part because its kind is not registered.'
         )
     key = (base.part_kind, kind)
-    existing = _TYPED_TOOL_PARTS.get(key)
-    if existing is not None and recreated is None and not _is_redefinition(existing.cls, cls):
+    existing = registry.get(key)
+    if existing is not None and recreated is None and not _is_redefinition(existing, cls):
         raise UserError(
             f'Tool kind {kind!r} is already registered for {base.__name__} by '
-            f'{existing.cls.__module__}.{existing.cls.__qualname__}.'
+            f'{existing.__module__}.{existing.__qualname__}.'
         )
     # A Temporal workflow sandbox re-executes application modules; its copy must not displace the
     # host's class, or the host would promote parts to a class its own `isinstance` checks don't match.
     if existing is None or not _keeps_canonical_registration():
-        _TYPED_TOOL_PARTS[key] = _TypedToolPart(cls, base, payload_field)
+        registry[key] = cls
         _REGISTERED_TOOL_KINDS.add(kind)
     if not core and recreated is None:
         _make_typed_part_dataclass(cls, kind)
@@ -1546,24 +1547,7 @@ def _make_typed_part_dataclass(cls: _ToolPartClass, kind: str) -> None:
     The kind is declared after a `KW_ONLY` marker rather than with `field(kw_only=True)`, so that a
     `@dataclass` decorator applied on top (as with capability events) builds the same keyword-only field.
     """
-    extra = {'_': KW_ONLY, 'tool_kind': str}
-    if sys.version_info >= (3, 14):
-        import annotationlib
-
-        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
-        if original_annotate is not None:
-
-            def annotate(format: int, /) -> dict[str, Any]:
-                return {
-                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
-                    **extra,
-                }
-
-            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
-        else:
-            cls.__annotations__ = {**cls.__dict__.get('__annotations__', {}), **extra}
-    else:
-        cls.__annotations__ = {**cls.__dict__.get('__annotations__', {}), **extra}
+    _utils.prepend_class_annotations(cls, {'_': KW_ONLY, 'tool_kind': str})
     cls.tool_kind = kind
     dataclass(repr=False)(cls)
 
@@ -2013,7 +1997,13 @@ class ToolReturnPart(BaseToolReturnPart):
         super().__init_subclass__(**kwargs)
         if (
             kind := _register_typed_tool_part(
-                cls, ToolReturnPart, 'content', namespace=namespace, tool_kind=tool_kind, core=_core
+                cls,
+                ToolReturnPart,
+                _TYPED_RETURN_PARTS,
+                'content',
+                namespace=namespace,
+                tool_kind=tool_kind,
+                core=_core,
             )
         ) is not None:
             cls._registered_tool_kind = kind
@@ -2067,7 +2057,13 @@ class NativeToolReturnPart(BaseToolReturnPart):
         super().__init_subclass__(**kwargs)
         if (
             kind := _register_typed_tool_part(
-                cls, NativeToolReturnPart, 'content', namespace=namespace, tool_kind=tool_kind, core=_core
+                cls,
+                NativeToolReturnPart,
+                _TYPED_RETURN_PARTS,
+                'content',
+                namespace=namespace,
+                tool_kind=tool_kind,
+                core=_core,
             )
         ) is not None:
             cls._registered_tool_kind = kind
@@ -2879,7 +2875,7 @@ class ToolCallPart(BaseToolCallPart):
         super().__init_subclass__(**kwargs)
         if (
             kind := _register_typed_tool_part(
-                cls, ToolCallPart, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
+                cls, ToolCallPart, _TYPED_CALL_PARTS, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
             )
         ) is not None:
             cls._registered_tool_kind = kind
@@ -2950,7 +2946,7 @@ class NativeToolCallPart(BaseToolCallPart):
         super().__init_subclass__(**kwargs)
         if (
             kind := _register_typed_tool_part(
-                cls, NativeToolCallPart, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
+                cls, NativeToolCallPart, _TYPED_CALL_PARTS, 'args', namespace=namespace, tool_kind=tool_kind, core=_core
             )
         ) is not None:
             cls._registered_tool_kind = kind
@@ -2970,7 +2966,6 @@ class NativeToolCallPart(BaseToolCallPart):
 
 _CallPartT = TypeVar('_CallPartT', bound='ToolCallPart | NativeToolCallPart')
 _ReturnPartT = TypeVar('_ReturnPartT', bound='ToolReturnPart | NativeToolReturnPart')
-_ToolPartT = TypeVar('_ToolPartT', bound='ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart')
 _AnyPartT = TypeVar('_AnyPartT')
 
 
@@ -2989,17 +2984,17 @@ def _unsubstantiated(part: _ToolPartT, kind: str) -> _ToolPartT:
 def _narrow_call(part: _CallPartT, tool_kind: ToolPartKind | None) -> _CallPartT:
     """Best-effort promotion shared by the call-part `narrow_type` methods. See `ToolCallPart.narrow_type`."""
     kind = tool_kind if tool_kind is not None else part.tool_kind
-    typed = _TYPED_TOOL_PARTS.get((part.part_kind, kind)) if kind is not None else None
-    if typed is None or isinstance(part, typed.cls):
+    typed = _TYPED_CALL_PARTS.get((part.part_kind, kind)) if kind is not None else None
+    if typed is None or isinstance(part, typed):
         return part
     assert kind is not None
     # Arguments still arriving as a JSON string are left to `typed_args`; a dictionary has to fit. The
     # arguments are kept exactly as the model sent them.
-    typed_args = cast('type[BaseToolCallPart]', typed.cls).typed_args
+    typed_args = typed.typed_args
     if isinstance(part.args, dict) and typed_args is not BaseToolCallPart.typed_args:
         if typed_args.validate(part.args) is None:
             return _unsubstantiated(part, kind)
-    return _utils.copy_dataclass_fields(part, typed.cls, tool_kind=kind)
+    return _utils.copy_dataclass_fields(part, typed, tool_kind=kind)
 
 
 @overload
@@ -3046,19 +3041,19 @@ def _check_parts(
 def _narrow_return(part: _ReturnPartT, tool_kind: ToolPartKind | None) -> _ReturnPartT:
     """Best-effort promotion shared by the return-part `narrow_type` methods. See `ToolReturnPart.narrow_type`."""
     kind = tool_kind if tool_kind is not None else part.tool_kind
-    typed = _TYPED_TOOL_PARTS.get((part.part_kind, kind)) if kind is not None else None
-    if typed is None or isinstance(part, typed.cls) or part.outcome != 'success':
+    typed = _TYPED_RETURN_PARTS.get((part.part_kind, kind)) if kind is not None else None
+    if typed is None or isinstance(part, typed) or part.outcome != 'success':
         return part
     assert kind is not None
-    typed_content = cast('type[BaseToolReturnPart]', typed.cls).typed_content
+    typed_content = typed.typed_content
     if typed_content is BaseToolReturnPart.typed_content:
-        return _utils.copy_dataclass_fields(part, typed.cls, tool_kind=kind)
+        return _utils.copy_dataclass_fields(part, typed, tool_kind=kind)
     # Content that arrived as a JSON string is parsed before it's validated against the declared shape.
     structured = part.structured_content()
     content = structured if structured is not None else part.content
     if typed_content.validate(content) is None:
         return _unsubstantiated(part, kind)
-    return _utils.copy_dataclass_fields(part, typed.cls, content=content, tool_kind=kind)
+    return _utils.copy_dataclass_fields(part, typed, content=content, tool_kind=kind)
 
 
 _BASE_TOOL_PART_TYPES: frozenset[type] = frozenset(
@@ -4286,20 +4281,19 @@ def _sanitize_request_parts(
                 dropped_uploaded_file_providers,
             )
             new_parts.append(replace(part, content=filtered_content))
-        elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
-            # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
-            # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
-            # during sanitization would leave it schema-invalid.
-            keep_content, sanitized_content = _sanitize_tool_return_content(
-                part.content,
-                allowed_file_url_schemes,
-                allowed_file_url_force_download,
-                allow_uploaded_files,
-                disallowed_schemes,
-                reset_force_download_values,
-                dropped_uploaded_file_providers,
+        elif isinstance(part, ToolReturnPart):
+            new_parts.append(
+                _sanitize_tool_return_part(
+                    part,
+                    ToolReturnPart,
+                    allowed_file_url_schemes,
+                    allowed_file_url_force_download,
+                    allow_uploaded_files,
+                    disallowed_schemes,
+                    reset_force_download_values,
+                    dropped_uploaded_file_providers,
+                )
             )
-            new_parts.append(replace(part, content=sanitized_content if keep_content else None))
         else:
             new_parts.append(part)
     return new_parts, stripped_system_prompt
@@ -4352,6 +4346,40 @@ def _sanitize_file_url(
         reset_force_download_values.add(file_url.force_download)
         return replace(file_url, force_download=False)
     return file_url
+
+
+def _sanitize_tool_return_part(
+    part: _ReturnPartT,
+    base: type[_ReturnPartT],
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+) -> _ReturnPartT:
+    """Sanitize the file references in a tool return part's content; see `_sanitize_tool_return_content`.
+
+    Typed parts are sanitized too: neither a client-claimed `tool_kind` nor a declared content shape
+    guarantees the content is free of file references. A typed part whose content sanitizing changes
+    may no longer fit its declared shape, so it falls back to `base` and is promoted again only if it
+    still fits.
+    """
+    keep_content, sanitized_content = _sanitize_tool_return_content(
+        part.content,
+        allowed_file_url_schemes,
+        allowed_file_url_force_download,
+        allow_uploaded_files,
+        disallowed_schemes,
+        reset_force_download_values,
+        dropped_uploaded_file_providers,
+    )
+    content = sanitized_content if keep_content else None
+    if type(part) is base:
+        return replace(part, content=content)
+    if content == part.content:
+        return part
+    return _narrow_return(_utils.copy_dataclass_fields(part, base, content=content), None)
 
 
 def _sanitize_tool_return_content(
@@ -4457,20 +4485,19 @@ def _sanitize_response_parts(
                 key: value for key, value in part.provider_details.items() if key != STANDING_PROMPT_PLANTED_KEY
             }
             new_parts.append(replace(part, provider_details=provider_details))
-        elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
-            # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
-            # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
-            # during sanitization would leave it schema-invalid.
-            keep_content, sanitized_content = _sanitize_tool_return_content(
-                part.content,
-                allowed_file_url_schemes,
-                allowed_file_url_force_download,
-                allow_uploaded_files,
-                disallowed_schemes,
-                reset_force_download_values,
-                dropped_uploaded_file_providers,
+        elif isinstance(part, NativeToolReturnPart):
+            new_parts.append(
+                _sanitize_tool_return_part(
+                    part,
+                    NativeToolReturnPart,
+                    allowed_file_url_schemes,
+                    allowed_file_url_force_download,
+                    allow_uploaded_files,
+                    disallowed_schemes,
+                    reset_force_download_values,
+                    dropped_uploaded_file_providers,
+                )
             )
-            new_parts.append(replace(part, content=sanitized_content if keep_content else None))
         else:
             new_parts.append(part)
     return new_parts

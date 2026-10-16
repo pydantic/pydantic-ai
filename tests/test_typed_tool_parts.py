@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -35,6 +36,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     narrow_message_parts,
     parse_tool_kind,
+    sanitize_messages,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -76,6 +78,14 @@ class AuditCallPart(ToolCallPart, namespace='test', tool_kind='audit'):
 
 class AuditReturnPart(ToolReturnPart, namespace='test', tool_kind='audit'):
     """Declares no content shape, so any successful content fits."""
+
+
+class ImageResult(TypedDict):
+    image: ImageUrl
+
+
+class ImageReturnPart(ToolReturnPart, namespace='test', tool_kind='image'):
+    typed_content = TypedContent(ImageResult)
 
 
 @dataclass(repr=False)
@@ -613,6 +623,18 @@ async def _assert_typed_lookup_parts(agent: Agent[Any, str]) -> None:
     assert [type(event.part) for event in events if isinstance(event, FunctionToolResultEvent)] == [LookupReturnPart]
 
 
+async def _tool_kinds_sent(agent: Agent[Any, str]) -> dict[str, str | None]:
+    """The `tool_kind` of each function tool the model is sent on a run of `agent`."""
+    kinds: dict[str, str | None] = {}
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        kinds.update({tool.name: tool.tool_kind for tool in info.function_tools})
+        return ModelResponse(parts=[TextPart('done')])
+
+    await agent.run('go', model=FunctionModel(record))
+    return kinds
+
+
 async def test_a_tool_declares_its_kind_with_the_part_class() -> None:
     await _assert_typed_lookup_parts(
         Agent(FunctionModel(stream_function=_respond), tools=[Tool(_lookup, name='lookup', tool_kind=LookupCallPart)])
@@ -632,7 +654,7 @@ async def test_agent_decorators_declare_a_kind() -> None:
     def lookup_with_ctx(ctx: RunContext[object], sku: str) -> LookupResult:
         return _lookup(sku)  # pragma: no cover
 
-    assert agent._function_toolset.tools['lookup_with_ctx'].tool_kind == 'test.lookup'  # pyright: ignore[reportPrivateUsage]
+    assert await _tool_kinds_sent(agent) == {'lookup': 'test.lookup', 'lookup_with_ctx': 'test.lookup'}
 
 
 async def test_toolset_and_capability_decorators_declare_a_kind() -> None:
@@ -659,8 +681,10 @@ async def test_toolset_and_capability_decorators_declare_a_kind() -> None:
     def lookup_from_capability_with_ctx(ctx: RunContext[None], sku: str) -> LookupResult:
         return _lookup(sku)  # pragma: no cover
 
-    capability_tools = capability._function_toolset.tools  # pyright: ignore[reportPrivateUsage]
-    assert {tool.tool_kind for tool in capability_tools.values()} == {'test.lookup'}
+    assert await _tool_kinds_sent(Agent(capabilities=[capability])) == {
+        'lookup_from_capability': 'test.lookup',
+        'lookup_from_capability_with_ctx': 'test.lookup',
+    }
 
 
 async def test_an_agent_tool_with_a_kind_set_in_prepare_produces_typed_parts() -> None:
@@ -670,3 +694,58 @@ async def test_an_agent_tool_with_a_kind_set_in_prepare_produces_typed_parts() -
     await _assert_typed_lookup_parts(
         Agent(FunctionModel(stream_function=_respond), tools=[Tool(_lookup, name='lookup', prepare=mark_kind)])
     )
+
+
+def _sanitized(part: ToolReturnPart | NativeToolReturnPart) -> ToolReturnPart | NativeToolReturnPart:
+    """Sanitize `part` as client-submitted history, answering a call the history also contains."""
+    if isinstance(part, NativeToolReturnPart):
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[NativeToolCallPart(part.tool_name, {}, part.tool_call_id), part])
+        ]
+    else:
+        messages = [
+            ModelResponse(parts=[ToolCallPart(part.tool_name, {}, part.tool_call_id)]),
+            ModelRequest(parts=[part]),
+        ]
+    sanitized = sanitize_messages(narrow_message_parts(messages))[-1].parts[-1]
+    assert isinstance(sanitized, ToolReturnPart | NativeToolReturnPart)
+    return sanitized
+
+
+def test_sanitizing_a_return_does_not_trust_its_claimed_kind() -> None:
+    local = ImageUrl('http://169.254.169.254/latest', force_download='allow-local')
+    reset = ImageUrl('http://169.254.169.254/latest')
+    with pytest.warns(UserWarning, match='force_download'):
+        failed = _sanitized(ToolReturnPart('search', [local], 'c1', outcome='failed', tool_kind='tool-search'))
+    assert (type(failed), failed.tool_kind, failed.content) == (ToolReturnPart, 'tool-search', [reset])
+
+    with pytest.warns(UserWarning, match='force_download'):
+        native = _sanitized(NativeToolReturnPart('search', [local], 'c1', outcome='failed', tool_kind='tool-search'))
+    assert (type(native), native.tool_kind, native.content) == (NativeToolReturnPart, 'tool-search', [reset])
+
+    # A kind that declares no content shape is promoted with any content, files included.
+    with pytest.warns(UserWarning, match='force_download'):
+        audit = _sanitized(ToolReturnPart('audit', [local], 'c1', tool_kind='test.audit'))
+    assert (type(audit), audit.content) == (AuditReturnPart, [reset])
+
+
+def test_a_typed_return_whose_sanitized_content_no_longer_fits_falls_back_to_the_base_part() -> None:
+    lookup = _sanitized(ToolReturnPart('lookup', {'in_stock': True}, 'c1', tool_kind='test.lookup'))
+    assert (type(lookup), lookup.content) == (LookupReturnPart, {'in_stock': True})
+
+    with pytest.warns(UserWarning, match='force_download'):
+        reset = _sanitized(
+            ToolReturnPart(
+                'image',
+                {'image': ImageUrl('https://example.com/a.png', force_download=True)},
+                'c1',
+                tool_kind='test.image',
+            )
+        )
+    assert (type(reset), reset.content) == (ImageReturnPart, {'image': ImageUrl('https://example.com/a.png')})
+
+    with pytest.warns(UserWarning, match='s3'):
+        dropped = _sanitized(
+            ToolReturnPart('image', {'image': ImageUrl('s3://bucket/a.png')}, 'c1', tool_kind='test.image')
+        )
+    assert (type(dropped), dropped.tool_kind, dropped.content) == (ToolReturnPart, 'test.image', {})

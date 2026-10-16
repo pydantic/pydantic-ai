@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal
 
 import pydantic
 import pydantic_core
@@ -34,7 +34,7 @@ from .exceptions import (
     UserError,
 )
 from .messages import (
-    _TYPED_TOOL_PARTS,  # pyright: ignore[reportPrivateUsage]
+    _TYPED_CALL_PARTS,  # pyright: ignore[reportPrivateUsage]
     BaseToolCallPart,
     RetryPromptPart,
     ToolCallPart,
@@ -84,10 +84,9 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
                 'Define a typed `ToolCallPart` / `ToolReturnPart` subclass with this kind, and import its module '
                 'before running the agent.'
             )
-        typed = _TYPED_TOOL_PARTS.get(('tool-call', kind))
-        if typed is None:
+        part_cls = _TYPED_CALL_PARTS.get(('tool-call', kind))
+        if part_cls is None:
             continue
-        part_cls = cast('type[BaseToolCallPart]', typed.cls)
         typed_args = part_cls.typed_args
         if typed_args is BaseToolCallPart.typed_args:
             # The call part doesn't declare an arguments shape, so there is nothing to check.

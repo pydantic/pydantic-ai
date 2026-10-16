@@ -2751,9 +2751,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: _messages.ToolPartKind
-        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
-        | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2776,9 +2774,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: _messages.ToolPartKind
-        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
-        | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2899,9 +2895,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: _messages.ToolPartKind
-        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
-        | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2924,9 +2918,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        tool_kind: _messages.ToolPartKind
-        | type[_messages.BaseToolCallPart | _messages.BaseToolReturnPart]
-        | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
