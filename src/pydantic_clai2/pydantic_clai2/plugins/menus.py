@@ -34,7 +34,10 @@ class FieldRow:
     preview: ChoicePreview | None = None
     """Renders a sample of each choice in the terminal choice picker."""
     button: str = ''
-    """What the web UI's button for a row with an action says, such as `View…`; `Change…` when empty."""
+    """What the web UI's button for a row with an action says, such as `View…`.
+
+    When empty, `Change…` for a row with a value or a secret, else `Open…`.
+    """
 
     def display(self, value: str) -> str:
         """Label a choice without changing its stored or validated value."""

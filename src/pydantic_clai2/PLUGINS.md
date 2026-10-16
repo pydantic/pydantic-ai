@@ -2926,7 +2926,8 @@ answer. Backing out returns `None` or `False`, never raises:
 | `view(title=..., text=...)` | nothing: it shows `text` read-only, scrollable (a pager in the terminal), until the user closes it |
 
 A `FieldRow` with an action may set `button`, what the web UI's button for it says, such as
-`View…`; it says **Change…** otherwise. A `Dialogs` of your own, such as one passed to
+`View…`; otherwise it says **Change…** for a row with a value or a secret, else **Open…**. A
+`Dialogs` of your own, such as one passed to
 `host.command_menu`'s actions, needs `view` and `text`'s `multiline` too.
 
 ```python

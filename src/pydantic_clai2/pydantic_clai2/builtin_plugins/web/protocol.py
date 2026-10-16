@@ -749,7 +749,7 @@ class MenuField:
     menu: bool
     """Whether choosing it opens another menu, which the routes reach with `?menu=KEY`, instead of editing a value."""
     button: str = ''
-    """What the action's button says; `Change…` when empty."""
+    """What the action's button says; when empty, `Change…` for a row with a value or a secret, else `Open…`."""
 
 
 @dataclass(kw_only=True)

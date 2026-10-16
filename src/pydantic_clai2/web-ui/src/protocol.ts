@@ -350,7 +350,7 @@ export interface MenuField {
   note: string
   /** Choosing it runs an action, with dialogs, instead of editing a value. */
   action: boolean
-  /** What the action's button says; `Change…` when empty. */
+  /** What the action's button says; when empty, `Change…` for a row with a value or a secret, else `Open…`. */
   button: string
   /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
   menu: boolean
