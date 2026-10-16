@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
+import type { MenuField } from '../protocol'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, KeyIcon, PuzzleIcon, SlidersIcon } from './icons'
+import { BackIcon, BrainIcon, KeyIcon, PuzzleIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -21,6 +22,13 @@ export const SECTIONS = [
     icon: SlidersIcon,
     hint: 'The settings /set changes, saved and applied at once.',
     commands: ['set', 'settings'],
+  },
+  {
+    id: 'models',
+    label: 'Models',
+    icon: BrainIcon,
+    hint: 'The model each prompt uses, and each saved model\'s settings, as /model and /model settings change them.',
+    commands: ['model'],
   },
   {
     id: 'plugins',
@@ -45,6 +53,10 @@ const KEYS_MENUS = [
 ] as const
 
 export type SettingsSection = (typeof SECTIONS)[number]['id']
+
+/** `/model`'s rows in cards: the model for the next prompt, then the saved models with add and remove, then chains. */
+const modelGroup = (field: MenuField) =>
+  field.key === 'model' ? 'Model' : field.key.startsWith('chain:') ? 'Fallback chains' : 'Saved models'
 
 /** The section a bare command's menu opens, or `null` for one that opens a dialog of its own. */
 export function commandSection(command: string): SettingsSection | null {
@@ -129,6 +141,17 @@ export function SettingsWindow({
               target={{ kind: 'commands', name: 'set' }}
               version={settingsVersion}
               grouped
+              onError={onError}
+              onNotice={onNotice}
+            />
+          )}
+          {section === 'models' && (
+            <MenuForm
+              target={{ kind: 'commands', name: 'model' }}
+              version={settingsVersion}
+              grouped
+              group={modelGroup}
+              opened={(field) => field.note === 'current'}
               onError={onError}
               onNotice={onNotice}
             />

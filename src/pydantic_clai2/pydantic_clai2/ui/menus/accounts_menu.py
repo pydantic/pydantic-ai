@@ -526,22 +526,14 @@ def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | 
     account is returned as it is. A picked account is pinned, the default one as `PROVIDER@default`,
     so `accounts.pool` does not spread it over the others.
     """
-    provider, _, name = model.partition(':')
-    if '@' in provider:
+    options = account_options(store, model)
+    if not options:
         return model
-    options = [item for item in accounts(store) if item.provider == provider_of(model)]
-    if not any(item.profile is not None for item in options):
-        return model
-    rows = [MenuItem(f'{item.name}  ({item.login})', value=item.pinned(name)) for item in options if item.signed_in]
-    if not any(item.profile is None for item in options):
-        rows.insert(0, MenuItem('default', value=with_profile(model, DEFAULT)))
-    if sum(item.signed_in for item in options) > 1:
-        rows.append(MenuItem('all accounts, in /accounts order', value=with_profile(model, ALL)))
     result = runners.run_choice(
-        MenuBuilder(f'Which {provider} account?')
+        MenuBuilder(f'Which {model.partition(":")[0]} account?')
         .style(markdown_style())
-        .items(rows)
-        .preview(lambda item: f'Runs as {item.value}' if isinstance(item.value, str) else '')
+        .items([MenuItem(option.label, value=option.value) for option in options])
+        .preview(lambda item: f'Runs as {item.value}')
         .footer_hint('Enter choose - Esc back')
         .key_source(menu_key)
         .build()
@@ -549,3 +541,19 @@ def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | 
     if result.cancelled or result.item is None or not isinstance(result.item.value, str):
         return None
     return result.item.value
+
+
+def account_options(store: SettingsStore, model: str) -> list[Option]:
+    """The accounts `choose_account` offers to run `model`, each the model name it picks; none when there is no choice."""
+    provider, _, name = model.partition(':')
+    if '@' in provider:
+        return []
+    found = [item for item in accounts(store) if item.provider == provider_of(model)]
+    if not any(item.profile is not None for item in found):
+        return []
+    choices = [(item.pinned(name), f'{item.name}  ({item.login})') for item in found if item.signed_in]
+    if not any(item.profile is None for item in found):
+        choices.insert(0, (with_profile(model, DEFAULT), 'default'))
+    if sum(item.signed_in for item in found) > 1:
+        choices.append((with_profile(model, ALL), 'all accounts, in /accounts order'))
+    return [Option(value=value, label=label, description=f'Runs as {value}') for value, label in choices]

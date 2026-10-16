@@ -90,7 +90,7 @@ from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
-from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
@@ -580,7 +580,13 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
+    def apply_setting(key: str, settings: Settings) -> None:
+        session_settings(key, settings)
+        # A model chosen outside the prompt, as from the web UI, shows at once, not at the next read; a running
+        # turn holds the change, and its model, until it ends.
+        shell.show_model()
+
+    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
     models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
@@ -600,6 +606,13 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
+    def effort_menu() -> SettingsMenu:
+        # Model settings load provider SDKs; keep them off the startup path.
+        from pydantic_clai2.ui.menus.model_menu import model_settings_menu
+
+        model = session.model or _model_label(agent)
+        return model_settings_menu(store, model, settings_as=context.settings_model(model))
+
     sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
     commands = Commands()
     commands.register(
@@ -608,6 +621,7 @@ def create_shell(
             description='View or set reasoning effort: /effort [VALUE|reset]',
             handler=lambda args: effort_command(context, args, model=session.model or _model_label(agent)),
             complete=lambda args: effort_completions(context, args, model=session.model or _model_label(agent)),
+            menu=effort_menu,
         )
     )
     commands.register(
@@ -695,6 +709,7 @@ def create_shell(
             complete=lambda args: model_completions(context, args),
             during_turn=True,
             during_turn_subcommands=MODEL_SUBCOMMANDS,
+            menu=lambda: models_menu(context),
         )
     )
     # Deprecated spellings of `/model add`, `/model settings`, and `/model chains`, kept working for existing habits.
@@ -1218,6 +1233,14 @@ class _Shell(Generic[DepsT, OutputT]):
             await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
+    def show_model(self) -> None:
+        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed."""
+        model = self.session.model or _model_label(self.agent)
+        if model != self.status.model:
+            self.status.context_window = None
+            self.status.context_alert = False
+        self.status.model = model
+
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
         self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
@@ -1238,11 +1261,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                model = self.session.model or _model_label(self.agent)
-                if model != self.status.model:
-                    self.status.context_window = None
-                    self.status.context_alert = False
-                self.status.model = model
+                self.show_model()
                 self.status.workspace = self.session.workspace
                 self._show_status_segments()
                 if self.editor is not None:

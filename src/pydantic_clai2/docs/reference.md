@@ -532,6 +532,11 @@ that cache implicitly or not at all ignore it. Set it to `false` to turn caching
 to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
 over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
+In the web UI, `/model` typed in the composer opens the Settings window's **Models** section
+instead: the model for the next prompt, each saved model's settings (this editor's rows), and
+adding and removing models. `/effort` opens a dialog with the active model's settings, effort
+among them. `/fast` still toggles, as in the terminal.
+
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
 removes the native effort override. Custom parameters stay unchanged: remove any
@@ -625,7 +630,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text

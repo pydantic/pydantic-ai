@@ -2459,7 +2459,8 @@ zero-argument callable returning a `SettingsMenu` (see
 [Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)). The terminal
 still runs `handler`; the web UI shows that menu in the page when the bare command is
 typed there, editing the same values through the same `FieldSource`, with its actions
-asking through the page's dialogs. `/set`, `/theme`, and `/spinner` declare theirs.
+asking through the page's dialogs. `/set`, `/theme`, `/spinner`, `/model`, and `/effort`
+declare theirs.
 `/keys`, `/accounts`, and `/login` declare theirs too: their actions ask through
 `Dialogs` in the terminal and the page alike.
 A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
@@ -2878,6 +2879,11 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `actions`, for rows that need more than one value typed or picked, such as
   choosing a `/keys` entry or signing in: the row's key maps to an async function
   that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `menus`, for rows that open another `SettingsMenu`, such as each saved model's
+  settings in `/model`'s menu: the row's key maps to a zero-argument callable that
+  builds it when it opens. Leaving it returns to this menu, in the terminal and in
+  the web UI, which shows it beneath the row. The keys are read as the menu opens, so
+  a row an action adds meanwhile opens its menu once the menu opens again.
 - `searchable`, whether typing filters the list (default `True`).
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
@@ -3594,7 +3600,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
