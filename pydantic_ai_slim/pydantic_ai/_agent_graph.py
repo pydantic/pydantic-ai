@@ -415,11 +415,33 @@ class _AttemptBaseline:
             self.messages.pop()
 
     def restore(self, request_context: ModelRequestContext) -> None:
-        # Fresh containers, so a hook that edits the settings or parameters in place for one attempt
-        # doesn't change what the next attempt starts from.
+        # Fresh containers, down to the lists, dicts and sets inside the settings and parameters, so a hook
+        # that edits them in place for one attempt doesn't change what the next attempt starts from. The
+        # messages, tool definitions and other items they hold are shared, as `before_model_request` shares them.
         request_context.messages = list(self.messages)
-        request_context.model_settings = self.model_settings.copy() if self.model_settings is not None else None
-        request_context.model_request_parameters = replace(self.model_request_parameters)
+        request_context.model_settings = (
+            cast(ModelSettings, {key: _copy_container(value) for key, value in self.model_settings.items()})
+            if self.model_settings is not None
+            else None
+        )
+        parameters = self.model_request_parameters
+        request_context.model_request_parameters = replace(
+            parameters,
+            function_tools=list(parameters.function_tools),
+            native_tools=list(parameters.native_tools),
+            tool_visibility=_copy_container(parameters.tool_visibility),
+            revealed_tool_names=set(parameters.revealed_tool_names),
+            deferred_capability_ids=set(parameters.deferred_capability_ids),
+            output_tools=list(parameters.output_tools),
+            instruction_parts=_copy_container(parameters.instruction_parts),
+        )
+
+
+def _copy_container(value: T) -> T:
+    """A shallow copy of `value` if it's a list, dict or set, so it can be edited in place without sharing."""
+    if isinstance(value, list | dict | set):
+        return cast(T, copy(value))  # pyright: ignore[reportUnknownArgumentType]
+    return value
 
 
 @dataclasses.dataclass
@@ -434,6 +456,9 @@ class _HandlerState:
         default_factory=list[_messages.ModelResponse]
     )
     """Every provider response whose usage was committed this step, including rejected attempts'."""
+    described_attempts: Sequence[_messages.ModelRequestAttempt] = ()
+    """This step's failed attempts, whose usage was committed when they failed: a response carrying them
+    in its `failed_attempts` only describes that usage, so it isn't counted again."""
 
     def record(
         self,
@@ -1690,6 +1715,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     sr, req_ctx, request_start = await self._open_stream(
                         ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
                     )
+                    # The step's failed attempts the stream was handed over with, committed when they failed.
+                    described_attempts = list(sr.failed_attempts or ())
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
@@ -1723,7 +1750,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = sr.get()
             _handler_response = response
             _handler_usage_recorded = True
-            self._record_response_usage(ctx, response, request_context=req_ctx)
+            # The attempts the stream was handed over with are described, not billed again.
+            self._record_response_usage(ctx, response, request_context=req_ctx, described=described_attempts)
             accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
             return await _after_streamed_model_request(ctx.deps.root_capability, run_context, req_ctx, response)
@@ -1992,11 +2020,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if state.response is not None:
-                self._append_response(ctx, state.response, record_usage=not state.usage_recorded)
+                self._append_response(
+                    ctx, state.response, record_usage=not state.usage_recorded, described=state.described_attempts
+                )
             return await self._build_retry_node(ctx, e)
 
         self._enforce_usage_limits(ctx, state.accounted_responses)
-        return await self._finish_handling(ctx, model_response, record_usage=not state.usage_recorded)
+        return await self._finish_handling(
+            ctx, model_response, record_usage=not state.usage_recorded, described=state.described_attempts
+        )
 
     async def _request_attempts(
         self,
@@ -2015,6 +2047,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         baseline = _AttemptBaseline.capture(request_context)
         failed = _FailedAttempts()
+        state.described_attempts = failed.log.attempts
         while True:
             baseline.restore(request_context)
             state.response = None
@@ -2067,7 +2100,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if state.response is not None:
                 state.record(ctx, state.response, request_context)
             outcome = e
-            response = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            # Not billed, so its usage is committed with the step's response, without the attempts it carries.
+            response = failed.log.attach(recovered)
         state.response = response
         capture_model_response_span_context(request_context, response)
         try:
@@ -2525,17 +2560,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     raise
                 # A hook recovered the failure with a complete response; replay it as a stream so the
                 # consumer sees the same shape either way.
-                return (
-                    CompletedStreamedResponse(
-                        recovered,
-                        model_request_parameters=request_context.model_request_parameters,
-                        replay_events=True,
-                    ),
-                    request_context,
-                    request_start,
+                replay = CompletedStreamedResponse(
+                    recovered,
+                    model_request_parameters=request_context.model_request_parameters,
+                    replay_events=True,
                 )
+                failed.log.attach_to_stream(replay)
+                return replay, request_context, request_start
             stream_stack.push_async_exit(attempt_stack)
-            # Stream-opening failures carry no usage, so the response these end up on records none twice.
             failed.log.attach_to_stream(sr)
             return sr, request_context, request_start
 
@@ -2595,9 +2627,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         record_usage: bool = True,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         # Append the model response to state.message_history
-        self._append_response(ctx, response, record_usage=record_usage)
+        self._append_response(ctx, response, record_usage=record_usage, described=described)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -2654,6 +2687,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         record_usage: bool = True,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
         """Commit a step's model response to history, counting the step and updating usage tracking.
 
@@ -2666,7 +2700,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
         if record_usage:
-            ModelRequestNode._record_response_usage(ctx, response)
+            ModelRequestNode._record_response_usage(ctx, response, described=described)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
         ctx.state.message_history.append(response)
 
@@ -2676,13 +2710,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         request_context: ModelRequestContext | None = None,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
-        """Commit billed usage at the provider-response boundary."""
+        """Commit billed usage at the provider-response boundary.
+
+        `described` are failed attempts whose usage was already committed, when they failed, so a response
+        carrying them only describes it.
+        """
         if request_context is not None:
             request_context._usage_response_ledger.responses.append(response)  # pyright: ignore[reportPrivateUsage]
         fill_response_cost(response)
         # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
-        _record_attempts_usage(ctx.state.usage, response.failed_attempts)
+        _record_attempts_usage(
+            ctx.state.usage,
+            [
+                attempt
+                for attempt in response.failed_attempts or ()
+                if not any(attempt is counted for counted in described)
+            ],
+        )
         _usage_attribution.record_usage(ctx.state.usage, response.usage)
 
     @staticmethod

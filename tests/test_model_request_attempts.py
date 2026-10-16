@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hoo
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 
 def success(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -435,3 +436,108 @@ async def test_retry_model_request_before_any_attempt_is_a_user_error(
                 await stream.get_output()  # pragma: no cover
         else:
             await agent.run('x')
+
+
+class RetryThenRecover(AbstractCapability[None]):
+    """Moves on from the first failed attempt, then recovers the second with a response of its own."""
+
+    async def on_model_request_error(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        if request_context.attempt == 1:
+            raise RetryModelRequest()
+        return ModelResponse(parts=[TextPart('recovered')])
+
+
+def _attempt_outcomes(response: object) -> list[tuple[str, str | None]]:
+    assert isinstance(response, ModelResponse)
+    return [(attempt.outcome, attempt.error) for attempt in response.failed_attempts or []]
+
+
+async def test_a_recovered_response_keeps_the_attempts_that_failed_before_it():
+    agent = Agent(FunctionModel(failure), deps_type=type(None), capabilities=[RetryThenRecover()])
+    result = await agent.run('x')
+    assert result.output == 'recovered'
+    assert _attempt_outcomes(result.all_messages()[-1]) == [('error', 'ModelAPIError: boom')]
+    # The recovered response was never billed, and the failed attempt reported no usage.
+    assert (result.usage.requests, result.usage.input_tokens, result.usage.output_tokens) == (1, 0, 0)
+
+
+async def test_a_recovered_stream_keeps_the_attempts_that_failed_before_it():
+    agent = Agent(
+        FunctionModel(stream_function=failure_stream), deps_type=type(None), capabilities=[RetryThenRecover()]
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'recovered'
+    assert _attempt_outcomes(stream.all_messages()[-1]) == [('error', 'ModelAPIError: boom')]
+
+
+async def test_in_place_parameter_edits_do_not_reach_the_next_attempt():
+    """Each attempt starts from what `before_model_request` produced, even if an attempt edited its lists in place."""
+    seen: list[tuple[int, list[str], bool]] = []
+
+    class EditInPlaceThenSwitch(AbstractCapability[None]):
+        async def prepare_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parameters = request_context.model_request_parameters
+            settings = request_context.model_settings or {}
+            seen.append(
+                (
+                    request_context.attempt,
+                    [tool.name for tool in parameters.function_tools],
+                    'x-attempt' in settings.get('extra_headers', {}),
+                )
+            )
+            if request_context.attempt == 1:
+                parameters.function_tools.clear()
+                parameters.output_tools.clear()
+                parameters.revealed_tool_names.add('leaked')
+                settings.setdefault('extra_headers', {})['x-attempt'] = '1'
+                raise RetryModelRequest(FunctionModel(success, model_name='other'))
+            return request_context
+
+    agent = Agent(
+        FunctionModel(failure),
+        deps_type=type(None),
+        model_settings={'extra_headers': {'x-base': 'yes'}},
+        capabilities=[EditInPlaceThenSwitch()],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    result = await agent.run('x')
+    assert result.output == 'hello'
+    assert seen == [(1, ['lookup'], False), (2, ['lookup'], False)]
+
+
+async def test_a_recovered_response_does_not_count_a_rejected_attempts_usage_again():
+    """The attempts a recovered response carries describe usage committed when they failed."""
+    calls: list[int] = []
+
+    def billed_then_failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            return ModelResponse(parts=[TextPart('nope')], usage=RequestUsage(input_tokens=100, output_tokens=10))
+        raise ModelAPIError(model_name='m', message='boom')
+
+    class RejectThenRecover(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if response.text == 'nope':
+                raise RetryModelRequest()
+            return response
+
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('recovered')])
+
+    agent = Agent(FunctionModel(billed_then_failing), deps_type=type(None), capabilities=[RejectThenRecover()])
+    result = await agent.run('x')
+    assert result.output == 'recovered'
+    assert _attempt_outcomes(result.all_messages()[-1]) == [('rejected', None)]
+    assert (result.usage.requests, result.usage.input_tokens, result.usage.output_tokens) == (1, 100, 10)

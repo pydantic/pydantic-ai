@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelHTTPError,
     ModelRetry,
+    RetryModelRequest,
     SkipModelRequest,
     UsageLimitExceeded,
     UserError,
@@ -2226,6 +2227,45 @@ class TestFallbackAttempts:
         assert spent[0] == spent[1] == Spent(usd=Decimal('120'), tokens=132, requests=2)
         # A response either one rejected is reported as a failed attempt, not as the answer.
         assert recorded[0] == recorded[1] == [('gpt-4o-mini', True), ('gpt-4o', reject_all)]
+
+    async def test_a_capability_rejection_is_charged_once_when_a_later_attempt_is_recovered(self):
+        """The response a recovery returns carries the rejected attempt, which was already charged as billed."""
+        calls: list[int] = []
+
+        def billed_then_failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(1)
+            if len(calls) == 1:
+                return _usage_response(100, 10)
+            raise ModelHTTPError(status_code=503, model_name='down')
+
+        class RejectThenRecover(AbstractCapability[None]):
+            async def after_model_request(
+                self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                if response.text == 'ok':
+                    raise RetryModelRequest()
+                return response  # pragma: no cover
+
+            async def on_model_request_error(
+                self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart('recovered')])
+
+        accrued: list[tuple[str | None, bool]] = []
+        guard = _RecordingSpendLimits[None](
+            budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens), accrued=accrued
+        )
+        agent = Agent(
+            FunctionModel(billed_then_failing, model_name='gpt-4o-mini'),
+            deps_type=type(None),
+            capabilities=[guard, RejectThenRecover()],
+        )
+        result = await agent.run('hi')
+
+        assert result.output == 'recovered'
+        assert accrued == [('gpt-4o-mini', True)]
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('100'), tokens=110, requests=1)
+        assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.requests) == (100, 10, 1)
 
     async def test_rejected_responses_are_charged_when_an_outer_hook_recovers(self):
         """Recovery by a capability outside `SpendLimits` hides the group from the wrapper, not the charge."""
