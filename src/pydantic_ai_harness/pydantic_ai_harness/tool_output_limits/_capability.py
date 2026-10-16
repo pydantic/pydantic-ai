@@ -23,6 +23,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness.capability_storage._capability import storage_workspace
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -162,8 +163,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     store: OverflowStore | WorkspaceStore | None = None
     """Backend for spilled payloads.
 
-    Defaults to a `WorkspaceStore` in the run's workspace. When the bands can spill and no store
-    has a workspace to write to, the run fails at its start: attach a workspace, or pass
+    Defaults to a `WorkspaceStore` in the run's workspace, or in the workspace of the agent's
+    `CapabilityStorage` when it has one. When the bands can spill and no store has a workspace to
+    write to, the run fails at its start: attach a workspace or a `CapabilityStorage`, or pass
     `store=LocalFileStore()` to keep spills on this machine.
     """
 
@@ -210,17 +212,21 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             isinstance(store, WorkspaceStore)
             and store.workspace is None
             and not ctx.workspace.attached
+            and storage_workspace(ctx) is None
             and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
         ):
             raise UserError(
                 "`ToolOutputLimits` spills oversized tool output to the run's workspace, but none is attached "
-                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileStore()` "
-                'to keep spills on this machine.'
+                "to this run. Attach one, such as `LocalWorkspace('.')`, add a `CapabilityStorage` to keep "
+                'spills in a workspace of their own, or pass `store=LocalFileStore()` to keep spills on this machine.'
             )
 
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
-        return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
+        if not isinstance(store, WorkspaceStore):
+            return store
+        storage = storage_workspace(ctx)
+        return store.bind(ctx.workspace if storage is None else storage)
 
     # --- toolset ---
 

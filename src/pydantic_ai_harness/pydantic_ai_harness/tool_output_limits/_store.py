@@ -81,7 +81,9 @@ class WorkspaceStore:
     directory.
 
     Files are not pruned: they go away with the sandbox, or when the directory is deleted for a
-    local workspace. Set `workspace` to keep them in a workspace other than the run's.
+    local workspace. With a `CapabilityStorage` on the agent, `ToolOutputLimits` passes its
+    workspace instead of the run's, and the model reads spills with `read_tool_result` only. Set
+    `workspace` to keep them in a workspace of this store's choosing.
     """
 
     workspace: WorkspaceBackend | None = None
