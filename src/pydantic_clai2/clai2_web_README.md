@@ -88,7 +88,7 @@ edits, or removes it, as `/mcp`'s subcommands do; the terminal prints each resul
 made there shows here too. A repository's MCP files show as a banner whose **Review** shows their
 contents before you trust them.
 
-<!-- From the clai2 web settings stack, part 5 -->
+<!-- From #10461 -->
 **System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the
 composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens your instructions in
 a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
