@@ -17,6 +17,7 @@ import anyio
 import anyio.from_thread
 import anyio.to_thread
 import pytest
+from pydantic import BaseModel
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -40,6 +41,7 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -7872,6 +7874,94 @@ async def test_bedrock_thinking_false_on_models_that_think_by_default(
     assert result.output == 42
     assert converse.call_args.kwargs.get('additionalModelRequestFields') == expected_fields
     assert converse.call_args.kwargs['toolConfig']['toolChoice'] == expected_tool_choice
+
+
+class _CityInfo(BaseModel):
+    city: str
+    population: int
+
+
+def _converse_responses(final: dict[str, Any]) -> list[dict[str, Any]]:
+    """A `get_population` tool call, then `final` as the last message's content."""
+    usage = {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20}
+    return [
+        {
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 't1', 'name': 'get_population', 'input': {'city': 'Zurich'}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': usage,
+        },
+        {
+            'output': {'message': {'role': 'assistant', 'content': [final]}},
+            'stopReason': 'tool_use' if 'toolUse' in final else 'end_turn',
+            'usage': usage,
+        },
+    ]
+
+
+def _thinking_from_second_step(ctx: RunContext) -> ModelSettings:
+    return {'thinking': True} if ctx.run_step > 1 else {}
+
+
+async def test_bedrock_default_output_mode_stays_put_when_thinking_toggles_per_step(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Claude keeps the output tool when a later step turns extended thinking on, offering it without forcing,
+    so the tools sent stay the same and the prompt cache holds."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        side_effect=_converse_responses(
+            {'toolUse': {'toolUseId': 't2', 'name': 'final_result', 'input': {'city': 'Zurich', 'population': 421878}}}
+        ),
+    )
+    agent = Agent(model, output_type=_CityInfo, model_settings=_thinking_from_second_step)
+
+    @agent.tool_plain
+    def get_population(city: str) -> int:
+        return 421878
+
+    result = await agent.run('What is the population of Zurich?')
+
+    assert result.output == _CityInfo(city='Zurich', population=421878)
+    first, second = (call.kwargs for call in converse.call_args_list)
+    assert second['toolConfig']['tools'] == first['toolConfig']['tools']
+    assert [tool['toolSpec']['name'] for tool in first['toolConfig']['tools']] == ['get_population', 'final_result']
+    assert [
+        (kwargs['toolConfig']['toolChoice'], kwargs.get('additionalModelRequestFields')) for kwargs in (first, second)
+    ] == snapshot([({'any': {}}, None), ({'auto': {}}, {'thinking': {'type': 'enabled', 'budget_tokens': 10000}})])
+
+
+async def test_bedrock_default_output_mode_resolves_again_where_the_kept_one_is_invalid(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Qwen rejects output tools alongside thinking, so a step that turns thinking on resolves its own mode
+    rather than failing."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        side_effect=_converse_responses({'text': '{"city": "Zurich", "population": 421878}'}),
+    )
+    agent = Agent(model, output_type=_CityInfo, model_settings=_thinking_from_second_step)
+
+    @agent.tool_plain
+    def get_population(city: str) -> int:
+        return 421878
+
+    result = await agent.run('What is the population of Zurich?')
+
+    assert result.output == _CityInfo(city='Zurich', population=421878)
+    first, second = (call.kwargs for call in converse.call_args_list)
+    assert [tool['toolSpec']['name'] for tool in first['toolConfig']['tools']] == ['get_population', 'final_result']
+    assert [tool['toolSpec']['name'] for tool in second['toolConfig']['tools']] == ['get_population']
 
 
 def test_bedrock_disabled_unified_thinking_takes_precedence_over_params(bedrock_provider: BedrockProvider) -> None:
