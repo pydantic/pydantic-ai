@@ -216,7 +216,8 @@ async def chat(
         async with agent:
             while True:
                 reason: SessionEndReason = 'error'
-                # The terminal shows this session, the process's only one.
+                # The terminal shows this session, the process's only one, live again after a failed reload.
+                shell.process.live.add(shell)
                 shell.process.live.focused = shell.live_session.id
                 with theme.use(
                     lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None

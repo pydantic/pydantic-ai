@@ -609,6 +609,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
+        self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:

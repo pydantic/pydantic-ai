@@ -42,6 +42,31 @@ class Recorder(Plugin):
 RECORDER = PluginSettings(id='recorder', factory=f'{__name__}:Recorder')
 
 
+class Gate(Plugin):
+    """Holds the end of the session in a folder named `held` until `release` is set."""
+
+    ending: ClassVar[anyio.Event] = anyio.Event()
+    release: ClassVar[anyio.Event] = anyio.Event()
+
+    async def on_session_end(self, event: SessionEnd) -> None:
+        if self.host.workspace.name == 'held':
+            Gate.ending.set()
+            await Gate.release.wait()
+
+
+class _Output(io.StringIO):
+    """Console output that tells when `clai2 --web` is ready for its user."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready = anyio.Event()
+
+    def write(self, s: str) -> int:
+        if 'Press Ctrl-C to quit.' in s:
+            self.ready.set()
+        return super().write(s)
+
+
 class Fleet:
     """One process whose `live.build` makes a runtime per folder, with that folder's agent, project, and console."""
 
@@ -199,7 +224,8 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
             async with anyio.create_task_group() as group:
                 group.start_soon(fleet.live.close, first.id)
                 await anyio.lowlevel.checkpoint()
-                assert fleet.live.holding(saved.id) is None
+                # Closing, it still holds the conversation: nothing else may resume it yet.
+                assert fleet.live.holding(saved.id) is first
                 reopened = await fleet.live.open(saved.id)
                 assert reopened is not first and fleet.built == ['a', 'home', 'a']
                 with pytest.raises(LookupError):
@@ -369,6 +395,43 @@ async def test_idle_sessions_close_after_the_timeout(tmp_path: Path) -> None:
     assert Recorder.ended[:3] == [('idle', 'exit'), ('watched', 'exit'), ('busy', 'exit')]
 
 
+async def test_a_session_that_ends_while_another_closes_is_skipped(tmp_path: Path) -> None:
+    """Idle closing waits on one session's end; another that `/exit`s meanwhile is not closed twice."""
+    Gate.ending, Gate.release = anyio.Event(), anyio.Event()
+    fleet = Fleet(tmp_path, builtin=(RECORDER, PluginSettings(id='gate', factory=f'{__name__}:Gate')))
+    now = [0.0]
+    fleet.live.clock = lambda: now[0]
+    fleet.live.idle_after = 10
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            await fleet.live.new(fleet.folder('held'))
+            other = await fleet.live.new(fleet.folder('other'))
+            now[0] = 11
+            async with anyio.create_task_group() as group:
+                group.start_soon(fleet.live.close_idle)
+                await Gate.ending.wait()
+                other.send_input('/exit')
+                await until(fleet.live, lambda: other not in fleet.live.listing())
+                Gate.release.set()
+            assert not fleet.live.listing()
+    assert sorted(Recorder.ended) == [('held', 'exit'), ('other', 'exit')]
+
+
+async def test_the_registry_counts_each_session_once(tmp_path: Path) -> None:
+    """Adding twice keeps one entry; leaving or removing a session no longer counted does nothing."""
+    fleet = Fleet(tmp_path, builtin=())
+    runtime = fleet.build(fleet.folder('once'))
+    heard: list[str] = []
+    fleet.live.subscribe(lambda: heard.append('changed'))
+    fleet.live.add(runtime)
+    assert fleet.live.listing() == [runtime.live_session] and not heard
+    await runtime.close('exit')
+    assert not fleet.live.listing() and heard == ['changed', 'changed']
+    fleet.live.leaving(runtime)
+    fleet.live.remove(runtime)
+    assert heard == ['changed', 'changed']
+
+
 async def test_the_idle_check_runs_on_its_own(tmp_path: Path) -> None:
     fleet = Fleet(tmp_path)
     fleet.live.idle_after = fleet.live.check_every = 0
@@ -420,7 +483,7 @@ async def test_run_web_opens_more_sessions_in_their_own_folders(
         await serve(shell, **kwargs)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(web_module, '_serve_web', recorded)
-    output = io.StringIO()
+    output = _Output()
     with anyio.fail_after(30):
         async with anyio.create_task_group() as group:
             group.start_soon(
@@ -433,8 +496,7 @@ async def test_run_web_opens_more_sessions_in_their_own_folders(
                     port=0,
                 )
             )
-            while 'Press Ctrl-C to quit.' not in output.getvalue():
-                await anyio.lowlevel.checkpoint()
+            await output.ready.wait()
             live = shells[0].process.live
             here = await live.new()
             there = await live.new(other)

@@ -66,8 +66,9 @@ class _Live:
     ready: bool = True
     """False while `open` or `new` loads it; until then it is not listed and not closed for being idle."""
     closing: bool = False
+    """Set once it starts closing, so `open` waits for it to close rather than return it."""
     done: Event = field(default_factory=Event)
-    """Set once a session `serving` runs has closed."""
+    """Set once it has closed."""
 
 
 class LiveRuntimes(JoinedSessions):
@@ -94,21 +95,31 @@ class LiveRuntimes(JoinedSessions):
         """The session the terminal shows, never closed for being idle; `None` under `clai2 --web`."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
+        self._building = False
 
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
         return [live.runtime.live_session for live in self._live.values() if live.ready]
 
     def add(self, runtime: Served) -> None:
-        """Count `runtime` among the live sessions, following the settings the others save."""
+        """Count `runtime` among the live sessions, following the settings the others save; once is enough."""
+        if runtime.live_session.id in self._live:
+            return
         runtime.context.saved = lambda key: self._saved(runtime, key)
-        self._live[runtime.live_session.id] = _Live(runtime=runtime, active=self.clock())
+        self._live[runtime.live_session.id] = _Live(runtime=runtime, active=self.clock(), ready=not self._building)
         self.changed(runtime.live_session)
+
+    def leaving(self, runtime: Served) -> None:
+        """Mark `runtime` closing: it still holds its conversation, but `open` waits for it to close."""
+        if (live := self._live.get(runtime.live_session.id)) is not None:
+            live.closing = True
+            self.changed(runtime.live_session)
 
     def remove(self, runtime: Served) -> None:
         """Stop counting `runtime`, once it has closed."""
-        self._live.pop(runtime.live_session.id, None)
-        self.changed(runtime.live_session)
+        if (live := self._live.pop(runtime.live_session.id, None)) is not None:
+            live.done.set()
+            self.changed(runtime.live_session)
 
     def changed(self, session: LiveRuntime) -> None:
         if (live := self._live.get(session.id)) is not None:
@@ -116,9 +127,9 @@ class LiveRuntimes(JoinedSessions):
         super().changed(session)
 
     def holding(self, conversation_id: str) -> LiveSession | None:
-        """The live session holding `conversation_id`, even one still opening, unless it is closing."""
+        """The live session holding `conversation_id`, even one still opening or closing."""
         live = self._holder(conversation_id)
-        return live.runtime.live_session if live is not None and not live.closing else None
+        return live.runtime.live_session if live is not None else None
 
     def _holder(self, conversation_id: str) -> _Live | None:
         return next(
@@ -178,7 +189,8 @@ class LiveRuntimes(JoinedSessions):
         """Close each session `serving` runs that has been idle and unwatched for `idle_after` seconds."""
         now = self.clock()
         for live_id, live in list(self._live.items()):
-            if live.scope is None or live.closing or not live.ready:
+            # A session may have closed by itself while an earlier one closed.
+            if self._live.get(live_id) is not live or live.scope is None or live.closing or not live.ready:
                 continue
             if live_id == self.focused or live.runtime.live_session.watchers or not live.runtime.idle:
                 live.active = now
@@ -193,8 +205,12 @@ class LiveRuntimes(JoinedSessions):
     async def _start(self, workspace: Path | None, *, resume: str | None) -> LiveSession:
         if self._group is None or self.build is None:
             return await super().new()
-        runtime = self.build(workspace)
-        self._live[runtime.live_session.id].ready = False
+        # What `build` adds is not listed until it has loaded.
+        self._building = True
+        try:
+            runtime = self.build(workspace)
+        finally:
+            self._building = False
         return await self._group.start(self._serve, runtime, resume)
 
     async def _serve(self, runtime: Served, resume: str | None, *, task_status: TaskStatus[LiveSession]) -> None:
@@ -213,8 +229,6 @@ class LiveRuntimes(JoinedSessions):
                 raise
             # One session failing must not end the others.
             _LOGGER.exception('Live session %s failed', runtime.live_session.id)
-        finally:
-            live.done.set()
 
     def _saved(self, origin: Served, key: str) -> None:
         """Have every other live session follow a setting `origin` saved; `model` and `run.*` stay per session."""
