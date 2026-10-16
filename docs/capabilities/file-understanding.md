@@ -1,6 +1,6 @@
 # File Understanding
 
-The [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] [capability](overview.md) lets an agent take images, documents and video its model cannot read. Before each request, every such file in a user prompt is replaced by a text description of it, written by a model that can read it. The agent's model sees the description in the file's place, and files it does accept are sent as they are.
+The [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] [capability](overview.md) lets an agent take images, documents, audio and video its model cannot read. Before each request, every such file in a user prompt or a tool result is replaced by a text description of it, written by a model that can read it. The agent's model sees the description in the file's place, and files it does accept are sent as they are. Without the capability, a file a tool returned that the model cannot read is [replaced by a note](../tools-advanced.md#tool-return-file-provenance) saying so, and one in a user prompt fails the request.
 
 ```python {title="file_understanding_capability.py"}
 from pydantic_ai import Agent, DocumentUrl
@@ -17,7 +17,7 @@ print(result.output)
 #> True
 ```
 
-Which files need describing comes from the model's [profile](../models/overview.md#inspecting-a-models-profile): [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Most models accept images and documents, so with them the capability only has video described. A text-only model like [Jev](../models/typesafe.md) has everything described.
+Which files need describing comes from the model's [profile](../models/overview.md#inspecting-a-models-profile): [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input], [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types], [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Most models accept images and documents, so with them the capability mostly has audio and video described; on [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], Word and Excel documents too. A text-only model like [Jev](../models/typesafe.md) has everything described.
 
 `fallback_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it must accept the files itself. `instructions` replaces the default request for a detailed description:
 
@@ -34,4 +34,4 @@ The description reaches the model between `-----BEGIN FILE-----` and `-----END F
 
 A file is described once and the description reused for the steps that follow, so a long conversation does not describe the same file again; the last 256 descriptions are kept. Binary content is reused for as long as the capability lives, because the bytes are their own identity. A file given by URL is reused only within the run that fetched it: the same URL can serve different bytes to different callers, and stop resolving once a signature expires, so one run's description of it is never handed to the next.
 
-A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has no single profile, so the capability leaves its files alone. Use the capability with a single model when files need to be described.
+A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has no single profile, so the capability leaves its files alone, and each model it tries is sent a note in place of a tool's file that model can't read. Use the capability with a single model when files need to be described.

@@ -530,9 +530,9 @@ class DecisionModel(Model[InterfaceClient]):
         the user text, where it would be judged as the request.
 
         Images are read only when the class sets
-        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents and
-        video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes those files
-        instead of letting them be refused.
+        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
+        audio and video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes
+        those files instead of letting them be refused, and a tool's file is otherwise replaced by a note.
         """
         return merge_profile(
             super().profile,
@@ -541,6 +541,7 @@ class DecisionModel(Model[InterfaceClient]):
                 supports_inline_system_prompts=True,
                 supports_image_input=self.supports_image_input,
                 supports_document_input=False,
+                supports_audio_file_input=False,
                 supports_video_input=False,
             ),
         )

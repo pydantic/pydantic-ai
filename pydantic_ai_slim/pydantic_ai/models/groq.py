@@ -182,6 +182,9 @@ class GroqModel(Model[AsyncGroq]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Groq's chat API takes images and no other file.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
 

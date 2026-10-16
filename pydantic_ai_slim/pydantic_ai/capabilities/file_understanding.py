@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
+from pydantic_ai._file_input import SendableFile, unsupported_file_input
 from pydantic_ai._utils import format_inlined_text_file, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
-    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    UserContent,
+    ToolReturnPart,
     UserPromptPart,
-    VideoUrl,
 )
 from pydantic_ai.models import KnownModelName, Model, download_item
 from pydantic_ai.profiles import ModelProfile
@@ -25,6 +24,8 @@ from .durable_operation import durable_operation
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
+
+_T = TypeVar('_T')
 
 _MAX_DESCRIPTIONS = 256
 """Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
@@ -39,10 +40,11 @@ _DEFAULT_INSTRUCTIONS = (
 class FileUnderstanding(AbstractCapability[AgentDepsT]):
     """Describe the files the agent's model cannot read, with a model that can.
 
-    Before each request, every image, document or video in a user prompt that the model's
-    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a text
-    description of it, written by `fallback_model`. The agent's model sees the description in the file's
-    place; files it accepts are sent as they are.
+    Before each request, every image, document, audio file or video in a user prompt or a tool result that
+    the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a
+    text description of it, written by `fallback_model`. The agent's model sees the description in the
+    file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
+    that the model cannot read is replaced by a note saying so instead.
 
     ```python
     from pydantic_ai import Agent, DocumentUrl
@@ -65,9 +67,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     lives, since the bytes are their own identity; a file given by URL is reused only within the run that fetched
     it, because the same URL can serve different bytes to different callers and stop resolving once a signature
     expires.
-
-    Audio is left as it is: [`supports_audio_input`][pydantic_ai.profiles.ModelProfile.supports_audio_input]
-    is about realtime speech history and is not set per model, so it cannot say which models read audio files.
     """
 
     fallback_model: Model | KnownModelName | str
@@ -116,15 +115,15 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
                     part,
                     content=[await self._describe_if_unsupported(item, profile, run_id) for item in part.content],
                 )
+            elif isinstance(part, ToolReturnPart) and part.files:
+                items = [await self._describe_if_unsupported(item, profile, run_id) for item in part.content_items()]
+                part = replace(part, content=items if isinstance(part.content, list) else items[0])
             parts.append(part)
         return replace(message, parts=parts) if parts != original_parts else message
 
-    async def _describe_if_unsupported(
-        self, item: UserContent, profile: ModelProfile, run_id: str | None
-    ) -> UserContent:
-        if _accepted(item, profile):
+    async def _describe_if_unsupported(self, item: _T, profile: ModelProfile, run_id: str | None) -> _T | str:
+        if not isinstance(item, SendableFile) or unsupported_file_input(item, profile) is None:
             return item
-        assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
         key = _reuse_key(item, run_id)
         description = self._descriptions.get(key) if key is not None else None
         if description is None:
@@ -139,7 +138,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     @durable_operation(name='describe')
-    async def _describe(self, item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent) -> str:
+    async def _describe(self, item: SendableFile) -> str:
         """The file as text: a text-like document's own content, anything else as `fallback_model` describes it."""
         from pydantic_ai.agent import Agent
 
@@ -155,7 +154,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return result.output
 
 
-def _reuse_key(item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent, run_id: str | None) -> str | None:
+def _reuse_key(item: SendableFile, run_id: str | None) -> str | None:
     """What identifies this file for reuse, or `None` when its description must not be reused.
 
     Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
@@ -168,14 +167,3 @@ def _reuse_key(item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent, run_id: 
         # are an image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
         return hashlib.sha256(item.media_type.encode() + b'\0' + item.data).hexdigest()
     return f'{run_id}:{item.url}' if run_id is not None else None
-
-
-def _accepted(item: UserContent, profile: ModelProfile) -> bool:
-    """Whether the model takes this item as it is; text and anything but a file is left alone."""
-    if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
-        return profile.get('supports_image_input', True)
-    if isinstance(item, DocumentUrl) or (isinstance(item, BinaryContent) and item.is_document):
-        return profile.get('supports_document_input', True)
-    if isinstance(item, VideoUrl) or (isinstance(item, BinaryContent) and item.is_video):
-        return profile.get('supports_video_input', False)
-    return True
