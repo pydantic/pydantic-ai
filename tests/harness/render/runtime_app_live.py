@@ -78,8 +78,13 @@ class RuntimeEffectEvent(CustomEvent, name='render_local_runtime.effect'):
 
 
 def _tool_returns(messages: list[ModelMessage]) -> dict[str, ToolReturnPart]:
-    """Index tool results from serialized model history by public tool name."""
-    return {part.tool_name: part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    """Index successful tool results from serialized model history by public tool name."""
+    return {
+        part.tool_name: part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+    }
 
 
 def grandchild_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
