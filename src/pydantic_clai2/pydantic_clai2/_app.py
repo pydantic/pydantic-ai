@@ -776,6 +776,8 @@ def create_shell(
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
+    updates.capture = lambda: _web_serving(loader) is not None
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -897,13 +899,16 @@ async def _serve_again(loader: PluginLoader[DepsT], web: WebHandoff | None, *, c
         console.print(await serve_again(loader, web), markup=False)
 
 
-def _serving(shell: '_Shell[DepsT, OutputT]') -> WebHandoff | None:
-    """The web UI to serve again once `/update` restarts CLAI; `None` when it does not, or none runs."""
-    if shell.updates.relaunch is None:
-        return None
+def _web_serving(loader: PluginLoader[DepsT]) -> WebHandoff | None:
+    """The port and token of the web UI the `web` plugin serves now; `None` while it serves none."""
     from pydantic_clai2.cli.web import serving
 
-    return serving(shell.loader)
+    return serving(loader)
+
+
+def _serving(shell: '_Shell[DepsT, OutputT]') -> WebHandoff | None:
+    """The web UI to serve again once `/update` restarts CLAI; `None` when it does not, or none runs."""
+    return None if shell.updates.relaunch is None else _web_serving(shell.loader)
 
 
 @dataclass(kw_only=True)

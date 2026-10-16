@@ -13,6 +13,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import _app, chat
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.builtin_plugins.web.protocol import Notice, Snapshot, UpdateChanged, UpdateInfo
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
@@ -42,6 +43,8 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
     updates, _ = _updates(['stable'], codes=[code], lines=UV_LINES)
     _use(monkeypatch, updates)
     web_ = make_web(Agent(TestModel()))
+    # The test client serves the page without `/web`, which is what tells CLAI a page watches.
+    updates.capture = lambda: True
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket_:
         snapshot = WIRE.validate_json(socket_.receive_text())
         assert isinstance(snapshot, Snapshot)
@@ -67,6 +70,29 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
             # A page that connects, or reloads, before CLAI exits still shows the restart.
             assert web_.get('/api/state').json()['update'] == {'target': '0.53.0', 'line': '', 'restarting': True}
         assert running.result(timeout=10) == 'exit'
+
+
+async def test_uv_draws_on_the_terminal_until_a_page_watches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With `web` loaded but not serving, nobody but the terminal watches uv, so its progress bars stay."""
+    updates, _ = _updates(['stable'])
+    _use(monkeypatch, updates)
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=[WEB],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    await shell.loader.load_all()
+    assert not updates.capture()
+    await shell.commands.execute_async('/web')
+    assert updates.capture()
+    await shell.loader.close('exit')
 
 
 async def test_run_web_restarts_on_the_same_port_and_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

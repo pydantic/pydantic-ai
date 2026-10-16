@@ -1307,7 +1307,8 @@ as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugi
 
 Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
 default and checks every request. The `Host` header must name the server's own address, which
-stops DNS rebinding. Every request must carry a random token, new each launch: API calls in a
+stops DNS rebinding. Every request must carry a random token, new each launch but kept across
+`/update`'s restart (see below): API calls in a
 header that another site's page cannot set, the page and its files in the address, as the
 printed link does, and the WebSocket as a query parameter, from the server's own origin. No
 cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
@@ -2326,9 +2327,10 @@ uv: `target` is the version, or on the `main` channel the short commit, being in
 `stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
 line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
 or `restarting` when CLAI is about to exit and start the new build in its place, and
-`on_session_end` follows. While a loaded plugin handles it, CLAI reads uv's output to pass it on
-and still prints each line, as plain lines; otherwise uv draws on the terminal itself. Nothing
-fires when there is nothing to install, or on Windows, where the install runs after CLAI exits.
+`on_session_end` follows. `output` comes only while the web UI serves: reading uv's output turns
+its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
+has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
+install runs after CLAI exits.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running

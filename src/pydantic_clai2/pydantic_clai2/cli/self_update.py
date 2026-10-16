@@ -324,7 +324,9 @@ class Updates:
     run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
     """Runs uv, handing its lines to the output when there is one."""
     report: Callable[[], Callable[[UpdateProgress], Awaitable[None]] | None] = lambda: None
-    """Who hears how an install goes: the shell's plugins while one listens. With nobody, uv draws on the terminal."""
+    """Who hears how an install goes: the shell's plugins, while one listens."""
+    capture: Callable[[], bool] = lambda: False
+    """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
@@ -399,7 +401,7 @@ class Updates:
         try:
             with CancelScope(shield=True):
                 await tell('installing')
-                code = await self.run(command, None if report is None else line)
+                code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
                 overrides.unlink(missing_ok=True)

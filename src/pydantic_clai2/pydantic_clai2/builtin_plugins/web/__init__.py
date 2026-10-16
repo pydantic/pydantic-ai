@@ -82,7 +82,7 @@ class WebPlugin(Plugin[WebSettings]):
     def __init__(self, host: PluginHost[None], settings: WebSettings) -> None:
         super().__init__(host, settings)
         self.token = secrets.token_urlsafe(32)
-        """Checked on every request; new each launch, so an old link stops working."""
+        """Checked on every request; new each launch, so an old link stops working, but kept across `/update`."""
         self.port: int | None = None
         """This launch's port, replacing the saved one, as `clai2 --web --port` sets it."""
         self.listen: str | None = None

@@ -406,6 +406,7 @@ async def test_command_reports_its_progress() -> None:
 
     restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
     restarted.report = lambda: report
+    restarted.capture = lambda: True
     assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
     assert heard == [
         UpdateProgress(stage='installing', target='0.53.0'),
@@ -413,6 +414,12 @@ async def test_command_reports_its_progress() -> None:
         UpdateProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
         UpdateProgress(stage='restarting', target='0.53.0'),
     ]
+    heard.clear()
+    # Without a page to show them, uv's lines stay on the terminal, where uv draws its progress itself.
+    quiet, _ = _updates(['stable'])
+    quiet.report = lambda: report
+    await quiet.command([])
+    assert [event.stage for event in heard] == ['installing', 'restarting']
     heard.clear()
     lost, _ = _updates(['stable'], executable=None)
     failed, _ = _updates(['stable'], codes=[1])
