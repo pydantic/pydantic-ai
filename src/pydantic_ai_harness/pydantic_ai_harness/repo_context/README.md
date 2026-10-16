@@ -40,9 +40,10 @@ print(result.output)
 
 Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to
 `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest
-context first, most specific last. Files are deduped by visited path and by content
-hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing identical
-content load once.
+context first, most specific last. Files are deduped by the path a symlink resolves
+to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
+sharing identical content load once. A symlinked file is labeled with its target's
+name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
 walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
