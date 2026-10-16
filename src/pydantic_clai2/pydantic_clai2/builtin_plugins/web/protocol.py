@@ -641,13 +641,15 @@ SessionMessage = (
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
 
-def dump(message: ServerMessage, *, session: str | None = None) -> str:
-    """The JSON text of one message, as the WebSocket sends it, with `session`, its conversation ID, when given."""
-    text = _WIRE.dump_json(message).decode()
-    if session is None:
-        return text
-    # Every message is a JSON object, so the conversation ID goes in first.
-    return f'{{"session":{json.dumps(session)},{text[1:]}'
+def dump(message: ServerMessage) -> str:
+    """The JSON text of one message, as the WebSocket sends it."""
+    return _WIRE.dump_json(message).decode()
+
+
+def dump_session(message: SessionMessage, *, session: str) -> str:
+    """The JSON text of a message about one live session, led by `session`, its conversation ID."""
+    # Every message is a JSON object with at least its `type`, so the conversation ID goes in first.
+    return f'{{"session":{json.dumps(session)},{dump(message)[1:]}'
 
 
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']

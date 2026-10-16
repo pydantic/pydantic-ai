@@ -75,6 +75,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
     TurnStarted,
     dump,
+    dump_session,
     history_items,
 )
 from pydantic_clai2.builtin_plugins.web.remote import Observer
@@ -752,9 +753,9 @@ async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
     assert [type(message).__name__ for message in published].count('DialogClosed') == 4
 
 
-def test_dump_names_the_session_of_a_per_session_message():
+def test_dump_names_the_session_of_a_per_session_message() -> None:
     """A per-session message carries its conversation ID first; a global one carries none."""
-    assert json.loads(dump(TextDelta(id='live1', text='hi'), session='conv "1"')) == {
+    assert json.loads(dump_session(TextDelta(id='live1', text='hi'), session='conv "1"')) == {
         'session': 'conv "1"',
         'type': 'delta',
         'id': 'live1',

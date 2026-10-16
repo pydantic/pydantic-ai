@@ -270,7 +270,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 `POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
 optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
-`{"id": …}` too. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+the same `{"id": "<conversation id>"}`. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,

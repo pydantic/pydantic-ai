@@ -217,7 +217,7 @@ export type SessionMessage = (
 ) & {
   /**
    * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
-   * only because the orchestrator chat applies the same chat messages without one.
+   * only because `reduce` also applies the orchestrator's chat messages, which have none.
    */
   session?: string
 }
