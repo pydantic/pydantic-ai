@@ -221,6 +221,11 @@ openai = "2026-10-06T21:31:20Z"
 # google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
 # TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
 google-genai = "2026-10-13T00:38:20Z"
+# typesafe-sdk 0.7.5 is the first release with image assets, and the `typesafe-sdk` floor.
+# This admits its artifacts through one second after the last upload.
+# TODO(DenysMoskalenko): Remove after 2026-10-21 21:22 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+typesafe-sdk = "2026-10-14T21:21:43Z"
 # asyncpg 0.32.0 is the first release with cp315 wheels, so Python 3.15 CI installs it instead of compiling
 # from source. This admits its artifacts through one second after the last upload.
 # TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, then run `uv lock` and
