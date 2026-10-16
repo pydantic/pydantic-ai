@@ -1609,10 +1609,11 @@ class TypedArgs(Generic[_ArgsT_co]):
         typed_args = TypedArgs(LookupArgs)
     ```
 
-    A part is only promoted to the subclass when its arguments, once complete, validate against the
-    shape, and `part.typed_args` returns them validated (a `LookupArgs` here). It returns `None` while
-    the arguments are still streaming in, or when they don't validate. `args` itself keeps the base
-    type, as it may still hold the raw JSON string.
+    A part whose arguments are already a dictionary is only promoted to the subclass when they validate
+    against the shape; arguments still held as a JSON string are promoted as is and only validated when
+    `typed_args` is read. `part.typed_args` returns them validated (a `LookupArgs` here), or `None` while
+    they are still streaming in or when they don't validate, so check for `None` even on a finalized
+    response. `args` itself keeps the base type, as it may still hold the raw JSON string.
     """
 
     def __init__(self, args_type: type[_ArgsT_co]) -> None:

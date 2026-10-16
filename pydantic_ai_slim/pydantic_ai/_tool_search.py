@@ -148,15 +148,12 @@ class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
     """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
     typed_args = TypedArgs(ToolSearchArgs)
-    """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
-
-    In non-streaming code (a typed call part on a finalized
-    [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-    populated — once a part is narrowed to this typed subclass, its `args`
-    have been validated.
+    """Typed view of the validated tool-search arguments, or `None` if they don't validate.
 
     Returns `None` in streaming-partial state, where `args` is still an
-    in-progress JSON string the model hasn't finished emitting, or when they don't validate.
+    in-progress JSON string the model hasn't finished emitting, or when they don't validate:
+    `args` given as a JSON string aren't validated until this is read, even on a finalized
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse].
     For raw string-tolerant access, use the inherited `args_as_dict()`.
     """
 
@@ -263,15 +260,12 @@ class ToolSearchCallPart(ToolCallPart, _core=True):
     """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
     typed_args = TypedArgs(ToolSearchArgs)
-    """Typed view of the validated tool-search arguments, or `None` if not yet parseable.
-
-    In non-streaming code (a typed call part on a finalized
-    [`ModelResponse`][pydantic_ai.messages.ModelResponse]), this is always
-    populated — once a part is narrowed to this typed subclass, its `args`
-    have been validated.
+    """Typed view of the validated tool-search arguments, or `None` if they don't validate.
 
     Returns `None` in streaming-partial state, where `args` is still an
-    in-progress JSON string the model hasn't finished emitting, or when they don't validate.
+    in-progress JSON string the model hasn't finished emitting, or when they don't validate:
+    `args` given as a JSON string aren't validated until this is read, even on a finalized
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse].
     For raw string-tolerant access, use the inherited `args_as_dict()`.
     """
 
