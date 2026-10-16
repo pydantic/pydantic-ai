@@ -18,7 +18,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import LiveSession, NoSettings, Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import ProcessPlugins, handling
@@ -1146,6 +1146,17 @@ async def test_a_process_plugin_ends_once_every_running_turn_is_over(tmp_path: P
     assert [entry.status for entry in a.loader.entries()] == ['on']
 
 
+async def test_a_turn_without_the_process_plugin_does_not_hold_back_its_end(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    b.loader.enabled = False
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    async with b.loader.turn():
+        await a.loader.disable('shared')
+        assert 'shared stopped exit' in a.text
+
+
 async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) -> None:
     a, b = two_sessions(tmp_path)
     (a.store.plugins_dir / 'shared.py').write_text(
@@ -1157,10 +1168,11 @@ async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) 
     assert 'shared' not in a.commands and 'shared' not in b.commands
 
 
-async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined_it(
+async def test_a_session_waits_for_a_process_plugin_that_fails_to_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     starting, fail = anyio.Event(), anyio.Event()
+    ended: list[LiveSession | None] = []
     module = ModuleType('fails_late')
 
     class FailsLate(Plugin):
@@ -1174,6 +1186,10 @@ async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined
             await fail.wait()
             raise RuntimeError('no start')
 
+        async def on_session_end(self, event: SessionEnd) -> None:
+            assert self.host.live is not None
+            ended.append(self.host.live.current())
+
     FailsLate.__module__ = module.__name__
     module.__dict__['FailsLate'] = FailsLate
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -1181,12 +1197,56 @@ async def test_a_process_plugin_failing_to_start_leaves_the_sessions_that_joined
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(a.loader.load_all)
         await starting.wait()
-        await b.loader.load_all()
-        assert 'late' in b.commands, 'the second session joins the instance the first is starting'
+        tasks.start_soon(b.loader.load_all)
+        await anyio.wait_all_tasks_blocked()
+        assert 'late' not in b.commands, 'the second session waits for the instance the first is starting'
         fail.set()
-    assert 'no start' in a.text and b.text == ''
+    assert 'no start' in a.text and 'no start' in b.text, 'nothing was shared, so each tried its own'
+    assert ended == [a.loader.live_session, b.loader.live_session], 'each ends as the session that built it'
     assert 'late' not in a.commands and 'late' not in b.commands
     assert [entry.loaded for entry in b.loader.entries()] == [None]
+
+    # Loaded for one launch while off, as `--web` loads `web`: a session starting meanwhile waits too.
+    starting, fail = anyio.Event(), anyio.Event()
+    a.store.save_plugin(PluginSettings(id='late', factory=module.__name__, enabled=False))
+
+    async def load_late() -> None:
+        with pytest.raises(PluginError, match='no start'):
+            await a.loader.load('late')
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(load_late)
+        await starting.wait()
+        tasks.start_soon(b.loader.load_all)
+        await anyio.wait_all_tasks_blocked()
+        fail.set()
+    assert [entry.loaded for entry in b.loader.entries()] == [None] and 'late' not in b.commands
+
+
+async def test_a_process_plugin_manages_the_plugins_of_the_session_being_handled(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    shared = next(entry.loaded for entry in a.loader.entries() if entry.name == 'shared')
+    assert shared is not None and shared.plugin.host.plugins is not None
+    plugins = shared.plugin.host.plugins
+    await a.loader.close('exit')
+    await plugins.disable('alpha')
+    assert [info.name for info in plugins.listing()] == ['alpha', 'shared']
+    assert [entry.status for entry in b.loader.entries()] == ['off', 'on']
+    assert a.loader.process.sessions == (b.loader,), 'the closed session does not join again'
+    with handling(b.loader.live_session):
+        await plugins.enable('alpha')
+        await plugins.reload('alpha')
+        assert plugins.settings_menu('alpha') is None and plugins.side_panels() == {}
+        with pytest.raises(ValueError, match='takes no settings'):
+            await plugins.save_settings('alpha', NoSettings())
+        with pytest.raises(ValueError, match='declares no settings menu'):
+            await plugins.edit_settings('alpha', lambda menu: anyio.sleep(0))
+    assert b.text.count('alpha started') == 3
+    await b.loader.close('exit')
 
 
 async def test_one_session_ends_its_own_plugins_before_the_process_ones(tmp_path: Path) -> None:

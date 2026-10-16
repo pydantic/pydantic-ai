@@ -123,8 +123,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `workspaces`, and `web` are. The first session to load one builds it and fires
   `on_session_start`; it then joins every live session (capabilities, commands, and
   each moment, dispatched per session with `host.live.current()` naming it). It ends
-  once, when unloaded (after every running turn) or when the last session closes.
-  Its host's `session_id`, `workspace`, `tasks`, `setting`, `send_input`,
+  once, when unloaded (after every running turn that bound it) or when the last
+  session closes; sessions load a name one at a time, so it is built once.
+  Its host's `session_id`, `workspace`, `tasks`, `plugins`, `setting`, `send_input`,
   `submit_prompt`, and `interrupt` follow the session being handled (moments,
   commands, and runs set it); its other attributes are the loading session's.
   `restart` keeps it. A process plugin that includes a session plugin (`web` and
