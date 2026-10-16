@@ -9,14 +9,15 @@ CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 With `variables_key` naming one holding a Logfire API key, the same instance can read the project's managed variables.
 
-`configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
-observability`). Each edit is saved at once, and the loader loads the plugin again when the menu closes, so the
-next run uses it. Its first row runs the project setup in `logfire_setup`.
+`settings_menu` declares the settings menu, shown in the terminal (turning the plugin on, `c` in `/plugins`, or
+`/plugins configure observability`) and in the web UI's plugins panel. Each edit is saved at once, and the loader
+loads the plugin again afterwards, so the next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
 
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from functools import partial
 from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
@@ -32,11 +33,11 @@ from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_e
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
 class LogfireAccount(BaseModel):
@@ -169,14 +170,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._session_tracing, self.instrumentation)
 
-    async def configure(self) -> str:
+    def settings_menu(self) -> SettingsMenu:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
-
-        async def set_up() -> list[str]:
-            return [await _configure(self.host, SETUP(self.host))]
-
-        messages = await run_flow_async(FieldMenu(LogfireSource(self.host)), RUNNERS, submenus={PROJECT: set_up})
-        return '\n'.join(messages) or 'Logfire settings unchanged.'
+        return SettingsMenu(source=LogfireSource(self.host), actions={PROJECT: partial(_set_up, host=self.host)})
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
@@ -264,8 +260,6 @@ async def _user_email(settings: LogfireSettings) -> str | None:
 
 CREDENTIALS_FILE = 'logfire_credentials.json'
 """The file the SDK writes on `logfire auth`/`projects use` and reads from `data_dir`."""
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
 PROJECT = 'project'
 """The row that runs the project setup instead of editing a value."""
 VARIABLES_KEY = 'variables_key'
@@ -438,26 +432,18 @@ class LogfireSource:
         return LogfireSettings.model_validate({**self.settings.model_dump(mode='json'), row.key: value})
 
 
-def _announce(host: PluginHost[None]) -> Setup:
-    def announce(line: str) -> None:
-        # Links can come from a self-hosted server, so terminal controls in them are made inert.
-        host.console.print(terminal_text(line), markup=False, highlight=False)
-
-    return Setup(announce=announce)
+SETUP = Setup()
+"""How setup reaches the browser and Logfire; tests swap in scripted ones."""
 
 
-SETUP: Callable[[PluginHost[None]], Setup] = _announce
-"""How setup talks to the terminal, the browser, and Logfire; tests swap in scripted ones."""
-
-
-async def _configure(host: PluginHost[None], setup: Setup) -> str:
-    """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
+async def _set_up(dialogs: Dialogs, /, *, host: PluginHost[None]) -> list[str]:
+    """The project row; saving new settings makes the loader load the plugin again, now sending to the project."""
     config = host.settings(LogfireSettings)
-    # Highlight the Logfire this plugin sends to, else the one last set up here or in `logfire_mcp`.
+    # Start from the Logfire this plugin sends to, else the one last set up here or in `logfire_mcp`.
     current = parse_destination(config.base_url) if config.base_url else await to_thread.run_sync(remembered)
-    chosen = await run_setup(setup, current=current, owned=config.token)
+    chosen = await run_setup(dialogs, SETUP, current=current, owned=config.token)
     if chosen is None:
-        return 'Logfire setup cancelled; settings unchanged.'
+        return ['Logfire setup cancelled; settings unchanged.']
     # Setting up a project means sending to it, even if sending had been turned off.
     email = chosen.account_email
     update = {
@@ -466,16 +452,16 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
     }
-    host.save_settings(config.model_copy(update=update))
+    await to_thread.run_sync(host.save_settings, config.model_copy(update=update))
     kept = (
         'only that name and the email you signed in with'
         if email
         else 'only that name; Logfire did not share your email'
     )
-    return (
+    return [
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
         f'{chosen.token.name}; plugin settings keep {kept}.'
-    )
+    ]
 
 
 def _destination(

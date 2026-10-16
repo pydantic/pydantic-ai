@@ -46,6 +46,31 @@ export interface QuestionInfo {
   multi_select: boolean
 }
 
+/** One value a settings row or a dialog offers. */
+export interface Choice {
+  value: string
+  label: string
+  description: string
+}
+
+/** What a plugin's settings menu asks; which fields apply depends on `kind`. */
+export interface Dialog {
+  id: string
+  kind: 'choose' | 'text' | 'confirm' | 'wait'
+  title: string
+  description: string
+  options: Choice[]
+  current: string | null
+  label: string
+  placeholder: string
+  initial: string
+  secret: boolean
+  yes: string
+  no: string
+  /** `wait`: the latest text its task showed, such as a sign-in link. */
+  shown: string
+}
+
 export interface Questions {
   id: string
   questions: QuestionInfo[]
@@ -105,7 +130,10 @@ export type ServerMessage =
       running: boolean
       status: StatusInfo
       questions: Questions[]
+      dialogs: Dialog[]
       theme: ThemeInfo
+      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      follows_workspace: boolean
     }
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
@@ -123,6 +151,9 @@ export type ServerMessage =
   | { type: 'status'; status: StatusInfo }
   | { type: 'question'; questions: Questions }
   | { type: 'question_closed'; id: string }
+  | { type: 'dialog'; dialog: Dialog }
+  | { type: 'dialog_shown'; id: string; text: string }
+  | { type: 'dialog_closed'; id: string }
   | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null }
   | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
@@ -142,11 +173,21 @@ export interface SessionEntry {
   current: boolean
 }
 
+export interface Worktree {
+  root: string
+  /** Its branch, or its folder's name outside Git or when the branch is unknown. */
+  label: string
+  current: boolean
+  /** The folder is gone, as with a removed worktree. */
+  missing: boolean
+  sessions: SessionEntry[]
+}
+
 export interface Project {
   key: string
   name: string
   current: boolean
-  sessions: SessionEntry[]
+  worktrees: Worktree[]
 }
 
 export interface Transcript {
@@ -155,6 +196,8 @@ export interface Transcript {
   workspace: string
   items: Item[]
   openable: boolean
+  /** CLAI would move to its directory, but that directory is gone. */
+  missing: boolean
 }
 
 export interface CompletionInfo {
@@ -191,13 +234,43 @@ export interface PluginRow {
   error: string | null
   notice: string | null
   provides: string
-  /** It has a settings menu of its own, which opens in the terminal. */
+  /** It has a settings menu. */
   has_menu: boolean
-  /** Whether this CLAI has a terminal for that menu to open in; `clai2 --web` has none. */
+  /** That menu is declared, so this page shows it; otherwise it opens in the terminal. */
+  settings_menu: boolean
+  /** Whether this CLAI has a terminal for an undeclared menu to open in; `clai2 --web` has none. */
   terminal: boolean
   form: PluginForm | null
   /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */
   serving: boolean
+}
+
+/** One row of a plugin's declared settings menu, with its current value. */
+export interface MenuField {
+  key: string
+  label: string
+  description: string
+  /** As the user would type it; never a secret itself. */
+  value: string
+  default: string
+  choices: Choice[]
+  /** A value other than `choices` may be typed. */
+  allow_custom: boolean
+  secret: boolean
+  /** Where the value comes from when not from the user. */
+  note: string
+  /** Choosing it runs an action, with dialogs, instead of editing a value. */
+  action: boolean
+}
+
+export interface MenuInfo {
+  title: string
+  fields: MenuField[]
+}
+
+export interface MenuEdited {
+  messages: string[]
+  menu: MenuInfo | null
 }
 
 /** The parts of a Pydantic JSON Schema the settings form reads. */

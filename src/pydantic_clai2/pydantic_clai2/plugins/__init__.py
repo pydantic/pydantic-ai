@@ -29,11 +29,13 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
 DepsT = DefaultTypeVar('DepsT', default=None)
 ModelT = TypeVar('ModelT', bound=BaseModel)
+ResultT = TypeVar('ResultT')
 _SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
 SessionEndReason = Literal['exit', 'eof', 'error']
@@ -94,6 +96,14 @@ class SessionCatalog(Protocol):
     Switching to one goes through the prompt, as `/resume ID` typed there does, with `PluginHost.send_input`.
     """
 
+    @property
+    def follows_workspace(self) -> bool:
+        """Whether `/resume ID` moves CLAI into the directory a session was saved in, as under `clai2 --web`.
+
+        Otherwise it refuses a session saved in another directory than the one CLAI runs in.
+        """
+        ...
+
     async def listing(self, *, query: str = '', limit: int = 200) -> list[ConversationSummary]:
         """Saved conversations from every directory, newest first, matching `query` when it is not empty.
 
@@ -149,7 +159,9 @@ class PluginInfo:
     provides: str = ''
     """What it contributes while loaded, such as `2 commands, 1 capability`."""
     has_menu: bool = False
-    """Whether it overrides `Plugin.configure`, whose menu runs in the terminal."""
+    """Whether it has a settings menu: a declared one (`settings_menu`), or its own `configure`, which runs in the terminal."""
+    settings_menu: bool = False
+    """Whether it declares its settings menu, which `PluginCatalog.edit_settings` can edit from anywhere."""
     settings_model: type[BaseModel] | None = None
     """Its settings model while loaded, unless it takes none; validate new settings with it for `save_settings`."""
     settings: BaseModel | None = None
@@ -161,7 +173,7 @@ class PluginCatalog(Protocol):
 
     Each action applies at once and is saved, as the same `/plugins` action is; a running turn keeps
     the plugins it started with. Adding and removing declarations goes through the prompt, with
-    `PluginHost.send_input`, as does a plugin's own settings menu (`/plugins configure NAME`).
+    `PluginHost.send_input`, as does a settings menu that is not declared (`/plugins configure NAME`).
     Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
     own `on_session_start` or `on_session_end`, which a change runs.
     """
@@ -187,6 +199,20 @@ class PluginCatalog(Protocol):
 
         `settings` is an instance of `PluginInfo.settings_model`. Raises `ValueError` when the plugin is
         not loaded or takes no settings, and `TypeError` for another model.
+        """
+        ...
+
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        """A loaded plugin's declared settings menu, to show; `None` when it is not loaded or declares none."""
+        ...
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        """Run `edit` on a loaded plugin's declared settings menu, then load the plugin again if its settings changed.
+
+        This is what closing the menu after an edit does, so call it once per edit: a value applied
+        or reset through the menu's `source`, or one of its `actions` run with your own `Dialogs`.
+        Raises `ValueError` when the plugin is not loaded, declares no menu, or its menu is already
+        open, in the terminal or for another edit.
         """
         ...
 
@@ -858,14 +884,31 @@ class Plugin(Generic[SettingsT, DepsT]):
         """Draw an event yourself; return `None` to fall back to the default display."""
         return None
 
-    async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
+    def settings_menu(self) -> SettingsMenu | None:
+        """This plugin's settings menu, declared rather than run, so any surface can show it; `None` for none.
 
-        Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
-        change with `host.save_settings` as the user makes it and return a line to show. When the
-        settings changed, the loader loads the plugin again afterwards, so it builds from them.
+        Its `FieldSource` saves each change with `host.save_settings` as the user makes it, and its
+        actions ask through the `Dialogs` they are given, so the menu works wherever it was opened.
+        When the settings changed, the loader loads the plugin again afterwards, so it builds from them.
         """
-        raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
+        return None
+
+    async def configure(self) -> str:
+        """Show the settings menu in the terminal: `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
+
+        By default it shows `settings_menu` and returns what changed. Override it only for a menu
+        that cannot be declared, which then opens in the terminal alone.
+        """
+        menu = self.settings_menu()
+        if menu is None:
+            raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
+        if not self.host.console.is_terminal:
+            return f'Configure {menu.source.title} from a terminal: /plugins configure {self.host.name}'
+        # Imported here: the terminal menus import this package, and `/reload` refuses an import cycle.
+        from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+
+        messages = await run_settings_menu(menu)
+        return '\n'.join(messages) or f'{menu.source.title}: nothing changed.'
 
     async def on_session_start(self, event: SessionStart) -> None:
         """CLAI is ready for prompts; called once, when the plugin loads."""
@@ -897,8 +940,9 @@ class Plugin(Generic[SettingsT, DepsT]):
 
     @property
     def has_configure(self) -> bool:
-        """Whether this plugin overrides `configure`, offering a settings menu."""
-        return type(self).configure is not Plugin.configure
+        """Whether this plugin offers a settings menu, by overriding `settings_menu` or `configure`."""
+        cls = type(self)
+        return cls.settings_menu is not Plugin.settings_menu or cls.configure is not Plugin.configure
 
     @property
     def has_render(self) -> bool:

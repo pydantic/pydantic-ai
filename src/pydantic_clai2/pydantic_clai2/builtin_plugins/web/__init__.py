@@ -166,6 +166,8 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def stop(self) -> None:
         server, self.server, self.url = self.server, None, None
+        # An action waiting on a dialog nobody can now answer backs out, which also lets its menu close.
+        self.remote.dialogs.cancel_all()
         if self._launch_page is not None:
             self._launch_page.unlink(missing_ok=True)
             self._launch_page = None

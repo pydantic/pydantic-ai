@@ -2,6 +2,8 @@ import type {
   AnswerBody,
   CompletionInfo,
   JsonValue,
+  MenuEdited,
+  MenuInfo,
   PluginAction,
   PluginRow,
   Project,
@@ -69,7 +71,8 @@ export const api = {
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
   sessions: (query: string) => call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
-  newSession: () => call<void>('POST', '/api/sessions/new'),
+  newSession: (workspace?: string) =>
+    call<void>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
   open: (id: string) => call<void>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
@@ -79,6 +82,12 @@ export const api = {
   pluginSettings: (name: string, changes: Record<string, JsonValue>, reset: string[] = []) =>
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
+  menu: (name: string) => call<MenuInfo>('GET', `/api/plugins/${encodeURIComponent(name)}/fields`),
+  setField: (name: string, key: string, value: string | null) =>
+    call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}`, { value }),
+  runAction: (name: string, key: string) =>
+    call<MenuEdited>('POST', `/api/plugins/${encodeURIComponent(name)}/fields/${encodeURIComponent(key)}/action`),
+  answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */

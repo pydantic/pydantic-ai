@@ -8,6 +8,8 @@ import { Transcript } from './components/Transcript'
 import { TurnMeter } from './components/TurnMeter'
 import { compact } from './format'
 import { PluginsPanel } from './components/PluginsPanel'
+import { DialogLayer } from './components/DialogLayer'
+import { NewSessionDialog } from './components/NewSessionDialog'
 import { ReplPanel } from './components/ReplPanel'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { ServerMessage, SessionEntry, Transcript as Saved } from './protocol'
@@ -38,8 +40,10 @@ export function App() {
   // The session the user picked, until it shows: its transcript loads, then the shell resumes it.
   const [opening, setOpening] = useState<Opening | null>(null)
   const picked = useRef(0)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ text: string; level: 'info' | 'error' } | null>(null)
   const [plugins, setPlugins] = useState(false)
+  // Asking where a new session runs, when each session runs in its own directory.
+  const [choosing, setChoosing] = useState(false)
   const openPlugins = useCallback(() => setPlugins(true), [])
   const closePlugins = useCallback(() => setPlugins(false), [])
   const local = useMemo(() => ({ '/plugins': openPlugins }), [openPlugins])
@@ -111,10 +115,19 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [opening])
 
-  const showError = useCallback((message: string) => {
-    setToast(message)
-    window.setTimeout(() => setToast((current) => (current === message ? null : current)), 5000)
+  const showToast = useCallback((text: string, level: 'info' | 'error') => {
+    const shown = { text, level }
+    setToast(shown)
+    window.setTimeout(() => setToast((current) => (current === shown ? null : current)), level === 'error' ? 5000 : 3000)
   }, [])
+  const showError = useCallback((message: string) => showToast(message, 'error'), [showToast])
+  const showNotice = useCallback((message: string) => showToast(message, 'info'), [showToast])
+
+  const followsWorkspace = state.followsWorkspace
+  const newSession = useCallback(() => {
+    if (followsWorkspace) setChoosing(true)
+    else void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+  }, [followsWorkspace, showError])
 
   // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
   const closePreview = useCallback(() => {
@@ -173,7 +186,7 @@ export function App() {
         window.setTimeout(() => sidebarRef.current?.focusSearch())
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault()
-        void api.newSession().catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+        newSession()
       } else if (mod && event.key === 'j') {
         event.preventDefault()
         setRepl((open) => !open)
@@ -195,7 +208,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.running, showError])
+  }, [state.running, showError, newSession])
 
   const status = state.status
   const title = preview ? preview.title : (state.session?.title ?? 'New session')
@@ -235,6 +248,7 @@ export function App() {
             void api.send(`/theme ${name}`).catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
           }
           onView={(session) => void view(session)}
+          onNew={newSession}
           onCollapse={() => setSidebar(false)}
           onPlugins={openPlugins}
           onError={showError}
@@ -275,7 +289,9 @@ export function App() {
           <div className="preview-banner">
             {preview.openable
               ? 'A turn is running. You can switch to this session once it ends.'
-              : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+              : preview.missing
+                ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
             {preview.openable && !state.running && (
               <button className="primary small" onClick={() => void open(preview)}>
                 Continue here
@@ -328,13 +344,24 @@ export function App() {
           </div>
         )}
         {toast && (
-          <button className="toast" role="alert" onClick={() => setToast(null)} title="Dismiss">
-            {toast}
+          <button
+            className={`toast ${toast.level}`}
+            role={toast.level === 'error' ? 'alert' : 'status'}
+            onClick={() => setToast(null)}
+            title="Dismiss"
+          >
+            {toast.text}
           </button>
         )}
       </main>
       {plugins && (
-        <PluginsPanel version={state.pluginsVersion} running={state.running} onClose={closePlugins} onError={showError} />
+        <PluginsPanel
+          version={state.pluginsVersion}
+          running={state.running}
+          onClose={closePlugins}
+          onError={showError}
+          onNotice={showNotice}
+        />
       )}
       {repl && (
         <ReplPanel
@@ -345,6 +372,10 @@ export function App() {
           onError={showError}
         />
       )}
+      {choosing && state.session && (
+        <NewSessionDialog current={state.session.workspace} onClose={() => setChoosing(false)} />
+      )}
+      <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>
   )
 }

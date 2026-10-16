@@ -443,10 +443,10 @@ declaration takes precedence; edits and removal apply to that one shared entry.
 
 Manage it with `/plugins disable observability`, `/plugins enable observability`, or
 `/plugins reload observability`. `/plugins configure observability` (or `c` on
-`observability` in `/plugins`) opens its settings menu: **Logfire project** runs the
-setup described below, and the other rows edit the options listed here. Each edit
-saves at once, and the plugin is loaded again when you close the menu, so the next
-run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
+`observability` in `/plugins`) opens its settings menu, which the web UI's plugins
+panel also shows: **Logfire project** runs the setup described below, and the other
+rows edit the options listed here. Each edit saves at once, and the plugin is loaded
+again when you close the menu (in the web UI, after each edit), so the next run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
 credentials file was found. Scripts can replace the declaration instead:
 
 ```text
@@ -486,7 +486,9 @@ clears `token`, `base_url`, and `account` again): it asks which Logfire, runs
 Logfire's own device sign-in there (the one behind `logfire auth`, not
 the Logfire plugin's MCP OAuth, whose tokens only the MCP server accepts), reads your
 account's email, lists the projects you can write to, and saves a new write
-token for the one you pick in `/keys`. The sign-in token is used only during
+token for the one you pick in `/keys`. The sign-in waits behind a screen that shows
+its link, where Esc cancels it. From the web UI's plugins panel, **Change…** on the
+row asks each step as a dialog in the page. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
 Agent runs and UI records nest under a `CLAI session` root whose
@@ -573,6 +575,9 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 Enter edits a row, R resets it to the default, and Esc backs out of a picker
 without changing anything. Each change is saved as you make it, so **Save & close**
 and Esc both just leave the menu, and the plugin is reloaded with the new settings.
+The same rows show in the [web UI](#web-this-session-in-your-browser)'s plugins
+panel, where Sign-in, API key, and Access have a **Change…** button: their pickers,
+key prompt, and sign-in open as dialogs in the page.
 Read-only is the default because tools that create or change issues act on a
 workspace your team shares. These rows are the settings harness `Linear` takes
 from a user. Linear's hosted server has a single URL (with a read-only variant)
@@ -591,7 +596,9 @@ rather than running without Linear. Harness's `LINEAR_ACCESS_TOKEN` environment
 variable is not read.
 
 With browser sign-in, the key row is hidden. Choosing it signs in right away,
-behind a waiting screen that Esc cancels; `/linear login` signs in again later,
+behind a waiting screen that Esc cancels, unless you are already signed in.
+Tokens belong to one endpoint, so choosing an Access you are not signed in for
+signs in again the same way. `/linear login` signs in again later,
 `/linear logout` signs out, and `/linear` shows whether you are signed in. Tokens
 go to the keyring the way `/mcp` OAuth tokens do. Loading and prompts never open
 the browser: until you sign in, runs have no Linear tools and the session start
@@ -615,11 +622,13 @@ settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
 `/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
 Each change is saved as soon as you make it, and the plugin loads again when the
-menu closes, so the next turn uses the new settings.
+menu closes, so the next turn uses the new settings. The same menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where picking
+the key and the browser sign-in open as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
-| Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
+| Key | none | the `/keys` entry to connect with: pick a saved key by name, or type a new one into a masked field; `R` clears the choice |
 | Sign-in | browser | browser uses the browser sign-in, and choosing it signs in if needed; key only uses the chosen key and never the browser. Choosing a key switches to key only, and `R` on the key switches back |
 | Tools | read and write | read-only keeps only the tools the server marks as read-only |
 | Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
@@ -677,7 +686,9 @@ CLAI builds sharing your settings still store it under, so `/plugins enable logf
 keeps meaning `observability`. Its command is `/logfire`; `/logfire_mcp` still works.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
-`/plugins configure logfire_mcp` or `c` in `/plugins`.
+`/plugins configure logfire_mcp` or `c` in `/plugins`. The same menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where **API key**
+and **Which Logfire** open their pickers and fields as dialogs in the page.
 
 Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
 the menu, and the plugin loads again with the new settings. Esc backs out of any
@@ -721,22 +732,24 @@ without changing anything.
 Whichever Logfire you last chose in either plugin is remembered, in
 `~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
-before any of its settings were saved also switches it to that Logfire, and says so,
-when it is Logfire US or EU; any other Logfire is only highlighted, so a key you
-already use is never sent to a server you did not pick for it.
+in the terminal before any of its settings were saved also switches it to that
+Logfire, and says so, when it is Logfire US or EU; any other Logfire is only
+highlighted, so a key you already use is never sent to a server you did not pick
+for it. The web UI's panel only highlights it: the plugin switches when you pick it.
 
 ### Keys live in `/keys`
 
 Plugin settings are stored as plaintext in SQLite, so they hold only the key's
-name, never its value. Enter on **API key** opens the same picker as
-`/model add`:
+name, never its value. Enter on **API key** (**Change…** in the web UI) offers:
 
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
 - **Enter a different API key**: a masked field. The value is saved in `/keys`
   as `LOGFIRE_API_KEY`, the conventional label; CLAI asks before replacing an
-  existing `LOGFIRE_API_KEY`, since other plugins may use it.
-- **No API key**: clears the choice.
+  existing `LOGFIRE_API_KEY`, since other plugins may use it. With nothing in
+  `/keys` yet, the masked field opens straight away.
+
+`R` on the row (**Reset** in the web UI) clears the choice.
 
 The plugin uses the first credential that is available:
 
@@ -912,7 +925,8 @@ shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulti
 to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
-and `/reload` keep the checkout in use. Plugins do not own worktree cleanup.
+and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
+elsewhere, or `/workspace`, moves CLAI to that session's directory. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
@@ -1018,7 +1032,10 @@ are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 upgrade never loads new definitions without your say. Old
 `pydantic_ai_harness.coder:Coder` declarations load through this module and are
 not rewritten. `/plugins configure coder` edits this list; see
-[Agent folders](docs/reference.md#agent-folders).
+[Agent folders](docs/reference.md#agent-folders). The same settings menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where the Agent
+folders row's **Change…** button asks the folder list, its edits, and the
+directory browser as dialogs in the page.
 
 `skill_folders` is a JSON list of [Agent Skills](docs/reference.md#agent-skills) folders,
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
@@ -1187,9 +1204,20 @@ terminal enters, and both show them. A capability the plugin binds gives the bro
 conversation's runs as turns, with their stream events (text, thinking, tool calls and results,
 shell output, diffs), but not a background `/fork`'s, though it fires the turn moments too.
 Command results come from `on_command_end` and history from `host.conversation`. The
-sidebar lists `host.sessions`, the store `/resume` uses: clicking a session sends
-`/resume ID`, so a session saved in another directory, which `/resume ID` refuses, opens
-read-only. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
+sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
+repository, then by checkout, with a session from a removed worktree under its repository by the
+checkout saved with it (`ConversationSummary.checkout`). Clicking a session sends `/resume ID`.
+Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
+directory (`host.sessions.follows_workspace`): `/resume ID` first changes CLAI's working directory
+to the one the session was saved in, reads that directory's `.clai/settings.json`, and loads every
+plugin but `web` again, so the coding tools, `repo_context`, skills, MCP project files, and a
+plugin's relative paths refer to it, as after `--worktree`. Each of those plugins gets
+`on_session_end` and then `on_session_start`, as on `/plugins reload`. `clai2 --web --resume ID`
+starts in that session's directory. A new session from the browser runs where the user picks,
+sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
+moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
+gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
+directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare command that opens a terminal
 menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead.
 
@@ -1216,15 +1244,26 @@ runs; reloading the page shows it at once.
 The **Plugins** panel (the puzzle button in the sidebar's footer, ⌘, or `/plugins` typed in the
 composer) is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
 status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
-`/plugins disable` do, without opening its settings menu. A plugin that is on shows a form for
-its settings model, built from the model's JSON Schema: a switch for each boolean, a list for
-each choice, fields for text and numbers, one line per item for a list of strings, and JSON for
-anything else. Each change is validated by the model and saved at once, then the plugin is
-loaded again with it, as its own settings menu does; a value the model rejects shows its error
-beside the field and is not saved. A plugin's own menu (`configure`), for sign-ins and `/keys`
-entries, opens in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to
-open it in. The panel cannot turn off, reload, or reconfigure `web` itself, which would end the
-page; change those from the terminal.
+`/plugins disable` do, without opening its settings menu. A plugin that is on shows its settings:
+
+- A plugin that [declares its settings menu](#offer-a-settings-menu-def-settings_menuself)
+  shows that menu's rows, as the terminal lists them: a switch for a yes/no row, a list for one
+  with choices, and a field for the rest. Each change is checked and saved at once, as the
+  terminal menu saves it, and the plugin loads again with it; a value the menu rejects shows its
+  reason beside the row and is not saved. A row that opens more, such as picking a `/keys`
+  entry or signing in, has a **Change…** button: what its action asks (`Dialogs`) opens as
+  dialogs in the page, only there, and the terminal is left alone. A secret typed into one goes
+  to the plugin alone, never to another browser.
+- Any other plugin with settings shows a form built from its settings model's JSON Schema: a
+  switch for each boolean, a list for each choice, fields for text and numbers, one line per item
+  for a list of strings, and JSON for anything else. Each change is validated by the model and
+  saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
+  in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+
+One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
+are open in the page, other edits to that plugin are refused until it closes. The panel cannot
+turn off, reload, or reconfigure `web` itself, which would end the page; change those from the
+terminal.
 
 While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
 terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
@@ -1258,7 +1297,8 @@ The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model 
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
-press `c` on it in `/plugins`.
+press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
+panel, with the sign-in, key, and host steps shown as dialogs in the page.
 You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -1283,11 +1323,12 @@ GitHub's hosted MCP server does not support dynamic client registration, so an
 MCP client can only use OAuth with an OAuth App registered to that client. CLAI
 doesn't register one. Instead it uses the GitHub CLI (`gh`), which has its own.
 Choosing **GitHub CLI (browser)** under Sign-in runs
-`gh auth login --hostname HOST --web --clipboard`. The menu shows the one-time
-code (`gh` also copies it to your clipboard) and opens
-`https://github.com/login/device` in your browser. Once you approve the code,
-the screen closes by itself. Enter opens the page again, and Esc stops `gh` and
-leaves the setting unchanged. If `gh` already has a login for the host, choosing
+`gh auth login --hostname HOST --web --clipboard`. A waiting screen shows the
+one-time code (`gh` also copies it to your clipboard) and the link to
+`https://github.com/login/device`, which it also opens in your browser. Once you
+approve the code, the screen closes by itself. Cancelling it (Esc in the
+terminal, or closing the dialog in the web UI) stops `gh` and leaves the setting
+unchanged. If `gh` already has a login for the host, choosing
 it just switches the plugin over. `HOST` is `github.com`, or the ghe.com host for
 GitHub Enterprise Cloud.
 
@@ -1340,12 +1381,15 @@ The settings menu is full-screen with one row per setting. Up/Down moves, Enter
 edits a row, `r` puts a row back to its default, and **Save & close** or Esc
 leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
 from the next turn, without reloading. Run `/google_workspace` again at any time
-to change a setting or pick a different key.
+to change a setting or pick a different key. The same rows show in the
+[web UI](#web-this-session-in-your-browser)'s plugins panel, where Access token key
+and Products have a **Change…** button: the key picker, the masked token prompt,
+and the products checklist open as dialogs in the page.
 
 | Row | Stored as | Default | Does |
 |---|---|---|---|
 | Access token key | the key's name, in the credential store | `GOOGLE_ACCESS_TOKEN` | which `/keys` entry holds the Google OAuth access token |
-| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one, and at least one stays on |
+| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one and saves it, **Done** or Esc goes back, and at least one stays on |
 | Read-only tools | `read_only` | `true` | keep only the tools Google marks as read-only |
 | Server instructions | `include_instructions` | `true` | pass the Google servers' own instructions to the agent |
 
@@ -1356,8 +1400,8 @@ CLAI runs tools without asking first, so `read_only` defaults to `true`. Set it 
 plugin settings, which are plain SQLite and reject a `token` or `auth` entry.
 Enter on the key row lists your saved key names so you can pick one (type to
 filter; Esc leaves the choice unchanged). **Enter a different API key** asks for a
-new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`,
-replacing any value already stored under that name. Only the chosen key's name is
+new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`.
+If a value is already stored under that name, it asks before replacing it. Only the chosen key's name is
 remembered, in the credential store. Several plugins and connections can share one
 named key, such as GitHub integrations all using `GITHUB_TOKEN`. While the plugin
 refers to a key, `/keys` refuses to rename it; pick another key here first. To
@@ -1399,12 +1443,15 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 #### Configuring Pylon
 
 Turning the plugin on opens its settings menu, like any plugin with a
-[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `c` in
+[settings menu](#offer-a-settings-menu-def-settings_menuself). `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
 change anything, including the key. Type to filter the rows. Enter edits a row,
 `R` restores its default, and **Save & close** or Esc leaves the menu. Each
 change is saved to the plugin's settings as soon as you make it and applies from
-the next run, with no reinstall.
+the next run, with no reinstall. The same rows show in the
+[web UI](#web-this-session-in-your-browser)'s plugins panel, where the Sign-in
+and Key rows' **Change…** buttons open the sign-in choice, the key picker, and
+the browser sign-in's waiting screen as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1428,9 +1475,9 @@ and user the agent acts as.
 #### Keys: `/keys` holds the secret, Pylon holds its name
 
 The token lives in [`/keys`](#saved-api-keys), not in plugin settings, which are
-plaintext SQLite. The Key row uses the shared saved-key picker, which is
-searchable, and Esc cancels it. Choose an existing key, or choose **Enter a
-different API key** to type a masked token. CLAI saves that token in `/keys` as
+plaintext SQLite. The Key row uses the shared saved-key picker, and Esc cancels
+it. Choose an existing key, or choose **Enter a different API key** to type a
+masked token; an empty one changes nothing. CLAI saves that token in `/keys` as
 `PYLON_ACCESS_TOKEN`, the name harness `Pylon` documents. If that name already
 exists, CLAI asks before replacing it, since other connections may use it. The
 name is only a label: CLAI does not read an exported `PYLON_ACCESS_TOKEN`.
@@ -1466,8 +1513,11 @@ meeting context, and draft emails. It needs a paid Day AI Agent tier.
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
 Type to filter the rows, press Enter to change one, `R` to reset it to its
 default, and Esc to close. Each change is saved as soon as you make it, and the
-plugin loads again with the new settings when the menu closes. The menu has
-one row for each option harness `DayAI` takes:
+plugin loads again with the new settings when the menu closes. The same menu
+shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
+the Sign-in row's **Change…** button asks for a key or runs the browser sign-in
+as dialogs in the page. The menu has one row for each option harness `DayAI`
+takes:
 
 | Row | Setting | Choices |
 | --- | --- | --- |
@@ -1528,7 +1578,9 @@ later, so you can change anything without reinstalling. It is the same field
 editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
 **Save & close** or Esc closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
-menu closes.
+menu closes. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the `/keys` picker, the masked token input, and the browser
+sign-in show as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1550,7 +1602,7 @@ will not rename a key while Ordinal uses it. Several plugins and providers can
 name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
 
 `/ordinal login` (or choosing browser sign-in in the menu) signs in through the
-browser, behind a waiting screen that Esc cancels. CLAI keeps the OAuth tokens in
+browser, behind a waiting screen that Esc cancels (a dialog, from the web UI). CLAI keeps the OAuth tokens in
 the OS keyring (the private credential file when no keyring exists), as `/mcp`
 does for OAuth servers, so later launches reuse them. It only works on the
 machine you run CLAI on. Loading and prompts never open the browser: until you
@@ -1578,7 +1630,11 @@ settings is left as it is.
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
 or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
 reopens it later, with no reinstall. The list is searchable, Enter edits the
-highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
+highlighted row, `R` resets it, and **Save & close** or Esc closes. The same menu
+shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
+the User token, Slack app, and Browser sign-in rows have a **Change…** button and
+their steps (the key picker, the Client ID, the sign-in's waiting screen) open as
+dialogs in the page. Every change is saved as you make it:
 
 | Row | Choices | Saved in |
 |---|---|---|
@@ -1605,8 +1661,9 @@ key is chosen or the chosen key is gone from `/keys`.
 serves only apps installed in your workspace, so browser sign-in goes through your
 own Slack app. CLAI creates it for you. Choose **Browser sign-in** in the Sign-in row,
 then press Enter on **Slack app**. CLAI opens Slack's create-app page filled in with
-CLAI's manifest. Pick your workspace, click **Create**, and paste the app's **Client
-ID** (Basic Information, App Credentials). CLAI then opens Slack's sign-in page and
+CLAI's manifest; the Client ID prompt shows the same link, in case no browser
+opened. Pick your workspace, click **Create**, and paste the app's **Client
+ID** (Basic Information, App Credentials); the prompt refuses anything else. CLAI then opens Slack's sign-in page and
 waits up to five minutes behind a screen that shows the URL, in case no browser
 opens (over SSH, for example); Esc cancels. You never copy a token or a client
 secret: the manifest enables PKCE, so Slack treats the app as a public client and
@@ -1661,7 +1718,9 @@ settings later, run `/plugins configure posthog` or press `c` on it in
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
 edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
-new settings.
+new settings. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the `/keys` picker, the masked key input, the feature-group
+list, and the browser sign-in show as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1669,7 +1728,7 @@ new settings.
 | Sign-in | API key from `/keys` | or browser sign-in, with tokens kept in the keyring |
 | Region | US cloud | US (`mcp.posthog.com`), EU (`mcp-eu.posthog.com`), or a typed `https://` URL for a PostHog MCP server you run (`http://` only for localhost) |
 | Tools | read-only | read-only, or read and write (for example editing feature flags) |
-| Feature groups | every group | a searchable list of PostHog's feature groups; Enter toggles one and saves it |
+| Feature groups | every group | a searchable list of PostHog's feature groups; each pick toggles one and saves it, until **Done** or Esc |
 | Server mode | server default | one `posthog` tool driven by commands, or one tool per operation |
 | Project ID | not set | pin every request to one project (`x-posthog-project-id`) |
 | Organization ID | not set | pin every request to one organization (`x-posthog-organization-id`) |
@@ -1698,7 +1757,7 @@ plugin still loads with a warning and keeps its menu, and each run fails with an
 error naming the fix instead of connecting without the key.
 
 With browser sign-in, `/posthog login` (or choosing browser sign-in in the menu)
-opens the browser behind a waiting screen that Esc cancels. Loading and prompts
+opens the browser behind a waiting screen that Esc cancels (a dialog, from the web UI). Loading and prompts
 never open the browser: until you sign in, runs have no PostHog tools and the
 session start says how to sign in. The tokens go to the keyring (the
 `mcp-posthog_plugin` entry under `pydantic-clai2`), the same storage `/mcp` uses
@@ -1718,14 +1777,16 @@ calls appear in core's spans.
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
 the Grain meetings, transcripts, and notes you can see. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
-settings menu. Until you have opened the menu once or picked a key, loading it
-prints a line pointing there.
+settings menu. Until you have closed the menu in the terminal once, changed a
+setting, or chosen the token source, loading it prints a line pointing there.
 
 `/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
 menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
 close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
-different key:
+different key. The same menu shows in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the Token row's **Change…** button asks its steps (the key
+picker, the masked token, the browser sign-in's waiting screen) as dialogs in the page:
 
 ```text
  Grain
@@ -1750,15 +1811,16 @@ the first of these that applies:
 1. The `GRAIN_ACCESS_TOKEN` environment variable. The Token row shows it and says
    it overrides the choice there while it is set.
 2. A [saved API key](#saved-api-keys) picked on the Token row, or with
-   `/grain key`. The searchable picker lists your `/keys` entries by name; you can
-   also type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
-   the name harness's `Grain` documents. CLAI keeps only the key's name and looks
+   `/grain key`: choose "A /keys entry", then pick one of your `/keys` entries by
+   name or type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
+   the name harness's `Grain` documents, after asking before it replaces a saved
+   `GRAIN_ACCESS_TOKEN`. CLAI keeps only the key's name and looks
    the key up on every run, so replacing it in `/keys` takes effect on the next
    prompt, deleting it makes Grain fail rather than connect without it, and
    `/keys` refuses to rename it while Grain uses it. Several plugins can share one
    named key, the way `vllm` and `openrouter` connections can. Choose "No API
-   key" to go back to the browser sign-in.
-3. A browser sign-in, made with `/grain login`, behind a waiting screen that
+   key" to go back to the browser sign-in, which starts then unless you are signed in.
+3. A browser sign-in, made with `/grain login` or "No API key", behind a waiting screen that
    shows the sign-in URL in case the browser does not open (over SSH, for
    example) and that Esc cancels. The tokens go to the OS keyring (or CLAI's
    private credential file when there is no keyring), the way `/mcp` OAuth
@@ -1821,7 +1883,7 @@ pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
 close.
 
 Turning a plugin on with Space opens its settings menu straight away when it
-offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
+offers one (see [settings menu](#offer-a-settings-menu-def-settings_menuself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
 Turning a plugin off never opens a menu, and a plugin without a settings menu
@@ -2243,15 +2305,21 @@ prompt the keyboard does:
   its own copy of the session's `run_code` REPL, and a deleted session's REPL is deleted with it. Like opening `/resume`,
   `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
-  while a turn runs, unlike background naming.
+  while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
+  moves CLAI into the directory a session was saved in, as under `clai2 --web`, rather than
+  refusing a session saved elsewhere.
 - `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
   `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
   what it provides, whether it has its own settings menu, and, while it is on, its settings model and
   saved settings); `enable(NAME)`, `disable(NAME)`, and `reload(NAME)` act as the `/plugins`
   subcommands do, saved at once, but `enable` opens no settings menu; and
   `save_settings(NAME, SETTINGS)` saves a loaded plugin's settings, an instance of its own settings
-  model, as its menu would with `host.save_settings`, then loads it again if they changed. Adding
-  and removing declarations, and a plugin's own menu, go through the prompt:
+  model, as its menu would with `host.save_settings`, then loads it again if they changed.
+  `settings_menu(NAME)` is a loaded plugin's declared `SettingsMenu`, or `None`, and
+  `await edit_settings(NAME, edit)` runs `edit(menu)` (apply or reset a row through its
+  `source`, or run one of its `actions` with your own `Dialogs`), then loads the plugin again if
+  its settings changed; it refuses while that plugin's menu is open elsewhere. Adding and removing
+  declarations, and a menu a plugin did not declare, go through the prompt:
   `send_input('/plugins configure NAME')`.
 - `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
   conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
@@ -2467,7 +2535,7 @@ your plugin. A plugin with an agent dependency type names it second, as
 
 `self.settings` is what the plugin loaded with. To edit settings from inside the
 plugin, call `self.host.save_settings(model)` (see
-[`configure`](#offer-a-settings-menu-async-def-configureself));
+[settings menu](#offer-a-settings-menu-def-settings_menuself));
 `self.host.settings(Model)` returns them from then on. Read them per run (for
 example in a capability function returned from `get_capabilities`) so an edit
 also reaches the next turn from a plugin command, without a reload.
@@ -2557,47 +2625,76 @@ returns a `KeyReference` to a saved key, a masked new value for you to
 `save_key(name=..., value=...)`, or `None` when cancelled. Then call
 `self.host.save_settings(settings)` with the new reference. It saves your plugin's
 declaration as `plugins add` would, and `self.host.settings(Model)` returns the new
-values from then on.
+values from then on. From a settings menu, `choose_key` (below) asks through the
+menu's `Dialogs` and saves the new value for you.
 
-### Offer a settings menu: `async def configure(self)`
+### Offer a settings menu: `def settings_menu(self)`
 
-Override `configure` with an async method that shows a settings menu and returns
-a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
-`/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`, and on
-`/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
-the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
-and save only a key's name: let the user pick one with
-`prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to
-it. When the saved settings changed, CLAI loads the plugin again afterwards, so a
-fresh instance is built from them.
+Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
+CLAI opens it when the plugin is turned on (Space in `/plugins`, `/plugins enable`,
+or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
+the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
+it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
+not tied to the terminal.
 
-Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
-`pydantic_clai2.ui.menus.field_menu`, run through `run_worker` from
-`pydantic_clai2.ui.menus.menu_worker`), the same one `/set` uses. Its last row is
-**Save & close**: every edit is already saved, so choosing it, like Esc, just
-leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
-treats a result as closed when `picked(result)` is `None`.
+A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 
-The built-in `logfire_mcp` plugin is a complete example.
+- `source`, your `FieldSource`: its `title`, its `rows()` (a `FieldRow` each), and
+  `current`, `problem`, `apply`, and `reset` for a row. Each method is synchronous
+  and may block, such as on the keyring, so CLAI calls them off the event loop.
+  `apply` and `reset` save the change with `self.host.save_settings(model)` as the
+  user makes it and return a line to show.
+- `actions`, for rows that need more than one value typed or picked, such as
+  choosing a `/keys` entry or signing in: the row's key maps to an async function
+  that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `searchable`, whether typing filters the list (default `True`).
+
+`Dialogs` asks the user wherever the menu was opened, and every method waits for the
+answer. Backing out returns `None` or `False`, never raises:
+
+| Method | Asks for |
+|---|---|
+| `choose(title=..., options=[Option(value=..., label=..., description=...)], current=...)` | one of the options; returns its `value` |
+| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=..., description=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable, and `description` says more above the input, such as where to find the value |
+| `confirm(title=..., yes=..., no=..., description=...)` | `yes` or `no`, with `no` selected first |
+| `wait(title=..., description=..., task=...)` | nothing: it runs `task(show)` behind a screen the user can cancel, showing the latest text passed to `show` (a sign-in link, a code), and returns whether it finished |
 
 ```python
+from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
+
+
 class Notify(Plugin[NotifySettings]):
-    async def configure(self) -> str:
+    def settings_menu(self) -> SettingsMenu:
         # `NotifySource` is your `FieldSource`: rows, current values, validation, apply, and reset.
-        messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(self.host))))
-        return '\n'.join(messages) or 'Notify settings unchanged.'
+        return SettingsMenu(source=NotifySource(self.host), actions={'sound': self._pick_sound})
+
+    async def _pick_sound(self, dialogs: Dialogs) -> list[str]:
+        sound = await dialogs.choose(
+            title='Notification sound',
+            options=[Option(value='bell', label='Bell'), Option(value='chime', label='Chime')],
+            current=self.settings.sound,
+        )
+        if sound is None:
+            return []
+        self.host.save_settings(self.settings.model_copy(update={'sound': sound}))
+        return [f'Sound set to {sound}.']
 ```
 
-For a row that opens something other than a plain value, pass `submenus` to
-`run_flow` to map the row's key to a function that returns messages. When that
-function is itself async, such as `api_keys.prompt_api_key`, await
-`field_menu.run_flow_async` from the `configure` function instead of running
-`run_flow` in a worker: it runs each widget in its own `run_worker`, so the
-submenu can open its own.
+When the saved settings changed, CLAI loads the plugin again after the menu closes,
+so a fresh instance is built from them. The built-in `compaction` plugin is a
+complete example. In the terminal the whole menu, its actions' dialogs included,
+keeps the screen to itself until it closes.
 
-The built-in `github`, `grain`, `linear`, `notion`, and [`pylon`](#configuring-pylon) plugins are
-complete examples; `linear` uses `run_flow_async`, and `pylon` steps out of the menu
-worker to run the async key picker.
+A menu that cannot be declared this way can still override `async def
+configure(self) -> str` instead, show its own widgets, and return a line to show.
+It opens only in a terminal. Build it with the shared field editor (`FieldMenu` and
+`run_flow` from `pydantic_clai2.ui.menus.field_menu`, run through `run_worker`
+from `pydantic_clai2.ui.menus.menu_worker`) so it ends with the same **Save &
+close** row; a list you build yourself ends with `save_and_close_item()` and treats
+a result as closed when `picked(result)` is `None`. For a row that opens something
+other than a plain value, pass `submenus` to `run_flow`, or await
+`field_menu.run_flow_async` when the submenu is itself async, such as
+`api_keys.prompt_api_key`.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
@@ -2607,12 +2704,16 @@ the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`
 so plugins that need the same credential share it. The label is only a name; it
 does not export or read an environment variable.
 
-For a token row, `pydantic_clai2.plugins.keys.choose_key(name=..., label=..., runners=...)`
-shows the searchable `/keys` picker, or a masked input when no keys are saved.
-It saves a new value under `name` only after confirming a replacement, and
-returns a `KeyReference` to persist in place of the secret. Call it through
-`plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
-is a complete example.
+For a token row, `await pydantic_clai2.plugins.keys.choose_key(name=..., label=..., dialogs=...)`
+offers the saved `/keys` by name, or a masked input when no keys are saved. Pass
+the `Dialogs` your settings menu action receives, so it asks wherever the menu was
+opened. `check`, if given, raises `ValueError` for a picked or typed value the
+service would reject. It saves a new value under `name` only after confirming a
+replacement, and returns a `KeyReference` to persist in place of the secret, or
+`None` when the user backed out. The built-in `slack` plugin is a complete
+example. A `configure` menu of your own passes `TerminalDialogs()` from
+`pydantic_clai2.ui.menus.dialogs` and calls it through `plugin_keys.on_loop` from
+the menu's worker thread.
 
 ### Sign in only when the user asks: `plugins.sign_in`
 
@@ -2629,9 +2730,11 @@ menu or a command, and runs use only what is already stored.
   as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
   refreshes the stored tokens and raises `SignInRequired` instead of opening a
   browser.
-- `await sign_in_now(method)` signs in behind a waiting screen that shows what
-  `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
-  message to show: signed in, cancelled, or why it failed.
+- `await sign_in_now(method, dialogs)` signs in behind a waiting screen that shows
+  what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
+  message to show: signed in, cancelled, or why it failed. Pass the `Dialogs` your
+  settings menu action receives, so the screen shows wherever the menu was opened;
+  without one, it shows in the terminal.
 - `sign_in_command('NAME', method)` is `/NAME [login | logout | status]`.
   `run_subcommand(method, args)` handles the same words inside a command that has
   more of its own.
@@ -2660,9 +2763,9 @@ client = PublicClient(
 sign_in = PKCESignIn(client=client, account='example-oauth', service='Example', setup='/plugins configure example')
 ```
 
-`await plugin_keys.browser_sign_in(sign_in, runners)` signs in from a settings
-menu behind a waiting screen that shows the URL, and returns `False` when the user
-presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
+`await plugin_keys.browser_sign_in(sign_in, dialogs)` signs in from a settings
+menu behind a waiting screen that shows the URL, through the `Dialogs` the menu's
+action receives, and returns `False` when the user presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
 Before each run, `await sign_in.token()` returns an access token, refreshing it
 first when it expires within five minutes and saving a rotated refresh token. It
 raises `UserError` naming `setup` when there is no usable sign-in, so a plugin can

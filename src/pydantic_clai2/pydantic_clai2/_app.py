@@ -1160,6 +1160,12 @@ class _Shell(Generic[DepsT, OutputT]):
             async for text in commands:
                 menus.start_soon(self._run_mid_turn, text)
 
+    def background_running(self) -> bool:
+        """Whether a background fork or a delegated task runs, using the plugins loaded now."""
+        return any(record.status == 'running' for record in self.forks.records) or any(
+            record.status == 'running' for record in self.tasks.owner.records.values()
+        )
+
     def plugins_busy(self, text: str) -> bool:
         """Keep plugin-owned transports alive until all children using them settle."""
         if text.split(maxsplit=1)[0] != '/plugins':

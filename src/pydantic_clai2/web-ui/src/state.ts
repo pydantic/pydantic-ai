@@ -1,4 +1,4 @@
-import type { Item, Questions, ServerMessage, SessionInfo, StatusInfo, ThemeInfo, Usage } from './protocol'
+import type { Dialog, Item, Questions, ServerMessage, SessionInfo, StatusInfo, ThemeInfo, Usage } from './protocol'
 
 export interface NoticeEntry {
   id: string
@@ -26,12 +26,16 @@ export interface State {
   running: boolean
   status: StatusInfo | null
   questions: Questions[]
+  /** What open settings menus ask, oldest first. */
+  dialogs: Dialog[]
   sessionsVersion: number
   /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
   pluginsVersion: number
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
   theme: ThemeInfo | null
+  /** Whether each session runs in its own directory, so a new one asks where. */
+  followsWorkspace: boolean
 }
 
 export const initial: State = {
@@ -40,10 +44,12 @@ export const initial: State = {
   running: false,
   status: null,
   questions: [],
+  dialogs: [],
   sessionsVersion: 0,
   pluginsVersion: 0,
   turnStartedAt: null,
   theme: null,
+  followsWorkspace: false,
 }
 
 let counter = 0
@@ -72,8 +78,10 @@ export function reduce(state: State, message: ServerMessage): State {
         running: message.running,
         status: message.status,
         questions: message.questions,
+        dialogs: message.dialogs,
         turnStartedAt: message.running ? state.turnStartedAt : null,
         theme: message.theme,
+        followsWorkspace: message.follows_workspace,
       }
     case 'item':
       return { ...state, entries: [...state.entries, message.item] }
@@ -157,6 +165,12 @@ export function reduce(state: State, message: ServerMessage): State {
       return { ...state, questions: [...state.questions.filter((q) => q.id !== message.questions.id), message.questions] }
     case 'question_closed':
       return { ...state, questions: state.questions.filter((q) => q.id !== message.id) }
+    case 'dialog':
+      return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== message.dialog.id), message.dialog] }
+    case 'dialog_shown':
+      return { ...state, dialogs: state.dialogs.map((d) => (d.id === message.id ? { ...d, shown: message.text } : d)) }
+    case 'dialog_closed':
+      return { ...state, dialogs: state.dialogs.filter((d) => d.id !== message.id) }
     case 'notice': {
       const notice: NoticeEntry = {
         id: nextId('notice'),
