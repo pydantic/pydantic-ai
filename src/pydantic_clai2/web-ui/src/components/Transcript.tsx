@@ -2,6 +2,8 @@ import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { OpenCardsContext } from '../openCards'
 import type { Item } from '../protocol'
 import type { Entry } from '../state'
+import { compact, duration } from '../format'
+import type { TurnSummary } from '../state'
 import { ChevronIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
@@ -29,7 +31,7 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
         </div>
       )
     case 'turn':
-      if (entry.outcome === 'completed') return null
+      if (entry.outcome === 'completed') return <TurnUsage turn={entry} />
       return (
         <div className={`turn-note ${entry.outcome}`}>
           {entry.outcome === 'cancelled' ? 'Interrupted' : `Failed: ${entry.error ?? 'unknown error'}`}
@@ -37,6 +39,19 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
       )
   }
 })
+
+/** What a finished turn used, in one quiet line. */
+function TurnUsage({ turn }: { turn: TurnSummary }) {
+  const { usage, seconds } = turn
+  if (!usage && seconds === null) return null
+  const parts = [
+    usage && `↑ ${compact(usage.input_tokens)}`,
+    usage && `↓ ${compact(usage.output_tokens)}`,
+    usage && `${usage.requests} ${usage.requests === 1 ? 'request' : 'requests'}`,
+    seconds !== null && duration(seconds),
+  ].filter(Boolean)
+  return <div className="turn-usage">{parts.join(' · ')}</div>
+}
 
 const EDITS = new Set(['edit_file', 'write_file'])
 const COMMANDS = new Set(['shell', 'run_code'])
