@@ -1608,7 +1608,11 @@ settings is left as it is.
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
 or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
 reopens it later, with no reinstall. The list is searchable, Enter edits the
-highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
+highlighted row, `R` resets it, and **Save & close** or Esc closes. The same menu
+shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
+the User token, Slack app, and Browser sign-in rows have a **Change…** button and
+their steps (the key picker, the Client ID, the sign-in's waiting screen) open as
+dialogs in the page. Every change is saved as you make it:
 
 | Row | Choices | Saved in |
 |---|---|---|
@@ -1635,8 +1639,9 @@ key is chosen or the chosen key is gone from `/keys`.
 serves only apps installed in your workspace, so browser sign-in goes through your
 own Slack app. CLAI creates it for you. Choose **Browser sign-in** in the Sign-in row,
 then press Enter on **Slack app**. CLAI opens Slack's create-app page filled in with
-CLAI's manifest. Pick your workspace, click **Create**, and paste the app's **Client
-ID** (Basic Information, App Credentials). CLAI then opens Slack's sign-in page and
+CLAI's manifest; the Client ID prompt shows the same link, in case no browser
+opened. Pick your workspace, click **Create**, and paste the app's **Client
+ID** (Basic Information, App Credentials); the prompt refuses anything else. CLAI then opens Slack's sign-in page and
 waits up to five minutes behind a screen that shows the URL, in case no browser
 opens (over SSH, for example); Esc cancels. You never copy a token or a client
 secret: the manifest enables PKCE, so Slack treats the app as a public client and
@@ -2658,10 +2663,10 @@ the `Dialogs` your settings menu action receives, so it asks wherever the menu w
 opened. `check`, if given, raises `ValueError` for a picked or typed value the
 service would reject. It saves a new value under `name` only after confirming a
 replacement, and returns a `KeyReference` to persist in place of the secret, or
-`None` when the user backed out. A `configure` menu of your own passes
-`TerminalDialogs()` from `pydantic_clai2.ui.menus.dialogs` and calls it through
-`plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
-is a complete example.
+`None` when the user backed out. The built-in `slack` plugin is a complete
+example. A `configure` menu of your own passes `TerminalDialogs()` from
+`pydantic_clai2.ui.menus.dialogs` and calls it through `plugin_keys.on_loop` from
+the menu's worker thread.
 
 ### Sign in only when the user asks: `plugins.sign_in`
 
