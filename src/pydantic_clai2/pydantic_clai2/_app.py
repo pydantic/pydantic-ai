@@ -1305,7 +1305,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
                 context = await run_shell_command(
-                    command, console=self.console, interrupts=self.interrupts, cwd=self.session.workspace
+                    command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
                 )
                 await self.session.commit_messages(
                     [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
