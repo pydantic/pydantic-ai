@@ -239,13 +239,11 @@ class WebService:
         client.unwatch.clear()
 
     def _question(self, message: QuestionAsked | QuestionClosed, session: str | None) -> None:
-        if session is None:
-            self.hub.publish(message)
-        else:
-            self.hub.publish_session(message, session=session)
+        assert session is not None, 'every question here is asked by a live session, from `_asking`'
+        self.hub.publish_session(message, session=session)
         self.live_changed()
 
-    def _asking(self) -> str | None:
+    def _asking(self) -> str:
         session = self.live.current()
         return (session or self.default().session).conversation.conversation_id
 

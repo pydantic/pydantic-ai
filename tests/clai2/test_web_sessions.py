@@ -23,7 +23,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
-from pydantic_clai2.builtin_plugins.web.service import WebService
+from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -31,6 +31,7 @@ from pydantic_clai2.plugins import PluginHost, Transcript
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
+from .test_web_parts import REQUEST
 
 GLOBAL = {'snapshot', 'orchestrator', 'live', 'sessions', 'plugins', 'settings', 'theme', 'update'}
 """Message types every browser gets, without a `session`."""
@@ -83,8 +84,10 @@ class Fleet:
         self.client.portal = self.portal
 
         async def serve() -> None:
+            # As `clai2 --web` does: the others close as serving ends, then the launch session's plugins.
             async with self.launch.process.live.serving():
-                await self.launch.run()
+                reason = await self.launch.run()
+            await self.launch.close(reason)
 
         self.running = self.portal.start_task_soon(serve)
 
@@ -126,6 +129,13 @@ class Fleet:
     def socket(self) -> WebSocketTestSession:
         return self.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'})
 
+    def exit(self) -> None:
+        """End the launch session, and with it the process's others and the web UI."""
+        assert self.running is not None
+        if not self.running.done():
+            self.portal.call(lambda: self.launch.send_input('/exit'))
+            self.running.result(timeout=10)
+
     def new(self, name: str) -> str:
         """Start a live session in folder `name`; its conversation ID."""
         response = self.post('/api/sessions/new', {'workspace': str(self.folder(name))})
@@ -147,9 +157,7 @@ def make_fleet(tmp_path: Path) -> Iterator[MakeFleet]:
 
         yield make
         for fleet in made:
-            portal.call(lambda: fleet.launch.send_input('/exit'))
-            assert fleet.running is not None
-            fleet.running.result(timeout=10)
+            fleet.exit()
 
 
 def messages(
@@ -429,3 +437,44 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
         session.setting('run.code_mode')
     service = WebService(host=host)
     assert service.live_message().sessions[0].state == 'idle'
+
+
+def test_closing_a_watched_session_or_the_web_ui_stops_counting_its_browsers(make_fleet: MakeFleet) -> None:
+    """A session that closes leaves `live`; ending the launch session stops the web UI watching any."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    session_b = fleet.service.session(b).session
+    session_a = fleet.launch.loader.live_session
+    with fleet.socket() as socket, fleet.socket() as other:
+        connected(other)  # Watches only the default session, which stays.
+        connected(socket)
+        watch(socket, session_a.conversation.conversation_id or '', b)
+        messages(socket, until=snapshot_of(b))
+        assert session_b.watchers == 1
+        fleet.portal.call(fleet.launch.process.live.close, session_b.id)
+        assert b not in live_states(
+            messages(socket, until=lambda m: m['type'] == 'live' and b not in live_states(m))[-1]
+        )
+        assert session_b.watchers == 0
+        assert session_a.watchers == 1
+        fleet.exit()
+        assert session_a.watchers == 0
+
+
+async def test_a_bare_host_asks_as_its_session_and_has_no_default_once_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Its one session asks in its own name; with no session live, nothing is followed and no run is shown."""
+    host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
+    service = WebService(host=host)
+    with service.hub.subscribe() as client:
+        async with anyio.create_task_group() as group:
+            group.start_soon(service.answerer, REQUEST)
+            await anyio.wait_all_tasks_blocked()
+            asked = json.loads(client.queue.get_nowait())
+            assert (asked['type'], asked['session']) == ('question', host.conversation.conversation_id)
+            service.answerer.reply(REQUEST.id, None)
+    monkeypatch.setattr(service.live, 'listing', list)
+    with pytest.raises(LookupError, match='No session is open'):
+        service.default()
+    assert service.hub.default() is None
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=[Observer(service=service)]).run('hi')
+    assert result.output == 'success (no tool calls)', 'a run no live session holds is not shown'
