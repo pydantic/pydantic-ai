@@ -45,6 +45,7 @@ from pydantic_clai2.commands import (
     set_completions,
 )
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -53,12 +54,14 @@ from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
+    CommandEnd,
     ConversationChanged,
     ModelProvider,
     PluginLogin,
     Renderer,
     SessionEndReason,
     SessionStart,
+    TaskEvent,
     TurnEnd,
     TurnStart,
     bare_screen,
@@ -82,7 +85,7 @@ from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
@@ -120,56 +123,7 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
-
-
-DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
-    PluginSettings(
-        id='coder',
-        factory='pydantic_clai2.builtin_plugins.coder',
-        settings={
-            'unrestricted_filesystem': True,
-            'repo_context': False,
-            'sub_agents': False,
-            'agent_folders': ['agents'],
-        },
-    ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
-    PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
-    PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
-    PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
-    PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
-    PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
-    PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
-    PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
-    PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),
-    PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False),
-    PluginSettings(id='ordinal', factory='pydantic_clai2.builtin_plugins.ordinal', enabled=False),
-    PluginSettings(id='notion', factory='pydantic_clai2.builtin_plugins.notion', enabled=False),
-    PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False),
-    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.builtin_plugins.logfire_mcp', enabled=False),
-    PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
-    PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
-    PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
-    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
-    PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=False),
-)
-"""Built-in declarations, each integrated with the shell. `remove` restores their defaults.
-
-Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
-
-`coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
-`compaction` runs alongside `coder`, whose `ClearToolResults` only empties old tool results; see `plugins.compatibility`.
-"""
-
-STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
-    plugin.model_copy(update={'settings': {**plugin.settings, 'sub_agents': True}}) if plugin.id == 'coder' else plugin
-    for plugin in DEFAULT_PLUGINS
-)
-"""CLI-owned agents bind plugins at construction, so Coder can delegate safely.
-
-`DEFAULT_PLUGINS` keeps its run-level delegation opt-out for caller-supplied agents.
-"""
+_PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
 
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
@@ -694,6 +648,7 @@ def create_shell(
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
             during_turn=True,
+            args_during_turn=True,
         )
     )
     commands.register(
@@ -812,6 +767,11 @@ def create_shell(
         status=status,
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
+        send_input=lambda text: shell.send_input(text),
+        interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
+        sessions=sessions,
+        setting=context.setting,
+        tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
@@ -904,6 +864,15 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+    commands.register(
+        Command(
+            name='monty',
+            description="Run your own Python in Monty, this session's run_code sandbox: /monty CODE",
+            handler=shell.monty_command,
+            raw=True,
+            live=True,
+        )
+    )
 
     async def show_resumed(messages: Sequence[ModelMessage]) -> None:
         # The live panel swaps to the restored conversation; startup output above it stays.
@@ -966,6 +935,8 @@ class _Shell(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
+    """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
 
     @property
     def session_id(self) -> str | None:
@@ -990,6 +961,9 @@ class _Shell(Generic[DepsT, OutputT]):
             if str(self.sessions.store.database) == ':memory:'
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
+            fire=self.loader.fire,
+            listening=lambda: self.loader.handles(TaskEvent),
+            send_input=self.send_input,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -1051,19 +1025,15 @@ class _Shell(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /tasks [stop|background|resume ID]')
         record = self.tasks.resolve(args[1])
         if args[0] == 'stop':
-            await self.tasks.owner.cancel(record.id)
-            await self.tasks.owner.save(record)
+            await self.tasks.stop(record.id)
             return f'Stopping task {record.id[:8]} and its descendants.'
         if args[0] == 'background':
-            self.tasks.owner.background(record.id)
+            self.tasks.background(record.id)
             return f'Task {record.id[:8]} moved to background.'
         await self.tasks.owner.allow_resume(record.id)
         if self.editor is None:
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
-        self.editor.submit(
-            f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
-            f'resume={record.id!r}. Continue from its saved history and report the result.'
-        )
+        self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
 
     def submit_prompt(self, text: str) -> None:
@@ -1071,6 +1041,38 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.submitted is None:
             raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
         self.submitted.append(text)
+
+    async def monty_command(self, args: list[str]) -> str:
+        """`/monty CODE`: run a cell in Monty, code mode's sandbox; the next prompt tells the model."""
+        code = args[0].strip() if args else ''
+        if not code:
+            raise ValueError("Usage: /monty CODE runs your own cell in Monty, this session's run_code sandbox.")
+        if not (self.speculation.enabled or self.context.settings.code_mode):
+            raise ValueError('Code mode is off, so there is no Monty sandbox. Turn it on with /set run.code_mode true.')
+        if self.session.repl_states is None:
+            raise ValueError('This CLAI saves no sessions, so no Monty state outlives a run.')
+        self.session.plugins = self.run_plugins()
+        cell = await self.session.run_in_monty(code)
+        if cell.failed:
+            raise ValueError(f'The cell failed:\n{cell.report()}')
+        return cell.report() or '(no output)'
+
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
+
+        A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
+        editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
+        used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+        """
+        if self.prompt is not None and self.editor is None:
+            raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
+        text = expand_bare_command(text.strip())
+        if not text or self.run_now(text):
+            return
+        if self.editor is not None:
+            self.editor.submit(text)
+        else:
+            self._inbox.put_nowait(text)
 
     def request_reload(self, args: list[str]) -> str:
         if args:
@@ -1108,6 +1110,9 @@ class _Shell(Generic[DepsT, OutputT]):
             self.screen.editor = self.editor.suspended
             try:
                 async with self.editor.opened():
+                    # Input a plugin entered while plugins loaded, before the editor existed.
+                    while not self._inbox.empty():
+                        self.editor.submit(self._inbox.get_nowait())
                     self.tasks.wake = self.editor.wake
                     if self.tasks.owner.reports(conversation_id=self.session.summary.id):
                         self.editor.wake()
@@ -1156,24 +1161,35 @@ class _Shell(Generic[DepsT, OutputT]):
             async for text in commands:
                 menus.start_soon(self._run_mid_turn, text)
 
+    def background_running(self) -> bool:
+        """Whether a background fork or a delegated task runs, using the plugins loaded now."""
+        return any(record.status == 'running' for record in self.forks.records) or any(
+            record.status == 'running' for record in self.tasks.owner.records.values()
+        )
+
     def plugins_busy(self, text: str) -> bool:
         """Keep plugin-owned transports alive until all children using them settle."""
         if text.split(maxsplit=1)[0] != '/plugins':
             return False
         if not any(record.status == 'running' for record in self.tasks.owner.records.values()):
             return False
-        self.console.print(
-            'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.', markup=False
-        )
+        self.console.print(_PLUGINS_WAIT, markup=False)
+        return True
+
+    async def _refused(self, text: str) -> bool:
+        """`plugins_busy`, telling plugins the command was refused, as `send_input` callers wait for its end."""
+        if not self.plugins_busy(text):
+            return False
+        await self.loader.fire(CommandEnd(text=text, error=RuntimeError(_PLUGINS_WAIT)))
         return True
 
     async def _run_mid_turn(self, text: str) -> None:
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
-            if self.plugins_busy(text):
+            if await self._refused(text):
                 return
-            await _execute_command(self.commands, text, console=self.console)
+            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1205,9 +1221,10 @@ class _Shell(Generic[DepsT, OutputT]):
                 self._show_status_segments()
                 if self.editor is not None:
                     text = await self.editor.read()
-                else:
-                    assert self.prompt is not None
+                elif self.prompt is not None:
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+                else:
+                    text = (await self._inbox.get()).strip()
             except PromptRewind:
                 await self._rewind()
                 continue
@@ -1230,7 +1247,8 @@ class _Shell(Generic[DepsT, OutputT]):
             self.images.notice = ''
             if not text:
                 continue
-            if self.editor is not None:
+            # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
+            if self.prompt is None:
                 self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             if await self._dispatch_input(text):
@@ -1261,16 +1279,17 @@ class _Shell(Generic[DepsT, OutputT]):
                 await self.editor.output.drain()
 
     async def _command(self, text: str) -> bool:
-        if self.plugins_busy(text):
+        if await self._refused(text):
             return False
         self.submitted = submitted = list[str]()
+        ended: list[CommandEnd] = []
         try:
             if self.editor is not None and self.commands.runs_live(text):
-                completed = await self._live_command(text, self.editor)
+                completed = await self._live_command(text, self.editor, ended)
                 exiting = self.interrupts.exit_requested
             else:
                 async with self.forks.busy(), self._released():
-                    completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
+                    completed = await self.interrupts.run(self._execute(text, ended))
                 exiting = (
                     text == '/exit'
                     or self.interrupts.exit_requested
@@ -1279,12 +1298,19 @@ class _Shell(Generic[DepsT, OutputT]):
                 )
         finally:
             self.submitted = None
+        # Plugins hear of the command once Esc no longer reaches it, so a slow handler cannot cancel it.
+        for event in ended:
+            await self.loader.fire(event)
         # A cancelled command's prompts are cancelled with it.
         while completed and submitted and not exiting:
             exiting = await self._prompt(submitted.pop(0))
         return exiting
 
-    async def _live_command(self, text: str, editor: LivePrompt) -> bool:
+    async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
+        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
+        ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
 
         Suspending the editor instead would freeze its last frame, an idle prompt and a `ready`
@@ -1295,7 +1321,7 @@ class _Shell(Generic[DepsT, OutputT]):
         async with self.forks.busy():
             self.status.activity = 'working'
             try:
-                completed = await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
+                completed = await self.interrupts.run(self._execute(text, ended))
             finally:
                 self.status.activity = 'ready'
                 await editor.output.drain()
@@ -1453,16 +1479,21 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console) -> CommandEnd:
+    """Run a command and show its result; the caller tells plugins, outside the scope that Esc cancels."""
+    ended = CommandEnd(text=text)
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
         if not is_silent(result):
+            ended.output = result
             console.print(result, markup=False)
             console.print()
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
+        ended.error = exc
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
+    return ended
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
@@ -1561,6 +1592,7 @@ async def _run_prompt(
 
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
+        status.context_estimated = False
 
     def context_window(window: int) -> None:
         # The `compaction` gauge, when loaded, already measured this request, honouring its override.
@@ -1588,6 +1620,7 @@ async def _run_prompt(
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.
             if isinstance(message, ModelResponse):
                 status.context_tokens = context_tokens(message) or None
+                status.context_estimated = False
                 break
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)

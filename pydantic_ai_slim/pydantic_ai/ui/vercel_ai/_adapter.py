@@ -409,7 +409,23 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     builder.add(UserPromptPart(content=user_prompt_content))
 
             elif msg.role == 'assistant':
+                # A `ModelResponse` with parallel tool calls is followed by one `ModelRequest` with all
+                # their returns, but a Vercel tool part carries a call and its output together. Hold the
+                # returns back until the step (one model response) ends, so the calls stay in one
+                # response. Streamed messages mark steps with `step-start` parts; without them (as
+                # `dump_messages` writes, one response per message) content after a completed tool
+                # call is taken to start the next step.
+                pending_returns: list[ToolReturnPart] = []
+                has_steps = any(isinstance(part, StepStartUIPart) for part in msg.parts)
                 for part in msg.parts:
+                    if pending_returns and (
+                        isinstance(part, StepStartUIPart)
+                        or (not has_steps and isinstance(part, TextUIPart | ReasoningUIPart | FileUIPart))
+                    ):
+                        for return_part in pending_returns:
+                            builder.add(return_part)
+                        pending_returns = []
+
                     if isinstance(part, TextUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -584,7 +600,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 # return keeps the call's `tool_kind`: one that isn't a success is never
                                 # promoted to its typed subclass, so the kind can't pass for success.
                                 interrupted = provider_meta.get('outcome') == 'interrupted'
-                                builder.add(
+                                pending_returns.append(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -594,7 +610,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     )
                                 )
                             elif part.state == 'output-error':
-                                builder.add(
+                                pending_returns.append(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -604,7 +620,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     )
                                 )
                             elif part.state == 'output-denied':
-                                builder.add(
+                                pending_returns.append(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -622,11 +638,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
                         pass
-                    elif isinstance(part, StepStartUIPart):  # pragma: no cover
-                        # Nothing to do here
+                    elif isinstance(part, StepStartUIPart):
+                        # Step boundaries are handled above, by flushing the held-back tool returns
                         pass
                     else:
                         assert_never(part)
+                for return_part in pending_returns:
+                    builder.add(return_part)
             else:
                 assert_never(msg.role)
 

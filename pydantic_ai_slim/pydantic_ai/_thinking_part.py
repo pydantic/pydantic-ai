@@ -1,6 +1,11 @@
 from __future__ import annotations as _annotations
 
-from pydantic_ai import TextPart, ThinkingPart
+import html
+import re
+
+from pydantic_ai import ModelResponse, TextPart, ThinkingPart
+
+from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
 
 def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str, str]) -> list[ThinkingPart | TextPart]:
@@ -29,3 +34,52 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     if content:
         parts.append(TextPart(content=content))
     return parts
+
+
+_ASSISTANT_THINKING_TAG = 'assistant_thinking'
+_ASSISTANT_THINKING_CLOSE_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_ASSISTANT_THINKING_TAG}(?=[\s/>]))', re.IGNORECASE)
+"""Matches only the `<` of a closing `assistant_thinking` tag, in every spelling a model might reach for."""
+
+
+def render_replayed_thinking(content: str, profile: ModelProfile, response: ModelResponse) -> tuple[str, bool]:
+    """Render reasoning that can't be replayed through a model's native channel, as tagged text.
+
+    The inverse of [`split_content_into_text_and_thinking`][pydantic_ai._thinking_part.split_content_into_text_and_thinking]:
+    a `ThinkingPart` that arrived unsigned or from another provider has no native block to ride, so the
+    only way to keep it in the history at all is to write it out as text.
+
+    Returns the text and whether it has to go in a *user* message rather than the assistant turn it was
+    produced in, which is what
+    [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting]
+    decides. Reasoning that stays in its own turn keeps the model's own thinking tags, which is how it
+    would have written the reasoning itself. Reasoning carried into a user message can't: attributed to
+    the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper naming
+    the model and provider that produced it instead.
+
+    The tags are rendered here, for the model the request goes to, and never stored: the history keeps
+    only the `ThinkingPart` and the `ModelResponse` facts the attribution is read from.
+
+    Both answers come from the profile, so the tag names and the meaning of that flag live in one place
+    across every adapter that replays reasoning as text; where the carried text ends up is the caller's,
+    because only the adapter knows what its wire accepts next to a tool result or a mid-conversation
+    instruction.
+    """
+    carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
+    if carry_in_user_turn:
+        # Read from the enclosing `ModelResponse` rather than the `ThinkingPart`, which carries no provider
+        # of its own once it arrives unsigned. Each attribute is left off when the response can't name it,
+        # so the tag never claims an author it doesn't have. The values can come from client-supplied
+        # history, so they are escaped like any other attribute the framework renders.
+        attributes = ''.join(
+            f' {name}="{html.escape(value)}"'
+            for name, value in (('model', response.model_name), ('provider', response.provider_name))
+            if value
+        )
+        # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
+        # the message as if the user had written it. Only the `<` of a closing tag is escaped, so the
+        # rest of the reasoning goes in exactly as written.
+        content = _ASSISTANT_THINKING_CLOSE_TAG_OPENER.sub('&lt;', content)
+        start_tag, end_tag = f'<{_ASSISTANT_THINKING_TAG}{attributes}>', f'</{_ASSISTANT_THINKING_TAG}>'
+    else:
+        start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+    return '\n'.join([start_tag, content, end_tag]), carry_in_user_turn
