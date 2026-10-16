@@ -74,16 +74,19 @@ __all__ = (
 _REALTIME_PATH = 'v1/realtime'
 """Path of the realtime WebSocket under the provider's `base_url` (`https://api.elevenlabs.io` → `wss://…`).
 
+With the OpenAI SDK's convention this is its `base_url` (e.g. `https://api.elevenlabs.io/v1/`) plus `realtime`.
 TODO(elevenlabs-launch): the real path. If the realtime API lives on a different *host* than the REST API
 (e.g. a dedicated `wss://` host), derive the URL from a host constant here instead of `provider.base_url`,
 and decide how data-residency `base_url`s map onto it."""
 
-_AUTH_HEADER = 'xi-api-key'
-"""The handshake header carrying the API key: `xi-api-key` on the rest of the ElevenLabs API.
+_AUTH_HEADER = 'Authorization'
+"""The handshake header carrying the API key.
 
-TODO(elevenlabs-launch): an OpenAI-compatible API may take `Authorization` instead; set `_AUTH_SCHEME` too."""
+ElevenLabs says the speech-to-speech API works with the OpenAI SDK, which authenticates with
+`Authorization: Bearer <key>`. TODO(elevenlabs-launch): confirm; the rest of the ElevenLabs API uses `xi-api-key`
+(then `_AUTH_SCHEME = None`)."""
 
-_AUTH_SCHEME: str | None = None
+_AUTH_SCHEME: str | None = 'Bearer'
 """Prefix for the header value, e.g. `'Bearer'` for `Authorization: Bearer <key>`; `None` sends the bare key."""
 
 _MODEL_QUERY_PARAM = True
@@ -208,6 +211,10 @@ class ElevenLabsRealtimeModel(RealtimeModel):
     """
 
     # TODO(elevenlabs-launch): the model-name example in `Args` (e.g. "The model name, e.g. `<id>`").
+    # TODO(elevenlabs-launch): decide whether to subclass `OpenAIRealtimeModel` instead (as `AzureRealtimeModel`
+    # does), backed by an `OpenAIProvider(base_url=..., api_key=..., http_client=...)` built from the shared
+    # `ElevenLabsProvider`. That brings WebRTC/client secrets/hang-up for free *if* ElevenLabs serves OpenAI's
+    # `/realtime/calls` and `/realtime/client_secrets`. See scratch/LAUNCH_CHECKLIST.md, section 5.
 
     model: ElevenLabsRealtimeModelName
     _: KW_ONLY

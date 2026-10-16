@@ -24,9 +24,9 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
     such as `https://api.eu.residency.elevenlabs.io` to keep the connection inside a region.
     """
 
-    # TODO(elevenlabs-launch): #7964's `ElevenLabsAgentsProvider` (name `'elevenlabs-agents'`) is this class with
-    # another `name` and `realtime_model_profile`. Move the shared constructor/properties into one private base
-    # both subclass; see scratch/LAUNCH_CHECKLIST.md "Coexisting with #7964".
+    # TODO(elevenlabs-launch): use #7964's ElevenLabsProvider. This whole file is a local stub of the one shared
+    # `ElevenLabsProvider` (name `'elevenlabs'`) that #7964 adds, kept shape-compatible with it (`api_key`,
+    # `base_url`, `client`) so `ElevenLabsRealtimeModel` builds on it unchanged. Delete it when rebasing onto #7964.
 
     @property
     def name(self) -> str:
@@ -47,6 +47,8 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        # TODO(elevenlabs-launch): #7964's shared provider returns the *Agents* profile here, so on rebase the
+        # speech-to-speech profile has to be chosen another way; see scratch/LAUNCH_CHECKLIST.md, section 5.
         return elevenlabs_realtime_model_profile(model_name)
 
     def __init__(

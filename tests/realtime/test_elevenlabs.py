@@ -234,7 +234,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
 
     assert events == [OutputTranscript(text='hi', is_final=True, response_id='response')]
     assert fake_connect.url == snapshot('wss://api.elevenlabs.io/v1/realtime?model=eleven-voice')
-    assert fake_connect.headers == snapshot({'xi-api-key': 'k'})
+    assert fake_connect.headers == snapshot({'Authorization': 'Bearer k'})
     update = json.loads(ws.sent[0])
     assert update['type'] == 'session.update'
     assert update['session']['instructions'] == 'Be nice'
