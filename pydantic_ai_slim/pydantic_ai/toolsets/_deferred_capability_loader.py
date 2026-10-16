@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityCallPart, LoadCapabilityReturn
-from pydantic_ai._instructions import explicitly_appends, resolve_sourced_instructions
+from pydantic_ai._instructions import explicitly_appended_blocks, resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
@@ -96,10 +96,11 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
 
-        if explicitly_appends(sourced, parts):
+        if appended := explicitly_appended_blocks(sourced, parts):
             warnings.warn(
-                "`on_change='append'` is not supported for deferred capability instructions. "
-                'These instructions are delivered when the capability loads and are not tracked for later changes.',
+                "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
+                f'{", ".join(map(repr, appended))} are delivered when the capability loads and their later changes '
+                'are not tracked.',
                 UserWarning,
                 stacklevel=2,
             )

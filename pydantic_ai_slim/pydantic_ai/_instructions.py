@@ -102,15 +102,19 @@ def append_on_change_by_default(
     ]
 
 
-def explicitly_appends(
+def explicitly_appended_blocks(
     instructions: Sequence[SourcedInstruction[AgentDepsT]], parts: Sequence[InstructionPart]
-) -> bool:
-    """Whether an author, rather than the framework, asked for `on_change='append'` on any of `parts`.
+) -> list[str]:
+    """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
 
     `parts` are what `instructions` (and any toolsets) resolved to.
     """
     framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
-    return any(part.on_change == 'append' and part.id not in framework_ids for part in parts)
+    return [
+        str(part.id) if part.id is not None else part.name or 'unnamed'
+        for part in parts
+        if part.on_change == 'append' and part.id not in framework_ids
+    ]
 
 
 def sourced_instruction(
@@ -230,16 +234,28 @@ def _normalize_append_parts(current: list[InstructionPart]) -> list[InstructionP
     normalized: list[InstructionPart] = []
     for part in current:
         if part.on_change == 'append' and (part.id is None or counts[part.id] > 1):
-            warnings.warn(
-                f'Instruction block {str(part.id) if part.id is not None else part.name!r} uses '
-                "`on_change='append'` without a unique instruction identity; rewriting its prefix. "
-                'Declare a unique `name` and an owning capability/toolset `id` where applicable.',
-                UserWarning,
-                stacklevel=3,
-            )
+            warnings.warn(f'{_unaddressable_reason(part)}; rewriting its prefix instead.', UserWarning, stacklevel=2)
             part = replace(part, on_change='rewrite')
         normalized.append(replace(part, content=part.content.strip()) if part.on_change == 'append' else part)
     return normalized
+
+
+def _unaddressable_reason(part: InstructionPart) -> str:
+    """Why an `on_change='append'` block can't be addressed, and how to fix it."""
+    if part.id is not None:
+        return (
+            f"Instruction blocks share the id {str(part.id)!r} and use `on_change='append'`, so changes can't say "
+            'which one they replace. Give each a different `name`'
+        )
+    if part.name is None:
+        return (
+            "An instruction block without a `name` uses `on_change='append'`, so its changes can't say what they "
+            'replace. Pass `name=` to the instructions decorator or `InstructionPart`'
+        )
+    return (
+        f"Instruction block {part.name!r} uses `on_change='append'`, but its capability or toolset has no `id` to "
+        'qualify the name with. Give it an `id`'
+    )
 
 
 def _opens_instruction_window(message: ModelMessage) -> bool:

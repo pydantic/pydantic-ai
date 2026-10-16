@@ -9726,7 +9726,9 @@ async def test_agent_realtime_session_append_instructions_warn() -> None:
         return 'Current state'
 
     model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(UserWarning, match='not supported by realtime sessions'):
+    with pytest.warns(
+        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
+    ):
         async with agent.realtime(model).session() as session:
             _ = [event async for event in session]
     assert model.last_instructions == 'Base\n\nCurrent state'

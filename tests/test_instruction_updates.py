@@ -900,9 +900,9 @@ async def test_instruction_updates_unaddressable_warn_and_default_rewrites():
             return ctx.deps
 
         if append:
-            with pytest.warns(UserWarning, match='without a unique instruction identity'):
+            with pytest.warns(UserWarning, match='An instruction block without a `name`.*Pass `name=`'):
                 first = await agent.run('Continue.', deps='A')
-            with pytest.warns(UserWarning, match='without a unique instruction identity'):
+            with pytest.warns(UserWarning, match='An instruction block without a `name`'):
                 second = await agent.run('Continue.', deps='B', message_history=first.all_messages())
         else:
             first = await agent.run('Continue.', deps='A')
@@ -912,6 +912,18 @@ async def test_instruction_updates_unaddressable_warn_and_default_rewrites():
         assert request.instructions == 'B'
         assert baseline_of(request) is None
         assert not any(isinstance(p, InstructionDeltaPart) for p in request.parts)
+
+
+async def test_instruction_updates_named_block_without_source_id_warns():
+    """A named block on a capability without an `id` has nothing to qualify its name with."""
+    agent = Agent(
+        TestModel(custom_output_text='ok'),
+        deps_type=type(None),
+        capabilities=[Capability[None](instructions=InstructionPart(content='A', name='state', on_change='append'))],
+    )
+    with pytest.warns(UserWarning, match="Instruction block 'state'.*has no `id`.*Give it an `id`"):
+        result = await agent.run('Continue.')
+    assert baseline_of(result.new_messages()[0]) is None
 
 
 async def test_instruction_updates_duplicate_identity_rewrites_and_resets_history():
@@ -933,7 +945,7 @@ async def test_instruction_updates_duplicate_identity_rewrites_and_resets_histor
             InstructionPart(content='C', name='state', on_change='append'),
         ],
     )
-    with pytest.warns(UserWarning, match='without a unique instruction identity'):
+    with pytest.warns(UserWarning, match="Instruction blocks share the id 'agent:state'.*different `name`"):
         result = await second_agent.run('Continue.', message_history=first.all_messages())
     request = result.new_messages()[0]
     assert isinstance(request, ModelRequest)
@@ -964,7 +976,10 @@ async def test_instruction_updates_deferred_source_warns():
             )
         ],
     )
-    with pytest.warns(UserWarning, match='not supported for deferred capability instructions'):
+    with pytest.warns(
+        UserWarning,
+        match="deferred capability instructions, so instruction blocks 'capability:memory:state' are delivered",
+    ):
         result = await agent.run('Continue.')
     assert result.output == 'done'
 
