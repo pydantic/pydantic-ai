@@ -467,6 +467,8 @@ async def test_string_encoded_tool_returns_roundtrip_wire_stable(
     anthropic_original, anthropic_restored = (
         kwargs['messages'] for kwargs in get_mock_chat_completion_kwargs(anthropic_client)
     )
+    assert openai_restored == openai_original
+    assert anthropic_restored == anthropic_original
     assert [message['content'] for message in openai_original if message['role'] == 'tool'] == snapshot(
         [
             '2026-01-01T09:30:00Z',
@@ -486,5 +488,3 @@ async def test_string_encoded_tool_returns_roundtrip_wire_stable(
         for block_param in message['content']
         if block_param['type'] == 'tool_result'
     ][-1] == snapshot(['2026-01-01', '12345678-1234-5678-1234-567812345678'])
-    assert openai_restored == openai_original
-    assert anthropic_restored == anthropic_original
