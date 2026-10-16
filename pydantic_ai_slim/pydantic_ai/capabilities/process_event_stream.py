@@ -66,8 +66,11 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
     Async generator processors are closed and observer handlers are awaited during stream teardown.
     Release resources in a `finally` block, using a shielded AnyIO cancel scope for asynchronous
-    cleanup that must finish under cancellation. An observer that stops reading before the stream
-    ends is not protected this way: its cleanup can be interrupted if the stream then ends early.
+    cleanup that must finish under cancellation. When the stream ends early (the consumer stops, an
+    error is raised, or the run is cancelled), async work an observer is in the middle of can be
+    interrupted even inside a shielded scope, such as cleanup after it stopped reading or a shielded
+    write in its loop. For cleanup to finish, keep iterating until the stream ends instead of
+    breaking out of the loop, skipping events you don't need, and clean up in `finally`.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
@@ -196,8 +199,12 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                 except BaseException:
                     # Cancel the handler natively, once, before `send_stream` closes, so it sees a
                     # cancellation rather than a normal end of stream. A native cancel is edge-triggered,
-                    # so the handler's `finally` can still await cleanup without shielding it. This assumes
-                    # the handler is still reading: one already in shielded cleanup is interrupted.
+                    # so the handler's `finally` can still await cleanup without shielding it. On asyncio it
+                    # also interrupts shielded work the handler is in the middle of, such as cleanup after it
+                    # stopped reading, so the docs tell handlers to keep iterating and clean up in `finally`.
+                    # Cancelling through `handler_scope` whenever the handler is outside `receive()` would
+                    # protect that work, but leave a handler interrupted mid-loop unable to finish an
+                    # unshielded `finally`.
                     handler_task.cancel()
                     handler_cancel_requested = True
                     raise
