@@ -64,9 +64,9 @@ __all__ = [
     'merge_mode',
     'merge_responses',
     'observe_continuation_segments',
+    'report_continuation_segment',
     'resumed_response',
     'usage_beyond',
-    'report_continuation_segment',
     '_ContinuationStreamedResponse',
 ]
 

@@ -1539,6 +1539,11 @@ async def test_resumed_stream_usage_before_its_first_segment_is_zero() -> None:
 
 
 def test_usage_beyond_subtracts_every_counter() -> None:
+    """`usage_beyond` is the field-by-field inverse of `RequestUsage.incr`, except for an unknown baseline cost.
+
+    Unit-tested directly: no scripted response in the `Agent`-level resume tests above carries `details`, a
+    provider-specific counter or a known cost on both sides, so they don't reach those parts of the subtraction.
+    """
     usage = RequestUsage(input_tokens=10, cache_read_tokens=4, details={'reasoning_tokens': 3}, cost=Decimal('0.5'))
     usage.__dict__['provider_note'] = 'kept'
     baseline = RequestUsage(input_tokens=6, cache_read_tokens=1, details={'reasoning_tokens': 1, 'gone': 2})
@@ -1550,6 +1555,9 @@ def test_usage_beyond_subtracts_every_counter() -> None:
     # An unknown baseline cost leaves the cost as reported.
     assert beyond.cost == Decimal('0.5')
     assert beyond.__dict__['provider_note'] == 'kept'
+    # The usage it was given, such as the merged response's in history, is left as it was.
+    assert usage.details == {'reasoning_tokens': 3}
+    assert usage.input_tokens == 10
     assert usage_beyond(usage, RequestUsage(cost=Decimal('0.2'))).cost == Decimal('0.3')
 
 
