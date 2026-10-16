@@ -798,7 +798,7 @@ class RealtimeSession:
         self._agent_name = agent_name
         self._conversation_id = conversation_id
         # The revision of the stored conversation the session continues, set by `AgentRealtime.session`.
-        self._conversation_revision: int | None = None
+        self._conversation_revision: str | None = None
         self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on

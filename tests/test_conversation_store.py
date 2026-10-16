@@ -26,7 +26,7 @@ async def test_a_saved_conversation_loads_whole() -> None:
     loaded = await store.load(conversation.conversation_id)
 
     assert loaded == conversation
-    assert conversation.revision == 0
+    assert conversation.revision is not None
     assert await store.load('unknown') is None
 
 
@@ -39,7 +39,7 @@ async def test_continuing_a_conversation_stores_only_its_new_messages() -> None:
     second = (await agent.run('Again', conversation=first)).conversation
     await store.save(second)
 
-    assert second.revision == 1
+    assert second.revision not in (None, first.revision)
     assert _entry_count(store) == len(second.messages)
     assert await store.load(first.conversation_id) == second
 
@@ -91,7 +91,7 @@ async def test_a_paused_conversation_keeps_what_it_is_waiting_on_and_its_scope()
     second = await store.save(conversation)
 
     assert (first.scope, second.scope) == ('user-1', 'user-1')
-    assert (first.revision, second.revision, conversation.revision) == (0, 1, 1)
+    assert first.revision != second.revision == conversation.revision
     loaded = await store.load(conversation.conversation_id)
     assert loaded is not None
     assert loaded.deferred_tool_requests == requests
@@ -162,7 +162,7 @@ async def test_a_fork_shares_the_history_it_keeps() -> None:
     assert record.forked_from == (await store.read_history(record.head_id))[-1].id
     assert (await store.fork(original.conversation_id, at=0)).messages == []
 
-    assert first_only.revision == 0
+    assert first_only.revision == record.revision
     continued = (await agent.run('Again', conversation=first_only)).conversation
     await store.save(continued)
     assert await store.load(first_only.conversation_id) == continued
@@ -237,7 +237,9 @@ async def test_a_results_conversation_can_be_saved_and_continued_from_directly()
     await store.save(result.conversation)
 
     assert result.conversation is result.conversation
-    assert result.conversation.revision == 1
+    record = await store.read_record(result.conversation.conversation_id)
+    assert record is not None
+    assert result.conversation.revision == record.revision
 
 
 async def test_a_whole_fork_keeps_what_a_paused_conversation_is_waiting_on() -> None:
@@ -328,3 +330,19 @@ async def test_a_history_missing_an_entry_of_an_unchanged_record_fails_to_load()
 
     with pytest.raises(KeyError):
         await store.load(conversation.conversation_id)
+
+
+async def test_a_copy_loaded_before_a_delete_cant_be_saved_over_a_conversation_created_again() -> None:
+    store = InMemoryConversationStore()
+    original = Conversation(conversation_id='reused', messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(original)
+    stale = await store.load('reused')
+    assert stale is not None
+    await store.delete('reused')
+    recreated = Conversation(conversation_id='reused', messages=[ModelRequest(parts=[UserPromptPart('two')])])
+    await store.save(recreated)
+
+    stale.messages.append(ModelResponse(parts=[TextPart('stale')]))
+    with pytest.raises(ConversationConflict):
+        await store.save(stale)
+    assert await store.load('reused') == recreated

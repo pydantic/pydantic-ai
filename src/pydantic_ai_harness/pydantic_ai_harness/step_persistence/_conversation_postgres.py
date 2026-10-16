@@ -101,7 +101,7 @@ class PostgresConversationStore(ConversationStore):
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._records} ('
                     'conversation_id TEXT PRIMARY KEY, '
-                    'revision BIGINT NOT NULL, '
+                    'revision TEXT NOT NULL, '
                     f'head_id TEXT REFERENCES {self._entries} (id), '
                     'scope TEXT, '
                     'record TEXT NOT NULL)'
@@ -134,7 +134,7 @@ class PostgresConversationStore(ConversationStore):
         record: ConversationRecord,
         *,
         new_entries: Sequence[ConversationEntry] = (),
-        expected_revision: int | None,
+        expected_revision: str | None,
     ) -> None:
         await self._ensure_schema()
         messages = await keyed_entry_messages(

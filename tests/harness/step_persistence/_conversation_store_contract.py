@@ -99,9 +99,9 @@ class ConversationStoreContract:
         conversation = Conversation(messages=[_prompt('one')])
         record = await store.save(conversation)
 
-        for expected_revision in (None, record.revision + 1):
+        for expected_revision in (None, 'stale'):
             entry = ConversationEntry(parent_id=record.head_id, message=_prompt('two'))
-            stale = dataclasses.replace(record, head_id=entry.id, revision=record.revision + 2)
+            stale = dataclasses.replace(record, head_id=entry.id, revision='new')
             with pytest.raises(ConversationConflict):
                 await store.write_record(stale, new_entries=[entry], expected_revision=expected_revision)
 
@@ -121,7 +121,8 @@ class ConversationStoreContract:
         first = await backend.store.save(conversation, scope='user-1')
         second = await backend.store.save(conversation)
 
-        assert (first.scope, second.scope, second.revision) == ('user-1', 'user-1', 1)
+        assert (first.scope, second.scope) == ('user-1', 'user-1')
+        assert first.revision != second.revision == conversation.revision
         record = await backend.store.read_record(conversation.conversation_id)
         assert record is not None
         assert record.usage == conversation.usage

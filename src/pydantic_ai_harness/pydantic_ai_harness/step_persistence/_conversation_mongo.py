@@ -100,7 +100,7 @@ class MongoConversationStore(ConversationStore):
         record: ConversationRecord,
         *,
         new_entries: Sequence[ConversationEntry] = (),
-        expected_revision: int | None,
+        expected_revision: str | None,
     ) -> None:
         await self._ensure_indexes()
         messages = await keyed_entry_messages(

@@ -2307,7 +2307,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         _usage_limits: _usage.UsageLimits | None = None,
         _metadata: AgentMetadata[AgentDepsT] | None = None,
         _conversation_id: str | None = None,
-        _conversation_revision: int | None = None,
+        _conversation_revision: str | None = None,
         _run_id: str | None = None,
         _message_history: Sequence[_messages.ModelMessage] | None = None,
     ) -> None:

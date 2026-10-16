@@ -434,7 +434,7 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 'run_id': {'title': 'Run Id', 'type': 'string'},
                 'conversation_id': {'title': 'Conversation Id', 'type': 'string'},
                 'conversation_revision': {
-                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
                     'title': 'Conversation Revision',
                 },
                 'metadata': {

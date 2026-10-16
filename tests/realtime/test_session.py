@@ -10223,15 +10223,15 @@ async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
 async def test_agent_realtime_carries_the_conversation_s_revision() -> None:
     agent: Agent[None, str] = Agent(TestModel())
     conversation = (await agent.run('Hi')).conversation
-    conversation.revision = 3
+    conversation.revision = 'rev-3'
 
     async with agent.realtime(
         FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
     ).session() as session:
-        assert session.conversation.revision == 3
+        assert session.conversation.revision == 'rev-3'
 
     assert session.result is not None
-    assert session.result.conversation.revision == 3
+    assert session.result.conversation.revision == 'rev-3'
 
 
 def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:

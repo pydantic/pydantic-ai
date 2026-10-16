@@ -172,19 +172,19 @@ async def test_a_run_carries_the_conversation_s_revision() -> None:
     agent = Agent(TestModel())
     conversation = (await agent.run('One')).conversation
     assert conversation.revision is None
-    conversation.revision = 3
+    conversation.revision = 'rev-3'
 
     result = await agent.run('Two', conversation=conversation)
     async with agent.iter('Two', conversation=conversation) as agent_run:
         async for _ in agent_run:
             pass
 
-    assert result.conversation.revision == 3
+    assert result.conversation.revision == 'rev-3'
     assert agent_run.result is not None
-    assert agent_run.result.conversation.revision == 3
+    assert agent_run.result.conversation.revision == 'rev-3'
     assert (await agent.run('Two', message_history=conversation.messages)).conversation.revision is None
     restored = TypeAdapter(AgentRunResult[str]).validate_json(TypeAdapter(AgentRunResult[str]).dump_json(result))
-    assert restored.conversation.revision == 3
+    assert restored.conversation.revision == 'rev-3'
 
 
 @pytest.mark.parametrize(

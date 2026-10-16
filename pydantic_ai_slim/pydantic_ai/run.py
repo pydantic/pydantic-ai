@@ -54,7 +54,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     usage: NotRequired[_usage.RunUsage]
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
-    conversation_revision: NotRequired[int | None]
+    conversation_revision: NotRequired[str | None]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -74,7 +74,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     usage: _usage.RunUsage
     run_id: str
     conversation_id: str
-    conversation_revision: int | None
+    conversation_revision: str | None
     metadata: dict[str, Any] | None
     traceparent: str | None
 

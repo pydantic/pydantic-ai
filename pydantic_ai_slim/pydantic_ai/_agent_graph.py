@@ -304,7 +304,7 @@ def resolve_conversation(
     message_history: Sequence[_messages.ModelMessage] | None,
     usage: _usage.RunUsage | None,
     conversation_id: str | None,
-) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None, int | None]:
+) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None, str | None]:
     """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision.
 
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
@@ -389,7 +389,7 @@ class GraphAgentState:
     `conversation_id` on `message_history`, or a freshly generated UUID7. See the
     `Agent.iter` docstring for the resolution priority.
     """
-    conversation_revision: int | None = None
+    conversation_revision: str | None = None
     """The [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation this run was given, if any.
 
     Carried to the result's `conversation` unchanged, so a store can tell whether the conversation

@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS conversation_entries_parent ON conversation_entries (
 CREATE INDEX IF NOT EXISTS conversation_entries_sha256 ON conversation_entries (sha256);
 CREATE TABLE IF NOT EXISTS conversation_records (
     conversation_id TEXT PRIMARY KEY,
-    revision INTEGER NOT NULL,
+    revision TEXT NOT NULL,
     head_id TEXT REFERENCES conversation_entries (id),
     scope TEXT,
     record TEXT NOT NULL
@@ -165,7 +165,7 @@ class SqliteConversationStore(ConversationStore):
         record: ConversationRecord,
         *,
         new_entries: Sequence[ConversationEntry] = (),
-        expected_revision: int | None,
+        expected_revision: str | None,
     ) -> None:
         messages = await keyed_entry_messages(
             new_entries, media_store=self._media_store, threshold_bytes=self._media_threshold_bytes
@@ -177,7 +177,7 @@ class SqliteConversationStore(ConversationStore):
         record: ConversationRecord,
         entries: Sequence[ConversationEntry],
         messages: list[tuple[str, str]],
-        expected_revision: int | None,
+        expected_revision: str | None,
     ) -> None:
         with self._connected() as conn:
             with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):

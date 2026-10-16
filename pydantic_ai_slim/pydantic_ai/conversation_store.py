@@ -88,8 +88,12 @@ class ConversationRecord:
     forked_from: str | None = None
     """The entry a [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] branched this conversation off."""
 
-    revision: int = 0
-    """Incremented on every save, so concurrent writers can't overwrite each other unnoticed."""
+    revision: str = dataclasses.field(default_factory=lambda: str(uuid7()))
+    """A token that changes on every save, so concurrent writers can't overwrite each other unnoticed.
+
+    Opaque: compare it for equality only. A conversation deleted and created again under the same
+    ID gets a new one, so a copy loaded before the delete can't be saved over it.
+    """
 
     updated_at: datetime = dataclasses.field(default_factory=now_utc)
     """When the conversation was last saved."""
@@ -193,7 +197,6 @@ class ConversationStore(ABC):
             deferred_tool_requests=conversation.deferred_tool_requests,
             scope=scope if scope is not None else record.scope if record is not None else None,
             forked_from=record.forked_from if record is not None else None,
-            revision=record.revision + 1 if record is not None else 0,
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=conversation.revision)
         conversation.revision = updated.revision
@@ -293,7 +296,7 @@ class ConversationStore(ABC):
         record: ConversationRecord,
         *,
         new_entries: Sequence[ConversationEntry] = (),
-        expected_revision: int | None,
+        expected_revision: str | None,
     ) -> None:
         """Store a record and the new entries its history adds, replacing the record with `expected_revision`.
 
@@ -345,7 +348,7 @@ class InMemoryConversationStore(ConversationStore):
         record: ConversationRecord,
         *,
         new_entries: Sequence[ConversationEntry] = (),
-        expected_revision: int | None,
+        expected_revision: str | None,
     ) -> None:
         stored = self._records.get(record.conversation_id)
         if (stored.revision if stored is not None else None) != expected_revision:
