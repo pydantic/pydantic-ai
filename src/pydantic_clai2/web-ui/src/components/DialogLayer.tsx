@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
+import { MOD } from '../platform'
 import type { Dialog } from '../protocol'
 import { CheckIcon, SearchIcon } from './icons'
 
@@ -48,7 +49,7 @@ function DialogBox({ dialog, onError }: { dialog: Dialog; onError: (message: str
 
   return (
     <div className="overlay dialog-overlay">
-      <div className={`dialog-box ${dialog.kind}`} role="dialog" aria-modal="true" aria-label={dialog.title}>
+      <div className={`dialog-box ${dialog.kind} ${dialog.multiline ? 'multiline' : ''}`} role="dialog" aria-modal="true" aria-label={dialog.title}>
         <h2 className="dialog-title">{dialog.title}</h2>
         {dialog.description && dialog.kind !== 'wait' && (
           <Paragraphs className="dialog-description" text={dialog.description} />
@@ -75,6 +76,18 @@ function DialogBox({ dialog, onError }: { dialog: Dialog; onError: (message: str
             </button>
           </div>
         )}
+        {dialog.kind === 'view' && (
+          <>
+            <pre className="dialog-view" tabIndex={0}>
+              {dialog.text}
+            </pre>
+            <div className="dialog-actions">
+              <button className="primary" autoFocus disabled={sending} onClick={() => void answer(null)}>
+                Close
+              </button>
+            </div>
+          </>
+        )}
         {dialog.kind === 'wait' && (
           <>
             <div className="dialog-waiting">
@@ -89,7 +102,7 @@ function DialogBox({ dialog, onError }: { dialog: Dialog; onError: (message: str
             </div>
           </>
         )}
-        {dialog.kind !== 'wait' && dialog.kind !== 'confirm' && (
+        {dialog.kind !== 'wait' && dialog.kind !== 'confirm' && dialog.kind !== 'view' && (
           <p className="dialog-hint">Esc goes back without changing anything.</p>
         )}
       </div>
@@ -200,6 +213,21 @@ function TextAnswer({
   onAnswer: (value: string) => void
 }) {
   const [text, setText] = useState(dialog.initial)
+  // Text asked for over several lines, such as instructions, or that starts on several, such as a server's JSON, is
+  // edited over several lines; Cmd/Ctrl+Enter saves.
+  const multiline = dialog.multiline || dialog.initial.includes('\n')
+  const field = {
+    autoFocus: true,
+    className: `setting-input ${multiline ? 'code' : ''} ${dialog.multiline ? 'dialog-textarea' : ''} ${problem ? 'invalid' : ''}`,
+    spellCheck: false,
+    value: text,
+    placeholder: dialog.placeholder,
+    disabled,
+    onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setText(event.target.value)
+      onEdit()
+    },
+  }
   return (
     <form
       className="dialog-text"
@@ -210,20 +238,23 @@ function TextAnswer({
     >
       <label className="dialog-label">
         <span>{dialog.label}</span>
-        <input
-          autoFocus
-          className={`setting-input ${problem ? 'invalid' : ''}`}
-          type={dialog.secret ? 'password' : 'text'}
-          autoComplete={dialog.secret ? 'off' : undefined}
-          spellCheck={false}
-          value={text}
-          placeholder={dialog.placeholder}
-          disabled={disabled}
-          onChange={(event) => {
-            setText(event.target.value)
-            onEdit()
-          }}
-        />
+        {multiline ? (
+          <textarea
+            {...field}
+            rows={dialog.multiline ? 12 : Math.min(16, Math.max(4, text.split('\n').length))}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
+              event.preventDefault()
+              onAnswer(text)
+            }}
+          />
+        ) : (
+          <input
+            {...field}
+            type={dialog.secret ? 'password' : 'text'}
+            autoComplete={dialog.secret ? 'off' : undefined}
+          />
+        )}
       </label>
       {problem && (
         <p className="setting-error" role="alert">
@@ -231,6 +262,7 @@ function TextAnswer({
         </p>
       )}
       <div className="dialog-actions">
+        {multiline && <span className="dialog-keys">{MOD}Enter saves</span>}
         <button className="primary" type="submit" disabled={disabled}>
           Save
         </button>
