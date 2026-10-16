@@ -6676,7 +6676,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14" },
     { name = "termflow-md", specifier = ">=1.0.0,<2" },
     { name = "uvicorn", specifier = ">=0.38.0" },
-    { name = "websockets", specifier = ">=13.0" },
+    { name = "websockets", specifier = ">=15.0" },
 ]
 provides-extras = ["typesafe"]
 
