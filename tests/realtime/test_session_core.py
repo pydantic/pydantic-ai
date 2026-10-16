@@ -20,9 +20,13 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeResponseInterruptedEvent,
     RealtimeSessionReconnectEvent,
     SpeechPart,
     TextPart,
@@ -33,7 +37,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.realtime._core import (
     AudioCleared,
     AudioSent,
-    AudioUnsent,
     Closed,
     CoreInput,
     ExchangeAbandoned,
@@ -47,6 +50,7 @@ from pydantic_ai.realtime._core import (
     ToolReturned,
     TranscriptOverdue,
 )
+from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
@@ -65,10 +69,12 @@ from pydantic_ai.realtime.codec import (
     InputRejected,
     InputTranscript,
     OutputTranscript,
+    RealtimeCodecEvent,
     ResponseDone,
     SessionUsage,
     ToolCall,
     ToolCallCancelled,
+    ToolResult,
 )
 from pydantic_ai.usage import RequestUsage
 
@@ -88,6 +94,12 @@ def feed(session_core: SessionCore, *items: CoreInput) -> SessionCore:
     for item in items:
         session_core.apply(item)
     return session_core
+
+
+def lifecycle_message(tracker: InferredLifecycle, session_core: SessionCore, *codec: RealtimeCodecEvent) -> None:
+    """Apply what the tracker makes of one provider message to the core."""
+    for event, _ in tracker.message(list(codec)):
+        session_core.apply(event)
 
 
 def summary(messages: list[ModelMessage]) -> list[str]:
@@ -172,6 +184,7 @@ def test_usage_goes_to_its_own_response_or_to_the_session() -> None:
         started('r1'),
         SessionUsage(RequestUsage(input_tokens=1), provider_response_id='r1'),
         SessionUsage(RequestUsage(input_tokens=2), response_scoped=False),
+        # Naming no response: the one under way.
         SessionUsage(RequestUsage(input_tokens=4), provider_response_id=None),
         ended('r1', provider_details={'status': 'completed'}),
         SessionUsage(RequestUsage(input_tokens=8), provider_response_id='r1'),
@@ -179,7 +192,72 @@ def test_usage_goes_to_its_own_response_or_to_the_session() -> None:
     (message,) = session_core.all_messages()
     assert isinstance(message, ModelResponse)
     assert (message.usage.input_tokens, session_core.usage.input_tokens, session_core.usage.requests) == snapshot(
-        (1, 15, 3)
+        (5, 15, 3)
+    )
+
+
+def test_usage_naming_no_response_between_responses_is_the_next_ones() -> None:
+    """Gemini's usage names no response: reported between two (a boundary that said nothing else), it is the next's."""
+    session_core = feed(
+        core(),
+        SessionUsage(RequestUsage(input_tokens=2), finish_reason='stop', provider_details={'x': 1}),
+        ResponseStarted(response_id='made_up', provider_id=False),
+        said('made_up', 'Hi.'),
+        SessionUsage(RequestUsage(input_tokens=3)),
+        ended('made_up'),
+    )
+    (message,) = session_core.all_messages()
+    assert isinstance(message, ModelResponse)
+    assert (message.usage.input_tokens, message.provider_response_id, message.provider_details) == snapshot(
+        (5, None, {'x': 1})
+    )
+
+
+def test_native_tool_parts_lead_the_response() -> None:
+    call = NativeToolCallPart(tool_name='web_search', args={'query': 'weather'}, tool_call_id='native_1')
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Sunny.'),
+        PartStartEvent(index=0, part=call),
+        PartEndEvent(index=0, part=call),
+        ended('r1'),
+    )
+    (message,) = session_core.all_messages()
+    assert [type(part).__name__ for part in message.parts] == snapshot(['NativeToolCallPart', 'SpeechPart'])
+    # A native part with no response under way has nothing to belong to.
+    feed(session_core, PartStartEvent(index=1, part=call))
+    assert len(session_core.all_messages()) == 1
+
+
+def test_a_wait_follows_a_response_to_the_one_that_carries_it_on() -> None:
+    """Gemini's extended-thinking model ends a filler saying the exchange goes on: the wait goes on with it."""
+    session_core = feed(core(), InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
+    wait = session_core.wait_tokens()
+    feed(session_core, started('r1', 0), said('r1', 'Let me see.'), ended('r1'))
+    feed(session_core, ResponseStarted(response_id='r2', continues='r1'), said('r2', 'Still looking.'))
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='response', key='r2', epoch=0)}))
+    feed(session_core, ended('r2'))
+    assert session_core.still_owed(wait) == snapshot(frozenset())
+
+
+def test_a_turn_heard_after_its_reply_started_joins_ahead_of_it() -> None:
+    """Gemini transcribes the user after the model starts answering them: the turn goes before the reply."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Sure.'),
+        UserTurnStarted(turn_id='turn_1'),
+        UserTurnEnded(turn_id='turn_1', before_response='r1'),
+        InputTranscript('Can you help?', is_final=True),
+        ended('r1'),
+        # A response already over can't be joined ahead of any more: the turn goes at the end.
+        UserTurnStarted(turn_id='turn_2'),
+        UserTurnEnded(turn_id='turn_2', before_response='r1'),
+        InputTranscript('Thanks.', is_final=True),
+    )
+    assert summary(session_core.all_messages()) == snapshot(
+        ['{user:Can you help?}', 'r1 [assistant:Sure.] complete stop', '{user:Thanks.}']
     )
 
 
@@ -453,6 +531,7 @@ def test_a_call_that_settles_without_a_result_owes_nothing() -> None:
 
 
 def test_a_call_the_session_refused_is_left_out() -> None:
+    """Unless its response is recorded already: then it gets an interrupted return."""
     session_core = feed(
         core(),
         started('r1'),
@@ -463,7 +542,7 @@ def test_a_call_the_session_refused_is_left_out() -> None:
         ended('r1'),
         ToolCallRefused(tool_call_id='call_1'),
     )
-    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop'])
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop', '{return:call_1}'])
 
 
 def test_a_turn_whose_transcript_can_no_longer_be_read_ends_with_what_it_has() -> None:
@@ -894,23 +973,6 @@ def test_a_conversation_id_resolved_late_reaches_what_the_core_recorded() -> Non
     assert {message.conversation_id for message in session_core.all_messages()} == {'c1'}
 
 
-def test_input_audio_that_never_went_out_is_taken_back() -> None:
-    session_core = feed(
-        core(input_transcription_enabled=False, retain_input_audio=True),
-        AudioSent(data=b'\x01\x00'),
-        AudioSent(data=b'\x02\x00'),
-        AudioUnsent(),
-        # Only the latest chunk is taken back, once.
-        AudioUnsent(),
-        UserTurnStarted(turn_id='u1'),
-        UserTurnEnded(turn_id='u1'),
-    )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    assert part.audio.data[44:] == b'\x01\x00'
-
-
 def test_a_reconnect_replays_a_held_turns_audio_without_counting_it() -> None:
     """The replay builds the held turn's request with its audio, which isn't retained history, so isn't counted."""
     session_core = feed(
@@ -951,25 +1013,6 @@ def test_retained_audio_eviction_passes_over_what_is_not_recorded() -> None:
     assert list(session_core._recorded_audio) == [session_core._turns['u5']]  # pyright: ignore[reportPrivateUsage]
 
 
-def test_input_audio_cut_for_a_turn_before_its_send_failed_is_taken_back_from_the_turn() -> None:
-    session_core = feed(
-        core(retain_input_audio=True),
-        AudioSent(data=b'\x01\x00'),
-        AudioSent(data=b'\x02\x00'),
-        RealtimeInputSpeechStartEvent(item_id='u1'),
-        UserTurnStarted(turn_id='u1'),
-        # The speech end cuts the turn's audio while the last chunk is still on its way, and its send then fails.
-        RealtimeInputSpeechEndEvent(item_id='u1'),
-        AudioUnsent(),
-        UserTurnEnded(turn_id='u1'),
-        InputTranscript('Hi.', item_id='u1', is_final=True),
-    )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    assert part.audio.data[44:] == b'\x01\x00'
-
-
 def test_retained_audio_trims_the_oldest_audio_coming_in_first() -> None:
     """A response whose incoming audio was emptied counts as newest when more comes in for it."""
     session_core = feed(
@@ -1007,38 +1050,27 @@ def test_retained_audio_evicted_is_let_go_by_the_core_too() -> None:
     assert len(session_core._recorded_audio) == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_a_failed_send_of_audio_trimmed_by_the_budget_leaves_nothing_of_it() -> None:
-    """A chunk longer than the whole budget is trimmed before its send fails: what is left of it is taken back."""
-    session_core = feed(
-        core(input_transcription_enabled=False, retain_input_audio=True, retain_audio_max_seconds=0.1),
-        AudioSent(data=_tenth_of_a_second(1) * 2),
-        AudioUnsent(),
-        AudioSent(data=b'\x05\x00'),
-        UserTurnStarted(turn_id='u1'),
-        UserTurnEnded(turn_id='u1'),
-    )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    assert part.audio.data[44:] == b'\x05\x00'
+def test_input_audio_that_went_out_after_its_turn_was_recorded_is_left_to_the_next() -> None:
+    """Audio is reported once its send completed, so a chunk still on its way when a turn is recorded comes after it.
 
-
-def test_audio_taken_back_from_a_turn_no_longer_waiting_leaves_it_alone() -> None:
-    """Once its turn is recorded, the core doesn't change the message to take the audio back.
-
-    A known gap, not the intent (the current session core has it too): a turn recorded while the send of its last
-    chunk is still under way keeps that chunk's audio if the send then fails.
+    The provider ended that turn without the chunk, which is the next turn's start, or, if its send fails, no
+    turn's: the recorded turn keeps only the audio that went out ahead of it either way.
     """
     session_core = feed(
         core(input_transcription_enabled=False, retain_input_audio=True),
         AudioSent(data=b'\x01\x00'),
         UserTurnStarted(turn_id='u1'),
         UserTurnEnded(turn_id='u1'),
-        AudioUnsent(),
+        AudioSent(data=b'\x02\x00'),
+        UserTurnStarted(turn_id='u2'),
+        UserTurnEnded(turn_id='u2'),
     )
-    [request] = session_core.all_messages()
-    [part] = request.parts
-    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert [
+        part.audio.data[44:]
+        for message in session_core.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart) and part.audio is not None
+    ] == [b'\x01\x00', b'\x02\x00']
 
 
 def test_retained_audio_eviction_does_not_walk_what_waits_or_has_no_audio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1105,3 +1137,93 @@ def test_a_turn_recorded_after_the_reply_to_it_is_evicted_before_that_reply() ->
     )
     turn, response = session_core._turns['u1'], session_core._responses['r1']  # pyright: ignore[reportPrivateUsage]
     assert list(session_core._recorded_audio) == [turn, response]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_held_filler_keeps_the_wait_through_a_transcript_until_the_model_carries_on() -> None:
+    """Gemini's extended-thinking model holds its filler open (`IN_PROGRESS`): the user's words then don't end the wait."""
+    tracker = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
+    session_core = core()
+
+    session_core.apply(InputSent(input_id=0, request=text_request('Weather?'), solicits=True))
+    tracker.input_sent(0, 'Weather?')
+    lifecycle_message(tracker, session_core, OutputTranscript('Let me check.'))
+    lifecycle_message(
+        tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True)
+    )
+    wait = session_core.wait_tokens()
+    lifecycle_message(tracker, session_core, InputTranscript('Hm'))
+    assert session_core.still_owed(wait) != frozenset()
+    lifecycle_message(tracker, session_core, OutputTranscript('Still checking.'))
+    assert session_core.still_owed(wait) != frozenset()
+    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone())
+    assert session_core.still_owed(wait) == frozenset()
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            '{prompt:Weather?}',
+            'None [assistant:Let me check.] complete stop',
+            '{user:Hm}',
+            'None [assistant:Still checking.] complete stop',
+        ]
+    )
+
+
+def test_a_reply_the_provider_will_never_give_is_lost_once() -> None:
+    """GPT-Live drops a tool result whose backend gave up: its reply is lost, unless a response already took it."""
+    tracker = InferredLifecycle(transcribes=True)
+    tracker.input_sent(0, ToolResult('call_1', output='sunny'))
+    tracker.input_unanswerable(0)
+    tracker.input_unanswerable(0)
+    assert tracker.take_pending() == snapshot([InputAdded(input_id=0), InputLost(input_ids=(0,))])
+
+
+def test_what_the_user_says_as_they_cut_in_is_a_turn_of_its_own() -> None:
+    """Gemini reports the words that cut a reply off ahead of the cut, in one message: they are new speech."""
+    tracker = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
+    session_core = core()
+
+    lifecycle_message(tracker, session_core, InputTranscript('First question'))
+    lifecycle_message(tracker, session_core, OutputTranscript('Let me check.'))
+    lifecycle_message(
+        tracker, session_core, SessionUsage(RequestUsage(input_tokens=1)), ResponseDone(more_expected=True)
+    )
+    lifecycle_message(tracker, session_core, InputTranscript('Second question'), RealtimeResponseInterruptedEvent())
+    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=2)), ResponseDone(interrupted=True))
+    lifecycle_message(tracker, session_core, OutputTranscript('Sure.'))
+    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=3)), ResponseDone())
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            '{user:First question}',
+            'None [assistant:Let me check.] interrupted None',
+            '{user:Second question}',
+            'None [assistant:Sure.] complete stop',
+        ]
+    )
+    # Likewise over a reply the model started on its own, before any transcript of what it answers came.
+    lifecycle_message(tracker, session_core, OutputTranscript('By the way...'))
+    lifecycle_message(tracker, session_core, InputTranscript('Stop'), RealtimeResponseInterruptedEvent())
+    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=4)), ResponseDone(interrupted=True))
+    lifecycle_message(tracker, session_core, OutputTranscript('Okay.'))
+    lifecycle_message(tracker, session_core, SessionUsage(RequestUsage(input_tokens=5)), ResponseDone())
+    assert summary(session_core.all_messages()[4:]) == snapshot(
+        ['None [assistant:By the way...] interrupted None', '{user:Stop}', 'None [assistant:Okay.] complete stop']
+    )
+
+
+def test_a_reply_taken_with_audio_starts_ahead_of_it() -> None:
+    """GPT-Live's audio track runs on between replies, so its connection says where the model takes the turn."""
+    tracker = InferredLifecycle(transcribes=True, audio_starts_response=False)
+    assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x00')])] == snapshot(['AudioDelta'])
+    assert [type(event).__name__ for event, _ in tracker.message([AudioDelta(b'\x00\x10')], takes_turn=True)] == (
+        snapshot(['ResponseStarted', 'AudioDelta'])
+    )
+
+
+def test_a_tool_result_the_backend_will_never_take_doesnt_join_the_conversation() -> None:
+    """Held behind the reply under way, a result that goes nowhere stays out of the conversation when that reply ends."""
+    tracker = InferredLifecycle(transcribes=True)
+    tracker.message([OutputTranscript('Let me check.')])
+    tracker.input_sent(0, ToolResult('call_1', output='sunny'))
+    tracker.input_unanswerable(0)
+    assert [type(event).__name__ for event, _ in tracker.message([ResponseDone()])] == snapshot(
+        ['InputLost', 'ResponseDone', 'ResponseEnded']
+    )

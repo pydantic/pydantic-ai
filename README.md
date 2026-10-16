@@ -53,7 +53,7 @@ agent = Agent(
     capabilities=[
         Coder(),  # files, shell, repo context, sub-agents, context management
         WebSearch(),  # look up docs and error messages on the web
-        Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
+        Advisor('openai:gpt-6.1-sol'),  # a second opinion from another model when stuck
     ],
 )
 agent.to_cli_sync()
@@ -64,14 +64,14 @@ agent.to_cli_sync()
 ```python
 capabilities = [
     FileSystem('.'), Shell(cwd='.'), RepoContext(), SubAgents(...),
-    ClearToolResults(), WarnNearLimits(), ToolOutputLimits(), RepairToolArguments(),
+    ClearToolResults(), ToolOutputLimits(), RepairToolArguments(),
 ]
 ```
 
 Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
+uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-1
 ```
 
 **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -99,7 +99,7 @@ class Sentiment(BaseModel):
     score: float = Field(ge=-1, le=1)
 
 
-agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
+agent = Agent('openai:gpt-6.1-sol', output_type=Sentiment)
 
 
 @agent.tool
@@ -133,7 +133,7 @@ from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
 agent = Agent(
-    'openai:gpt-6-sol',
+    'openai:gpt-6.1-sol',
     instructions='Research the topic and write a structured brief.',
     name='researcher',
     capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
@@ -150,7 +150,7 @@ class ResearchWorkflow(PydanticAIWorkflow):
         return result.output
 ```
 
-[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, and Absurd](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
+[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and [Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) integrations besides.
 
 **Build this →** [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
 
@@ -202,7 +202,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('openai:gpt-image-2.5-flare')
 result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
 Path('logo.png').write_bytes(result.image.data)
 ```
@@ -234,7 +234,7 @@ That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation
 
 - **[Every interface](https://pydantic.dev/docs/ai/overview/interfaces/).** One agent definition runs as a [CLI](https://pydantic.dev/docs/ai/integrations/cli/), a [built-in web chat](https://pydantic.dev/docs/ai/guides/web/), or [realtime speech](https://pydantic.dev/docs/ai/realtime/overview/) (OpenAI Realtime, Gemini Live, Azure, xAI Grok Voice); [UI event streams](https://pydantic.dev/docs/ai/integrations/ui/overview/) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** [Durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on eight engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Kitaru, Airflow, and Absurd, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** [Durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on nine engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Kitaru, Airflow, Absurd, and pgtask, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) built in.
 
 - **Coming from another framework?** The [comparisons](https://pydantic.dev/docs/ai/comparisons/overview/) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](https://pydantic.dev/docs/ai/comparisons/migrate-from-other-frameworks/) let your coding agent port an existing application over.
 
@@ -303,7 +303,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(
-    'openai:gpt-6-sol',
+    'openai:gpt-6.1-sol',
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # the run returns a validated SupportOutput, typed as such
     instructions=(

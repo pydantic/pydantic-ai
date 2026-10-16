@@ -13,7 +13,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
@@ -40,7 +40,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -143,6 +143,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'github-copilot',
         'heroku',
         'litellm',
+        'meta',
         'moonshotai',
         'nebius',
         'ollama',
@@ -162,6 +163,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'azure',
         'deepseek',
         'fireworks',
+        'meta',
         'nebius',
         'openai-codex',
         'openrouter',
@@ -427,8 +429,9 @@ class ModelRequestContext:
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
         """The model responses whose usage was counted for this request.
 
-        Empty until the model responds. It includes responses a hook later replaced, and can hold more
-        than one response when a continued response was partly billed before an error hook recovered.
+        Empty until the model responds. It includes responses a hook later replaced and the partial response
+        of a stream the consumer stopped, and can hold more than one response when a continued response was
+        partly billed before an error hook recovered.
         Request contexts copied with `dataclasses.replace()` see the same responses.
 
         Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
@@ -595,6 +598,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Exit the model context, closing the provider's HTTP client if it owns one."""
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
+
+    def connect(self) -> AbstractAsyncContextManager[Self]:
+        """Open a persistent connection and yield a model bound to it.
+
+        The context owns the connection and closes it on exit. The source model remains unchanged.
+        Models that do not implement explicit connections raise [`UserError`][pydantic_ai.exceptions.UserError].
+        See [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]
+        for Responses WebSocket support.
+        """
+        raise UserError(f'`{type(self).__name__}` does not support explicit connections.')
 
     @property
     def settings(self) -> ModelSettings | None:
@@ -1394,6 +1407,10 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                except ModelAPIError as e:
+                    # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+                    if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
+                        raise
                 else:
                     # Only natural `StopAsyncIteration` on a stream that wasn't
                     # cancelled flips `_finished`. Early `break` / `aclose()` (raising
@@ -1967,7 +1984,9 @@ def infer_model(  # noqa: C901
         from .openai_codex import OpenAICodexModel
 
         return OpenAICodexModel(model_name, provider=provider)
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
+    # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
+    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API.
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
@@ -2002,6 +2021,13 @@ def infer_model(  # noqa: C901
         if not isinstance(provider, SystemOneProvider):
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
+    elif model_kind == 'openai-decisions':
+        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from .openai_decisions import OpenAIDecisionsModel
+
+        if not isinstance(provider, OpenAIDecisionsProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

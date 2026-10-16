@@ -67,6 +67,7 @@ def exploration_settings() -> settings:
     if imports_successful()
     else [],
 )
+@pytest.mark.slow(reason='explores 50 randomized sessions of up to 25 steps against each provider simulator')
 def test_exploration(machine: type[RuleBasedStateMachine]) -> None:
     KNOWN_HIT_COUNTS.clear()
     run_state_machine_as_test(machine, settings=exploration_settings())
@@ -193,9 +194,8 @@ def test_second_commit_keeps_the_turn_of_earlier_audio_in_place() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
 
 
-@known('SIM-11')
-def test_known_live_utterance_spoken_before_a_reply_filed_before_it() -> None:
-    """On GPT-Live, audio streamed before the model's reply is transcribed as a turn only after that reply."""
+def test_live_utterance_transcribed_after_a_reply_is_filed_after_it() -> None:
+    """On GPT-Live, audio streamed before the model's reply, transcribed only after it, is a turn after it (SIM-11, fixed by the session core)."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.send_audio()
@@ -204,7 +204,7 @@ def test_known_live_utterance_spoken_before_a_reply_filed_before_it() -> None:
         sim.user_says()
         sim.settle()
 
-    reproduce('SIM-11', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_refused_tool_results_request_ends_the_wait() -> None:
@@ -294,11 +294,11 @@ def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('SIM-1')
-def test_known_gemini_tool_batch_answer_lost_to_a_drop() -> None:
-    """Every result of the batch went out, then the connection dropped before the answer: it stays owed.
+def test_gemini_tool_batch_answer_lost_to_a_drop_is_settled() -> None:
+    """Every result of the batch went out, then the connection dropped before the answer (SIM-1, fixed by the session core).
 
-    On OpenAI the reconnect asks for that answer again; Gemini doesn't resume a generation after a re-dial.
+    On OpenAI the reconnect asks for that answer again; Gemini doesn't resume a generation after a re-dial, so the
+    answer is lost with the connection.
     """
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -309,7 +309,7 @@ def test_known_gemini_tool_batch_answer_lost_to_a_drop() -> None:
         sim.drop()
         sim.settle()
 
-    reproduce('SIM-1', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
 def test_refused_context_leaves_the_spoken_turn_in_place() -> None:
@@ -363,15 +363,16 @@ def test_cleared_barge_in_releases_the_dropped_request() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
 
 
-@known('SIM-17')
-def test_known_extended_thinking_parallel_calls_leave_a_reservation() -> None:
+def test_extended_thinking_parallel_calls_are_answered_once() -> None:
+    """SIM-17, fixed by the session core."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_audio()
         sim.user_speaks()
         sim.call_tools(count=2)
         sim.settle()
 
-    reproduce('SIM-17', GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
+    run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
 
 
 @known('8760')
@@ -432,14 +433,15 @@ def test_known_gemini_cut_off_unstarted_turn_ends_the_wait_early() -> None:
     reproduce('SIM-13', GeminiSimulation(), scenario)
 
 
-@known('SIM-19')
-def test_known_gemini_async_batch_of_three_leaves_a_reservation() -> None:
+def test_gemini_async_batch_of_three_is_answered_once() -> None:
+    """SIM-19, fixed by the session core."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools(count=3)
         sim.settle()
 
-    reproduce('SIM-19', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
 @known('G3b')
@@ -544,6 +546,61 @@ def test_known_failed_deferred_create_after_a_refusal_keeps_its_reservation() ->
         sim.settle()
 
     reproduce('SIM-4', OpenAISimulation(), scenario)
+
+
+@known('SIM-4')
+def test_known_xai_held_audio_failing_after_a_reply_drops_its_terminal() -> None:
+    """Audio sent during a reply is held back, and goes out from the receive loop once the reply ends."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-4')
+def test_known_xai_held_audio_failing_before_a_deferred_request_loses_it() -> None:
+    """The held audio goes out ahead of the request deferred behind the reply, which the failure takes with it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-4')
+def test_known_xai_clear_before_a_deferred_request_failing_loses_it() -> None:
+    """The clear xAI needs before a deferred request goes out from the receive loop, once the reply ends."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.clear_audio()
+        sim.create_response()
+        sim.fail_next_send()
+        sim.send_audio()
+        sim.clear_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
 
 
 def test_barge_in_keeps_a_request_vad_will_not_answer() -> None:
@@ -673,6 +730,21 @@ def test_clear_after_an_unread_vad_commit_keeps_the_turn() -> None:
         sim.settle()
 
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+def test_xai_clear_after_a_request_committed_speech_keeps_the_turn() -> None:
+    """On xAI push-to-talk, the request a text turn sends commits the speech in the buffer before the clear (SIM-35)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.settle()
+        sim.send_text()
+        sim.clear_audio()
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)), scenario
+    )
 
 
 @known('SIM-36')
@@ -840,19 +912,33 @@ def test_known_stop_server_vad_takes_back_holds_history() -> None:
     reproduce('SIM-38', OpenAISimulation(), scenario)
 
 
-@known('E')
-def test_known_gemini_spoken_turn_inserted_into_recorded_history() -> None:
+def test_gemini_spoken_turn_is_not_inserted_into_recorded_history() -> None:
+    """E, fixed by the session core."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_audio()
         sim.send_text(respond=False)
         sim.user_speaks(finished=False, deliver=False)
         sim.settle()
 
-    reproduce('E', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
-@known('SIM-11')
-def test_known_gemini_turn_spoken_before_a_reply_filed_before_it() -> None:
+def test_live_spoken_turn_is_not_inserted_into_recorded_history() -> None:
+    """E, fixed by the session core."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_audio()
+        sim.send_text(respond=False)
+        sim.user_says(deliver=False)
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
+def test_gemini_turn_spoken_after_a_reply_is_filed_after_it() -> None:
+    """SIM-11, fixed by the session core."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.send_audio()
@@ -860,18 +946,58 @@ def test_known_gemini_turn_spoken_before_a_reply_filed_before_it() -> None:
         sim.user_speaks(finished=False, deliver=False)
         sim.settle()
 
-    reproduce('SIM-11', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
 
 
-@known('SIM-2a')
-def test_known_gemini_turn_sent_during_a_tool_round_recorded_ahead_of_it() -> None:
+def test_live_text_sent_after_a_delegation_is_recorded_in_order() -> None:
+    """SIM-2a, fixed by the session core."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.settle()
+        sim.send_text(respond=False)
+        sim.user_says(deliver=False)
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
+def test_gemini_turn_sent_during_a_tool_round_is_recorded_after_it() -> None:
+    """SIM-2a, fixed by the session core: an input sent while a reply is owed is placed after that reply."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools(deliver=False)
         sim.send_text(respond=False)
         sim.settle()
 
-    reproduce('SIM-2a', GeminiSimulation(), scenario)
+    run_clean(GeminiSimulation(), scenario)
+
+
+@pytest.mark.parametrize('finished', [True, False])
+def test_gemini_turn_heard_before_a_drop_is_kept(finished: bool) -> None:
+    """The user spoke, and the connection dropped before the model replied: the turn stays, its reply is lost."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_audio()
+        sim.user_speaks(finished=finished)
+        sim.drop()
+        sim.settle()
+
+    run_clean(GeminiSimulation(), scenario)
+
+
+def test_gemini_close_in_the_middle_of_a_tool_call_message_returns_every_call() -> None:
+    """The session closes after running the first of two calls in one message: the second still gets a return."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_audio()
+        sim.user_speaks(deliver=False)
+        sim.call_tools(count=2, ticks=0)
+        sim.close()
+        sim.settle()
+
+    run_clean(GeminiSimulation(), scenario)
 
 
 def test_gemini_typed_turn_lost_to_a_drop_is_settled() -> None:
@@ -908,13 +1034,14 @@ def test_wait_waits_for_a_started_vad_reply() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('SIM-2b')
-def test_known_wait_returns_before_a_delegated_reply() -> None:
+def test_wait_waits_for_a_delegated_reply() -> None:
+    """SIM-2b, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.wait_for_reply()
 
-    reproduce('SIM-2b', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_reconnect_asks_again_for_an_unstarted_reply() -> None:
@@ -999,19 +1126,19 @@ def test_send_during_reconnect_survives_gemini() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
-@known('SIM-6')
-def test_known_live_parallel_calls_leak_reservations() -> None:
+def test_live_parallel_calls_are_answered_once() -> None:
+    """SIM-6, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.backend_call(count=2)
         sim.settle()
 
-    reproduce('SIM-6', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
-@known('SIM-6')
-def test_known_live_results_of_delegations_in_a_row_answered_together() -> None:
-    """Two delegations each call a tool; the model answers both results with one reply, which leaves one owed."""
+def test_live_results_of_delegations_in_a_row_answered_together() -> None:
+    """Two delegations each call a tool, and the model answers both results with one reply (SIM-6, fixed by the session core)."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
@@ -1021,17 +1148,18 @@ def test_known_live_results_of_delegations_in_a_row_answered_together() -> None:
         sim.backend_call()
         sim.settle()
 
-    reproduce('SIM-6', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
-@known('SIM-7')
-def test_known_live_queued_text_answered_together() -> None:
+def test_live_queued_text_answered_together() -> None:
+    """SIM-7, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.send_text()
         sim.send_text()
         sim.settle()
 
-    reproduce('SIM-7', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 @known('SIM-8')
@@ -1042,15 +1170,16 @@ def test_known_live_drop_raises_a_raw_websocket_error() -> None:
     reproduce('SIM-8', LiveSimulation(), scenario)
 
 
-@known('SIM-9')
-def test_known_live_abandoned_calls_keep_reservations() -> None:
+def test_live_abandoned_calls_owe_nothing() -> None:
+    """SIM-9, fixed by the session core."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
         sim.backend_call()
         sim.backend_finish(status='failed')
         sim.settle()
 
-    reproduce('SIM-9', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 @known('8763c #3')
@@ -1160,6 +1289,46 @@ def test_baseline_gemini_conversation() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
+def test_gemini_extended_thinking_filler_followed_by_more_speech() -> None:
+    """The model stalls `IN_PROGRESS` and then speaks again instead of calling a tool: two responses, one exchange."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish(in_progress=True)
+        sim.wait_for_reply()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+
+    run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
+
+
+def test_gemini_user_cuts_in_on_a_held_filler() -> None:
+    """The model stalls `IN_PROGRESS`, and the user speaks over the pause: the exchange is over."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish(in_progress=True)
+        sim.wait_for_reply()
+        sim.send_audio()
+        sim.user_speaks()
+        sim.settle()
+
+    run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
+
+
+def test_scenario_gemini_context_sent_while_a_reply_is_owed() -> None:
+    """SIM-39: context sent right after a typed turn is placed after the reply, which the server may not have begun."""
+
+    with GeminiSimulation(strict=False) as sim:
+        sim.send_text()
+        sim.send_text(respond=False)
+        sim.settle()
+        assert ('SIM-39', 'history.order') in sim.checker.known_hits
+
+
 def test_baseline_gemini_extended_thinking() -> None:
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
@@ -1172,6 +1341,18 @@ def test_baseline_gemini_extended_thinking() -> None:
         sim.finish()
 
     run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True, handles_at_turn_start=True)), scenario)
+
+
+def test_live_backend_response_read_while_closing_counts_its_request() -> None:
+    """The session closes right after a delegation's backend reported its usage, before reading it: closing reads it."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_finish(deliver=True, ticks=0)
+        sim.close()
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_baseline_live_conversation() -> None:
@@ -1279,18 +1460,19 @@ def test_scenario_xai_push_to_talk(name: str, transcription: bool) -> None:
 
 
 @pytest.mark.parametrize('typed', [True, False])
-def test_scenario_gemini_async_pair_cut_off_by_a_user_turn(typed: bool) -> None:
-    """SIM-19 also covers two asynchronous calls whose turn a user turn cut off, answered together with it."""
-    sim = GeminiSimulation(strict=False, behavior=GeminiBehavior(async_tool_calls=True))
-    with sim as s:
-        s.send_text()
-        s.call_tools(count=2)
+def test_gemini_async_pair_cut_off_by_a_user_turn(typed: bool) -> None:
+    """Two asynchronous calls whose turn a user turn cut off, answered together with it (SIM-19, fixed by the session core)."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools(count=2)
         if typed:
-            s.send_text()
+            sim.send_text()
         else:
-            s.user_speaks(finished=True)
-        s.settle()
-        assert ('SIM-19', 'wait.hang') in s.checker.known_hits
+            sim.user_speaks(finished=True)
+        sim.settle()
+
+    run_clean(async_gemini(), scenario)
 
 
 def test_baseline_server_vad_answers_each_turn_heard_during_a_reply() -> None:

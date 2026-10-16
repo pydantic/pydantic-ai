@@ -57,10 +57,10 @@ class Interrupts:
                 task.cancel()
 
         def on_signal(signum: int, frame: FrameType | None) -> None:
-            cancel(True)
-            # Wake an idle selector, as `asyncio.Runner` does for SIGINT; a silent shell
-            # command otherwise leaves the cancellation unprocessed until the child exits.
-            loop.call_soon_threadsafe(lambda: None)
+            # A Python signal handler can run between any two bytecodes, including inside asyncio's
+            # own callbacks, such as `asyncio.shield` checking and then setting its result.
+            # Cancelling from the loop keeps those steps whole and also wakes an idle selector.
+            loop.call_soon_threadsafe(cancel, True)
 
         previous = signal.getsignal(signal.SIGINT)
         self._cancel = cancel

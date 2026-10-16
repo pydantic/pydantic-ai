@@ -58,7 +58,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         microphone = asyncio.create_task(session.send_audio(microphone_chunks()))
         speaker = asyncio.create_task(play_audio(session.stream_audio()))
 
@@ -190,7 +190,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
 realtime = agent.realtime(
-    'openai:gpt-realtime', model_settings=RealtimeModelSettings(output_modality='audio')
+    '{{ openai:realtime }}', model_settings=RealtimeModelSettings(output_modality='audio')
 )
 ```
 
@@ -215,7 +215,7 @@ models, with one deliberate exception:
 
 ```python {test="skip" lint="skip"}
 agent.realtime(
-    model,                # 'openai:gpt-realtime', or a RealtimeModel instance
+    model,                # '{{ openai:realtime }}', or a RealtimeModel instance
     deps=...,             # dependencies, as in run()/iter()
     model_settings=...,   # RealtimeModelSettings
     instructions=...,     # combined with the agent's instructions
@@ -275,4 +275,4 @@ fit for a product, two alternatives sit outside it:
 | Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |
 | GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration; a `cost_limit` bounds it once the duration is priced. | [#8371](https://github.com/pydantic/pydantic-ai/issues/8371) |
-| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model, and only while audio is flowing. | [GPT-Live text input](openai.md#text-is-context-not-a-user-turn) |
+| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model; a session with no microphone needs `openai_live_idle_audio=True`. | [GPT-Live text input](openai.md#text-is-context-not-a-user-turn) |

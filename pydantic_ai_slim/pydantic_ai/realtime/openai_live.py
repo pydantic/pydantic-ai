@@ -9,7 +9,8 @@ shape the adapter:
 - **Audio drives the session.** Live has no user-turn event for text: text arrives as *context*
   through `session.commentary.append` (speakable) and `session.thinking.append` (silent), each
   capped at 500 tokens. Both are placed on the session's audio timeline, which only advances while
-  audio flows — so a session whose microphone isn't streaming silently defers everything sent to it.
+  audio flows — so a session whose microphone isn't streaming defers everything sent to it, unless
+  `openai_live_idle_audio` has the connection stream silence in the microphone's place.
 - **There is no turn terminal.** Live has no `response.done` equivalent and no transcript-done
   event; transcripts arrive as timeline fragments. The connection synthesizes
   [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone] once the model has been quiet for
@@ -39,6 +40,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, ClassVar, Literal, assert_never, cast
 from urllib.parse import quote
 
+import anyio
 from pydantic import Field, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -93,6 +95,8 @@ from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._inferred_lifecycle import InferredLifecycle
+from ._lifecycle import LIFECYCLE_EVENT_TYPES, TaggedEvent
 from ._openai_protocol import (
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
@@ -292,6 +296,11 @@ _live_session_usage_adapter: TypeAdapter[_LiveSessionUsage] = TypeAdapter(_LiveS
 #: `connection_lost` or one this version doesn't know, means it ended without anyone asking.
 _NORMAL_CLOSE_REASONS = frozenset({'close_requested', 'remote_hangup'})
 
+#: How long `send_audio()` must be quiet before the connection streams silence in its place, in seconds.
+_IDLE_AUDIO_GAP = 0.3
+#: How much silence each idle frame carries, in seconds: the 100 ms frames a microphone would send.
+_IDLE_AUDIO_FRAME = 0.1
+
 #: The ones a reconnect policy recovers from. A session the safety filter ended stays ended.
 _RECONNECTABLE_CLOSE_REASONS = frozenset({'expired', 'connection_lost'})
 
@@ -384,6 +393,15 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, a stored session
     that drops is forked, so the new one has the whole conversation. An unstored one is replaced by a new
     session seeded with the text of the history so far."""
+
+    openai_live_idle_audio: bool
+    """Whether to stream silence to Live while the application sends no audio. Defaults to `False`.
+
+    Live's timeline only advances while it receives audio, so text sent to a session with no microphone
+    streaming waits until audio flows again. With this on, the session streams silence in real time
+    whenever `send_audio()` has been quiet for a moment, and stops as soon as the application sends
+    audio again, so a text-only session works. Live bills the audio it receives by the second, silence
+    included, so this bills the whole time the session is open."""
 
     openai_live_data_channel: DataChannelConfigParam
     """Which Live events the browser on a [WebRTC call](https://pydantic.dev/docs/ai/realtime/openai#browser-webrtc)
@@ -586,6 +604,7 @@ class OpenAILiveConnection(RealtimeConnection):
     """
 
     transport_errors: ClassVar[tuple[type[Exception], ...]] = (websockets.WebSocketException, OSError)
+    _lifecycle_version: ClassVar[int] = 2
 
     def __init__(
         self,
@@ -597,6 +616,7 @@ class OpenAILiveConnection(RealtimeConnection):
         audio_rate: int = 24000,
         provider_name: str = 'openai',
         provider_url: str = '',
+        idle_audio: bool = False,
         forwards_output_audio: bool = True,
         session_id: str | None = None,
         dial: _LiveDial | None = None,
@@ -604,6 +624,7 @@ class OpenAILiveConnection(RealtimeConnection):
         forks: bool = False,
     ) -> None:
         self._ws = ws
+        self._idle_audio = idle_audio
         # Re-opening the session after a drop: by forking it, which Live can only do for a stored
         # session, or else by starting a new one seeded with the history so far.
         self._session_id = session_id
@@ -649,12 +670,31 @@ class OpenAILiveConnection(RealtimeConnection):
         # Calls asked for and not answered yet, which a replacement session wouldn't know.
         self._open_calls: set[str] = set()
         self._reported_seconds = 0.0
+        # The idle-audio pump, and where the application's audio ends on the pump's clock: audio sent in a
+        # burst plays on Live's timeline for as long as it lasts, however quickly it was sent.
+        self._idle_audio_task: asyncio.Task[None] | None = None
+        self._input_audio_end = 0.0
+        # Where all the audio sent so far, idle frames included, ends on the pump's clock. Application audio
+        # sent right after an idle frame plays once that frame has.
+        self._audio_end = 0.0
+        self._next_idle_frame = 0.0
+        # Counts the application's audio sends. Held with the lock around every audio send, it is how the
+        # pump tells that the application spoke between its wait ending and its frame going out.
+        self._input_audio_sends = 0
+        self._audio_send_lock = anyio.Lock()
         self._session_end = _SessionEnd()
         # Numbers the native tool parts this connection reports; the session maps them to its own indexes.
         self._native_part_index = 0
         # The backend's reasoning since its last other output item, per delegation. A search replays into
         # the Responses API only with the reasoning item that led to it, so that is recorded with it.
         self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
+        # Which response, user turn, and input each frame is about (see `_tagged_frames()`). Live always
+        # transcribes, and closes the user's turn as the model's reply starts.
+        self._lifecycle = InferredLifecycle(transcribes=True, audio_starts_response=False)
+        # Every `send()` call is numbered (see `InputRejected.input_index`).
+        self._inputs_sent = 0
+        # Whether the frame just mapped had the model take the turn (see `_open_response()`).
+        self._took_turn = False
 
     @property
     def model_name(self) -> str | None:
@@ -690,28 +730,41 @@ class OpenAILiveConnection(RealtimeConnection):
     # --- sending ----------------------------------------------------------------------------------
 
     async def send(self, content: RealtimeInput) -> None:
+        input_index = self._inputs_sent
+        self._inputs_sent += 1
+        self._lifecycle.input_sent(input_index, content)
+        try:
+            delivered = await self._send_input(content)
+        except BaseException:
+            self._lifecycle.input_failed(input_index)
+            raise
+        if not delivered:
+            # A tool result whose backend gave up on the call: nothing will reply to it.
+            self._lifecycle.input_unanswerable(input_index)
+
+    async def _send_input(self, content: RealtimeInput) -> bool:
+        """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
             await _check_context_length(content)
             await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
-            return
+            return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
             # choose to mention it.
             await _check_context_length(content.text)
             await self._send_event({'type': 'session.thinking.append', 'delegation_id': None, 'content': content.text})
-            return
+            return True
         if isinstance(content, ToolResult):
-            await self._send_tool_result(content)
-            return
+            return await self._send_tool_result(content)
         if isinstance(content, CreateResponse):
             # Reaches the connection only right after an image: the profile's
             # `image_input_requires_response` is what lets the session send one, and `create_response()`
             # itself still needs manual turn control. Running the backend on the queued image is the
             # response: Live opens a delegation for it and speaks the result.
             await self._send_event({'type': 'response.create'})
-            return
+            return True
         if isinstance(content, (CommitAudio, ClearAudio, CancelResponse, TruncateOutput)):
             raise UserError(
                 'OpenAI GPT-Live drives turn-taking itself: manual turn control, cancellation, and '
@@ -729,11 +782,69 @@ class OpenAILiveConnection(RealtimeConnection):
                     },
                 }
             )
-            return
-        await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
+            return True
+        async with self._audio_send_lock:
+            self._input_audio_sends += 1
+            booked = self._input_audio_end, self._audio_end
+            self._input_audio_end = self._audio_end = (
+                max(_pump_clock(), self._audio_end) + len(content.data) / self._audio_bytes_per_ms / 1000
+            )
+            try:
+                await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
+            except asyncio.CancelledError:
+                # Audio that never went out doesn't hold the idle frames back.
+                self._input_audio_end, self._audio_end = booked
+                raise
+        return True
 
-    async def _send_tool_result(self, result: ToolResult) -> None:
-        """Return a tool result to the delegated Responses backend and let it continue."""
+    def _start_idle_audio(self) -> None:
+        """Stream silence whenever the application sends no audio, until the connection closes.
+
+        Live's timeline only advances while audio arrives, so without this, text sent to a session whose
+        microphone isn't streaming waits for audio that never comes.
+        """
+        if self._idle_audio_task is not None:
+            return
+        # Audio sent before the pump started still plays out first.
+        self._input_audio_end = max(self._input_audio_end, _pump_clock())
+        self._idle_audio_task = asyncio.create_task(self._pump_idle_audio(), name='openai-live-idle-audio')
+
+    async def _pump_idle_audio(self) -> None:
+        frame = _b64(bytes(int(self._audio_bytes_per_ms * _IDLE_AUDIO_FRAME * 1000) // 2 * 2))
+        while True:
+            sends = self._input_audio_sends
+            await self._wait_for_idle_frame()
+            async with self._audio_send_lock:
+                if self._input_audio_sends != sends:
+                    # The application sent audio after the wait ended: wait out a fresh quiet gap.
+                    continue
+                try:
+                    await self._send_event({'type': 'session.input_audio.append', 'audio': frame})
+                    self._audio_end = max(_pump_clock(), self._audio_end) + _IDLE_AUDIO_FRAME
+                except self.transport_errors:
+                    # The read loop reports the drop. While it can redial, the frames that follow go to
+                    # the replacement socket; once it can't, there is nothing left to keep going.
+                    if self._closed or self._gave_up or self._reconnect is None or self._dial is None:
+                        return
+
+    async def _wait_for_idle_frame(self) -> None:
+        """Wait until the next frame of silence is due.
+
+        Frames go out at a microphone's pace, and none until the application's own audio has been quiet
+        for `_IDLE_AUDIO_GAP`: application audio arriving meanwhile pushes the next frame back.
+        """
+        while (delay := self._idle_frame_due() - _pump_clock()) > 0:
+            # In short steps, so a schedule a redial cuts short (see `_forget_session_state`) takes effect.
+            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))
+        # Booked from now rather than from when it was due, so a stalled loop doesn't catch up with a
+        # burst of frames that would run Live's timeline ahead of the clock.
+        self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
+
+    def _idle_frame_due(self) -> float:
+        return max(self._next_idle_frame, self._input_audio_end + _IDLE_AUDIO_GAP)
+
+    async def _send_tool_result(self, result: ToolResult) -> bool:
+        """Return a tool result to the delegated Responses backend and let it continue; `False` if it goes nowhere."""
         # Mapped first: downloading media can wait, and the backend can give up on the call meanwhile,
         # which only the checks below, made after it, can see.
         follow_up = await _tool_result_follow_up(result, provider_name=self._provider_name)
@@ -743,7 +854,7 @@ class OpenAILiveConnection(RealtimeConnection):
             # The backend that asked for this call gave up before it was answered. Sending the output
             # would attach it to nothing, and `response.create` would start a turn nobody asked for.
             self._abandoned_calls.discard(result.tool_call_id)
-            return
+            return False
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
@@ -758,15 +869,16 @@ class OpenAILiveConnection(RealtimeConnection):
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
-            return
+            return True
         if delegation.pending_tool_calls:
             # With `parallel_tool_calls` the backend resumes from all of its calls' outputs together.
-            return
+            return True
         if delegation.response_in_flight:
             # The response that asked for these calls may still ask for more: continue at its terminal.
             delegation.continuation_due = True
-            return
+            return True
         await self._continue(delegation)
+        return True
 
     async def _send_due_continuations(self) -> None:
         """Continue each delegation whose asking response just ended with every result already in."""
@@ -793,8 +905,8 @@ class OpenAILiveConnection(RealtimeConnection):
         since the last report, all of them on a short call, would never be recorded. Called once the session
         has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
 
-        A backend response still finishing meanwhile has no reply left to land on, so its tokens are yielded
-        as session usage: counted in the session's total, attributed to no response.
+        A backend response still finishing meanwhile has no reply left to land on: its report is yielded as
+        it is, counted in the session's total (with the request it was) and attributed to no response.
         """
         if self._closed:
             return
@@ -804,6 +916,9 @@ class OpenAILiveConnection(RealtimeConnection):
             for report in unclaimed:
                 yield report
             return
+        if self._idle_audio_task is not None:
+            # Silence after `session.close` would only be billed: Live answers it without audio flowing.
+            await _utils.cancel_and_drain(self._idle_audio_task)
         await self._send_event({'type': 'session.close'})
         while not self._session_end.ended:
             read = self._recv_task if self._recv_task is not None else self._start_read()
@@ -815,7 +930,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 break
             for event in self._map_frame(raw):
                 if isinstance(event, SessionUsage):
-                    yield event if not event.response_scoped else SessionUsage(event.usage, response_scoped=False)
+                    yield event
             # Any final usage `session.closed` held back was just yielded.
             self._session_end.unclaimed = []
 
@@ -824,6 +939,8 @@ class OpenAILiveConnection(RealtimeConnection):
         self._closed = True
         task = self._recv_task
         self._cancel_read()
+        if self._idle_audio_task is not None:
+            await _utils.cancel_and_drain(self._idle_audio_task)
         if task is not None:
             with suppress(asyncio.CancelledError, websockets.WebSocketException):
                 await task
@@ -831,17 +948,37 @@ class OpenAILiveConnection(RealtimeConnection):
     # --- receiving --------------------------------------------------------------------------------
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for frame in self._tagged_frames():
+            for event, _ in frame:
+                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                    yield event
+
+    def _frame(self, codec: list[RealtimeCodecEvent]) -> list[TaggedEvent]:
+        """One frame's codec events, with the lifecycle events around them."""
+        took_turn, self._took_turn = self._took_turn, False
+        return self._lifecycle.message(codec, takes_turn=took_turn)
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:  # noqa: C901
         # One read is always in flight: the next one starts before this frame is handled, so nothing
         # arrives while the consumer is busy and no frame is dropped between iterations.
+        if self._idle_audio:
+            self._start_idle_audio()
         pending = self._start_read()
         while True:
             # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
             # so the turn clock is a timeout on the wait rather than on the read.
-            done, _ = await asyncio.wait({pending}, timeout=self._silence_timeout())
+            # A pump that failed before this wait would be left out of it.
+            self._raise_if_idle_audio_failed()
+            waiting: set[asyncio.Task[Any]] = {pending}
+            if (pump := self._idle_audio_task) is not None and not pump.done():
+                # A pump that fails wakes this wait, so its failure surfaces now rather than at the next frame.
+                waiting.add(pump)
+            done, _ = await asyncio.wait(waiting, timeout=self._silence_timeout(), return_when=asyncio.FIRST_COMPLETED)
             if self._closed:
                 # `aclose()` cancelled the read while we were waiting on it.
                 return
-            if done:
+            self._raise_if_idle_audio_failed()
+            if pending in done:
                 finished, pending = pending, self._start_read()
                 dropped: Exception | None = None
                 try:
@@ -857,39 +994,57 @@ class OpenAILiveConnection(RealtimeConnection):
                         # A graceful close ends whatever was in flight. Live never says a turn is over,
                         # so without this the last reply would be settled as interrupted even though the
                         # model had finished speaking and the session closed normally.
-                        for event in self._settle_open_turns():
-                            yield event
+                        settled = self._frame(self._settle_open_turns())
+                        yield [*settled, *((event, False) for event in self._lifecycle.connection_lost())]
                         return
                     dropped = e
                 except self.transport_errors as e:
                     dropped = e
                 else:
-                    for event in self._map_frame(raw):
-                        self._hand_over(event)
-                        yield event
+                    frame = self._frame(self._map_frame(raw))
+                    for event, _ in frame:
+                        if isinstance(event, SessionUsage):
+                            self._hand_over(event)
+                    yield frame
                     try:
                         await self._send_due_continuations()
                     except self.transport_errors as e:
                         dropped = e
                 if dropped is not None:
+                    # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
+                    lost: list[TaggedEvent] = [(event, False) for event in self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
+                        yield lost
                         raise dropped
                     # The read started above is on the dead socket.
                     self._cancel_read()
-                    if not await self._try_reconnect():
+                    reconnected = await self._try_reconnect()
+                    lost += [(event, False) for event in self._lifecycle.take_pending()]
+                    if not reconnected:
                         self._gave_up = True
-                        yield RealtimeSessionErrorEvent(
+                        error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection dropped; reconnect failed: {dropped}',
                             recoverable=False,
                         )
+                        yield [*lost, (error, False)]
                         return
-                    yield RealtimeSessionReconnectEvent(state_restored=self._restored)
+                    yield [*lost, (RealtimeSessionReconnectEvent(state_restored=self._restored), False)]
                     pending = self._start_read()
                     continue
             # Checked after every frame, not just when the socket goes quiet: the idle audio track
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
-            for event in self._expire_quiet_turn():
-                yield event
+            if expired := self._expire_quiet_turn():
+                yield self._frame(expired)
+
+    def _raise_if_idle_audio_failed(self) -> None:
+        """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.
+
+        A transport error isn't one: the read loop reports the drop, and the pump carries on past it to the
+        replacement socket, or stops if there won't be one.
+        """
+        task = self._idle_audio_task
+        if task is not None and task.done() and not task.cancelled() and (error := task.exception()) is not None:
+            raise error
 
     async def _try_reconnect(self) -> bool:
         """Re-open the session with exponential backoff; return whether a replacement is connected."""
@@ -946,6 +1101,10 @@ class OpenAILiveConnection(RealtimeConnection):
         self._call_delegations.clear()
         self._continuations_due.clear()
         self._reported_seconds = 0.0
+        # Audio still booked to play on the lost session never will, so idle frames may start right away.
+        self._input_audio_end = min(self._input_audio_end, _pump_clock())
+        self._audio_end = min(self._audio_end, _pump_clock())
+        self._next_idle_frame = 0.0
         # The new session hasn't ended: closing asks it to, and records the usage it reports then.
         self._session_end = _SessionEnd()
 
@@ -1010,6 +1169,9 @@ class OpenAILiveConnection(RealtimeConnection):
         self._heard_voice()
         events = self._close_input_turn()
         self._response_open = True
+        # Its reply starts here, even with nothing of it to report: work it delegated, or speech a WebRTC
+        # sideband doesn't forward.
+        self._took_turn = True
         return events
 
     def _map_frame(self, raw: str | bytes) -> list[RealtimeCodecEvent]:
@@ -1367,6 +1529,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 model_name=response.model,
                 provider_api_url=self._provider_url,
                 provider_name=self._provider_name,
+                price_context={'service_tier': response.service_tier} if response.service_tier else None,
             )
         ) is not None:
             mapped.cost = price.total_price
@@ -1416,6 +1579,11 @@ class OpenAILiveConnection(RealtimeConnection):
 
 def _now() -> float:
     """The turn clock. Monotonic rather than the loop's own, so it needs no running loop."""
+    return time.monotonic()
+
+
+def _pump_clock() -> float:
+    """The idle-audio pump's clock, kept apart from the turn clock, which replayed recordings move."""
     return time.monotonic()
 
 
@@ -1904,6 +2072,11 @@ class OpenAILiveModel(RealtimeModel):
         self._check_webrtc_session_provider(session)
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
+        if settings.get('openai_live_idle_audio'):
+            raise UserError(
+                "A WebRTC sideband does not carry the call's audio, the browser does, so `openai_live_idle_audio` "
+                "cannot be set on one. The browser keeps Live's timeline moving as long as the call is up."
+            )
         handshake_timeout = settings.get('handshake_timeout', 30.0)
 
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
@@ -2000,6 +2173,7 @@ class OpenAILiveModel(RealtimeModel):
                 turn_silence_ms=settings.get('openai_live_turn_silence_ms', DEFAULT_TURN_SILENCE_MS),
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
+                idle_audio=settings.get('openai_live_idle_audio', False),
                 session_id=started.get('session', {}).get('id'),
                 dial=dial,
                 reconnect=settings.get('reconnect'),

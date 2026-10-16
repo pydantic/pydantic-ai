@@ -324,16 +324,18 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             errors: list[Exception | None] = []
             for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
                 response_token = cache(partial(self._dedup_token, ctx, usage_response, response_index))
-                for billed in _billed_attempts(usage_response.failed_attempts or (), response_token):
-                    errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
                 boundary_tokens = [
-                    (boundary, partial(self._dedup_token, ctx, boundary, response_index)) for boundary in boundaries
+                    (boundary, cache(partial(self._dedup_token, ctx, boundary, response_index)))
+                    for boundary in boundaries
                 ]
+                anchors = [*boundary_tokens, (usage_response, response_token)]
+                for billed in _billed_attempts(usage_response.failed_attempts or (), partial(_anchored_token, anchors)):
+                    errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
                 errors.append(await self._accrue_safely(ctx, usage_response, response_token, boundary_tokens))
             unanswered = request_context._usage_attempts[usage_attempt_offset:]  # pyright: ignore[reportPrivateUsage]
             if unanswered:
                 unanswered_token = cache(partial(_unanswered_token, ctx, unanswered))
-                for billed in _billed_attempts(unanswered, unanswered_token):
+                for billed in _billed_attempts(unanswered, partial(_attempt_token, unanswered_token)):
                     errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
             first_error = next((error for error in errors if error is not None), None)
             # Only on the success path: pricing-policy and callback errors have never been
@@ -810,13 +812,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
 
 def _billed_attempts(
-    attempts: Sequence[ModelRequestAttempt], token: Callable[[], str]
+    attempts: Sequence[ModelRequestAttempt], token: Callable[[int], str]
 ) -> Iterator[tuple[ModelResponse, Callable[[], str]]]:
     """Each attempt the provider billed, as a response to accrue and its replay token.
 
     The response carries what `price` and the registry read, so a user's `price` prices an attempt the
-    same way it would have priced the response had it been accepted. An attempt's token extends
-    `token`, which identifies what the attempts were recorded on, with its position among them.
+    same way it would have priced the response had it been accepted. `token` gives an attempt's replay
+    token from its position among `attempts`.
     """
     for index, attempt in enumerate(attempts):
         if attempt.usage is None:
@@ -828,11 +830,25 @@ def _billed_attempts(
             provider_name=attempt.provider_name,
             timestamp=attempt.timestamp,
         )
-        yield billed, partial(_attempt_token, token, index)
+        yield billed, partial(token, index)
 
 
 def _attempt_token(token: Callable[[], str], index: int) -> str:
+    """Extend `token`, which identifies what the attempts were recorded on, with an attempt's position among them."""
     return delimited(token(), 'attempt', str(index))
+
+
+def _anchored_token(anchors: Sequence[tuple[ModelResponse, Callable[[], str]]], index: int) -> str:
+    """The replay token of a committed response's attempt at `index`, anchored to the first of `anchors` carrying it.
+
+    `anchors` are a continuation chain's boundaries followed by the response it was merged into. Merging keeps
+    earlier segments' attempts first, so the first boundary carrying an attempt is the earliest response it
+    could have been committed on: a retry of a chain that failed partway reaches that boundary again and
+    replays the attempt's recorded accrual, rather than keying it to a merged response the failed run never
+    reached. Without boundaries the anchor is the response itself.
+    """
+    token = next(token for response, token in anchors if len(response.failed_attempts or ()) > index)
+    return _attempt_token(token, index)
 
 
 def _unanswered_token(ctx: RunContext[Any], attempts: Sequence[ModelRequestAttempt]) -> str:

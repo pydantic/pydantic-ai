@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 import json
 from typing import Annotated, Any, Optional
 
@@ -35,6 +36,14 @@ class Foo(BaseModel):
     b: int
 
 
+def _split_to_words(sep: str, text: str) -> 'WordList':
+    return WordList(words=text.split(sep))  # pragma: no cover
+
+
+class WordList(BaseModel):
+    words: list[str]
+
+
 async def test_text_output_json_schema():
     agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
@@ -44,6 +53,46 @@ async def test_text_output_json_schema():
 
     agent = Agent('test', output_type=TextOutput(func))
     assert agent.output_json_schema() == snapshot({'type': 'string'})
+
+
+async def test_text_output_function_json_schema_list_str_return():
+    def func(x: str) -> list[str]:
+        return []  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'items': {'type': 'string'}, 'type': 'array'})
+
+
+async def test_text_output_function_json_schema_annotated_scalar_return():
+    def func(x: str) -> int:
+        return 1  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'type': 'integer'})
+
+
+async def test_text_output_function_json_schema_no_return_hint():
+    def func(x: str):
+        return x  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'type': 'string'})
+
+
+async def test_text_output_function_json_schema_partial_forward_ref():
+    output_function = functools.partial(_split_to_words, ' ')
+    # `function_schema` reads `__name__`, which a bare `partial` lacks.
+    output_function.__name__ = _split_to_words.__name__  # pyright: ignore[reportAttributeAccessIssue]
+    output_function.__qualname__ = _split_to_words.__qualname__  # pyright: ignore[reportAttributeAccessIssue]
+    agent = Agent('test', output_type=TextOutput(output_function))
+    assert agent.output_json_schema() == snapshot(
+        {
+            'properties': {'words': {'items': {'type': 'string'}, 'title': 'Words', 'type': 'array'}},
+            'required': ['words'],
+            'title': 'WordList',
+            'type': 'object',
+        }
+    )
 
 
 async def test_function_output_json_schema():

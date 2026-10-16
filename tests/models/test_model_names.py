@@ -22,21 +22,25 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModelName
     from pydantic_ai.models.snowflake import SnowflakeModelName
     from pydantic_ai.models.typesafe import TypeSafeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
+    from pydantic_ai.providers.meta import MetaModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    OpenAIDecisionsModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
+    MetaModelName = None
     TypeSafeModelName = None
 
 pytestmark = [
@@ -65,10 +69,12 @@ _PROVIDER_TO_MODEL_NAMES = {
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
+    'meta': MetaModelName,
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'openai-decisions': OpenAIDecisionsModelName,
     'snowflake': SnowflakeModelName,
     'typesafe': TypeSafeModelName,
     'zai': ZaiModelName,

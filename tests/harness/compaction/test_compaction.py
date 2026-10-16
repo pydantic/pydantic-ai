@@ -10,11 +10,13 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
+from pydantic_ai._context_size import mark_initial_input_tokens
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -68,6 +70,7 @@ from pydantic_ai_harness.compaction import (
     WarnNearLimits,
     drain_summary_events,
     estimate_context_tokens,
+    estimate_message_tokens,
     estimate_token_count,
     is_pinned,
     pin,
@@ -161,6 +164,28 @@ def _make_request_context(messages: list[ModelMessage], model: Model | None = No
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
     )
+
+
+async def _injected_warning(capability: WarnNearLimits[None]) -> ModelRequest:
+    """Return the warning request *capability* injects at its limit, as an earlier request would have."""
+    assert capability.max_iterations is not None
+    result = await capability.before_model_request(
+        _make_ctx(requests=capability.max_iterations), _make_request_context([_user('earlier')])
+    )
+    warning = result.messages[-1]
+    assert isinstance(warning, ModelRequest)
+    return warning
+
+
+def _request_texts(messages: list[ModelMessage]) -> list[str]:
+    """Return the text of every user prompt in *messages*, in order."""
+    return [
+        _part_text(part)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
 
 
 def _user(text: str) -> ModelRequest:
@@ -267,12 +292,40 @@ class TestEstimateContextTokens:
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
         assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
 
+    def test_changed_instructions_replace_the_anchored_set(self):
+        # The next request sends the new set instead of the one the anchor paid for, as when
+        # an hourly clock in the instructions ticks over: count the difference, not both sets.
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 4_400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 100
+
+    def test_shorter_instructions_lower_the_estimate(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 400)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 - 900
+
+    def test_changed_instructions_are_swapped_with_a_tokenizer(self):
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='one two')
+        request_after = ModelRequest(parts=[UserPromptPart(content='three')], instructions='one two three four')
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_500 + 1 + 2
+
     def test_tokenizer_applies_to_the_suffix(self):
         msgs: list[ModelMessage] = [
             _assistant_with_usage('short', 50_000, 500),
             _user('three short words'),
         ]
         assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_503
+
+    def test_long_decode_anchors_on_its_first_request(self):
+        # A provider SDK that continued the response in a second request (Google long decode) summed both
+        # requests' input, which re-counts the first one's 500 output tokens; the context is the first request's.
+        response = _assistant_with_usage('long', 50_000 + 50_500, 1_000)
+        mark_initial_input_tokens(response, 50_000)
+        msgs: list[ModelMessage] = [_user('x' * 40), response]
+        assert estimate_context_tokens(msgs) == 51_000
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +439,77 @@ class TestFindTokenCutoff:
         # messages[2:] = 8 tokens (fits), messages[1:] = 12 (does not) -> candidate is 2,
         # which splits the pair, so it walks back to 1.
         assert find_token_cutoff(msgs, 8, tokenizer=len) == 1
+
+    def test_measures_the_tail_with_provider_usage(self):
+        """Thinking a provider returns without text counts, so the tail is not mostly unseen tokens."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=100, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=5200, output_tokens=10),
+            _user('last'),
+        ]
+        assert estimate_token_count(msgs) <= 100, 'the text estimate alone would keep everything'
+        assert find_token_cutoff(msgs, 100) == 1
+
+    def test_output_usage_alone_counts(self):
+        """A provider that reports only output tokens still has its thinking counted."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=0, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=0, output_tokens=10),
+            _user('last'),
+        ]
+        assert find_token_cutoff(msgs, 100) == 1
+
+
+def _reported(*, input_tokens: int, output_tokens: int) -> ModelResponse:
+    """A response whose thinking came back without text, as some providers return it, with its usage."""
+    return ModelResponse(
+        parts=[ThinkingPart(content='', signature='sig'), TextPart(content='ok')],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+class TestEstimateMessageTokens:
+    def test_without_usage_each_message_is_estimated(self):
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant('y' * 80)]
+        assert estimate_message_tokens(msgs) == [10, 20]
+        assert estimate_message_tokens(msgs, tokenizer=len) == [40, 80]
+
+    def test_usage_between_responses_is_shared_and_a_shrunk_history_keeps_estimates(self):
+        msgs: list[ModelMessage] = [
+            _user('x' * 40),  # before the first reported response: estimated
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),  # with the response above, shares 2001 - 1000 in proportion 300:100
+            _reported(input_tokens=2001, output_tokens=200),
+            _user('z' * 40),  # the next response reports less input: compacted in between, so estimated
+            _reported(input_tokens=500, output_tokens=50),
+            _user('w' * 80),  # after the last reported response: estimated
+        ]
+        assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
+
+    def test_long_decode_input_is_its_first_request(self):
+        """A response continued across requests counts its first request's input, not their sum."""
+        # Its second request's input re-counted the first one's 500 output tokens.
+        long_decode = _reported(input_tokens=1000 + 1500, output_tokens=600)
+        mark_initial_input_tokens(long_decode, 1000)
+        msgs: list[ModelMessage] = [
+            long_decode,
+            _user('y' * 400),  # with the response above, shares 1900 - 1000 in proportion 600:100
+            _reported(input_tokens=1900, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [772, 128, 200]
+
+    def test_unchanged_input_between_responses_keeps_estimates(self):
+        """Equal input usage says nothing about the messages between, so it does not zero them."""
+        msgs: list[ModelMessage] = [
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),
+            _reported(input_tokens=1000, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [300, 100, 200]
 
 
 # ---------------------------------------------------------------------------
@@ -635,9 +759,8 @@ class TestWarnNearLimits:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'URGENT' in text.content
-        assert '[WarnNearLimits]' in text.content
+        assert 'URGENT' in _part_text(text)
+        assert '[WarnNearLimits]' in _part_text(text)
 
     async def test_iteration_warning_critical(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7, critical_remaining_iterations=3)
@@ -649,8 +772,7 @@ class TestWarnNearLimits:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        assert 'CRITICAL' in _part_text(text)
 
     async def test_context_window_warning(self):
         lw = WarnNearLimits(max_context_tokens=10)
@@ -671,7 +793,7 @@ class TestWarnNearLimits:
 
     async def test_strips_old_warnings(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
-        old_warning = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nOld warning')])
+        old_warning = await _injected_warning(lw)
         messages: list[ModelMessage] = [_user('hi'), old_warning]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)  # Below threshold.
@@ -679,15 +801,56 @@ class TestWarnNearLimits:
         # Old warning removed, no new warning added (below threshold).
         assert len(result.messages) == 1
 
-    async def test_strips_legacy_limit_warner_markers(self):
+    async def test_keeps_text_that_only_looks_like_a_warning(self):
+        """Warnings are recognized by their metadata, never by text a user could also write."""
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
-        legacy_warning = ModelRequest(parts=[UserPromptPart(content='[LimitWarner]\nOld warning')])
-        messages: list[ModelMessage] = [_user('hi'), legacy_warning]
-        rc = _make_request_context(messages)
+        messages: list[ModelMessage] = [
+            _user('Why do my logs show [WarnNearLimits] and [LimitWarner] lines?'),
+            _assistant('They are run-limit warnings.'),
+            ModelRequest(parts=[SystemPromptPart(content='[WarnNearLimits]\nquoted in a system prompt')]),
+            _user('[WarnNearLimits]\nCRITICAL: Configured run limits are approaching.'),
+        ]
+        rc = _make_request_context(list(messages))
         ctx = _make_ctx(requests=5)  # Below threshold.
         result = await lw.before_model_request(ctx, rc)
-        # Warnings injected before the rename are still recognized and stripped.
-        assert len(result.messages) == 1
+        assert result.messages == messages
+
+    async def test_user_prompt_quoting_the_marker_survives_a_run(self):
+        """A user prompt that quotes the warning marker reaches every request and stays in history."""
+        prompt = 'Why do my logs show [WarnNearLimits] lines?'
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WarnNearLimits(max_iterations=2, warning_threshold=0.5)])
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'found'
+
+        result = await agent.run(prompt)
+
+        assert result.output == 'done'
+        # The second request is past the threshold, so it also carries a warning after the prompt.
+        assert [_request_texts(messages) for messages in seen] == snapshot(
+            [
+                [prompt],
+                [
+                    prompt,
+                    """\
+[WarnNearLimits]
+CRITICAL: Configured run limits are approaching.
+- Iterations: 1/2 requests used (50%); 1 remaining.
+Complete the current task immediately and avoid unnecessary tool calls.\
+""",
+                ],
+            ]
+        )
+        assert _request_texts(result.all_messages()) == [prompt]
 
     async def test_multiple_warnings_ordered(self):
         lw = WarnNearLimits(max_iterations=10, max_total_tokens=100)
@@ -699,9 +862,8 @@ class TestWarnNearLimits:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
         # Iterations should come before total_tokens.
-        assert text.content.index('Iterations') < text.content.index('Total tokens')
+        assert _part_text(text).index('Iterations') < _part_text(text).index('Total tokens')
 
 
 # ---------------------------------------------------------------------------
@@ -1044,9 +1206,9 @@ class TestWarnNearLimitsEdgeCases:
     """Cover WarnNearLimits edge cases for marker detection and stripping."""
 
     async def test_strip_warning_with_only_marker_message(self):
-        """A message composed entirely of a marker part should be removed."""
+        """A message composed entirely of a warning part should be removed."""
         lw = WarnNearLimits(max_iterations=100)
-        marker_msg = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')])
+        marker_msg = await _injected_warning(lw)
         messages: list[ModelMessage] = [_user('real'), marker_msg]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -1054,25 +1216,10 @@ class TestWarnNearLimitsEdgeCases:
         # Marker message should be stripped; only the real message remains.
         assert len(result.messages) == 1
 
-    async def test_strip_warning_system_prompt_marker(self):
-        """Marker in a SystemPromptPart should also be detected."""
-        lw = WarnNearLimits(max_iterations=100)
-        marker_msg = ModelRequest(parts=[SystemPromptPart(content='[WarnNearLimits]\nold')])
-        messages: list[ModelMessage] = [_user('real'), marker_msg]
-        rc = _make_request_context(messages)
-        ctx = _make_ctx(requests=5)
-        result = await lw.before_model_request(ctx, rc)
-        assert len(result.messages) == 1
-
     async def test_strip_mixed_parts_keeps_non_marker(self):
         """A message with both marker and non-marker parts should keep the non-marker parts."""
         lw = WarnNearLimits(max_iterations=100)
-        mixed = ModelRequest(
-            parts=[
-                UserPromptPart(content='keep this'),
-                UserPromptPart(content='[WarnNearLimits]\nremove this'),
-            ]
-        )
+        mixed = ModelRequest(parts=[UserPromptPart(content='keep this'), *(await _injected_warning(lw)).parts])
         messages: list[ModelMessage] = [mixed]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -1115,8 +1262,7 @@ class TestWarnNearLimitsEdgeCases:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        assert 'CRITICAL' in _part_text(text)
 
     async def test_context_window_critical(self):
         """Context window at or above limit should produce CRITICAL."""
@@ -1129,8 +1275,7 @@ class TestWarnNearLimitsEdgeCases:
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
         assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        assert 'CRITICAL' in _part_text(text)
 
     def test_warn_on_subset(self):
         """Can configure warn_on to only include specific limits."""
@@ -1197,7 +1342,7 @@ class TestWarnNearLimitsMarkerDetection:
         messages: list[ModelMessage] = [
             _user('hi'),
             _assistant('response'),
-            ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')]),
+            await _injected_warning(lw),
         ]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -1263,9 +1408,10 @@ class TestTokenizerParameter:
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
-        # With keep_tokens=5 and 4 tokens per message, should keep 1 message.
+        # Include the whole message crossing the five-token retention target.
         remaining_tokens = estimate_token_count(result.messages, tokenizer=lambda s: len(s))
-        assert remaining_tokens <= 5
+        assert remaining_tokens == 8
+        assert result.messages == messages[-2:]
 
     async def test_sliding_window_tokenizer_threshold_check(self):
         """SlidingWindowCompaction tokenizer should be used for the trigger check."""
@@ -1350,6 +1496,34 @@ class TestPreserveFirstUserMessage:
             _assistant('hello'),
         ]
         assert find_first_user_message(msgs) is None
+
+    async def test_summarizing_keeps_every_part_of_the_first_request_across_compactions(self):
+        agent, sent = _recording_agent(_summarizing(), system_prompt='Be terse.')
+        first = ModelRequest(
+            parts=[
+                SystemPromptPart(content='Be terse.'),
+                UserPromptPart(content='attached doc'),
+                UserPromptPart(content='the actual question'),
+            ]
+        )
+        await _continue(agent, [f'turn {n}' for n in range(2, 8)], history=[first, _assistant('ok')])
+        assert _request_shapes(sent[-1]) == snapshot(
+            [
+                [
+                    'system-prompt: Be terse.',
+                    """\
+system-prompt: Summary of previous conversation:
+
+Summary 3.\
+""",
+                    'user-prompt: attached doc',
+                    'user-prompt: the actual question',
+                    'user-prompt: turn 3',
+                    'user-prompt: turn 5',
+                    'user-prompt: turn 7',
+                ]
+            ]
+        )
 
     async def test_sliding_window_preserves_first_user(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=True)
@@ -1491,6 +1665,87 @@ class TestIncrementalSummarization:
             _user('hello'),
         ]
         assert _extract_previous_summary(msgs) is None
+
+    async def test_recompaction_across_runs_updates_latest_summary(self):
+        prompts: list[str] = []
+        agent, sent = _recording_agent(_summarizing(prompts), system_prompt='Be terse.')
+        await _continue(agent, [f'turn {n}' for n in range(1, 8)])
+        assert len(prompts) == 3
+        assert 'Summary 1.' in prompts[1]
+        assert 'Summary 2.' in prompts[2]
+        assert 'Summary 1.' not in prompts[2]
+        assert _request_shapes(sent[-1]) == snapshot(
+            [
+                [
+                    'system-prompt: Be terse.',
+                    """\
+system-prompt: Summary of previous conversation:
+
+Summary 3.\
+""",
+                    'user-prompt: turn 1',
+                    'user-prompt: turn 3',
+                    'user-prompt: turn 5',
+                    'user-prompt: turn 7',
+                ]
+            ]
+        )
+
+    async def test_recompaction_of_stacked_history_updates_newest_summary(self):
+        # Each compaction used to keep the earlier summaries, merged in newest first.
+        stacked = ModelRequest(
+            parts=[
+                SystemPromptPart(content='Be terse.'),
+                SystemPromptPart(content=f'{_SUMMARY_PREFIX}Newest.'),
+                SystemPromptPart(content='Be terse.'),
+                SystemPromptPart(content=f'{_SUMMARY_PREFIX}Oldest.'),
+                SystemPromptPart(content='Be terse.'),
+                UserPromptPart(content='turn 1'),
+                UserPromptPart(content='turn 3'),
+            ]
+        )
+        prompts: list[str] = []
+        agent, sent = _recording_agent(_summarizing(prompts), system_prompt='Be terse.')
+        history = [stacked, _assistant('ok'), _user('turn 4'), _assistant('ok')]
+        await _continue(agent, ['turn 5'], history=history)
+        assert 'Newest.' in prompts[0]
+        assert 'Oldest.' not in prompts[0]
+        assert _request_shapes(sent[-1]) == snapshot(
+            [
+                [
+                    'system-prompt: Be terse.',
+                    """\
+system-prompt: Summary of previous conversation:
+
+Summary 1.\
+""",
+                    'user-prompt: turn 1',
+                    'user-prompt: turn 3',
+                    'user-prompt: turn 5',
+                ]
+            ]
+        )
+
+    async def test_recompaction_keeps_one_receipt(self):
+        agent, sent = _recording_agent(_summarizing(receipts=True), system_prompt='Be terse.')
+        await _continue(agent, [f'turn {n}' for n in range(1, 8)])
+        assert len(_receipt_parts(sent[-1])) == 1
+
+    async def test_recompaction_keeps_one_copy_of_a_dynamic_system_prompt(self):
+        agent, sent = _recording_agent(_summarizing())
+        calls = 0
+
+        @agent.system_prompt(dynamic=True)
+        def evaluated() -> str:
+            nonlocal calls
+            calls += 1
+            return f'Evaluation {calls}.'
+
+        await _continue(agent, [f'turn {n}' for n in range(1, 8)])
+        system = [
+            p for m in sent[-1] if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, SystemPromptPart)
+        ]
+        assert len([p for p in system if p.content.startswith('Evaluation')]) == 1
 
     async def test_incremental_includes_previous_summary(self):
         """When incremental=True and a prior summary exists, it should be included in the prompt."""
@@ -1655,6 +1910,58 @@ def _call_args(messages: list[ModelMessage]) -> list[object]:
                 if isinstance(p, ToolCallPart):
                     out.append(p.args)
     return out
+
+
+def _summarizing(prompts: list[str] | None = None, *, receipts: bool = False) -> SummarizingCompaction[None]:
+    """Compact every other run, numbering each summary and recording each summary request."""
+    recorded = [] if prompts is None else prompts
+
+    def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompt = request.parts[-1]
+        assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+        recorded.append(prompt.content)
+        return ModelResponse(parts=[TextPart(f'Summary {len(recorded)}.')])
+
+    return SummarizingCompaction(model=FunctionModel(summarize), max_messages=4, keep_messages=1, receipts=receipts)
+
+
+def _recording_agent(
+    compaction: SummarizingCompaction[None], *, system_prompt: str = ''
+) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent that records the messages of every model request it sends."""
+    sent: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), system_prompt=system_prompt, capabilities=[compaction])
+    return agent, sent
+
+
+async def _continue(
+    agent: Agent[None, str], prompts: list[str], *, history: list[ModelMessage] | None = None
+) -> list[ModelMessage]:
+    """Run one turn per prompt, each continuing the previous turn's history."""
+    messages = history or []
+    for prompt in prompts:
+        messages = (await agent.run(prompt, message_history=messages)).all_messages()
+    return messages
+
+
+def _request_shapes(messages: list[ModelMessage]) -> list[list[str]]:
+    """Each request's system and user prompt parts, as `kind: text`."""
+    return [
+        [
+            f'{part.part_kind}: {part.content if isinstance(part, SystemPromptPart) else _part_text(part)}'
+            for part in message.parts
+            if isinstance(part, SystemPromptPart | UserPromptPart)
+        ]
+        for message in messages
+        if isinstance(message, ModelRequest)
+    ]
 
 
 def _user_texts(messages: list[ModelMessage]) -> list[str]:
@@ -2712,6 +3019,14 @@ class TestHelperBranchCoverage:
             f'Tool [screenshot]: {reference}\nTool [screenshot]: taken {reference}'
         )
 
+    def test_a_file_returned_by_a_provider_side_tool_is_not_counted_as_characters(self):
+        """A generated image travels as an attachment, like `FilePart`; only the text is counted."""
+        image = BinaryContent(data=b'\x89PNG' * 75_000, media_type='image/png')
+        msgs: list[ModelMessage] = [
+            ModelResponse(parts=[NativeToolReturnPart(tool_name='image_generation', content=image, tool_call_id='c1')]),
+        ]
+        assert estimate_token_count(msgs) == len('image_generation') // 4
+
     def test_user_prompt_text_skips_non_text_content(self):
 
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
@@ -3605,7 +3920,7 @@ class TestKeepUserMessages:
         assert len(first.messages) <= comp.max_messages
         assert second.messages == first.messages
 
-    async def test_retained_users_and_tail_share_the_token_budget(self):
+    async def test_retained_users_are_additional_to_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=2,
@@ -3618,12 +3933,11 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('xx'), _assistant('x')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
-        assert _user_texts(result) == []
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:], len) <= comp.keep_tokens
+        assert _user_texts(result) == ['xx']
+        assert result[-1] is messages[-1]
+        assert estimate_token_count(result[1:], len) == 3
 
-    async def test_retained_user_can_consume_the_token_budget(self):
+    async def test_retained_user_cannot_displace_the_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=2,
@@ -3637,16 +3951,15 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['x']
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
+        assert result[-1] is messages[-1]
+        assert estimate_token_count(result[1:], len) == 2
 
-    async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
+    async def test_extra_users_are_capped_without_displacing_token_tail(self):
         comp = SummarizingCompaction(
             model='test:m',
             max_tokens=3,
             keep_tokens=1,
-            keep_messages=3,
+            keep_messages=1,
             keep_user_messages=True,
             bridge_prefix=False,
             tokenizer=len,
@@ -3654,8 +3967,8 @@ class TestKeepUserMessages:
         messages: list[ModelMessage] = [_user('x'), _assistant('x'), _user('xx'), _assistant('x')]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
-        assert _user_texts(result) == []
-        assert result[-1] == messages[-1]
+        assert _user_texts(result) == ['xx']
+        assert result[-1] is messages[-1]
 
     async def test_retained_user_turns_exhausting_keep_messages_preserve_current_request(self):
         comp = SummarizingCompaction(
@@ -3711,9 +4024,8 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['ab', 'd']
-        assert result[-1] == messages[-1]
-        assert comp.keep_tokens is not None
-        assert estimate_token_count(result[1:-1], len) <= comp.keep_tokens
+        assert result[-2] is messages[1]
+        assert result[-1] is messages[-1]
 
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(

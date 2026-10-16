@@ -1,23 +1,26 @@
 from __future__ import annotations
 
+import json
 import pickle
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema, field_validator
+from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai import Agent, BinaryContent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -142,6 +145,74 @@ async def test_decision_model_extension_point(allow_model_requests: None):
     assert result.response.usage == RequestUsage(input_tokens=4, output_tokens=2)
     assert result.response.provider_name == 'test-decisions'
     assert result.response.provider_url == 'https://example.test/decisions'
+
+
+class ImageEnabledDecisionModel(InMemoryDecisionModel):
+    supports_image_input: ClassVar[bool] = True
+
+
+async def test_decision_model_preserves_image_evidence_in_state(allow_model_requests: None):
+    prior_image = BinaryContent(b'prior', media_type='image/png')
+    assistant_image = BinaryContent(b'assistant', media_type='image/png')
+    tool_image = BinaryContent(b'tool', media_type='image/png')
+    native_image = BinaryContent(b'native', media_type='image/png')
+    failed_image = BinaryContent(b'failed', media_type='image/png')
+    current_image = BinaryContent(b'current', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['Earlier prompt.', prior_image])]),
+        ModelResponse(parts=[TextPart('Assistant text.'), FilePart(assistant_image)]),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', ['before', tool_image, 'after'], tool_call_id='tool-1')]),
+        ModelResponse(
+            parts=[NativeToolReturnPart('native_lookup', ['before', native_image, 'after'], provider_name='test')]
+        ),
+        ModelResponse(parts=[ToolCallPart('failed_lookup', {}, tool_call_id='tool-2')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'failed_lookup',
+                    ['before', failed_image, 'after'],
+                    tool_call_id='tool-2',
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+    model = ImageEnabledDecisionModel()
+
+    result = await Agent(model, output_type=bool, instructions='Does the evidence contain an image?').run(
+        ['Current prompt.', current_image], message_history=history
+    )
+
+    assert result.output is True
+    [request] = model.requests
+    assert request.images == (
+        prior_image,
+        assistant_image,
+        tool_image,
+        native_image,
+        failed_image,
+        current_image,
+    )
+    expected_state: JsonValue = {
+        'history': [
+            {'user': 'Earlier prompt.\n\n<image 1>'},
+            {'assistant': 'Assistant text.'},
+            {'assistant': '<image 2>'},
+            {'tool_call': {'name': 'lookup', 'args': {}}},
+            {'tool_return': {'name': 'lookup', 'content': '["before","<image 3>","after"]'}},
+            {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 4>","after"]'}},
+            {'tool_call': {'name': 'failed_lookup', 'args': {}}},
+            {
+                'tool_return': {
+                    'name': 'failed_lookup',
+                    'content': json.dumps({'error': '["before","<image 5>","after"]'}, separators=(',', ':')),
+                }
+            },
+        ],
+        'text': 'Current prompt.\n\n<image 6>',
+    }
+    assert request.state == expected_state
 
 
 class Release(BaseModel):
@@ -1374,6 +1445,27 @@ async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None
 
     assert result.response.model_name == 'test'
     assert len(decision_model.requests) == 1
+
+
+@pytest.mark.parametrize('limit_kind', ['images', 'questions'])
+async def test_default_fallback_handles_backend_request_limits(allow_model_requests: None, limit_kind: str):
+    """Image and question preflight errors are `ModelAPIError`s, so the default fallback can take over."""
+
+    class LimitedDecisionModel(ImageEnabledDecisionModel):
+        max_images: ClassVar[int | None] = 0
+        max_questions: ClassVar[int | None] = 1
+
+    decision_model = LimitedDecisionModel()
+    model = FallbackModel(decision_model, TestModel(call_tools=[]))
+    if limit_kind == 'images':
+        agent = Agent(model, output_type=bool, instructions='Does the evidence contain a receipt?')
+        result = await agent.run(['Review this image.', BinaryContent(b'image', media_type='image/png')])
+    else:
+        agent = Agent(model, output_type=Triage)
+        result = await agent.run('Triage this ticket.')
+
+    assert result.response.model_name == 'test'
+    assert decision_model.requests == []
 
 
 def approve() -> str:
