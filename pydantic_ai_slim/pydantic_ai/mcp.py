@@ -93,7 +93,6 @@ else:
 from . import _mcp, _utils, exceptions, messages, models
 from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
-from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
@@ -1910,9 +1909,7 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         if stop_sequences is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
-        # These are the MCP server's settings, not the user's, so a sampling model that ignores one stays silent.
-        with suppress_unsupported_setting_warnings():
-            model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
+        model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),

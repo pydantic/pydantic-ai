@@ -31,9 +31,9 @@ def warnings_suppressed() -> bool:
 def suppress_warnings() -> Generator[None]:
     """Don't warn about ignored settings from `Model.prepare_request` calls made inside this block.
 
-    For framework code that prepares a request without sending it (to resolve the output mode, or describe the
-    request on a span, possibly in a Temporal workflow), so a request warns once, when the model that sends it
-    prepares it; and for settings the user didn't choose, like the ones an MCP server asks a sampling model for.
+    For framework code that prepares a request without sending it (to resolve the output mode, count its tokens, or
+    describe it on a span, possibly in a Temporal workflow), so a request warns once, when the model that sends it
+    prepares it.
     """
     token = _warnings_suppressed.set(True)
     try:

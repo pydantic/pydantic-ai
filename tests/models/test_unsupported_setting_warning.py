@@ -23,6 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import try_import
 
@@ -139,12 +140,26 @@ def _structured_reply(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'answer': 'done'})])
 
 
+@dataclass(init=False)
+class CountingIgnoringModel(IgnoringModel):
+    """Prepares the request to count its tokens, like the provider models that count tokens through their API."""
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        self.prepare_request(model_settings, model_request_parameters)
+        return RequestUsage(input_tokens=1)
+
+
 @pytest.mark.parametrize('fallback', [False, True])
 async def test_warns_once_per_request(fallback: bool):
-    """Framework code prepares a request without sending it too, to resolve the output mode and describe the request
-    on a span; only the model that sends the request warns.
+    """Framework code prepares a request without sending it too, to resolve the output mode, count its tokens and
+    describe it on a span; only the model that sends the request warns. (`FallbackModel` can't count tokens ahead.)
     """
-    model = IgnoringModel(_structured_reply, model_name='ignoring')
+    model = CountingIgnoringModel(_structured_reply, model_name='ignoring')
     agent = Agent(
         FallbackModel(FunctionModel(_fail), model) if fallback else model,
         output_type=Answer,
@@ -154,7 +169,7 @@ async def test_warns_once_per_request(fallback: bool):
 
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter('always', UnsupportedSettingWarning)
-        result = await agent.run('hello')
+        result = await agent.run('hello', usage_limits=UsageLimits(count_tokens_before_request=not fallback))
 
     assert result.output == Answer(answer='done')
     assert len(record) == 1
