@@ -284,6 +284,13 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     return text
 
 
+def render_question(event: AgentStreamEvent) -> RenderableType | None:
+    """The transcript's lines for an `ask_user_question` call and its answer; `None` for other events."""
+    if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == TOOL_NAME:
+        return render_call(event)
+    return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
+
+
 class AskUserPlugin(Plugin):
     """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
 
@@ -291,6 +298,4 @@ class AskUserPlugin(Plugin):
         return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
-        if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == TOOL_NAME:
-            return render_call(event)
-        return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
+        return render_question(event)
