@@ -6,7 +6,7 @@ import json
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
@@ -56,7 +56,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning, spend
 from pydantic_ai_harness.spend import (
@@ -145,6 +145,7 @@ class _UsageRequestContext:
 
     _usage_responses: tuple[ModelResponse, ...] = ()
     _usage_attempts: tuple[ModelRequestAttempt, ...] = ()
+    _rejected_usage_responses: tuple[ModelResponse, ...] = ()
 
 
 def _response(
@@ -2089,6 +2090,25 @@ def _attempt(
     )
 
 
+@dataclass
+class _RecordingSpendLimits(SpendLimits[AgentDepsT]):
+    """Records the model of each response it accrues, and whether it was accrued as a failed attempt."""
+
+    accrued: list[tuple[str | None, bool]] = field(default_factory=list[tuple[str | None, bool]])
+
+    async def _accrue_safely(
+        self,
+        ctx: RunContext[AgentDepsT],
+        response: ModelResponse,
+        token: Callable[[], str],
+        boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]] = (),
+        *,
+        failed_attempt: bool = False,
+    ) -> Exception | None:
+        self.accrued.append((response.model_name, failed_attempt))
+        return await super()._accrue_safely(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+
+
 class TestFallbackAttempts:
     """A response a `FallbackModel` rejected was billed, though the agent never acted on it."""
 
@@ -2180,8 +2200,15 @@ class TestFallbackAttempts:
             ]
 
         spent: list[Spent] = []
+        recorded: list[list[tuple[str | None, bool]]] = []
         for use_capability in (False, True):
-            guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
+            accrued: list[tuple[str | None, bool]] = []
+            recorded.append(accrued)
+            # An event listener would make the request streamed, where response handlers don't apply, so the
+            # accruals are recorded where `SpendRecordedEvent.failed_attempt` comes from.
+            guard = _RecordingSpendLimits[None](
+                budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens), accrued=accrued
+            )
             first, second = chain()
             if use_capability:
                 agent = Agent(first, deps_type=type(None), capabilities=[guard, Fallback(second, fallback_on=reject)])
@@ -2197,6 +2224,8 @@ class TestFallbackAttempts:
             spent.append((await guard.status())[0].spent)
 
         assert spent[0] == spent[1] == Spent(usd=Decimal('120'), tokens=132, requests=2)
+        # A response either one rejected is reported as a failed attempt, not as the answer.
+        assert recorded[0] == recorded[1] == [('gpt-4o-mini', True), ('gpt-4o', reject_all)]
 
     async def test_rejected_responses_are_charged_when_an_outer_hook_recovers(self):
         """Recovery by a capability outside `SpendLimits` hides the group from the wrapper, not the charge."""

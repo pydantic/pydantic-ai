@@ -4205,7 +4205,7 @@ def test_response_rejected_span(capfire: CaptureLogfire) -> None:
                 'name': 'model request attempt rejected-length',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
-                'status_description': 'Response rejected by a `fallback_on` response handler',
+                'status_description': 'Response rejected',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'rejected-length',
@@ -4217,7 +4217,7 @@ def test_response_rejected_span(capfire: CaptureLogfire) -> None:
                 'name': 'model request attempt rejected-None',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
-                'status_description': 'Response rejected by a `fallback_on` response handler',
+                'status_description': 'Response rejected',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'rejected-None',

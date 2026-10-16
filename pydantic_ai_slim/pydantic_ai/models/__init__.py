@@ -440,6 +440,18 @@ class ModelRequestContext:
         return tuple(self._usage_response_ledger.responses)
 
     @property
+    def _rejected_usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The responses of `_usage_responses` that a hook rejected to make another attempt.
+
+        A response a hook rejected with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        is a failed attempt, like a response a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        rejected, but its usage was counted at the provider boundary, so it stays in `_usage_responses`.
+
+        Private for now: read by the Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.rejected)
+
+    @property
     def _unrejected_usage_responses(self) -> tuple[ModelResponse, ...]:
         """The responses of `_usage_responses` that no hook rejected to make another attempt.
 
