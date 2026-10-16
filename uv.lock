@@ -6631,7 +6631,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "websockets", marker = "extra == 'google-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
-    { name = "websockets", marker = "extra == 'openai-responses-websocket'", specifier = ">=14.0" },
+    { name = "websockets", marker = "extra == 'openai-responses-websocket'", specifier = ">=14.0,<16" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'xai-realtime'", specifier = ">=14.0" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },

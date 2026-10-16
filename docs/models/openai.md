@@ -418,7 +418,7 @@ print(result.output)
 ```
 
 !!! note
-    Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
+    Over HTTP or after changing WebSocket connections, a referenced response must have been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, send the full message history after such a transport change. On the same live Responses WebSocket, its latest cached response can be used for chaining without storage.
 
 #### Using durable conversations
 

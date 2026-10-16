@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Self
 
@@ -47,7 +47,7 @@ class ResponsesWebSocket:
     headers: Mapping[str, str]
     active: bool = False
     closed: bool = False
-    response_ids: set[str] = field(default_factory=set[str])
+    latest_response_id: str | None = None
 
     @classmethod
     async def connect(
@@ -182,7 +182,9 @@ class ResponsesWebSocketStream:
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             self.completed = True
             if isinstance(event, ResponseCompletedEvent):
-                self.websocket.response_ids.add(event.response.id)
+                # With store=false the provider only promises the latest response in this lane's
+                # connection-local cache. An older completed ID may already have been evicted.
+                self.websocket.latest_response_id = event.response.id
             else:
                 # A terminal failure cannot be used as the parent of another response.
                 # Reopen explicitly so no continuation can depend on ambiguous socket state.

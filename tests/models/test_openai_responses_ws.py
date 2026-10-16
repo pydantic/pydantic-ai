@@ -22,6 +22,7 @@ from pydantic_ai import (
     Agent,
     ModelRequest,
     ModelResponse,
+    RunContext,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -30,7 +31,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import SelectModel
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
+from pydantic_ai.models import AbstractModel, Model, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -345,6 +346,32 @@ def empty_completed_events(response_id: str) -> list[Frame]:
     ]
 
 
+def tool_call_events(response_id: str, call_id: str) -> list[Frame]:
+    item: Frame = {
+        'type': 'function_call',
+        'id': 'fc_test',
+        'status': 'completed',
+        'arguments': '{}',
+        'call_id': call_id,
+        'name': 'step',
+    }
+    events = empty_completed_events(response_id)
+    response = events[-1]['response']
+    assert isinstance(response, dict)
+    response['output'] = [item]
+    events[-1]['response'] = response
+    events[-1:-1] = [
+        {
+            'type': 'response.output_item.added',
+            'sequence_number': 1,
+            'output_index': 0,
+            'item': {**item, 'status': 'in_progress', 'arguments': ''},
+        },
+        {'type': 'response.output_item.done', 'sequence_number': 2, 'output_index': 0, 'item': item},
+    ]
+    return events
+
+
 @dataclass
 class ScriptedSocket:
     """Control interruptions and concurrency beneath the real SDK event parser."""
@@ -632,6 +659,148 @@ async def test_history_provenance_across_transports(allow_model_requests: None, 
         {'role': 'user', 'content': 'after socket A on B'},
     ]
     assert all('previous_response_id' not in frame for frame in socket_b.sent)
+
+
+async def test_older_socket_response_replays_history(allow_model_requests: None, sockets: SocketHarness):
+    """Another completed response can evict an earlier store-false parent from the socket cache."""
+    socket = sockets.pending[0]
+    socket.responses = deque(
+        [text_events('first answer', 'resp_first'), text_events('other answer', 'resp_other'), text_events('again')]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+
+    async with model.connect() as connected:
+        agent = Agent(connected, model_settings=settings)
+        first = await agent.run('first question')
+        await agent.run('unrelated question')
+        again = await agent.run('follow up', message_history=first.all_messages())
+
+    assert again.output == 'again'
+    assert len(socket.sent) == 3
+    assert 'previous_response_id' not in socket.sent[2]
+    assert socket.sent[2]['input'] == [
+        {'role': 'user', 'content': 'first question'},
+        {'role': 'assistant', 'content': 'first answer'},
+        {'role': 'user', 'content': 'follow up'},
+    ]
+
+
+async def test_per_step_selection_switches_websocket_and_http(allow_model_requests: None, sockets: SocketHarness):
+    """A selector can change transport inside one run without crossing cache-only IDs."""
+    socket = sockets.pending[0]
+    socket.responses = deque([tool_call_events('resp_socket', 'call_socket'), text_events('done', 'resp_final')])
+    http_requests: list[httpx2.Request] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        http_requests.append(request)
+        response = text_events(response_id='resp_http')[-1]['response']
+        assert isinstance(response, dict)
+        response['output'] = [
+            {
+                'type': 'function_call',
+                'id': 'fc_http',
+                'status': 'completed',
+                'arguments': '{}',
+                'call_id': 'call_http',
+                'name': 'step',
+            }
+        ]
+        return httpx2.Response(200, json=response)
+
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
+        async with source.connect() as connected:
+            selection_contexts: list[tuple[int, Model | None]] = []
+            tool_models: list[AbstractModel] = []
+
+            def select(ctx: ModelSelectionContext[object]) -> Model:
+                selection_contexts.append((ctx.run_step, ctx.model))
+                return connected if ctx.run_step in (1, 3) else source
+
+            agent = Agent(source, deps_type=object, capabilities=[SelectModel(select)], model_settings=settings)
+
+            @agent.tool
+            def step(ctx: RunContext[object]) -> str:
+                tool_models.append(ctx.model)
+                return str(len(tool_models))
+
+            result = await agent.run('start')
+
+    assert result.output == 'done'
+    assert selection_contexts == [(1, source), (2, connected), (3, source)]
+    assert tool_models == [connected, source]
+    assert len(socket.sent) == 2
+    assert len(http_requests) == 1
+    assert all(frame['type'] == 'response.create' and frame['model'] == 'gpt-4o' for frame in socket.sent)
+    assert all(frame['store'] is False for frame in socket.sent)
+    assert socket.sent[0]['input'] == [{'role': 'user', 'content': 'start'}]
+    assert http_requests[0].url.path == '/v1/responses'
+    http_body = FRAME_ADAPTER.validate_json(http_requests[0].content)
+    assert http_body['model'] == 'gpt-4o'
+    assert http_body['store'] is False
+    replayed_socket_turn: list[Frame] = [
+        {'role': 'user', 'content': 'start'},
+        {'type': 'function_call', 'name': 'step', 'arguments': '{}', 'call_id': 'call_socket'},
+        {'type': 'function_call_output', 'call_id': 'call_socket', 'output': '1'},
+    ]
+    assert http_body['input'] == replayed_socket_turn
+    assert 'previous_response_id' not in http_body
+    assert 'resp_socket' not in str(http_body)
+    assert 'previous_response_id' not in socket.sent[1]
+    assert 'resp_http' not in str(socket.sent[1])
+    final_input = socket.sent[1]['input']
+    assert isinstance(final_input, list)
+    assert final_input == [
+        *replayed_socket_turn,
+        {'type': 'function_call', 'name': 'step', 'arguments': '{}', 'call_id': 'call_http'},
+        {'type': 'function_call_output', 'call_id': 'call_http', 'output': '2'},
+    ]
+    assert socket.close_count == 1
+
+
+async def test_per_step_selection_switches_distinct_sockets(allow_model_requests: None, sockets: SocketHarness):
+    """A second same-name socket cannot inherit the first one's cache-only parent ID."""
+    first_socket = sockets.pending[0]
+    first_socket.responses = deque([tool_call_events('resp_first', 'call_first')])
+    second_socket = ScriptedSocket(responses=deque([text_events('done', 'resp_second')]))
+    sockets.pending.append(second_socket)
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+
+    async with AsyncExitStack() as stack:
+        first = await stack.enter_async_context(source.connect())
+        second = await stack.enter_async_context(source.connect())
+        selection_contexts: list[tuple[int, Model | None]] = []
+        tool_models: list[AbstractModel] = []
+
+        def select(ctx: ModelSelectionContext[object]) -> Model:
+            selection_contexts.append((ctx.run_step, ctx.model))
+            return first if ctx.run_step == 1 else second
+
+        agent = Agent(source, deps_type=object, capabilities=[SelectModel(select)], model_settings=settings)
+
+        @agent.tool
+        def step(ctx: RunContext[object]) -> str:
+            tool_models.append(ctx.model)
+            return '1'
+
+        result = await agent.run('start')
+
+    assert result.output == 'done'
+    assert selection_contexts == [(1, source), (2, first)]
+    assert tool_models == [first]
+    assert len(first_socket.sent) == len(second_socket.sent) == 1
+    assert first_socket.sent[0]['input'] == [{'role': 'user', 'content': 'start'}]
+    assert second_socket.sent[0]['input'] == [
+        {'role': 'user', 'content': 'start'},
+        {'type': 'function_call', 'name': 'step', 'arguments': '{}', 'call_id': 'call_first'},
+        {'type': 'function_call_output', 'call_id': 'call_first', 'output': '1'},
+    ]
+    assert 'previous_response_id' not in second_socket.sent[0]
+    assert 'resp_first' not in str(second_socket.sent[0])
+    assert [first_socket.close_count, second_socket.close_count] == [1, 1]
 
 
 async def test_model_selection_uses_connected_model_at_the_selected_precedence(

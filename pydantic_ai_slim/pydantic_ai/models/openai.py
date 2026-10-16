@@ -804,8 +804,9 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     the conversation history across retries and subsequent requests within the same run.
 
     When set to `False` on `OpenAIResponsesModel`, image generation calls in the message history are
-    not sent back to the model, as the API can only look them up in a stored response. The model then
-    doesn't see that it generated those images.
+    not sent back to the model outside a live Responses WebSocket continuation, as the API can only
+    look them up in a stored response or the connection-local cache. The model then doesn't see that
+    it generated those images.
     """
 
     openai_user: str
@@ -1001,9 +1002,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_previous_response_id: Literal['auto'] | str
-    """Reference a prior OpenAI response to continue a conversation server-side, omitting already-stored messages from the input.
+    """Reference a prior OpenAI response to continue a conversation server-side, omitting cached messages from the input.
 
-    - `'auto'`: chain to the most recent `provider_response_id` in the message history.
+    - `'auto'`: chain to the most recent usable `provider_response_id` in the message history.
       If the history contains no such response, no `previous_response_id` is sent.
     - A concrete response ID string: use it as the seed for the first request in the run
       (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
@@ -1014,9 +1015,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state.
 
-    Requires the referenced response to have been stored (see
-    [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
-    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+    Over HTTP or after changing sockets, this requires the referenced response to have been stored
+    (see [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+    which defaults to `True` on OpenAI's side). A live Responses WebSocket can continue from its
+    latest cached response with `openai_store=False` or Zero Data Retention.
 
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
@@ -3351,6 +3353,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
         profile = self.profile
+        span = get_current_span()
+        if span.is_recording() and getattr(span, 'attributes', {}).get('gen_ai.operation.name') == 'chat':
+            span.set_attribute('pydantic_ai.transport', 'websocket' if self._websocket else 'http')
 
         include = self._build_include(model_settings)
 
@@ -3431,13 +3436,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 raise UserError(
                     'Responses WebSocket `extra_body` cannot set `background`, `stream`, `stream_id`, or `type`.'
                 )
-            get_current_span().set_attribute('pydantic_ai.transport', 'websocket')
             return await websocket.request(
                 {key: value for key, value in body.items() if not isinstance(value, Omit)},
                 HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout),
             )
 
-        get_current_span().set_attribute('pydantic_ai.transport', 'http')
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await self.client.responses.create(
@@ -3869,7 +3872,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     return None
                 response_id = message.provider_response_id
                 if (message.provider_details or {}).get('transport') == 'websocket':
-                    if self._websocket is None or response_id not in self._websocket.response_ids:
+                    if self._websocket is None or response_id != self._websocket.latest_response_id:
                         return None
                 elif self._websocket is not None:
                     return None
@@ -3902,7 +3905,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # A WebSocket response may exist only in its connection cache (store=false or
                 # zero data retention). A different socket or HTTP request must replay history.
                 if (m.provider_details or {}).get('transport') == 'websocket':
-                    if self._websocket is None or m.provider_response_id not in self._websocket.response_ids:
+                    if self._websocket is None or m.provider_response_id != self._websocket.latest_response_id:
                         return None, messages
                 elif self._websocket is not None:
                     return None, messages
