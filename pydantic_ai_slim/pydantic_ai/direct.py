@@ -25,6 +25,7 @@ from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
 from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
 from .models._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, check_batch_settings
+from .models._request_timeout import enforce_request_deadline, open_request_stream, start_request_deadline
 
 __all__ = (
     'model_request',
@@ -103,11 +104,13 @@ async def model_request(
     """
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
-    return await model_instance.request(
-        list(messages),
-        model_settings,
-        mrp,
-    )
+    deadline = start_request_deadline(model_instance, model_settings)
+    with enforce_request_deadline(deadline):
+        return await model_instance.request(
+            list(messages),
+            model_settings,
+            mrp,
+        )
 
 
 async def model_request_batch(
@@ -349,7 +352,8 @@ def model_request_stream(
     """
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
-    return model_instance.request_stream(
+    return open_request_stream(
+        model_instance,
         list(messages),
         model_settings,
         mrp,

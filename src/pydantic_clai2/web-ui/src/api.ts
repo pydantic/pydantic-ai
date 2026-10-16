@@ -67,19 +67,24 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   send: (text: string) => call<void>('POST', '/api/input', { text }),
+  /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
+  update: () => call<void>('POST', '/api/input', { text: '/update' }),
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/interrupt'),
   complete: (text: string) => call<CompletionInfo[]>('GET', `/api/complete?text=${encodeURIComponent(text)}`),
   models: () => call<string[]>('GET', '/api/models'),
   selectModel: (name: string) => call<void>('POST', '/api/model', { name }),
   setSwitch: (key: Switch, on: boolean) => call<void>('POST', '/api/switch', { key, on }),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', `/api/questions/${id}`, { answers }),
-  sessions: (query: string) => call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}`),
+  sessions: (query: string, archived = false) =>
+    call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   newSession: (workspace?: string) =>
     call<void>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
   open: (id: string) => call<void>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
+  archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
+  unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   plugins: () => call<PluginRow[]>('GET', '/api/plugins'),
   plugin: (name: string, action: PluginAction) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/${action}`),
@@ -160,7 +165,8 @@ export function connect(onMessage: (message: ServerMessage) => void, onState: (s
     }
     if (!stopped) {
       timer = window.setTimeout(open, delay)
-      delay = Math.min(delay * 2, 8000)
+      // At most 2 seconds apart, so a page waiting on `/update`'s restart is back soon after CLAI is.
+      delay = Math.min(delay * 2, 2000)
     }
   }
   const open = () => {

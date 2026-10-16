@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
+from .._thinking_part import render_replayed_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
@@ -71,7 +72,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..output import StructuredOutputMode
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -2639,6 +2640,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaRequestMCPToolResultBlockParam
                     | BetaCompactionBlockParam
                 ] = []
+                carried_thinking_params: list[BetaTextBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
@@ -2671,12 +2673,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 )
                         elif response_part.content:  # pragma: no branch
-                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            assistant_content_params.append(
-                                BetaTextBlockParam(
-                                    text='\n'.join([start_tag, response_part.content, end_tag]), type='text'
-                                )
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(
+                                response_part.content, self.profile, m
                             )
+                            thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
+                            if carry_in_user_turn:
+                                carried_thinking_params.append(thinking_param)
+                            else:
+                                assistant_content_params.append(thinking_param)
                     elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
@@ -2904,6 +2908,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(response_part)
+                if carried_thinking_params:
+                    # Reasoning replayed in an assistant turn teaches a model that imitates assistant
+                    # formatting to write `<thinking>` tags into its visible answers
+                    # (https://github.com/pydantic/pydantic-ai/issues/5869), so it gets a user turn of its
+                    # own, built here so its position is fixed while mapping. It goes *ahead* of any
+                    # `system` entry this request emitted, so that entry has no user turn to hop and keeps
+                    # the cache boundary it was authored with (see `_place_system_messages_before_generation`).
+                    insert_at = len(anthropic_messages)
+                    while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
+                        insert_at -= 1
+                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
                 if len(assistant_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
