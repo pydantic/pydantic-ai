@@ -67,6 +67,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   send: (text: string) => call<void>('POST', '/api/input', { text }),
+  /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
+  update: () => call<void>('POST', '/api/input', { text: '/update' }),
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/interrupt'),
   complete: (text: string) => call<CompletionInfo[]>('GET', `/api/complete?text=${encodeURIComponent(text)}`),
   models: () => call<string[]>('GET', '/api/models'),

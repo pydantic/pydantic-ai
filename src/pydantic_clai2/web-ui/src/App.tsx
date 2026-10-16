@@ -493,6 +493,19 @@ export function App() {
             </span>
           </div>
         )}
+        {state.update && (
+          <div className="opening-overlay" role="status">
+            <span className="spinner" />
+            {state.update.restarting || connection !== 'open' ? (
+              <span>Restarting CLAI…</span>
+            ) : (
+              <span>
+                Updating CLAI to <span className="opening-title">{state.update.target}</span>…
+                {state.update.line && <span className="update-line mono">{state.update.line}</span>}
+              </span>
+            )}
+          </div>
+        )}
         {connection === 'expired' && (
           <div className="toast expired" role="alert">
             This page belongs to an earlier CLAI. Open the new address it printed.

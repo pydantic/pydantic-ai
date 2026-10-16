@@ -33,6 +33,7 @@ from pydantic_clai2.plugins import (
     SessionEnd,
     TaskEvent,
     TurnEnd,
+    UpdateProgress,
 )
 from pydantic_clai2.ui.browser import open_browser
 
@@ -197,3 +198,6 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_task_event(self, event: TaskEvent) -> None:
         self.remote.workers.observe(event)
+
+    async def on_update_progress(self, event: UpdateProgress) -> None:
+        self.remote.update_progress(event)

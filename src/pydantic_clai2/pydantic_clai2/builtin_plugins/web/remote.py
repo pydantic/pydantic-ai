@@ -61,12 +61,15 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     TurnEnded,
     TurnStarted,
+    UpdateChanged,
+    UpdateInfo,
     Worktree,
     history_items,
     usage_info,
     user_text,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
+from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
@@ -80,6 +83,7 @@ from pydantic_clai2.plugins import (
     TaskCatalog,
     TaskEvent,
     TurnOutcome,
+    UpdateProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
@@ -134,6 +138,10 @@ class Remote:
         """The theme browsers were last sent, so a command that changes it sends it again."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
+        self.version = installed().label
+        self.update: UpdateInfo | None = None
+        """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
+        self._uv_output: list[str] = []
 
     # What the browser sees.
 
@@ -155,6 +163,8 @@ class Remote:
             tasks=self.tasks(),
             task_items=self.workers.items(),
             follows_workspace=self.host.sessions is not None and self.host.sessions.follows_workspace,
+            version=self.version,
+            update=self.update,
         )
 
     def theme(self) -> ThemeInfo:
@@ -272,6 +282,21 @@ class Remote:
         self.publish_status()
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
+
+    def update_progress(self, event: UpdateProgress) -> None:
+        """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
+        if event.stage == 'installing':
+            self._uv_output = []
+            self.update = UpdateInfo(target=event.target)
+        elif event.stage == 'output':
+            self._uv_output.append(event.text)
+            self.update = UpdateInfo(target=event.target, line=event.text)
+        else:
+            if self._uv_output:
+                level = 'error' if event.stage == 'failed' else 'info'
+                self.hub.publish(Notice(text='\n'.join(self._uv_output), level=level, command='uv'))
+            self.update = UpdateInfo(target=event.target, restarting=True) if event.stage == 'restarting' else None
+        self.hub.publish(UpdateChanged(update=self.update))
 
     # What the browser does.
 
