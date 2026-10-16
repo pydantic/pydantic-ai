@@ -24,7 +24,7 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import Model
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
 
 try:
@@ -40,7 +40,6 @@ except ModuleNotFoundError as _import_error:  # pragma: no cover - optional SDK 
 
 from ._compat import (
     CapabilityMethodDeclaration,
-    RenderRunContext,
     RenderRunContextCodec,
     ToolsetCallToolParams,
     function_tool_original_name,
@@ -333,14 +332,6 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         if agent is None:  # pragma: no cover - binding always supplies the agent
             raise UserError('`RenderWorkflows` must be bound before a function tool can run.')
         return await prepare_function_call_params(agent, toolset, params)
-
-    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-        guarded = super()._durable_run_context(ctx)
-        if isinstance(ctx, RenderRunContext) and isinstance(
-            guarded, RenderRunContext
-        ):  # pragma: no branch - worker hook
-            guarded.restore_snapshots(ctx)
-        return guarded
 
     def _workspace_call_transport(self) -> RenderWorkspaceCallTransport[AgentDepsT]:
         return RenderWorkspaceCallTransport(self._codec())
