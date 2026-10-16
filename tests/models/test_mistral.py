@@ -22,6 +22,7 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -170,6 +171,32 @@ class MockMistralAI:
                 response = cast(MistralChatCompletionResponse, self.completions)
         self.index += 1
         return response
+
+
+async def test_tool_call_args_sent_as_canonical_json_string(allow_model_requests: None):
+    """String and dict args for the same call go on the wire as the same compact JSON string.
+
+    Mistral returns arguments with whitespace (`{"city": "Paris"}`), while a history loaded back from a UI
+    protocol or storage may hold the same call's args as a dict. Sending both as one string keeps the request
+    bytes, and the prompt cache, stable across that round trip.
+    """
+
+    def history(args: str | dict[str, Any]) -> list[ModelMessage]:
+        return [
+            ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+            ModelResponse(parts=[ToolCallPart('get_weather', args, tool_call_id='call_1')]),
+            ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ]
+
+    sent: list[Any] = []
+    for args in ('{"city": "Paris", "days": 2}', {'city': 'Paris', 'days': 2}):
+        mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='OK')))
+        model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+        await Agent(model).run(message_history=history(args))
+        assistant = cast(MockMistralAI, mock_client).chat_completion_kwargs[0]['messages'][1]
+        sent.append(assistant.tool_calls[0].function.arguments)
+
+    assert sent == snapshot(['{"city":"Paris","days":2}', '{"city":"Paris","days":2}'])
 
 
 def completion_message(

@@ -4,6 +4,7 @@ import { cell } from '../code'
 import { highlight } from '../markdown'
 import type { Item, StatusInfo, SubCall } from '../protocol'
 import type { Entry } from '../state'
+import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { codeCalls, codeResult } from './ToolCard'
 import { CloseIcon, TerminalIcon } from './icons'
 
@@ -159,12 +160,10 @@ export function MontyPanel({
   onError: (message: string) => void
 }) {
   const found = cells(entries)
-  const scroller = useRef<HTMLDivElement>(null)
-  const last = found[found.length - 1]?.item
-  useLayoutEffect(() => {
-    const element = scroller.current
-    if (element) element.scrollTop = element.scrollHeight
-  }, [last])
+  const { scroller, behind, jump } = useStickToBottom<HTMLDivElement>(
+    found[found.length - 1]?.item,
+    entries.findLast((entry) => entry.kind === 'user'),
+  )
   const codeMode = status?.code_mode || status?.speculation
   return (
     <aside className="monty" aria-label="Monty, the run_code sandbox">
@@ -188,6 +187,7 @@ export function MontyPanel({
         ) : (
           found.map((entry) => <CellView key={entry.item.id} {...entry} />)
         )}
+        <JumpToLatest shown={behind} onJump={jump} />
       </div>
       <CellInput
         disabled={!codeMode || running}

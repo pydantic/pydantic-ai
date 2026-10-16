@@ -2680,10 +2680,15 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-def test_args_as_json_str_valid_json_verbatim():
-    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
-    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
-    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+def test_args_as_json_str_valid_json_canonical():
+    """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
+
+    Key order is preserved and non-ASCII text stays unescaped, so only insignificant whitespace (and
+    number spelling) changes.
+    """
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": [2, 3.50], "c": "Z\\u00fcrich ☕"}')
+    assert part.args_as_json_str() == snapshot('{"b":1,"a":[2,3.5],"c":"Zürich ☕"}')
+    assert part.args_as_json_str() == ToolCallPart(tool_name='test_tool', args=part.args_as_dict()).args_as_json_str()
 
 
 def test_args_as_json_str_dict_args():
