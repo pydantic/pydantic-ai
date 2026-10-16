@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -28,9 +29,14 @@ class MessagesBuilder:
 
     messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
 
+    _sealed_tail: ModelMessage | None = field(default=None, init=False, repr=False, compare=False)
+    """The last message `_append_whole` added, which `add` never extends."""
+
     def add(self, part: ModelRequestPart | ModelResponsePart) -> None:
         """Add a new part, creating a new request or response message if necessary."""
         last_message = self.messages[-1] if self.messages else None
+        if last_message is not None and last_message is self._sealed_tail:
+            last_message = None
         if isinstance(part, get_union_args(ModelRequestPart)):
             part = cast(ModelRequestPart, part)
             if isinstance(last_message, ModelRequest):
@@ -43,6 +49,12 @@ class MessagesBuilder:
                 last_message.parts = [*last_message.parts, part]
             else:
                 self.messages.append(ModelResponse(parts=[part]))
+
+    def _append_whole(self, messages: Sequence[ModelMessage]) -> None:
+        """Append complete messages, which later `add` calls start a new message after rather than extend."""
+        if messages:
+            self.messages.extend(messages)
+            self._sealed_tail = messages[-1]
 
     def checkpoint(self) -> BuilderCheckpoint:
         """Snapshot the current builder state. Pair with [`last_modified`][pydantic_ai.ui.MessagesBuilder.last_modified]."""

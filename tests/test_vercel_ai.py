@@ -113,6 +113,7 @@ with try_import() as starlette_import_successful:
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
+        StepStartUIPart,
         SubmitMessage,
         TextUIPart,
         ToolApprovalRequested,
@@ -11708,6 +11709,7 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     def work(ctx: RunContext[object]) -> str:
         ctx.enqueue('Background result: 42')
         ctx.enqueue(SystemPromptPart(content='Announcement'))
+        ctx.enqueue(ModelResponse(parts=[TextPart('Synthetic reply')]), 'Synthetic follow-up')
         return 'started'
 
     user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
@@ -11749,7 +11751,11 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         for chunk in enqueued_chunks
     ]
     announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
-    assert streamed == [[('user', 'Background result: 42')], *announcement]
+    assert streamed == [
+        [('user', 'Background result: 42')],
+        *announcement,
+        [('assistant', 'Synthetic reply'), ('user', 'Synthetic follow-up')],
+    ]
     # Each delivery is keyed on its own enqueue call, so the nested message IDs don't collide.
     nested_ids = [message['id'] for chunk in enqueued_chunks for message in chunk['data']['messages']]
     assert len(set(nested_ids)) == len(nested_ids)
@@ -11777,6 +11783,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         ('request', [('tool-return', 'started')]),
         ('request', [('user-prompt', 'Background result: 42')]),
         *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
+        # An enqueued response stays its own message: the model's next text doesn't extend it.
+        ('response', [('text', 'Synthetic reply')]),
+        ('request', [('user-prompt', 'Synthetic follow-up')]),
         ('response', [('text', 'done')]),
     ]
 
@@ -11845,6 +11854,39 @@ def test_enqueued_messages_keep_their_own_message_ids() -> None:
             ('request', {'ui_message_id': 'enqueued-user-1'}),
             ('response', {'ui_message_id': 'assistant-2'}),
             ('request', {'ui_message_id': 'enqueued-later'}),
+        ]
+    )
+
+
+def test_enqueued_response_is_not_extended_by_the_next_step() -> None:
+    """A payload ending in a response, e.g. one whose trailing system prompt stayed on the server, is a boundary."""
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [
+                            {'id': 'enqueued-1', 'role': 'assistant', 'parts': [{'type': 'text', 'text': 'synthetic'}]}
+                        ]
+                    },
+                ),
+                StepStartUIPart(),
+                TextUIPart(text='reply'),
+            ],
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert [
+        (message.kind, _model_visible([message])[0][1], (message.metadata or {}).get('__pydantic_ai__'))
+        for message in loaded
+    ] == snapshot(
+        [
+            ('response', [('text', 'synthetic')], {'ui_message_id': 'enqueued-1'}),
+            ('response', [('text', 'reply')], {'ui_message_id': 'assistant-1'}),
         ]
     )
 

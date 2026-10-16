@@ -430,7 +430,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     ):
                         for return_part in pending_returns:
                             builder.add(return_part)
-                        builder.messages.extend(pending_enqueued)
+                        builder._append_whole(pending_enqueued)  # pyright: ignore[reportPrivateUsage]
                         pending_returns = []
                         pending_enqueued = []
 
@@ -491,7 +491,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if pending_returns:
                                 pending_enqueued.extend(loaded)
                             else:
-                                builder.messages.extend(loaded)
+                                builder._append_whole(loaded)  # pyright: ignore[reportPrivateUsage]
                             enqueued.extend(loaded)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
@@ -663,7 +663,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         assert_never(part)
                 for return_part in pending_returns:
                     builder.add(return_part)
-                builder.messages.extend(pending_enqueued)
+                builder._append_whole(pending_enqueued)  # pyright: ignore[reportPrivateUsage]
             else:
                 assert_never(msg.role)
 

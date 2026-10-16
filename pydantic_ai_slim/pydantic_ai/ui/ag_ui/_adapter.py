@@ -624,7 +624,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
                         # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                         # They carry their own message ids, so the activity's id isn't kept on them.
-                        builder.messages.extend(
+                        builder._append_whole(  # pyright: ignore[reportPrivateUsage]
                             cls.load_messages(
                                 _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
                             )

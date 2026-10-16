@@ -9051,6 +9051,7 @@ def _enqueuing_agent() -> Agent[object, str]:
     def work(ctx: RunContext[object]) -> str:
         ctx.enqueue('Background result: 42')
         ctx.enqueue(SystemPromptPart(content='Announcement'))
+        ctx.enqueue(ModelResponse(parts=[TextPart('Synthetic reply')]), 'Synthetic follow-up')
         return 'started'
 
     return agent
@@ -9102,7 +9103,11 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         for activity in activities
     ]
     announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
-    assert streamed == [[('user', 'Background result: 42')], *announcement]
+    assert streamed == [
+        [('user', 'Background result: 42')],
+        *announcement,
+        [('assistant', 'Synthetic reply'), ('user', 'Synthetic follow-up')],
+    ]
     # Delivered after the tool result and before the step that responds to it, as in server history.
     types = [event['type'] for event in events]
     assert types.index('TOOL_CALL_RESULT') < types.index('ACTIVITY_SNAPSHOT') < types.index('TEXT_MESSAGE_CONTENT')
@@ -9124,6 +9129,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         ('request', [('tool-return', 'started')]),
         ('request', [('user-prompt', 'Background result: 42')]),
         *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
+        # An enqueued response stays its own message: the model's next text doesn't extend it.
+        ('response', [('text', 'Synthetic reply')]),
+        ('request', [('user-prompt', 'Synthetic follow-up')]),
         ('response', [('text', 'done')]),
     ]
 
@@ -9181,6 +9189,26 @@ def test_enqueued_messages_keep_their_own_message_ids() -> None:
     loaded = AGUIAdapter.load_messages([AssistantMessage(id='assistant-1', content='hello'), activity])
     assert [(message.kind, (message.metadata or {}).get('__pydantic_ai__')) for message in loaded] == snapshot(
         [('response', {'ui_message_id': 'assistant-1'}), ('request', {'ui_message_id': 'enqueued-1'})]
+    )
+
+
+def test_enqueued_response_is_not_extended_by_the_next_message() -> None:
+    """A payload ending in a response, e.g. one whose trailing system prompt stayed on the server, is a boundary."""
+    activity = ActivityMessage(
+        id='activity-1',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'enqueued-1', 'role': 'assistant', 'content': 'synthetic'}]},
+    )
+
+    loaded = AGUIAdapter.load_messages([activity, AssistantMessage(id='assistant-1', content='reply')])
+    assert [
+        (message.kind, _model_visible([message])[0][1], (message.metadata or {}).get('__pydantic_ai__'))
+        for message in loaded
+    ] == snapshot(
+        [
+            ('response', [('text', 'synthetic')], {'ui_message_id': 'enqueued-1'}),
+            ('response', [('text', 'reply')], {'ui_message_id': 'assistant-1'}),
+        ]
     )
 
 
