@@ -28,7 +28,14 @@ from pydantic_ai._instrumentation import (
     get_instructions_source as _get_history_instructions_source,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
+from pydantic_ai._utils import (
+    ScopedTask,
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    is_str_dict,
+    now_utc,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -1571,7 +1578,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
-        wrap_task = asyncio.create_task(wrap_awaitable)
+        # The stream teardown waits for the request through `ScopedTask`, so a cancelled `anyio` scope around the
+        # consumer can't cut the model stream's shielded close short.
+        wrap = ScopedTask(wrap_awaitable)
+        wrap_task = wrap.task
 
         async def _wrap_response() -> _messages.ModelResponse | None:
             """The response `wrap_model_request` finishes with after abandoning the stream.
@@ -1689,7 +1699,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 else:
                     try:
                         try:
-                            model_response = await wrap_task
+                            model_response = await wrap.result()
                         except exceptions.SkipModelRequest as e:
                             # `wrap_model_request` skipped the request after the stream opened, e.g. a parallel
                             # `InputGuardrail` that blocked the prompt. The consumer then streamed the skip's

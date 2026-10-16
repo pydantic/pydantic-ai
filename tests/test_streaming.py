@@ -6000,6 +6000,34 @@ async def test_get_output_after_stream_output():
     )
 
 
+async def test_run_stream_early_exit_in_cancelled_scope_closes_model_stream():
+    """Leaving `run_stream()` early inside a cancelled `anyio` scope still closes the model stream before it exits.
+
+    The cancelled scope re-cancels the consumer at every checkpoint of the teardown; none of those cancels may cut short
+    the stream's shielded close. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    stream_closed = False
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_closed
+        try:
+            while True:
+                yield 'chunk '
+        finally:
+            stream_closed = True
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with anyio.CancelScope() as scope:
+            async with agent.run_stream('hello') as result:
+                stream = result.stream_text(delta=True, debounce_by=None)
+                assert await anext(stream)
+                scope.cancel()
+
+    assert stream_closed
+
+
 @pytest.mark.parametrize('delta', [True, False])
 @pytest.mark.parametrize('debounce_by', [None, 0.1])
 async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):
