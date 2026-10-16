@@ -2,7 +2,7 @@
 
 This page lists every request Pydantic AI makes on its own initiative, what each one carries, and how to turn it off. It doesn't cover the requests you configure: to model providers, MCP servers, or from your own tools.
 
-One of them, [the version check](#the-version-check), goes to a server run by Pydantic, which uses its `User-Agent` in aggregate to understand which versions and platforms Pydantic AI is used on. It only runs on a developer's machine, never in CI, under `pytest` or in a deployed service, and it [can be turned off](#turning-the-version-check-off) with one environment variable.
+One of them, [the version check](#the-version-check), goes to a server run by Pydantic, which uses its `User-Agent` in aggregate to understand which versions and platforms Pydantic AI is used on. It only runs where a banner is displayed (at a terminal or for a coding agent, never in CI or under `pytest`), which in practice means a developer's machine, and it [can be turned off](#turning-the-version-check-off) with one environment variable.
 
 ## Model provider requests
 
