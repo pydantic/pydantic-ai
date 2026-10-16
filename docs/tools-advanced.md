@@ -982,7 +982,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
-    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape.
+    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape. The exception is the legacy [`AsyncAnthropicBedrock` client](models/anthropic.md#aws-bedrock), where recorded `bm25` calls replay as `regex` unless the run uses `ToolSearch(strategy='bm25')`.
 
 #### Tool-availability history portability
 
