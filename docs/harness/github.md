@@ -20,7 +20,7 @@ Set `GITHUB_TOKEN` to a GitHub personal access token, or pass `auth=` a token. S
 from pydantic_ai import Agent
 from pydantic_ai_harness.github import GitHub
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[GitHub()])
+agent = Agent('{{ openai:medium }}', capabilities=[GitHub()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -55,7 +55,7 @@ def github_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.github_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[GitHub(auth=github_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[GitHub(auth=github_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only`, `toolsets`, and `url` still apply to every run.
@@ -84,7 +84,7 @@ def github(ctx: RunContext[Deps]) -> GitHub[Deps] | None:
     return GitHub(auth=ctx.deps.github_token, url=ctx.deps.github_mcp_url or GITHUB_MCP_URL)
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[DynamicCapability(github, id='github')])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[DynamicCapability(github, id='github')])
 ```
 
 With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `github`, so `defer_loading=True` works without one. To add more than one `GitHub` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
@@ -106,7 +106,7 @@ from pydantic_ai_harness.github import GitHub
 
 capability = GitHub()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
