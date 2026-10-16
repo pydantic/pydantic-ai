@@ -1422,7 +1422,10 @@ Turning the plugin on opens its settings menu, like any plugin with a
 change anything, including the key. Type to filter the rows. Enter edits a row,
 `R` restores its default, and **Save & close** or Esc leaves the menu. Each
 change is saved to the plugin's settings as soon as you make it and applies from
-the next run, with no reinstall.
+the next run, with no reinstall. The same rows show in the
+[web UI](#web-this-session-in-your-browser)'s plugins panel, where the Sign-in
+and Key rows' **Change…** buttons open the sign-in choice, the key picker, and
+the browser sign-in's waiting screen as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1446,9 +1449,9 @@ and user the agent acts as.
 #### Keys: `/keys` holds the secret, Pylon holds its name
 
 The token lives in [`/keys`](#saved-api-keys), not in plugin settings, which are
-plaintext SQLite. The Key row uses the shared saved-key picker, which is
-searchable, and Esc cancels it. Choose an existing key, or choose **Enter a
-different API key** to type a masked token. CLAI saves that token in `/keys` as
+plaintext SQLite. The Key row uses the shared saved-key picker, and Esc cancels
+it. Choose an existing key, or choose **Enter a different API key** to type a
+masked token; an empty one changes nothing. CLAI saves that token in `/keys` as
 `PYLON_ACCESS_TOKEN`, the name harness `Pylon` documents. If that name already
 exists, CLAI asks before replacing it, since other connections may use it. The
 name is only a label: CLAI does not read an exported `PYLON_ACCESS_TOKEN`.
@@ -2630,8 +2633,7 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`. The built-in `github` and
-[`pylon`](#configuring-pylon) plugins still work this way.
+`api_keys.prompt_api_key`. The built-in `github` plugin still works this way.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
