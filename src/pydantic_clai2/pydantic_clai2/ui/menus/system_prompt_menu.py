@@ -8,6 +8,8 @@ terminal and the web UI show the same rows, each asking through its own `Dialogs
 
 from collections.abc import Callable, Sequence
 
+from anyio import to_thread
+
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
@@ -152,7 +154,8 @@ class SystemPromptSource:
         )
         if edited is None or edited == self.instructions:
             return []
-        return [self._save(edited)]
+        # Saving waits for any other save of a setting, so it runs off the loop, as the source's methods do.
+        return [await to_thread.run_sync(self._save, edited)]
 
     async def append(self, dialogs: Dialogs) -> list[str]:
         """Add a paragraph after your instructions."""
@@ -164,7 +167,7 @@ class SystemPromptSource:
         )
         if not added:
             return []
-        return [self._save('\n\n'.join(part for part in (self.instructions, added) if part))]
+        return [await to_thread.run_sync(self._save, '\n\n'.join(part for part in (self.instructions, added) if part))]
 
     async def view(self, dialogs: Dialogs) -> list[str]:
         """Show the full system prompt, read-only."""
