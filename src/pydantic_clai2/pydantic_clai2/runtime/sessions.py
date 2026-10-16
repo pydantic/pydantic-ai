@@ -77,17 +77,17 @@ class Sessions(Generic[DepsT, OutputT]):
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
-        """Moves CLAI into a directory, so `/resume ID` continues a session where it was saved; set by `clai2 --web` only."""
+        """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
 
     @property
     def follows_workspace(self) -> bool:
-        """Whether `/resume ID` moves CLAI into the session's own directory rather than refusing another one."""
+        """Whether `/resume ID` moves the session into its own directory rather than refusing another one."""
         return self.relocate is not None
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, unarchive: bool = True) -> str:
         """Restore a saved session, then show its history.
 
-        With `relocate`, CLAI first moves into the directory the session was saved in, unless the
+        With `relocate`, the session first moves into the directory it was saved in, unless the
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         """

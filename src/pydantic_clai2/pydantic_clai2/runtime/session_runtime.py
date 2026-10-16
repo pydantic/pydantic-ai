@@ -25,7 +25,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
-from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
+from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -72,7 +72,6 @@ from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
-from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
@@ -91,13 +90,13 @@ from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, Promp
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._branding import print_banner
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
+from pydantic_clai2.ui.rendering.welcome import print_welcome
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -130,15 +129,16 @@ def create_shell(
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
-    what the session shares with the others in this CLAI; without one, it gets its own over `store`, which
-    is otherwise unused. `signals` lets Ctrl-C cancel this session's turns; only the session the terminal
-    shows takes it.
+    what the session shares with the others in this CLAI; without one, it gets its own over `store`.
+    `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
         if settings is not None
         else Settings(model=None)
     )
+    if process is not None and store is not None:
+        raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
     process = process or ClaiProcess.open(store)
     store, conversations = process.store, process.conversations
     transcript = transcript if transcript is not None else TranscriptBuffer()
@@ -883,7 +883,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
                 context = await run_shell_command(
-                    command, console=self.console, interrupts=self.interrupts, cwd=self.session.workspace
+                    command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
                 )
                 await self.session.commit_messages(
                     [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
@@ -1066,29 +1066,6 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     steering_receive.close()
                     send.close()
         return ended
-
-
-def print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
-    console.print()
-    print_banner(console)
-    console.print(f'pydantic-clai2 {installed().label}', style=theme.color(theme.MUTED))
-    if worktree is not None:
-        # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
-        console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
-    console.print(
-        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
-        style=theme.color(theme.MUTED),
-    )
-    _report_project(project, console)
-
-
-def _report_project(project: ProjectSettings, console: Console) -> None:
-    if project.path is None:
-        return
-    console.print(f'Project settings: {project.path}', style=theme.color(theme.MUTED))
-    if project.unknown:
-        console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.color(theme.WARNING))
 
 
 def _report_interrupt(completed: bool, console: Console) -> None:

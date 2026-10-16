@@ -99,7 +99,7 @@ class SessionCatalog(Protocol):
 
     @property
     def follows_workspace(self) -> bool:
-        """Whether `/resume ID` moves CLAI into the directory a session was saved in, as under `clai2 --web`.
+        """Whether `/resume ID` moves the session into the directory it was saved in, as under `clai2 --web`.
 
         Otherwise it refuses a session saved in another directory than the one CLAI runs in.
         """
