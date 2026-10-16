@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
@@ -57,6 +58,7 @@ with try_import() as imports_successful:
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('xai', XaiProvider, 'XAI_API_KEY'),
+        ('elevenlabs', ElevenLabsProvider, 'ELEVENLABS_API_KEY'),
         ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
         ('meta', MetaProvider, 'META_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),

@@ -42,8 +42,10 @@ from .ws_cassettes import RealtimeCassette
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import AzureRealtimeModel
+    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
@@ -53,8 +55,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
-_Route = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google']
-_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google']
+_Route = Literal['openai', 'openai-live', 'azure', 'xai', 'elevenlabs', 'google', 'gateway-openai', 'gateway-google']
+_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'elevenlabs', 'google']
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,18 @@ REALTIME_PARITY_CASES = [
         supports_interruption=True,
         supports_native_tools=False,
         supports_text_output=False,  # Grok Voice always speaks
+    ),
+    # TODO(elevenlabs-launch): the launch model id, and each flag as verified live (they mirror the profile).
+    RealtimeParityCase(
+        id='elevenlabs-current',
+        model_kind='elevenlabs',
+        model_name='eleven-voice',
+        route='elevenlabs',
+        supports_image_input=False,
+        supports_manual_turn_control=True,
+        supports_interruption=True,
+        supports_native_tools=False,
+        supports_text_output=False,
     ),
     RealtimeParityCase(
         id='google-current',
@@ -263,6 +277,9 @@ def _model(
     if case.model_kind == 'xai':
         assert isinstance(provider, XaiProvider)
         return XaiRealtimeModel(case.model_name, provider=provider, settings=settings)
+    if case.model_kind == 'elevenlabs':
+        assert isinstance(provider, ElevenLabsProvider)
+        return ElevenLabsRealtimeModel(case.model_name, provider=provider, settings=settings)
     return GoogleRealtimeModel(case.model_name, provider=provider, settings=settings)
 
 

@@ -54,7 +54,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live']
+ProviderName = Literal['openai', 'gemini', 'xai', 'elevenlabs', 'openai_live']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -113,6 +113,7 @@ _SECRET_ENV_VARS = (
     'GEMINI_API_KEY',
     'GOOGLE_API_KEY',
     'XAI_API_KEY',
+    'ELEVENLABS_API_KEY',
 )
 
 
@@ -668,6 +669,11 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
+    if provider == 'elevenlabs':
+        # Same raw-frame engine as xAI: an OpenAI-protocol clone dialed with the `websockets` library.
+        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
+
+        return rt_elevenlabs.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'

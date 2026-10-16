@@ -69,7 +69,7 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
 
 
 ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
-OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
+OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai', 'elevenlabs'})
 GEMINI = frozenset({'gemini'})
 
 
@@ -726,7 +726,8 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
     ),
     evidence='simulated',
     codes=frozenset({'history.phantom_turn'}),
-    providers=frozenset({'openai', 'azure'}),
+    # TODO(elevenlabs-launch): drop `elevenlabs` if its server doesn't share the OpenAI behavior this needs.
+    providers=frozenset({'openai', 'azure', 'elevenlabs'}),
     # No more phantom turns than stops taken back: each of those makes at most one.
     matches=lambda sim, violation: violation.context.get('extra', 0) <= len(sim.truth.speech_stopped_uncommitted),
 )

@@ -1,4 +1,4 @@
-"""The simulation of a session with an OpenAI Realtime protocol model (OpenAI, Azure OpenAI, xAI)."""
+"""The simulation of a session with an OpenAI Realtime protocol model (OpenAI, Azure OpenAI, xAI, ElevenLabs)."""
 
 from __future__ import annotations as _annotations
 
@@ -6,18 +6,25 @@ import asyncio
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
 
 from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
 from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel
-from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, ElevenLabsRealtimeModelSettings
+from pydantic_ai.realtime.openai import (
+    OpenAIRealtimeConnection,
+    OpenAIRealtimeModel,
+    OpenAIRealtimeModelSettings,
+    ServerVAD,
+)
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 from pydantic_ai.realtime.xai import XaiRealtimeModel
 
@@ -35,7 +42,7 @@ class OpenAIOptions:
     turn_detection: Literal['server_vad', 'manual'] = 'server_vad'
     transcription: bool = True
     dialect: Dialect = 'openai'
-    """Which provider's model the session connects to: OpenAI, Azure OpenAI, or xAI Grok Voice."""
+    """Which provider's model the session connects to: OpenAI, Azure OpenAI, xAI Grok Voice, or ElevenLabs."""
     vad_interrupts: bool = True
     """Server VAD's `interrupt_response`: whether the user starting to speak cancels the active response."""
     vad_responds: bool = True
@@ -56,9 +63,7 @@ class OpenAISimulation(Simulation):
         super().__init__(seed=seed, options=options, strict=strict)
         self.openai = openai or OpenAIOptions()
         self.provider = self.openai.dialect
-        self.server = OpenAIServer(
-            dialect=self.openai.dialect, model='grok-voice-latest' if self.openai.dialect == 'xai' else 'gpt-realtime'
-        )
+        self.server = OpenAIServer(dialect=self.openai.dialect, model=_SERVED_MODELS[self.openai.dialect])
         self.deferred_requests = 0
         """How many requests for a response the connection deferred behind an active one."""
         self.requests_cut_off = 0
@@ -116,6 +121,10 @@ class OpenAISimulation(Simulation):
             )
         if self.openai.dialect == 'xai':
             return XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='simulated'))
+        if self.openai.dialect == 'elevenlabs':
+            return ElevenLabsRealtimeModel(
+                _SERVED_MODELS['elevenlabs'], provider=ElevenLabsProvider(api_key='simulated')
+            )
         return OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='simulated'))
 
     def model_settings(self) -> RealtimeModelSettings:
@@ -130,11 +139,15 @@ class OpenAISimulation(Simulation):
             and vad.dialect != 'xai'
             and not (vad.vad_interrupts and vad.vad_responds)
         ):
-            settings['openai_turn_detection'] = {
+            server_vad: ServerVAD = {
                 'type': 'server_vad',
                 'interrupt_response': vad.vad_interrupts,
                 'create_response': vad.vad_responds,
             }
+            if vad.dialect == 'elevenlabs':
+                cast(ElevenLabsRealtimeModelSettings, settings)['elevenlabs_turn_detection'] = server_vad
+            else:
+                settings['openai_turn_detection'] = server_vad
         return settings
 
     @contextmanager
@@ -249,6 +262,16 @@ class OpenAISimulation(Simulation):
             return False
         server.network.deliver()
         return True
+
+
+# TODO(elevenlabs-launch): the ElevenLabs launch model id.
+_SERVED_MODELS: dict[Dialect, str] = {
+    'openai': 'gpt-realtime',
+    'azure': 'gpt-realtime',
+    'xai': 'grok-voice-latest',
+    'elevenlabs': 'eleven-voice',
+}
+"""The model each dialect's server reports in `session.created`."""
 
 
 def _options(dialect: Dialect) -> st.SearchStrategy[OpenAIOptions]:
@@ -393,3 +416,9 @@ class XaiMachine(OpenAIMachine):  # pragma: lax no cover (driven only by randomi
     """Randomized traces against the simulated server speaking as xAI Grok Voice."""
 
     provider_options = _options('xai')
+
+
+class ElevenLabsMachine(OpenAIMachine):  # pragma: lax no cover (driven only by randomized exploration)
+    """Randomized traces against the simulated server speaking as ElevenLabs."""
+
+    provider_options = _options('elevenlabs')

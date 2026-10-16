@@ -27,6 +27,7 @@ from pydantic_ai.realtime.azure import (
     _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeConnection
 from pydantic_ai.realtime.google import GoogleRealtimeConnection
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 from pydantic_ai.realtime.openai_live import OpenAILiveConnection
@@ -34,7 +35,7 @@ from pydantic_ai.realtime.xai import XaiRealtimeConnection
 
 from ..ws_cassettes import CassetteClose, RealtimeCassette
 
-Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'gemini', 'openai-live']
+Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'elevenlabs', 'gemini', 'openai-live']
 
 CASSETTES_DIR = Path(__file__).parent.parent / 'cassettes'
 
@@ -45,6 +46,7 @@ _MODULE_PROTOCOLS: dict[str, Protocol] = {
     'test_azure_ws_sideband': 'azure',
     'test_azure_voice_live_ws': 'azure-voice-live',
     'test_xai_ws': 'xai',
+    'test_elevenlabs_ws': 'elevenlabs',
     'test_google_ws': 'gemini',
     'test_openai_live_ws': 'openai-live',
     'test_openai_live_ws_sideband': 'openai-live',
@@ -55,6 +57,7 @@ _PARITY_PROTOCOLS: dict[str, Protocol] = {
     'gateway-openai': 'openai',
     'azure': 'azure',
     'xai': 'xai',
+    'elevenlabs': 'elevenlabs',
     'google': 'gemini',
     'gateway-google': 'gemini',
     'openai-live': 'openai-live',
@@ -189,6 +192,8 @@ def _connection(protocol: Protocol, frames: list[dict[str, Any]], close: Cassett
         return OpenAILiveConnection(socket)
     if protocol == 'xai':
         return XaiRealtimeConnection(socket)
+    if protocol == 'elevenlabs':
+        return ElevenLabsRealtimeConnection(socket)
     if protocol == 'azure':
         return AzureRealtimeConnection(socket)
     if protocol == 'azure-voice-live':

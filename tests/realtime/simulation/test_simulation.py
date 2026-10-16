@@ -35,7 +35,14 @@ with try_import() as imports_successful:
     from ._live import LiveMachine, LiveSimulation
     from ._machine import KNOWN_HIT_COUNTS
     from ._openai_server import Dialect
-    from ._openai_simulation import AzureMachine, OpenAIMachine, OpenAIOptions, OpenAISimulation, XaiMachine
+    from ._openai_simulation import (
+        AzureMachine,
+        ElevenLabsMachine,
+        OpenAIMachine,
+        OpenAIOptions,
+        OpenAISimulation,
+        XaiMachine,
+    )
     from ._simulation import FindingReproduced, SessionOptions, Simulation
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs or hypothesis not installed')
@@ -61,6 +68,7 @@ def exploration_settings() -> settings:
         pytest.param(OpenAIMachine, id='openai'),
         pytest.param(AzureMachine, id='azure'),
         pytest.param(XaiMachine, id='xai'),
+        pytest.param(ElevenLabsMachine, id='elevenlabs'),
         pytest.param(GeminiMachine, id='gemini'),
         pytest.param(LiveMachine, id='gpt-live'),
     ]
@@ -1207,7 +1215,7 @@ def run_clean(sim: Simulation, scenario: Callable[[Any], object]) -> None:
         s.check_handoff()
 
 
-@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai', 'elevenlabs'])
 def test_baseline_openai_protocol_conversation(dialect: str) -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()

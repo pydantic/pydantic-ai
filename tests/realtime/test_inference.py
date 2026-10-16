@@ -25,6 +25,7 @@ with try_import() as imports_successful:
     import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import (
@@ -142,6 +143,11 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert type(azure_model).__name__ == 'AzureRealtimeModel'
     assert azure_model.model_name == 'gpt-realtime'
 
+    env.set('ELEVENLABS_API_KEY', 'test')
+    elevenlabs_model = infer_realtime_model('elevenlabs:eleven-voice')
+    assert type(elevenlabs_model).__name__ == 'ElevenLabsRealtimeModel'
+    assert elevenlabs_model.model_name == 'eleven-voice'
+
 
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     # `gateway/openai:...` routes the OpenAI realtime protocol through the Pydantic AI Gateway: an
@@ -188,12 +194,20 @@ def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
     # `provider:` prefix exactly as written (gateway routes un-normalized), and every branch — not just
     # `openai` — uses the provider it returns. Nothing is read from the environment, so credentials
     # can come from the application (e.g. per-user keys) rather than `*_API_KEY` variables.
-    for name in ('OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'XAI_API_KEY', 'GOOGLE_API_KEY'):
+    for name in (
+        'OPENAI_API_KEY',
+        'AZURE_OPENAI_ENDPOINT',
+        'AZURE_OPENAI_API_KEY',
+        'XAI_API_KEY',
+        'ELEVENLABS_API_KEY',
+        'GOOGLE_API_KEY',
+    ):
         env.remove(name)
     providers: dict[str, Provider[Any]] = {
         'openai': OpenAIProvider(api_key='factory-key'),
         'azure': AzureProvider.for_realtime(azure_endpoint='https://factory.openai.azure.com', api_key='factory-key'),
         'xai': XaiProvider(api_key='factory-key'),
+        'elevenlabs': ElevenLabsProvider(api_key='factory-key'),
         'google': GoogleProvider(api_key='factory-key'),
         'gateway/openai': gateway_provider(
             'openai', api_key='factory-key', base_url='https://gateway.pydantic.dev/proxy'
@@ -212,6 +226,7 @@ def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
         ('openai:gpt-realtime', 'OpenAIRealtimeModel'),
         ('azure:gpt-realtime', 'AzureRealtimeModel'),
         ('xai:grok-voice-latest', 'XaiRealtimeModel'),
+        ('elevenlabs:eleven-voice', 'ElevenLabsRealtimeModel'),
         ('google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
         ('gateway/openai:gpt-realtime', 'OpenAIRealtimeModel'),
         ('gateway/google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
@@ -220,7 +235,7 @@ def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
         assert type(model).__name__ == expected_class, model_id
         # Identity: the factory's provider is used as-is, not re-inferred from its name.
         assert getattr(model, '_provider') is providers[model_id.partition(':')[0]], model_id
-    assert seen == ['openai', 'azure', 'xai', 'google', 'gateway/openai', 'gateway/google']
+    assert seen == ['openai', 'azure', 'xai', 'elevenlabs', 'google', 'gateway/openai', 'gateway/google']
 
     # The Azure realtime URL comes from the factory's endpoint, with no `AZURE_OPENAI_ENDPOINT` set.
     azure_model = infer_realtime_model('azure:gpt-realtime', provider_factory)
@@ -262,7 +277,7 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 def test_infer_realtime_model_unknown_provider() -> None:
     with pytest.raises(
-        UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, and `google-cloud`'
+        UserError, match='Supported providers are `openai`, `azure`, `xai`, `elevenlabs`, `google`, and `google-cloud`'
     ):
         infer_realtime_model('anthropic:voice')
 

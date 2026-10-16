@@ -1,4 +1,4 @@
-"""A simulated OpenAI Realtime server (also serving the Azure OpenAI and xAI dialects of the protocol).
+"""A simulated OpenAI Realtime server (also serving the Azure OpenAI, xAI, and ElevenLabs dialects of the protocol).
 
 It is a small model of the provider's server, not a script: it keeps the conversation, at most one
 active response, the input audio buffer, and server-VAD state, and it reacts to client frames the way
@@ -37,7 +37,9 @@ _BYTES_PER_MS = 48
 
 _EVENT_ID = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
 
-Dialect = Literal['openai', 'azure', 'xai']
+Dialect = Literal['openai', 'azure', 'xai', 'elevenlabs']
+# TODO(elevenlabs-launch): `elevenlabs` serves exactly what `openai` does until its divergences are known. Encode
+# each one recorded on launch day here, gated on `self.dialect == 'elevenlabs'`, as the xAI ones are.
 
 _CONTENT_FRAME_PREFIXES = (
     'response.output_audio',

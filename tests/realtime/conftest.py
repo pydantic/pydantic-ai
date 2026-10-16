@@ -32,6 +32,9 @@ with try_import() as gateway_imports_successful:
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as elevenlabs_imports_successful:
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+
 with try_import() as xai_imports_successful:
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -178,6 +181,7 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
     monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
+    monkeypatch.setenv('ELEVENLABS_API_KEY', 'mock-api-key')
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
     # Voice Live is a distinct resource with its own credential set. Tests build their provider from the
@@ -324,6 +328,21 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
         yield XaiProvider(api_key=xai_api_key), cassette
 
 
+@pytest.fixture
+def elevenlabs_ws_cassette(
+    request: pytest.FixtureRequest, elevenlabs_api_key: str
+) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
+    """An `ElevenLabsProvider` whose realtime WebSocket is backed by a cassette.
+
+    Skips (rather than errors) when the cassette is missing offline, so the cassette tests can land
+    before their recordings do.
+    """
+    if not elevenlabs_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'elevenlabs', skip_if_missing=True) as cassette:
+        yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
+
+
 def _gateway_realtime_provider(kind: str, api_key: str | None) -> Provider[Any]:
     """Build a gateway provider for realtime, mirroring how `gateway/<kind>:...` resolves for a user.
 
@@ -460,6 +479,7 @@ def parity_ws_cassette(
     openai_api_key: str,
     gemini_api_key: str,
     xai_api_key: str,
+    elevenlabs_api_key: str,
     azure_config: tuple[str, str],
     gateway_api_key: str | None,
 ) -> Iterator[tuple[Any, Provider[Any], RealtimeCassette]]:
@@ -484,6 +504,9 @@ def parity_ws_cassette(
     elif route == 'xai':
         provider = XaiProvider(api_key=xai_api_key)
         provider_name = 'xai'
+    elif route == 'elevenlabs':
+        provider = ElevenLabsProvider(api_key=elevenlabs_api_key)
+        provider_name = 'elevenlabs'
     elif route == 'google':
         provider = GoogleProvider(api_key=gemini_api_key)
         provider_name = 'gemini'
@@ -495,7 +518,8 @@ def parity_ws_cassette(
         provider = _gateway_realtime_provider('google', gateway_api_key)
         provider_name = 'gemini'
 
-    with _ws_cassette(request, provider_name) as cassette:
+    # TODO(elevenlabs-launch): drop `skip_if_missing` once the ElevenLabs parity rows are recorded.
+    with _ws_cassette(request, provider_name, skip_if_missing=route == 'elevenlabs') as cassette:
         yield case, provider, cassette
 
 
