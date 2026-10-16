@@ -319,6 +319,9 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
 | `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
 | `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer a settings menu's dialog, as `/api/dialogs/…` |
+| `GET /api/sessions/{id}/commands/{name}/fields[?menu=KEY…]` | the `MenuInfo` of the menu bare `/name` opens in this session, built from its own commands, as `/api/commands/{name}/fields` |
+| `POST /api/sessions/{id}/commands/{name}/fields/{key}[?menu=KEY…]` | set a row, body `{"value": "…"}` (`null` or empty resets it); answers `MenuEdited` |
+| `POST /api/sessions/{id}/commands/{name}/fields/{key}/action[?menu=KEY…]` | run a row's action, asking through the page's dialogs; answers `MenuEdited` |
 
 `POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
@@ -328,8 +331,13 @@ opens no other sessions (`/web` from a terminal), both switch the one session in
 or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
+A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:
+choosing a model in session B's `/model` menu switches B alone, and B's `/effort` shows B's model. Settings
+CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
+(`/api/plugins/…`) and dialogs belong to the page.
+
 The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
-`/api/switch`, `/api/dialogs/…`) and a `/ws` without `watch` keep working on the default session: the
-one this page last opened or started while it stays live, else the most recently opened.
+`/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
+default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
 orchestrators of other CLAI versions use them.

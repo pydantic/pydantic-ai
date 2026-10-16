@@ -35,6 +35,7 @@ from pydantic_clai2.plugins import (
     TaskCatalog,
 )
 from pydantic_clai2.plugins._factories import import_file
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -157,6 +158,10 @@ class LiveRuntime:
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session."""
         return self._host.setting(key)
+
+    def command_menu(self, name: str, /) -> SettingsMenu | None:
+        """The menu bare `/NAME` opens in the session, built now from the session's own commands."""
+        return self._host.command_menu(name)
 
     @property
     def queued(self) -> int:
