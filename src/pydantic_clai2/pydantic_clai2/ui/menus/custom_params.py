@@ -1,119 +1,78 @@
-"""Free-form request body parameters, matching Code Puppy's dotted-key editor."""
+"""Free-form request body parameters, matching Code Puppy's dotted-key editor, asked through `Dialogs`."""
 
 import json
-from dataclasses import dataclass
 
+from anyio import to_thread
 from pydantic import JsonValue
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
-from termflow.tui.menu import Menu, MenuResult
-from termflow.tui.textinput import TextInput
 
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.custom_params import parse_pair
-from pydantic_clai2.ui.menus.field_menu import Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.plugins.menus import Dialogs, Option
+
+_ADD = ''
+"""The "add" choice: `parse_pair` rejects an empty key, so no parameter is called this."""
+_HELP = (
+    'Dotted keys nest in extra_body. Custom values override built-in request settings.\n\n'
+    'Values accept JSON or unquoted text. Do not store secrets here.'
+)
 
 
-@dataclass(frozen=True, kw_only=True)
-class DeleteParam:
-    """Delete the selected key rather than edit it."""
+async def edit_custom_params(dialogs: Dialogs, *, store: SettingsStore, model: str) -> list[str]:
+    """Add, change, or remove `model`'s custom parameters one at a time, saving each, until the user backs out.
 
-    key: str
-
-
-class CustomParamsMenu:
-    """A persisted, per-model add/edit/delete menu with no pending changes."""
-
-    def __init__(self, *, store: SettingsStore, model: str) -> None:
-        """Keep edits scoped to one saved model."""
-        self.store = store
-        self.model = model
-
-    def pairs(self) -> dict[str, JsonValue]:
-        """Read fresh values after every edit."""
-        pairs = self.store.model_settings(self.model).get('custom_params')
-        return pairs if isinstance(pairs, dict) else {}
-
-    def build(self) -> Menu:
-        """The list and delete shortcut, with an always-available add row."""
-        return (
-            MenuBuilder(f'Custom Params - {self.model}')
-            .style(markdown_style())
-            .items(
-                [
-                    *[MenuItem(f'{key} = {json.dumps(value)}', value=key) for key, value in self.pairs().items()],
-                    MenuItem('+ Add param...', value=False),
-                ]
-            )
-            .preview(
-                lambda _: (
-                    'Dotted keys nest in extra_body. Custom values override built-in request settings.\n'
-                    'Values accept JSON or unquoted text. Do not store secrets here.'
-                )
-            )
-            .on_key('d', self.delete_marker)
-            .footer_hint('Enter add/edit - d delete - Esc back')
-            .key_source(menu_key)
-            .build()
+    A parameter is edited as `key = value`, so renaming it is one edit; empty text removes it.
+    """
+    messages: list[str] = []
+    while True:
+        pairs = await to_thread.run_sync(_pairs, store, model)
+        picked = await dialogs.choose(
+            title=f'Custom Params - {model}',
+            options=[
+                *(Option(value=key, label=f'{key} = {json.dumps(value)}') for key, value in pairs.items()),
+                Option(value=_ADD, label='+ Add param...'),
+            ],
+            description=_HELP,
         )
-
-    def delete_marker(self, menu: object, item: MenuItem) -> MenuResult | None:
-        """Do not delete the add row."""
-        if not isinstance(item.value, str):
-            return None
-        return MenuResult(item=MenuItem('', value=DeleteParam(key=item.value)))
-
-    def editor(self, *, key: str | None) -> TextInput:
-        """Edit a pair together so renaming is atomic."""
-
-        def problem(text: str) -> str | None:
-            try:
-                parse_pair(text=text)
-            except ValueError as exc:
-                return str(exc)
-            return None
-
-        return (
-            TextInputBuilder(f'Custom param - {self.model}')
-            .style(markdown_style())
-            .prompt('key = value: ')
-            .initial(f'{key} = {json.dumps(self.pairs()[key])}' if key is not None else '')
-            .placeholder('chat_template_kwargs.thinking = medium')
-            .validator(problem)
-            .footer_hint('Enter save - Esc cancel')
-            .key_source(menu_key)
-            .build()
+        if picked is None:
+            return messages
+        key = picked or None
+        text = await dialogs.text(
+            title=f'Custom param - {model}',
+            label='key = value',
+            placeholder='chat_template_kwargs.thinking = medium',
+            initial='' if key is None else f'{key} = {json.dumps(pairs[key])}',
+            check=_problem,
+            description='' if key is None else 'Empty text removes it.',
         )
+        if text is None or (not text and key is None):
+            continue
+        if key is not None:
+            pairs.pop(key)
+        if text:
+            name, value = parse_pair(text=text)
+            pairs[name] = value
+        await to_thread.run_sync(_save, store, model, pairs)
+        messages.append(f'Saved custom params for {model}.')
 
-    def save(self, *, pairs: dict[str, JsonValue]) -> None:
-        """Preserve other model settings while replacing custom parameters."""
-        saved = self.store.model_settings(self.model)
-        if pairs:
-            saved['custom_params'] = pairs
-        else:
-            saved.pop('custom_params', None)
-        self.store.save_model_settings(self.model, saved)
 
-    def run(self, *, runners: Runners) -> list[str]:
-        """Run on the owning menu worker, saving every successful mutation."""
-        messages: list[str] = []
-        while True:
-            result = runners.run_list(self.build())
-            if result.cancelled or result.item is None:
-                return messages
-            selected = result.item.value
-            pairs = self.pairs()
-            if isinstance(selected, DeleteParam):
-                pairs.pop(selected.key, None)
-            else:
-                key = selected if isinstance(selected, str) else None
-                edited = runners.run_text(self.editor(key=key))
-                if edited.cancelled or edited.value is None:
-                    continue
-                name, value = parse_pair(text=edited.value)
-                if key is not None:
-                    pairs.pop(key)
-                pairs[name] = value
-            self.save(pairs=pairs)
-            messages.append(f'Saved custom params for {self.model}.')
+def _pairs(store: SettingsStore, model: str) -> dict[str, JsonValue]:
+    pairs = store.model_settings(model).get('custom_params')
+    return pairs if isinstance(pairs, dict) else {}
+
+
+def _save(store: SettingsStore, model: str, pairs: dict[str, JsonValue]) -> None:
+    """Replace the custom parameters, keeping the model's other settings."""
+    saved = store.model_settings(model)
+    if pairs:
+        saved['custom_params'] = pairs
+    else:
+        saved.pop('custom_params', None)
+    store.save_model_settings(model, saved)
+
+
+def _problem(text: str) -> str | None:
+    try:
+        parse_pair(text=text)
+    except ValueError as exc:
+        return str(exc)
+    return None

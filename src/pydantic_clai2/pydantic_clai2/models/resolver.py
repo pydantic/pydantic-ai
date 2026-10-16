@@ -16,6 +16,7 @@ from pydantic_clai2.plugins import (
     ModelProvider,
     PluginLogin,
 )
+from pydantic_clai2.plugins.menus import Dialogs, SettingsMenu
 
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
@@ -52,10 +53,27 @@ class ModelResolver:
             self._auth = CodexAuth(self.console)
         return self._auth
 
-    async def login(self, args: list[str]) -> str:
+    async def login(self, args: list[str], dialogs: Dialogs | None = None) -> str:
+        """`/login`; `dialogs` asks wherever a menu was opened, such as the web UI, instead of the terminal."""
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
+        return await login_command(
+            args, codex=self.codex_auth(), plugins=self.logins(), store=self.store, dialogs=dialogs
+        )
+
+    def accounts_menu(self) -> SettingsMenu:
+        """`/accounts` (and bare `/login`) as a declared menu, signing in through the dialogs it is shown with."""
+        from pydantic_clai2.ui.menus.accounts_menu import accounts_settings_menu
+
+        if self.store is None:  # pragma: no cover -- the shell always has a store.
+            raise ValueError('Accounts need a settings database.')
+        return accounts_settings_menu(
+            self.store,
+            sign_in=lambda target, dialogs: self.login([target], dialogs),
+            plugins=self.logins,
+            # Read when an account signs out, on the loop: the menu itself is built in a worker thread.
+            forget=lambda account: self.codex_auth().forget(account),
+        )
 
     async def resolve(self, name: str) -> Model | str:
         """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string.
