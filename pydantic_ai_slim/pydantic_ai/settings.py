@@ -635,7 +635,6 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
-    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (Gemini API and Google Cloud)

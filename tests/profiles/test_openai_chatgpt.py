@@ -12,7 +12,6 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.native_tools import WebSearchTool
-    from pydantic_ai.profiles.openai_chatgpt import openai_chatgpt_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
 
@@ -21,7 +20,7 @@ pytestmark = [
 ]
 
 DIALECT = {
-    'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
+    'openai_unsupported_model_settings': ('max_tokens', 'service_tier', 'temperature', 'top_p'),
     'openai_system_prompt_role': 'developer',
     'openai_responses_requires_streaming': True,
     'openai_responses_requires_store_false': True,
@@ -47,8 +46,3 @@ def test_chatgpt_provider_layers_the_dialect_over_the_first_party_profile():
     }
     # Tools added mid-conversation travel as `additional_tools` items, which the route accepts.
     assert chatgpt['tool_addition_mode'] == 'with_definitions'
-
-
-def test_chatgpt_profile_overrides_the_standard_openai_profile():
-    profile = openai_chatgpt_model_profile('gpt-6.1-sol')
-    assert {key: profile[key] for key in DIALECT} == DIALECT

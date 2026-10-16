@@ -11,7 +11,7 @@ def openai_chatgpt_model_profile(model_name: str) -> ModelProfile:
     ChatGPT plan usage serves the public Responses API with the narrower dialect OpenAI documents in its
     [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations):
     requests must stream and set `store=false`, explicit `system` messages are rejected in favor of
-    `developer` ones, sampling and output-limit fields are rejected, only `POST /v1/responses` is served
+    `developer` ones, sampling, output-limit, and service-tier fields are rejected, only `POST /v1/responses` is served
     (so there is no server-side input-token counting), and of the hosted tools only web search is
     accepted. `tool_search` is not accepted, so deferred tools fall back to local search.
     """
@@ -20,8 +20,10 @@ def openai_chatgpt_model_profile(model_name: str) -> ModelProfile:
         OpenAIModelProfile(
             # Drop unsupported generic settings for portability. Forward explicit `openai_*`
             # settings so the API reports incompatibilities instead of silently ignoring them.
+            # Service-tier overrides are among the capabilities the route reports as unsupported.
             openai_unsupported_model_settings=(
                 'max_tokens',
+                'service_tier',
                 'temperature',
                 'top_p',
             ),

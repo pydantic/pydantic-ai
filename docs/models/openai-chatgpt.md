@@ -42,6 +42,8 @@ async def main():
     print(result.output)
 ```
 
+The provider needs your app's credentials, so build the model with it as shown, rather than passing an `'openai-chatgpt:...'` model name string to the agent.
+
 `app_name` is the name the user sees when approving your app. Use the same name on every installation. `host_id` is an opaque identifier for one installation of your app, such as a laptop or a VM; create it once and reuse it for every sign-in on that installation. OpenAI asks apps to send it, but it's optional here because sign-ins that send it have been reported to time out; leave it out if yours do.
 
 The first sign-in to a ChatGPT account registers your app with it, and OpenAI issues the credentials' `client_id` for that registration. The user can decline to let your app use their plan: the sign-in then still returns credentials, so you can save the registration, but [`plan_usage_granted`][pydantic_ai.providers.openai_chatgpt.OpenAIChatGPTCredentials.plan_usage_granted] is `False` and the provider refuses them.
@@ -123,6 +125,8 @@ With `id_token_hint`, the sign-in fails if the user completes it with a differen
 
 ## Errors
 
+A sign-in the token endpoint rejects, or whose ID token fails validation, raises [`CredentialsRefreshError`][pydantic_ai.providers.openai_chatgpt.CredentialsRefreshError]; start the sign-in again. A sign-in that completes for a different account than `id_token_hint` names raises [`UserError`][pydantic_ai.exceptions.UserError], and its credentials are discarded.
+
 When the user's plan can't serve a request, the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] whose body carries an error code such as `subscription_sharing_usage_limit_exceeded`. OpenAI never moves the request to another billing method. [Errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery) lists the codes and what to tell the user; for usage limits, point them to [ChatGPT settings](https://chatgpt.com/settings/usage).
 
 ## Limitations
@@ -132,7 +136,7 @@ ChatGPT plan usage is a preview with the [limitations](https://developers.openai
 - Requests are streamed; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.
 - Every request is sent with `store=false`, and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError].
 - System prompts and instructions are sent as developer messages, since system messages are rejected.
-- Unsupported generic settings (`max_tokens`, `temperature`, and `top_p`) are dropped before sending. Explicit `openai_*` settings are sent unchanged, so ones the route rejects, such as `openai_truncation` and `openai_user`, surface as errors.
+- Unsupported generic settings (`max_tokens`, `service_tier`, `temperature`, and `top_p`) are dropped before sending. Explicit `openai_*` settings are sent unchanged, so ones the route rejects, such as `openai_truncation` and `openai_user`, surface as errors.
 - Of the [native tools](../native-tools.md), only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] is supported. [Tool search](../tools-advanced.md#tool-search) runs locally instead of through OpenAI's native tool search.
 - The prompt caching settings have no effect, and `count_tokens()` raises [`UserError`][pydantic_ai.exceptions.UserError].
 - The callback reaches the computer running the browser, so for an app on a remote VM, sign in locally and copy the credentials to it, as described in [Self-hosted VMs](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms).

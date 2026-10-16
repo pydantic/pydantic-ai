@@ -16,7 +16,6 @@ import hashlib
 import json
 import locale
 import pickle
-import socket
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -35,7 +34,8 @@ from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.providers import infer_provider_class
 
 from ...conftest import TestEnv, try_import
-from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials, make_jwt
+from ..oauth_helpers import free_port, get_callback, make_jwt
+from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -855,34 +855,17 @@ async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
     assert credentials.account_id == 'acc-9'  # extracted from the nested id_token claim
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
-
-
-async def _get_callback(url: str, params: dict[str, str]) -> httpx2.Response:
-    """GET the callback URL, retrying briefly while the one-shot server binds."""
-    async with httpx2.AsyncClient() as client:
-        for _ in range(50):
-            try:
-                return await client.get(url, params=params)
-            except httpx2.ConnectError:
-                await asyncio.sleep(0.05)
-        raise AssertionError('callback server never came up')  # pragma: no cover
-
-
 async def test_exchange_code_from_callback(monkeypatch: pytest.MonkeyPatch):
     """The built-in one-shot server ignores foreign-state requests and exchanges the real one."""
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
-    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{free_port()}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    stray = await _get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
+    stray = await get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
     assert stray.status_code == 200  # answered politely, but ignored: the server keeps serving
-    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code'})
     assert 'close this tab' in accepted.text
 
     credentials = await exchange
@@ -907,12 +890,12 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     """
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
-    port = _free_port()
+    port = free_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    await get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
     reader, writer = await asyncio.open_connection('127.0.0.1', port)
     writer.write(b'GET http://[/auth/callback HTTP/1.1\r\nHost: x\r\n\r\n')
     await writer.drain()
@@ -920,7 +903,7 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     assert b'400' in status_line
     writer.close()
 
-    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code'})
     assert 'close this tab' in accepted.text
     credentials = await exchange
     assert credentials.account_id == 'acc-9'
@@ -931,17 +914,17 @@ async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pyt
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', 0.2)
-    port = _free_port()
+    port = free_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    await get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
     reader, writer = await asyncio.open_connection('127.0.0.1', port)
     assert await reader.read() == b''  # the server hangs up on the silent connection
     writer.close()
 
-    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code'})
     assert 'close this tab' in accepted.text
     credentials = await exchange
     assert credentials.account_id == 'acc-9'
@@ -949,11 +932,11 @@ async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pyt
 
 async def test_exchange_code_from_callback_denied():
     """An error callback (e.g. the user clicked Deny) surfaces instead of hanging."""
-    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{free_port()}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    await get_callback(url, {'state': flow.state, 'error': 'access_denied'})
 
     with pytest.raises(UserError, match='Authorization failed: access_denied'):
         await exchange

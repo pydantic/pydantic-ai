@@ -18,7 +18,7 @@ from typing import Annotated, Protocol
 from urllib.parse import urlencode, urlsplit
 
 import httpx2
-from pydantic import Field, StrictFloat, StrictInt, TypeAdapter
+from pydantic import Field, TypeAdapter
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile, merge_profile
@@ -31,6 +31,7 @@ from ._oauth_provider import (
     OAuthCredentialSource,
     OAuthCredentialsProvider,
     jwt_claims,
+    jwt_expires_at,
     post_token_request as _post_token_request,
 )
 from ._openai_compatible import AsyncHTTPClient as _OpenAIHTTPClient
@@ -117,8 +118,6 @@ class _IdTokenClaims:
 
     iss: str | None = None
     aud: str | list[str] | None = None
-    # Strict, so a numeric string is not coerced into an expiry.
-    exp: StrictInt | StrictFloat | None = None
     sub: str | None = None
     nonce: str | None = None
 
@@ -135,18 +134,21 @@ def _validate_id_token(id_token: str, *, client_id: str, nonce: str, subject: st
     """
     claims = jwt_claims(id_token, _id_token_claims_ta)
     if claims is None:
-        raise UserError('The token response carried a malformed ID token.')
+        raise CredentialsRefreshError('The token response carried a malformed ID token.', _PROVIDER_NAME)
     audiences = [claims.aud] if isinstance(claims.aud, str) else claims.aud or []
     if claims.iss != _ISSUER:
-        raise UserError(f'The ID token was issued by {claims.iss!r}, not {_ISSUER!r}.')
+        raise CredentialsRefreshError(f'The ID token was issued by {claims.iss!r}, not {_ISSUER!r}.', _PROVIDER_NAME)
     if client_id not in audiences:
-        raise UserError(f'The ID token was not issued for client {client_id!r}.')
-    if claims.exp is None or datetime.fromtimestamp(claims.exp, tz=UTC) + _CLOCK_SKEW < datetime.now(UTC):
-        raise UserError('The ID token has expired; start the sign-in again.')
+        raise CredentialsRefreshError(f'The ID token was not issued for client {client_id!r}.', _PROVIDER_NAME)
+    expires_at = jwt_expires_at(id_token)
+    if expires_at is None or expires_at + _CLOCK_SKEW < datetime.now(UTC):
+        raise CredentialsRefreshError('The ID token has expired; start the sign-in again.', _PROVIDER_NAME)
     if claims.nonce != nonce:
-        raise UserError("The ID token does not carry this sign-in attempt's `nonce`; start the sign-in again.")
+        raise CredentialsRefreshError(
+            "The ID token does not carry this sign-in attempt's `nonce`; start the sign-in again.", _PROVIDER_NAME
+        )
     if not claims.sub:
-        raise UserError('The ID token does not identify an account.')
+        raise CredentialsRefreshError('The ID token does not identify an account.', _PROVIDER_NAME)
     if subject is not None and claims.sub != subject:
         raise UserError(
             'The sign-in completed for a different ChatGPT account than `id_token_hint` identifies; '
@@ -212,6 +214,8 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
     exchange its code. The browser and credential storage stay caller-owned.
     """
 
+    _bound_params = frozenset({'client_id', 'redirect_uri', 'state', 'code_challenge', 'nonce', 'resource'})
+
     def __init__(
         self,
         *,
@@ -268,10 +272,12 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
         The URL carries `id_token_hint` when one was given, so keep it out of logs.
 
         Args:
-            scope: The OAuth scopes to request; `None` means the identity scopes plus plan usage.
+            scope: The OAuth scopes to request; `None` means the identity scopes plus plan usage. Keep
+                `offline_access` and `chatgpt.tokens.use.direct`: the credentials need a refresh token,
+                and the provider refuses credentials without plan usage.
             extra_params: Additional query parameters, merged over the defaults (so they can also
-                override them), except `client_id`, `redirect_uri`, `state`, and `code_challenge`,
-                which the code exchange relies on. Pass `{'prompt': 'consent'}` to ask a user who
+                override them), except `client_id`, `redirect_uri`, `state`, `code_challenge`, `nonce`,
+                and `resource`, which the callback validation and code exchange rely on. Pass `{'prompt': 'consent'}` to ask a user who
                 declined plan usage again, or `{'login_hint': email}` to preselect an account.
         """
         params: dict[str, str] = {
@@ -330,7 +336,7 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
             provider_name=_PROVIDER_NAME,
         )
         if data.id_token is None:
-            raise UserError('The token response carried no ID token.')
+            raise CredentialsRefreshError('The token response carried no ID token.', _PROVIDER_NAME)
         _validate_id_token(data.id_token, client_id=client_id, nonce=self.nonce, subject=self._hint_subject)
         return OpenAIChatGPTCredentials(
             client_id=client_id,
