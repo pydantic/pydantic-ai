@@ -36,6 +36,7 @@ from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins.web import WebPlugin, workspace_tools as tools_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER
+from pydantic_clai2.builtin_plugins.web.client import SessionView, WaitOutcome
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
     Item,
@@ -503,15 +504,26 @@ async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, mo
         # A CLAI that stopped: the connection ends, and the next use connects again once it runs.
         await tools.session_start(workspace, 'block')
         await child.blocked.wait()
+        # Stop it once `session_wait` waits on the connection. `anyio.wait_all_tasks_blocked` cannot tell:
+        # it counts a task awaiting a worker thread as blocked, and uvicorn's 0.1 s tick can keep it polling for minutes.
+        entered = anyio.Event()
+        wait = SessionView.wait
+
+        async def entering(view: SessionView, *, timeout: float) -> WaitOutcome:
+            entered.set()
+            return await wait(view, timeout=timeout)
+
         stopped: list[str] = []
-        async with anyio.create_task_group() as group:
+        with monkeypatch.context() as patched:
+            patched.setattr(SessionView, 'wait', entering)
+            async with anyio.create_task_group() as group:
 
-            async def waiting() -> None:
-                stopped.append(await tools.session_wait(workspace, timeout=10))
+                async def waiting() -> None:
+                    stopped.append(await tools.session_wait(workspace, timeout=10))
 
-            group.start_soon(waiting)
-            await anyio.wait_all_tasks_blocked()
-            await child.web.stop()
+                group.start_soon(waiting)
+                await entered.wait()
+                await child.web.stop()
         assert stopped == [f'The CLAI of workspace {workspace} stopped.']
         await child.web.start()
         assert await tools.session_interrupt(workspace) == 'Interrupted.'

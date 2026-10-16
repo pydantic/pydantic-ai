@@ -1734,6 +1734,9 @@ It stays `?` until the first request of the session or after a model change, and
 a model with no known window. With `compaction` off, the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
+Until a response in the conversation reports its usage, the used figure is an estimate
+from the text's length that leaves out most tool definitions, shown with `~`, such as `~13k/1m`.
+It usually reads low, so it can rise sharply once the first response arrives.
 
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller
@@ -1924,7 +1927,11 @@ skill mid-session is left out of the next turn's catalog.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the
-two can differ.
+two can differ. A plugin that adds a per-run capability function, such as
+`posthog` with browser sign-in, could supply a sandbox only after the catalog is
+read, so with one loaded the catalog is read from the project directory. If that
+plugin does run the agent in a sandbox, the skills' directories are paths on this
+machine that the sandbox may not reach.
 
 ### Ask CLAI to customize itself
 
