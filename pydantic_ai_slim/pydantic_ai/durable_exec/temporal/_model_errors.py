@@ -126,8 +126,11 @@ _ERROR_CATEGORIES = (
 def _retry_policy_type(error: ModelAPIError) -> str:
     """The `ApplicationError` type for `error`, which a retry policy's `non_retryable_error_types` matches.
 
-    An error with a category reports the class it was before categories existed, `ModelHTTPError` if it came with
-    an HTTP status and `ModelAPIError` otherwise, so a retry policy matches exactly what it matched before. Any other
+    An error with a category reports the class it's raised as apart from its category, `ModelHTTPError` if it has an
+    HTTP status and `ModelAPIError` otherwise, so a retry policy matches what it matched before categories existed.
+    The exceptions are errors that only now get the HTTP status the provider uses for the same error (e.g. a Bedrock
+    stream throttling event, an error inside an OpenAI-compatible stream, or xAI's `INVALID_ARGUMENT`): like the
+    class they're raised as, they now report `ModelHTTPError` instead of `ModelAPIError`. Any other
     error, including a subclass of a category defined outside `pydantic_ai.exceptions` (like an adapter-specific
     error), reports its own class name, which is what Temporal would have used for the raw exception. The workflow
     still rebuilds the error as its own class.

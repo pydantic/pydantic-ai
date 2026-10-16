@@ -52,6 +52,7 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelServerError,
     ModelTimeoutError,
     UserError,
@@ -3167,6 +3168,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-test'),
             'ModelHTTPError',
             id='http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
+            'ModelHTTPError',
+            id='in-stream-http-category',
         ),
         pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
         pytest.param(
