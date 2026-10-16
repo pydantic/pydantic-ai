@@ -1,10 +1,10 @@
-"""Run the user's own `run_code` cells in the session's REPL, between turns, through code mode itself.
+"""Run the user's own `run_code` cells in Monty, code mode's sandbox, between turns, through code mode itself.
 
 A cell runs as a run of the session's agent whose model is scripted: it calls `run_code` once with
 the user's code and stops. So the cell gets everything the model's cells get, the session's tools,
-sandbox mounts, resource limits, and the REPL that code mode keeps with the session, without a
-second way to drive the sandbox. The run is kept out of the conversation; the next prompt tells the
-model what the user ran, since its variables are in the REPL now.
+sandbox mounts, resource limits, and the Monty state that code mode keeps with the session, without
+a second way to drive the sandbox. The run is kept out of the conversation; the next prompt tells the
+model what the user ran, since its variables are in Monty now.
 """
 
 import json
@@ -23,23 +23,23 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
-REPL_CELL = 'clai2_repl_cell'
-"""Run metadata marking a user's REPL cell, so observers can tell it from a turn."""
+MONTY_CELL = 'clai2_monty_cell'
+"""Run metadata marking a user's Monty cell, so observers can tell it from a turn."""
 
 RUN_CODE = 'run_code'
-NOTE_PREFIX = 'Between turns, the user ran this cell in your `run_code` REPL'
+NOTE_PREFIX = 'Between turns, the user ran this cell in Monty, the sandbox your `run_code` runs in'
 """How each note to the model starts, so a UI that shows the cells already can leave the notes out."""
 NOTE_CHARS = 4_000
 """The most of a cell's result the next prompt repeats to the model."""
 
 
-def is_repl_cell(ctx: RunContext[object]) -> bool:
-    """Whether `ctx` is a run of a user's REPL cell rather than of a prompt."""
-    return bool(ctx.metadata and ctx.metadata.get(REPL_CELL))
+def is_monty_cell(ctx: RunContext[object]) -> bool:
+    """Whether `ctx` is a run of a user's Monty cell rather than of a prompt."""
+    return bool(ctx.metadata and ctx.metadata.get(MONTY_CELL))
 
 
 @dataclass(kw_only=True)
-class ReplCell:
+class MontyCell:
     """A scripted model that runs one `run_code` cell with the user's code, then keeps what it returned."""
 
     code: str
@@ -47,7 +47,7 @@ class ReplCell:
     failed: bool = False
 
     def model(self) -> FunctionModel:
-        return FunctionModel(self.respond, stream_function=self.stream, model_name='repl-cell')
+        return FunctionModel(self.respond, stream_function=self.stream, model_name='monty-cell')
 
     def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         request = messages[-1]
