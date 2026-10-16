@@ -2,7 +2,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { Project, SessionEntry, ThemeInfo, Worktree } from '../protocol'
+import type { Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../protocol'
+import { WorkersTree } from './WorkersTree'
 import {
   BranchIcon,
   ChevronIcon,
@@ -37,6 +38,11 @@ interface Props {
   onCollapse: () => void
   onPlugins: () => void
   onError: (message: string) => void
+  /** The current session's delegated tasks, shown under it. */
+  tasks: TaskEntry[]
+  /** The worker open in the main pane. */
+  worker: string | null
+  onWorker: (id: string) => void
 }
 
 export function ago(iso: string): string {
@@ -55,7 +61,24 @@ function live(worktrees: Worktree[]): boolean {
 
 /** Saved sessions grouped by project, then worktree, as `/resume` lists them, with search and per-session actions. */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { version, viewing, opening, theme, connected, onTheme, themeInfo, onPickTheme, onView, onNew, onCollapse, onPlugins, onError },
+  {
+    version,
+    viewing,
+    opening,
+    theme,
+    connected,
+    onTheme,
+    themeInfo,
+    onPickTheme,
+    onView,
+    onNew,
+    onCollapse,
+    onPlugins,
+    onError,
+    tasks,
+    worker,
+    onWorker,
+  },
   ref,
 ) {
   const [query, setQuery] = useState('')
@@ -184,6 +207,22 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     </div>
   )
 
+  // A lone checkout needs no heading of its own, unless it is gone.
+  const isNested = (project: Project) =>
+    project.worktrees.length > 1 || project.worktrees.some((worktree) => worktree.missing)
+
+  // The tree sits under the current session, or above the list while that row is hidden.
+  const listed = projects.some(
+    (project) =>
+      !(!query && (collapsed[project.key] ?? false)) &&
+      project.worktrees.some(
+        (worktree) =>
+          !(isNested(project) && !query && (collapsed[`${project.key}\0${worktree.root}`] ?? false)) &&
+          worktree.sessions.some((session) => session.current),
+      ),
+  )
+  const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
+
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -217,6 +256,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">
+        {!listed && workers}
         {projects.length === 0 && (
           <div className="empty-list">
             {unsaved ? 'This CLAI does not save sessions' : query ? 'No matching sessions' : 'No saved sessions yet'}
@@ -225,8 +265,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         {projects.map((project) => {
           // A search shows every match, whatever is collapsed.
           const closed = !query && (collapsed[project.key] ?? false)
-          // A lone checkout needs no heading of its own, unless it is gone.
-          const nested = project.worktrees.length > 1 || project.worktrees.some((worktree) => worktree.missing)
+          const nested = isNested(project)
           return (
             <section key={project.key} className="project">
               <button
@@ -261,7 +300,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                           <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
                         </button>
                       )}
-                      {!shut && worktree.sessions.map(row)}
+                      {!shut && worktree.sessions.flatMap((session) => [row(session), session.current && workers])}
                     </div>
                   )
                 })}

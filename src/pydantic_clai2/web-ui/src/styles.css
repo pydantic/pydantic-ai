@@ -2581,6 +2581,184 @@ textarea.setting-input {
   }
 }
 
+/* Workers: the current session's delegated tasks, under it in the sidebar, and one open in the main pane */
+
+.workers {
+  margin: 2px 0 8px 14px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.workers-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px 3px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workers-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.worker {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.worker:hover {
+  background: var(--hover);
+}
+
+.worker.selected {
+  background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
+}
+
+.worker-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.worker-agent {
+  flex: none;
+  color: var(--text-soft);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.worker.selected .worker-agent {
+  color: var(--text);
+}
+
+.worker-model {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.worker-time {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.worker-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.worker > .worker-activity {
+  padding-left: 16px;
+}
+
+.worker.running > .worker-activity {
+  color: var(--text-soft);
+}
+
+.spinner.worker-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  animation: spin 0.7s linear infinite;
+}
+
+.worker .state,
+.worker-banner .state,
+.worker-chip .state {
+  margin: 0 2px;
+}
+
+.worker .state.completed,
+.worker-banner .state.completed,
+.worker-chip .state.completed {
+  background: var(--green);
+}
+
+.worker-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.worker-banner-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.worker-banner .worker-model {
+  flex: 0 1 auto;
+}
+
+.worker-banner .worker-time {
+  margin-left: 0;
+}
+
+.stop-worker:hover {
+  color: var(--red);
+}
+
+.worker-note {
+  padding: 12px 4px 4px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.worker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 8px 26px;
+}
+
+.worker-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.worker-chip:hover {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
 /* A settings menu row's current value and the button that changes it, and where its value comes from. */
 
 .setting-action {
