@@ -16922,6 +16922,27 @@ async def test_background_queued_then_completed(allow_model_requests: None):
     )
 
 
+async def test_background_response_keeps_its_history_across_the_resume(allow_model_requests: None):
+    """The run merges the resumed response into the suspended one, keeping the history it recorded for the next chain check."""
+    mock_client = MockOpenAIResponses(
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('The answer is 42.', background=True)],
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
+    _, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await Agent(model=model).run('What is the meaning of life?', model_settings=settings)
+
+    request, response = result.all_messages()
+    assert isinstance(response, ModelResponse) and response.provider_details is not None
+    assert (
+        response.provider_details['history_sha256']
+        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
+    )
+
+
 async def test_background_in_progress_then_completed(allow_model_requests: None):
     """Background mode: create returns status='in_progress', retrieve returns status='completed'.
 

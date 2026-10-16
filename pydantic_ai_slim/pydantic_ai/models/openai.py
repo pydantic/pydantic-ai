@@ -1030,7 +1030,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     - A concrete conversation ID string: use it as the OpenAI Responses API `conversation` parameter.
 
     When a matching conversation ID is found in message history, messages that precede that response
-    are omitted from the input, since OpenAI reconstructs them from the server-side conversation.
+    are omitted from the input, since OpenAI reconstructs them from the server-side conversation. So
+    changes to those messages, by a history processor or compaction for instance, don't reach the
+    model: it continues from the conversation as OpenAI stored it.
 
     Not compatible with
     [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
