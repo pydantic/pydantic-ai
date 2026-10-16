@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
-import html
-import re
-
 from pydantic_ai import ModelResponse, TextPart, ThinkingPart
 
+from ._framing import ASSISTANT_THINKING_TAG, wrap
 from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
 
@@ -36,11 +34,6 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     return parts
 
 
-_ASSISTANT_THINKING_TAG = 'assistant_thinking'
-_ASSISTANT_THINKING_CLOSE_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_ASSISTANT_THINKING_TAG}(?=[\s/>]))', re.IGNORECASE)
-"""Matches only the `<` of a closing `assistant_thinking` tag, in every spelling a model might reach for."""
-
-
 def render_replayed_thinking(content: str, profile: ModelProfile, response: ModelResponse) -> tuple[str, bool]:
     """Render reasoning that can't be replayed through a model's native channel, as tagged text.
 
@@ -69,17 +62,16 @@ def render_replayed_thinking(content: str, profile: ModelProfile, response: Mode
         # Read from the enclosing `ModelResponse` rather than the `ThinkingPart`, which carries no provider
         # of its own once it arrives unsigned. Each attribute is left off when the response can't name it,
         # so the tag never claims an author it doesn't have. The values can come from client-supplied
-        # history, so they are escaped like any other attribute the framework renders.
-        attributes = ''.join(
-            f' {name}="{html.escape(value)}"'
-            for name, value in (('model', response.model_name), ('provider', response.provider_name))
-            if value
+        # history, so `wrap` escapes them like any other attribute the framework renders, and escapes a
+        # closing tag in reasoning that talks about the wrapper, which would otherwise close it early and
+        # spill the rest into the message as if the user had written it.
+        text = wrap(
+            ASSISTANT_THINKING_TAG,
+            f'\n{content}\n',
+            model=response.model_name or None,
+            provider=response.provider_name or None,
         )
-        # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
-        # the message as if the user had written it. Only the `<` of a closing tag is escaped, so the
-        # rest of the reasoning goes in exactly as written.
-        content = _ASSISTANT_THINKING_CLOSE_TAG_OPENER.sub('&lt;', content)
-        start_tag, end_tag = f'<{_ASSISTANT_THINKING_TAG}{attributes}>', f'</{_ASSISTANT_THINKING_TAG}>'
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-    return '\n'.join([start_tag, content, end_tag]), carry_in_user_turn
+        text = '\n'.join([start_tag, content, end_tag])
+    return text, carry_in_user_turn

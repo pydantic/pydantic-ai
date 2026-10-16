@@ -26,6 +26,7 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._framing import SYSTEM_TAG, neutralize_closing_tag
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -3059,11 +3060,10 @@ def _announce_tool_availability_delta_messages(
             # A delta that adds nothing has nothing to announce, so it drops out entirely.
             added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if added:
-                replacement_parts.append(
-                    SystemPromptPart(
-                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
-                    )
-                )
+                # A name can come from a remote MCP server, so one carrying `</system>` must not be able to
+                # end the `<system>` statement `_wrap_non_leading_system_prompts` frames this in.
+                names = ', '.join(f'`{neutralize_closing_tag(name, SYSTEM_TAG)}`' for name in added)
+                replacement_parts.append(SystemPromptPart(content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=names)))
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:
