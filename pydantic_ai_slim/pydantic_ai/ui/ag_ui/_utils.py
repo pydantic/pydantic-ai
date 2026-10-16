@@ -246,16 +246,18 @@ def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | 
     return namespaced if is_str_dict(namespaced) else None
 
 
-def structured_content_encrypted_value(payloads: dict[int, dict[str, Any]]) -> str:
-    """Pack the structured content payloads of a `UserMessage`'s text items into its `encrypted_value` blob.
+def structured_content_encrypted_value_kwargs(payloads: dict[int, dict[str, Any]]) -> _EncryptedValueKwargs:
+    """`UserMessage` kwargs carrying the structured content payloads of its text items, or empty to omit it.
 
     AG-UI has no structured user input, so a `StructuredContent` is sent as a text item the frontend shows, and
     what text can't carry, keyed by the item's position in the message content, rides the message's
-    `encrypted_value` (a field every supported AG-UI version has on `UserMessage`), namespaced as in
-    `tool_kind_encrypted_value`.
+    `encrypted_value` (from 0.1.11), namespaced as in `tool_kind_encrypted_value`. Empty when there's nothing to
+    carry, so the field is never written as a bare `null`.
     """
+    if not payloads:
+        return {}
     entries = {str(index): payload for index, payload in payloads.items()}
-    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'structured_content': entries}})
+    return {'encrypted_value': json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'structured_content': entries}})}
 
 
 def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[str, Any]:

@@ -114,7 +114,7 @@ try:
         parse_encrypted_structured_content,
         parse_encrypted_tool_kind,
         rehydrate_tool_return_content,
-        structured_content_encrypted_value,
+        structured_content_encrypted_value_kwargs,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
@@ -451,8 +451,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         for msg in messages:
             checkpoint = builder.checkpoint()
             match msg:
-                case UserMessage(content=content, encrypted_value=encrypted_value):
-                    structured = parse_encrypted_structured_content(encrypted_value)
+                case UserMessage(content=content):
+                    # `UserMessage.encrypted_value` only exists on the installed model from 0.1.11 onward.
+                    structured = parse_encrypted_structured_content(msg.encrypted_value) if use_encrypted_value else {}
                     if isinstance(content, str):
                         loaded = (
                             structured_content_from_payload(structured['0'], content) if '0' in structured else content
@@ -727,8 +728,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         request keeps its position instead of being reordered after the user prompt.
         """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
-        # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
-        # `tool_kind_encrypted_value`.
+        # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) and `UserMessage.encrypted_value`
+        # (the `StructuredContent` carrier) landed in 0.1.11 — see `tool_kind_encrypted_value`.
         use_encrypted_value = parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION
         result: list[Message] = []
         system_content: list[str] = []
@@ -747,13 +748,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             nonlocal user_content, structured_payloads
             if not user_content:
                 return
-            encrypted_value = structured_content_encrypted_value(structured_payloads) if structured_payloads else None
             # Simplify to plain string if only a single text item.
             if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
                 content: str | list[Any] = user_content[0].text
             else:
                 content = user_content
-            result.append(UserMessage(id=_new_message_id(), content=content, encrypted_value=encrypted_value))
+            result.append(
+                UserMessage(
+                    id=_new_message_id(),
+                    content=content,
+                    **structured_content_encrypted_value_kwargs(structured_payloads),
+                )
+            )
             user_content = []
             structured_payloads = {}
 
@@ -767,8 +773,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     for item in part.content:
                         if isinstance(item, StructuredContent):
                             # AG-UI has no structured user input, so the item is text the frontend shows,
-                            # and its value rides the message's `encrypted_value`.
-                            structured_payloads[len(user_content)] = structured_content_payload(item)
+                            # and its value rides the message's `encrypted_value`; before 0.1.11 it's text only.
+                            if use_encrypted_value:
+                                structured_payloads[len(user_content)] = structured_content_payload(item)
                             user_content.append(TextInputContent(type='text', text=item.content))
                         elif isinstance(item, UploadedFile) and preserve_file_data:
                             # AG-UI has no native uploaded-file message type. We repurpose

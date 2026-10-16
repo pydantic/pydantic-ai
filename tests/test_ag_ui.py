@@ -6991,6 +6991,30 @@ def test_dump_messages_text_content() -> None:
     )
 
 
+def test_structured_content_is_plain_text_before_ag_ui_0_1_11() -> None:
+    """`UserMessage.encrypted_value` landed in 0.1.11, so for an older client the item is dumped as text only."""
+    item = StructuredContent({'url': '/products/42'}, tag='ui_state')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why?'])])]
+
+    dumped = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in dumped] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': '<ui_state>{"url":"/products/42"}</ui_state>'},
+                    {'type': 'text', 'text': 'Why?'},
+                ],
+            }
+        ]
+    )
+    [request] = AGUIAdapter.load_messages(dumped)
+    assert request.parts == [
+        UserPromptPart(content=['<ui_state>{"url":"/products/42"}</ui_state>', 'Why?'], timestamp=IsDatetime())
+    ]
+
+
+@requires_ag_ui('0.1.11')
 def test_structured_content_round_trips_as_text_with_its_value() -> None:
     """A structured item is text in the user message, which a frontend shows like any user text.
 
@@ -7043,6 +7067,7 @@ The page the user is on.
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
     ],
 )
+@requires_ag_ui('0.1.11')
 @pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
 def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(
     encrypted_value: str, content: str
