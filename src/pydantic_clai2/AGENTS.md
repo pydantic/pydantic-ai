@@ -137,7 +137,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   drop-in folder, project, built-in. CLAI never writes the project file.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
-  approval. [Environment variables](README.md#environment-variables) documents the
+  approval. [Environment variables](docs/reference.md#environment-variables) documents the
   scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
@@ -450,8 +450,12 @@ uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pyd
 
 ## Docs parity
 
-`README.md` is the tour, `PLUGINS.md` is the plugin contract, this file is for
-agents. A user-facing change updates the first two in the same PR. Plain
+`README.md` is the product tour, `docs/reference.md` is the user reference,
+`PLUGINS.md` is the plugin contract, and this file is for agents. A user-facing
+change updates the reference (and the README when it changes what the tour shows)
+and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
+images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
+the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
