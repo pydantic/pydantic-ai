@@ -12166,20 +12166,26 @@ class _ProviderToolConnection(FakeRealtimeConnection):
     """A provider that asks to approve its own CRM lookup, runs it only once approved, and then answers.
 
     Its reply ends with the request, as one whose model goes on in a reply of its own once the call is decided.
+    With `request_only`, it asks before any output, outside any response.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, request_only: bool = False) -> None:
+        request = NativeToolApprovalRequest(
+            'mcp_1', tool_name='crm_lookup', args={'email': 'ada@example.com'}, metadata={'server': 'crm'}
+        )
         super().__init__(
-            [
+            [request]
+            if request_only
+            else [
                 PartStartEvent(index=0, part=_CRM_CALL),
                 PartEndEvent(index=0, part=_CRM_CALL),
-                NativeToolApprovalRequest(
-                    'mcp_1', tool_name='crm_lookup', args={'email': 'ada@example.com'}, metadata={'server': 'crm'}
-                ),
+                request,
                 ResponseDone(),
             ]
         )
         self._decided: asyncio.Queue[NativeToolApproval] = asyncio.Queue()
+        self.awaiting_decision = asyncio.Event()
+        """Set once the session has handled everything the provider said before the decision."""
 
     async def send(self, content: RealtimeInput) -> None:
         await super().send(content)
@@ -12189,6 +12195,8 @@ class _ProviderToolConnection(FakeRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
             yield event
+        # The session pulls the next event only once it has handled the last one.
+        self.awaiting_decision.set()
         decision = await self._decided.get()
         result = NativeToolReturnPart(
             tool_name='crm_lookup',
@@ -12211,8 +12219,8 @@ class _CoreProviderToolConnection(_ProviderToolConnection):
 
     _lifecycle_version = 2
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *, request_only: bool = False) -> None:
+        super().__init__(request_only=request_only)
         self._lifecycle = InferredLifecycle(transcribes=True, transcripts_lag_replies=True)
         self._inputs = 0
 
@@ -12225,10 +12233,6 @@ class _CoreProviderToolConnection(_ProviderToolConnection):
         async for event in super().__aiter__():
             yield self._lifecycle.message([event])
         await asyncio.Event().wait()
-
-
-def _provider_tool_connection(core: bool) -> _ProviderToolConnection:
-    return _CoreProviderToolConnection() if core else _ProviderToolConnection()
 
 
 async def _run_native_approval(
@@ -12323,20 +12327,29 @@ async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
     assert not any(isinstance(e, DeferredToolResultsEvent) for e in events)
 
 
+async def _consume(session: Any) -> None:
+    async for _ in session:
+        pass
+
+
+async def _settle_loop() -> None:
+    """Let every task that can run do so: what hasn't happened by then is waiting on something."""
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
 @pytest.mark.parametrize('core', [False, True], ids=['codec', 'core'])
 @pytest.mark.parametrize('waiting_since', ['before the request', 'after its response ended'])
 async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str, core: bool) -> None:
     """The response that asked ended, but the exchange goes on once the call is decided: a wait covers the decision."""
-    asked = asyncio.Event()
     decide_now = asyncio.Event()
 
     async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
-        asked.set()
         await decide_now.wait()
         return requests.build_results(approve_all=True)
 
     agent: Agent[None, str] = Agent()
-    conn = _provider_tool_connection(core)
+    conn = _CoreProviderToolConnection() if core else _ProviderToolConnection()
     model = FakeRealtimeModel(conn)
     async with agent.realtime(
         model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
@@ -12344,16 +12357,17 @@ async def test_wait_for_reply_waits_for_the_approval_decision(waiting_since: str
         if waiting_since == 'before the request':
             await session.send('Look up Ada.')
             waiter = asyncio.create_task(session.wait_for_reply())
-            await asyncio.wait_for(asked.wait(), _LIVENESS_TIMEOUT)
         else:
-            session._start_pump()  # pyright: ignore[reportPrivateUsage]
-            await asyncio.wait_for(asked.wait(), _LIVENESS_TIMEOUT)
-            await asyncio.sleep(0.01)
+            consumer = asyncio.create_task(_consume(session))
+            await asyncio.wait_for(conn.awaiting_decision.wait(), _LIVENESS_TIMEOUT)
             waiter = asyncio.create_task(session.wait_for_reply())
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(conn.awaiting_decision.wait(), _LIVENESS_TIMEOUT)
+        await _settle_loop()
         assert not waiter.done()
         decide_now.set()
         await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
+        if waiting_since != 'before the request':
+            consumer.cancel()
     assert conn.sent[-1] == NativeToolApproval('mcp_1', approved=True)
 
 
@@ -12371,9 +12385,34 @@ async def test_closing_while_the_approval_handler_decides_answers_nothing() -> N
     async with agent.realtime(
         model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
     ).session() as session:
-        session._start_pump()  # pyright: ignore[reportPrivateUsage]
+        consumer = asyncio.create_task(_consume(session))
         await asyncio.wait_for(deciding.wait(), _LIVENESS_TIMEOUT)
+    consumer.cancel()
     assert conn.sent == []
+
+
+async def test_a_wait_covers_an_approval_asked_between_responses() -> None:
+    """A provider can ask before any output of the response the call belongs to: the decision is owed all the same."""
+    decide_now = asyncio.Event()
+
+    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        await decide_now.wait()
+        return requests.build_results(approve_all=True)
+
+    agent: Agent[None, str] = Agent()
+    conn = _CoreProviderToolConnection(request_only=True)
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(
+        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
+    ).session() as session:
+        consumer = asyncio.create_task(_consume(session))
+        await asyncio.wait_for(conn.awaiting_decision.wait(), _LIVENESS_TIMEOUT)
+        waiter = asyncio.create_task(session.wait_for_reply())
+        await _settle_loop()
+        assert not waiter.done()
+        decide_now.set()
+        await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
+    consumer.cancel()
 
 
 async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_report() -> None:
@@ -12390,29 +12429,3 @@ async def test_a_connection_whose_responses_are_not_requests_counts_each_usage_r
     async with session:
         await drain_events(session)
     assert (session.usage.requests, session.usage.input_tokens) == (2, 3)
-
-
-async def test_a_wait_covers_an_approval_asked_between_responses() -> None:
-    """A provider can ask before any output of the response the call belongs to: the decision is owed all the same."""
-    asked = asyncio.Event()
-    decide_now = asyncio.Event()
-
-    async def wait_for_a_person(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
-        asked.set()
-        await decide_now.wait()
-        return requests.build_results(approve_all=True)
-
-    agent: Agent[None, str] = Agent()
-    conn = _CoreProviderToolConnection()
-    conn._events = [conn._events[2]]  # pyright: ignore[reportPrivateUsage]  (the request alone)
-    model = FakeRealtimeModel(conn)
-    async with agent.realtime(
-        model, capabilities=[HandleDeferredToolCalls(handler=wait_for_a_person)]
-    ).session() as session:
-        session._start_pump()  # pyright: ignore[reportPrivateUsage]
-        await asyncio.wait_for(asked.wait(), _LIVENESS_TIMEOUT)
-        waiter = asyncio.create_task(session.wait_for_reply())
-        await asyncio.sleep(0.01)
-        assert not waiter.done()
-        decide_now.set()
-        await asyncio.wait_for(waiter, _LIVENESS_TIMEOUT)
