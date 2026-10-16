@@ -319,7 +319,7 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
         return output
 
     def get_default_evaluation_name(self) -> str:
-        return self.evaluation_name or get_unwrapped_function_name(self.function)
+        return self.evaluation_name or self._function_name()
 
     def get_evaluator_version(self) -> str | None:
         return self.version
@@ -328,9 +328,16 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
         # Used as the `source` of every result, so this must not raise like serialization does.
         # Like the built-in evaluators, the spec names the evaluator itself and carries any `evaluation_name` override.
         return EvaluatorSpec(
-            name=get_unwrapped_function_name(self.function),
+            name=self._function_name(),
             arguments={'evaluation_name': self.evaluation_name} if self.evaluation_name else None,
         )
+
+    def _function_name(self) -> str:
+        try:
+            return get_unwrapped_function_name(self.function)
+        except AttributeError:
+            # Callables like `operator.attrgetter(...)` have no `__name__`.
+            return type(self.function).__name__
 
     def _serialization_spec(self) -> EvaluatorSpec:
         raise TypeError(

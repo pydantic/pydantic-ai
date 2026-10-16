@@ -265,6 +265,8 @@ class OnlineEvaluator:
         if self.max_concurrency < 1:
             raise ValueError(f'max_concurrency must be >= 1, got {self.max_concurrency}')
         self.semaphore = threading.Semaphore(self.max_concurrency)
+        # A function passed here without a type checker would otherwise fail silently at dispatch.
+        self.evaluator = as_evaluator(self.evaluator)
 
 
 class EvaluatorContextSource(Protocol):

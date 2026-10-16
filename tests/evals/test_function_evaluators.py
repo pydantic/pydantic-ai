@@ -7,6 +7,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Generator, Sequence
 from functools import partial
+from operator import attrgetter
 from pathlib import Path
 from typing import Any
 
@@ -415,3 +416,23 @@ def test_evaluate_sync():
     context = _make_context('HELLO')
     assert FunctionEvaluator(exact_match).evaluate_sync(context) is False
     assert FunctionEvaluator(deferred).evaluate_sync(context) is True
+
+
+async def test_unnamed_callable():
+    """A callable without a `__name__` is named after its type instead of aborting the evaluation."""
+    results, failures = await run_evaluators([attrgetter('output')], _make_context('HELLO'))
+
+    assert failures == []
+    assert results == snapshot(
+        [
+            EvaluationResult(
+                name='attrgetter', value='HELLO', reason=None, source=EvaluatorSpec(name='attrgetter', arguments=None)
+            )
+        ]
+    )
+
+
+def test_online_evaluator_wraps_function():
+    """A function given to `OnlineEvaluator` without a type checker is wrapped instead of failing at dispatch."""
+    online_evaluator = OnlineEvaluator(evaluator=exact_match)  # pyright: ignore[reportArgumentType]
+    assert online_evaluator.evaluator == FunctionEvaluator(exact_match)
