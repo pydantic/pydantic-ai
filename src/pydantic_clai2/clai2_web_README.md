@@ -55,6 +55,15 @@ saved; a change made in the terminal shows here too. `/set` or `/settings` typed
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
 in the terminal.
 
+<!-- From #MCP_PR -->
+The Settings window's **MCP servers** section (`#settings/mcp`, or `/mcp` typed in the composer)
+lists your MCP servers with their state: running, ready, off, an error, or needing a sign-in.
+**Add server** opens `/mcp install`'s form as dialogs, its JSON in a multi-line field, and a
+server's **Manage** starts, stops, or restarts it, shows its tools and recent logs, signs in or out,
+edits, or removes it, as `/mcp`'s subcommands do; the terminal prints each result, and a change
+made there shows here too. A repository's MCP files show as a banner whose **Review** shows their
+contents before you trust them.
+
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
 footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and

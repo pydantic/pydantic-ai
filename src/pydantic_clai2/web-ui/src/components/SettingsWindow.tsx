@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
+import { McpSection } from './McpSection'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, PuzzleIcon, SlidersIcon } from './icons'
+import { BackIcon, PuzzleIcon, ServerIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -28,6 +29,13 @@ export const SECTIONS = [
     icon: PuzzleIcon,
     hint: 'Turn plugins on and off and edit their settings, as /plugins does.',
     commands: [],
+  },
+  {
+    id: 'mcp',
+    label: 'MCP servers',
+    icon: ServerIcon,
+    hint: 'Connect MCP servers whose tools the agent can use, and manage them, as /mcp does.',
+    commands: ['mcp'],
   },
 ] as const satisfies readonly Section[]
 
@@ -128,6 +136,9 @@ export function SettingsWindow({
               onError={onError}
               onNotice={onNotice}
             />
+          )}
+          {section === 'mcp' && (
+            <McpSection version={settingsVersion} running={running} onError={onError} onNotice={onNotice} />
           )}
         </div>
       </main>

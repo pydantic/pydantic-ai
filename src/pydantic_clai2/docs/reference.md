@@ -2354,7 +2354,9 @@ server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
-and project trust. `/plugins disable mcp` removes the command and tools.
+and project trust. `/plugins disable mcp` removes the command and tools. In the
+web UI, bare `/mcp` opens the Settings window's MCP servers section, which lists
+the servers and runs the same form and subcommands in the page.
 
 ### Desktop notifications
 
