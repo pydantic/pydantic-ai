@@ -282,17 +282,27 @@ folders at run start adds a toolset at run time, which Temporal refuses, so pass
 
 An activity has 60 seconds by default. `run_command` and `shell` get 300 seconds, which covers the `shell`
 tool's 270-second foreground wait. A `run_command` given a longer timeout, through
-`Shell(default_timeout=...)` or the model's `timeout_seconds`, needs a longer activity. Add this next to
-`TemporalDurability()`:
+`Shell(default_timeout=...)` or the model's `timeout_seconds`, needs a longer activity. Set it with
+`SetToolMetadata` in the agent's capabilities:
 
 ```python
 from datetime import timedelta
 
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 
-SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30)))
+agent = Agent(
+    '{{ openai:medium }}',
+    name='coder',
+    capabilities=[
+        LocalWorkspace('.'),  # plus Coder() or Shell(), which provide `run_command`
+        TemporalDurability(),
+        SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30))),
+    ],
+)
 ```
 
 For longer work, use `start_command` or `shell(mode='background')`, which return while the command keeps
