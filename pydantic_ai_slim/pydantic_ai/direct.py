@@ -59,11 +59,13 @@ def _prepare_messages_carrying_a_retry(
 ) -> list[messages.ModelMessage]:
     """Run the model's message preparation, for the one history shape that cannot go out without it.
 
-    A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] and a legacy
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] are both kept model-neutrally and only
-    become something a model can send at
+    A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] is kept model-neutrally and only
+    becomes something a model can send at
     [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time, so an untranslated one
-    reaching an adapter raises a `UserError` naming that step.
+    reaching an adapter raises a `UserError` naming that step. A deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] would reach a model in the shape it had
+    before deprecation, so a history holding one is prepared too, to send it in the current shape:
+    a tool-less one in the voice its cause calls for, rather than as bare user text.
 
     Preparation does more than translate retries, though — it wraps mid-conversation system prompts,
     synthesizes tool-search exchanges, announces tool-availability deltas, converts realtime speech
