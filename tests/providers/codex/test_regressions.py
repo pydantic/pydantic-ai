@@ -20,6 +20,7 @@ with try_import() as imports_successful:
         OpenAICodexCredentials,
         OpenAICodexProvider,
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
+        _token_response_ta,  # pyright: ignore[reportPrivateUsage]
     )
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed')]
@@ -123,7 +124,13 @@ async def test_token_endpoint_rejects_malformed_fields_without_leaking(field: st
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(CredentialsRefreshError) as exc:
-            await _post_token_request('https://auth.openai.com/oauth/token', {}, http_client=client)
+            await _post_token_request(
+                'https://auth.openai.com/oauth/token',
+                {},
+                _token_response_ta,
+                provider_name='openai-codex',
+                http_client=client,
+            )
     formatted = ''.join(traceback.format_exception(exc.value))
     for token in ('SENTINEL_ACCESS', 'SENTINEL_REFRESH', 'SENTINEL_ID'):
         assert token not in formatted

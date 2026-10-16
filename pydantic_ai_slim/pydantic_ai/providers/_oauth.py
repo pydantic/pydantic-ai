@@ -85,7 +85,7 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
         address = (parsed.hostname or 'localhost', parsed.port or 80)
         callback_path = parsed.path
         expected_state = self.state
-        result: dict[str, str] = {}
+        callback: dict[str, str] = {}
 
         class CallbackHandler(BaseHTTPRequestHandler):
             def setup(self) -> None:
@@ -104,10 +104,10 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
                     return
                 params = {name: values[0] for name, values in parse_qs(url.query).items()}
                 if url.path == callback_path and params.get('state') == expected_state:
-                    if code := params.get('code'):
-                        result['code'] = code
+                    if params.get('code'):
+                        callback.update(params)
                     else:
-                        result['error'] = params.get('error', 'unknown')
+                        callback['error'] = params.get('error', 'unknown')
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b'You can close this tab.')
@@ -120,13 +120,21 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
         def serve_one_callback() -> None:
             with HTTPServer(address, CallbackHandler) as server:
                 server.timeout = 0.5  # recheck for a result or cancellation between requests
-                while not result and not cancelled.is_set():
+                while not callback and not cancelled.is_set():
                     server.handle_request()
 
         try:
             await anyio.to_thread.run_sync(serve_one_callback, abandon_on_cancel=True)
         finally:
             cancelled.set()
-        if error := result.get('error'):
-            raise UserError(f'Authorization failed: {error}')
-        return await self.exchange_code(result['code'])
+        if 'code' not in callback:
+            raise UserError(f'Authorization failed: {callback["error"]}')
+        return await self._exchange_callback(callback)
+
+    async def _exchange_callback(self, params: Mapping[str, str]) -> CredentialsT:
+        """Exchange a callback that carried this flow's `state` and a `code`.
+
+        Flows whose callback carries more than the code (such as a client id issued during
+        registration) override this to read it.
+        """
+        return await self.exchange_code(params['code'])
