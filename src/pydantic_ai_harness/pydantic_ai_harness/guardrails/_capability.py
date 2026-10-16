@@ -362,9 +362,9 @@ async def input_guardrails_allow(ctx: RunContext[object]) -> bool:
         if not verdict.done():
             # `asyncio.wait` rather than `await`: cancelling this waiter must not cancel the guard.
             await asyncio.wait({verdict})
-        # A guard cancelled before it decided never blocked the prompt, so the call runs as it would
-        # without the guard.
-        if not verdict.cancelled() and verdict.exception() is not None:
+        # A guard cancelled before it decided, as when the stream fails while a call waits, never
+        # allowed the prompt.
+        if verdict.cancelled() or verdict.exception() is not None:
             return False
     return True
 

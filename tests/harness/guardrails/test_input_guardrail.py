@@ -722,7 +722,7 @@ class TestInputGuardrailParallel:
 
         async def slow_handler(_: Any) -> ModelResponse:
             handler_started.set()
-            await asyncio.sleep(10)
+            await asyncio.Event().wait()
             return ModelResponse(parts=[TextPart(content='never')])  # pragma: no cover
 
         async def guard(_: str) -> GuardrailResult:
