@@ -1,4 +1,4 @@
-"""Commands' own menus in the web UI: `/set`, `/theme`, and `/spinner` shown in the page instead of the terminal."""
+"""Commands' own menus in the web UI: `/set`, `/theme`, `/spinner`, and `/mcp` shown in the page instead of the terminal."""
 
 import io
 from collections.abc import Sequence
@@ -22,7 +22,8 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.mcp import MCPPlugin, MCPSettings, MCPStore
+from pydantic_clai2.plugins import PluginHost, collect
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
@@ -195,6 +196,40 @@ def test_settings_save_one_at_a_time(tmp_path: Path) -> None:
     context.reset_setting('display.thinking')
     assert held == [True, True]
     assert not context.edits.locked()
+
+
+def test_mcp_servers_are_managed_from_the_page(make_web: MakeWeb, tmp_path: Path) -> None:
+    """Bare `/mcp` opens its menu in the page, whose actions run `/mcp`'s own form and subcommands there."""
+    web_ = make_web(Agent(TestModel()))
+    store = MCPStore(tmp_path / 'mcp', workspace=tmp_path)
+    host = PluginHost[None](name='mcp', console=Console(file=io.StringIO()), settings={})
+    web_.shell.commands.register_many(collect(MCPPlugin(host, MCPSettings(), store=store)).commands)
+    assert list(fields(web_, 'mcp')) == ['add']
+    with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
+        socket.receive_text()
+        assert web_.post('/api/input', {'text': '/mcp'}).json() == {'menu': 'mcp'}
+        with ThreadPoolExecutor(1) as pool:
+            action = pool.submit(web_.post, '/api/commands/mcp/fields/add/action')
+            answers = ['name', 'files', 'json', '{"command": "uvx", "args": ["files"]}', 'save']
+            for answer in answers:
+                dialog = receive_until(socket, DialogOpened)[1].dialog
+                if dialog.kind == 'text' and dialog.label == 'JSON':
+                    assert '\n' in dialog.initial, 'the page edits the indented JSON'
+                    rejected = web_.post(f'/api/dialogs/{dialog.id}', {'value': '{broken'})
+                    assert rejected.status_code == 400 and rejected.json()['detail'].startswith('Invalid JSON')
+                assert web_.post(f'/api/dialogs/{dialog.id}', {'value': answer}).status_code == 204
+            done = action.result(timeout=10).json()
+        receive_until(socket, SettingsChanged)
+    [message] = done['messages']
+    assert message.startswith('Added files.') and message.splitlines()[0] in terminal(web_)
+    assert store.load().servers['files'].model_dump(exclude_defaults=True) == {
+        'type': 'stdio',
+        'command': 'uvx',
+        'args': ['files'],
+    }
+    shown = {field['key']: field for field in done['menu']['fields']}
+    assert shown['server.files']['value'] == 'ready' and shown['server.files']['action'] is True
+    assert web_.post('/api/commands/mcp/fields/server.files', {'value': 'off'}).status_code == 400
 
 
 def test_a_host_finds_only_declared_available_menus() -> None:

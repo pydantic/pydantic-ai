@@ -83,6 +83,15 @@ finishes when the browser comes back to the machine CLAI runs on. An API-key acc
 a `/keys` entry. Connections (`openrouter`, `vllm`) and plugins' sign-ins ask in the terminal, so
 the page says to run `/login NAME` there.
 
+<!-- From #10459 -->
+**MCP servers** (`#settings/mcp`, or `/mcp` typed in the composer) lists your MCP servers with
+their state: running, ready, off, an error, or needing a sign-in.
+**Add server** opens `/mcp install`'s form as dialogs, its JSON in a multi-line field, and a
+server's **Manage** starts, stops, or restarts it, shows its tools and recent logs, signs in or out,
+edits, or removes it, as `/mcp`'s subcommands do; the terminal prints each result, and a change
+made there shows here too. A repository's MCP files show as a banner whose **Review** shows their
+contents before you trust them.
+
 <!-- From #10289 -->
 The Plugins panel, the Settings window's **Plugins** section (the puzzle button in the sidebar's
 footer, or `/plugins` in the composer), turns plugins on and off and edits their settings, saved and

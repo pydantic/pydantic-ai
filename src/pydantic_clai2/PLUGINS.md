@@ -68,7 +68,8 @@ separately.
   into the form and written into the JSON.
 - **JSON Configuration** opens `$VISUAL` or `$EDITOR` (default `vi`) on the
   server's JSON, with a one-line input as a fallback when no editor runs. The
-  preview says whether it is valid and why not.
+  preview says whether it is valid and why not. In the web UI it is a multi-line
+  field in the page.
 - **OAuth sign-in** appears for `http` and `sse` servers. Switching it on sets
   `"auth": "oauth"`, allows 330 seconds for the handshake, and drops any
   `Authorization` header. After saving, `/mcp auth NAME` signs in: FastMCP runs
@@ -92,6 +93,17 @@ between prompts. A server that cannot connect is marked `error` and left out of
 the prompt instead of failing it; `/mcp logs NAME` shows why. `/mcp stop`
 disconnects the server and disables it until `/mcp start`. The model sees tools
 prefixed by server name, for example `local_search`.
+
+In the web UI, the Settings window's **MCP servers** section (`#settings/mcp`, or bare
+`/mcp` typed in the composer) is the same command in the page. It lists each server with
+its state (`running`, `ready`, `stopped`, `error`, or needing its OAuth sign-in), what it
+runs, and where it is defined. **Add server** opens the form above as dialogs, and a
+server's **Manage** offers the subcommands that apply to it: start or connect, stop,
+restart, its tools, its recent logs, sign in or out, edit, and remove (after a
+confirmation). Each runs as typing it would, and the terminal prints the result. When the
+repository has project MCP files, a banner shows whether they are trusted, and **Review**
+shows each file's contents before you trust or revoke them. The section is `/mcp`'s
+declared menu, `pydantic_clai2.mcp.servers_menu`, asking through `Dialogs`.
 
 Only install servers you trust. Stdio servers run programs with your user
 permissions, launched as an executable plus arguments without a shell. Remote
@@ -1236,10 +1248,10 @@ directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the t
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, the others a dialog, except where a section lists the command, as Keys &
-accounts lists `/keys`, `/login`, and `/accounts`. Its edits go through the menu's own source, as in
-the terminal, which prints what each one saved. Any other bare command that opens a terminal
-menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
-`/model NAME` instead.
+accounts lists `/keys`, `/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go
+through the menu's own source, as in the terminal, which prints what each one saved. Any other
+bare command that opens a terminal menu, such as `/model`, opens it in the terminal; the
+browser's model picker selects with `/model NAME` instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
@@ -1275,6 +1287,9 @@ runs; reloading the page shows it at once.
 The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
 left; each has its own address, `#settings/general` or `#settings/plugins`. **General** is `/set`'s
 menu, from `host.command_menu('set')`, grouped by the part of each key before its dot.
+**MCP servers** (`#settings/mcp`) is `/mcp`'s menu, from `host.command_menu('mcp')`: one row
+per server, each an action whose dialogs run `/mcp`'s subcommands; see
+[Connect MCP servers](#connect-mcp-servers).
 The **Plugins** section (the puzzle button in the sidebar's footer, or `/plugins` typed in the
 composer), called the plugins panel below, is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
 status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
