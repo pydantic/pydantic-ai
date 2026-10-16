@@ -12,11 +12,11 @@ import re
 import secrets
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Annotated, Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
@@ -56,6 +56,8 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 ResultT = TypeVar('ResultT')
+MenuPath = Annotated[tuple[str, ...], Query(alias='menu')]
+"""`?menu=KEY`, once per row chosen from a declared settings menu to reach the menu that row opens."""
 
 
 class Guard:
@@ -375,16 +377,16 @@ def _plugins(app: FastAPI, service: WebService) -> None:
         _run(lambda: service.open_plugin_menu(name))
 
     @app.get('/api/plugins/{name}/fields')
-    async def fields(name: str) -> MenuInfo:
-        return await _wait(service.plugin_menu(name))
+    async def fields(name: str, path: MenuPath = ()) -> MenuInfo:
+        return await _wait(service.plugin_menu(name, path=path))
 
     @app.post('/api/plugins/{name}/fields/{key}')
-    async def set_field(name: str, key: str, body: FieldValue) -> MenuEdited:
-        return await _wait(service.edit_menu(name, key, body.value))
+    async def set_field(name: str, key: str, body: FieldValue, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(service.edit_menu(name, key, body.value, path=path))
 
     @app.post('/api/plugins/{name}/fields/{key}/action')
-    async def run_action(name: str, key: str) -> MenuEdited:
-        return await _wait(service.run_menu_action(name, key))
+    async def run_action(name: str, key: str, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(service.run_menu_action(name, key, path=path))
 
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:
@@ -395,16 +397,16 @@ def _commands(app: FastAPI, service: WebService) -> None:
     """Commands' own menus, such as `/set`'s, shown in the page instead of the terminal."""
 
     @app.get('/api/commands/{name}/fields')
-    async def fields(name: str) -> MenuInfo:
-        return await _wait(service.command_menu(name))
+    async def fields(name: str, path: MenuPath = ()) -> MenuInfo:
+        return await _wait(service.command_menu(name, path=path))
 
     @app.post('/api/commands/{name}/fields/{key}')
-    async def set_field(name: str, key: str, body: FieldValue) -> MenuEdited:
-        return await _wait(service.edit_command_menu(name, key, body.value))
+    async def set_field(name: str, key: str, body: FieldValue, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(service.edit_command_menu(name, key, body.value, path=path))
 
     @app.post('/api/commands/{name}/fields/{key}/action')
-    async def run_action(name: str, key: str) -> MenuEdited:
-        return await _wait(service.run_command_menu_action(name, key))
+    async def run_action(name: str, key: str, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(service.run_command_menu_action(name, key, path=path))
 
 
 def _tasks(app: FastAPI, service: WebService) -> None:

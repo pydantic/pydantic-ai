@@ -8,12 +8,14 @@ from functools import partial
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
@@ -223,6 +225,11 @@ def run_text(widget: TextInput) -> TextInputResult:  # pragma: no cover -- needs
     return widget.run()
 
 
+def run_pager(pager: Pager) -> object:  # pragma: no cover -- needs a real terminal.
+    """Show a termflow pager on the real terminal."""
+    return pager.run()
+
+
 @dataclass(frozen=True, kw_only=True)
 class Runners:
     """How widgets get shown; tests swap these for scripted results."""
@@ -230,6 +237,9 @@ class Runners:
     run_list: ListRunner = run_menu
     run_choice: ListRunner = run_menu
     run_text: TextRunner = run_text
+    run_pager: Callable[[Pager], object] = run_pager
+    edit: TextEditor = edit_text
+    """Multi-line text: `$VISUAL`, `$EDITOR`, or the built-in editor."""
 
 
 TERMINAL = Runners()

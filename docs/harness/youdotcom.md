@@ -222,7 +222,7 @@ contributes the same default research guidance.
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each You.com request is recorded, so a
+Under [durable execution](../durable_execution/overview.md), each You.com request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -232,7 +232,7 @@ exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
 longer with
 `TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](durable-execution.md#temporal-timeouts).
+as in [Temporal timeouts](../durable_execution/temporal.md#harness-command-timeouts).
 
 The records are named after the capability's `id`, which defaults to
 `you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable

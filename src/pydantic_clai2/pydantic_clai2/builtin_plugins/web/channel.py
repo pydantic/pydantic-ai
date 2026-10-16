@@ -30,11 +30,13 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
     usage_info,
+    usage_report,
     user_text,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.plugins import CommandEnd, LiveSession, TurnOutcome
+from pydantic_clai2.ui.rendering.usage_report import session_usage
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.service import WebService
@@ -43,6 +45,8 @@ CODE_MODE = 'run.code_mode'
 SPECULATION = 'run.speculative_code_mode'
 Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
+USAGE_COMMANDS = frozenset({'/usage', '/cost'})
+"""Commands whose notice carries the figures they report, for the page's usage card."""
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
@@ -200,7 +204,9 @@ class SessionChannel:
         if event.error is not None:
             self.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:
-            self.publish(Notice(text=event.output, command=event.text))
+            reports = event.text.split(maxsplit=1)[0] in USAGE_COMMANDS
+            usage = usage_report(session_usage(self.session.conversation.messages)) if reports else None
+            self.publish(Notice(text=event.output, command=event.text, usage=usage))
 
     # What the browser does.
 

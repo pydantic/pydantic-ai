@@ -154,8 +154,6 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
     calls = {'a': 0, 'b': 0}
     fleet.agents = {name: blocked(name, started, release, calls) for name in 'ab'}
     launched_in = Path.cwd()
-    # Switching a new database to WAL can fail at once when two first saves race, so make it first.
-    await fleet.process.conversations.listing()
     with anyio.fail_after(20):
         async with fleet.live.serving():
             a = await fleet.live.new(workspace=fleet.folder('a'))
