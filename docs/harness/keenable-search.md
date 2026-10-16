@@ -38,7 +38,7 @@ by default, and this capability talks to them over `httpx`, which
 from pydantic_ai import Agent
 from pydantic_ai_harness import KeenableSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[KeenableSearch()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[KeenableSearch()])
 result = agent.run_sync('What changed in the EU AI Act this year? Cite your sources.')
 print(result.output)
 ```
@@ -62,7 +62,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import KeenableSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         KeenableSearch(
             num_results=10,
