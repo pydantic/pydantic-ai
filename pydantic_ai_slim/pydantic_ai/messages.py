@@ -2953,7 +2953,7 @@ class NativeToolCallPart(BaseToolCallPart[ArgsT_co]):
     a worked example):
 
     1. Add a sibling `pydantic_ai/_<name>.py` module that defines the cross-provider
-       `TypedDict`s, the kind (with `_core_tool_kind('<emitter>', args=..., content=...)`, matching
+       `TypedDict`s, the kind (with `ToolKind._core('<emitter>', args=..., content=...)`, matching
        the emitting [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind]),
        and the `NativeToolCallPart[Args]` / `NativeToolReturnPart[Content]` subclasses that pass it
        as their `kind` class argument. As core kinds are in the deserialization union, each subclass

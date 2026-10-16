@@ -38,6 +38,7 @@ from .messages import (
     RetryPromptPart,
     ToolCallPart,
     ToolReturn,
+    _shape_name,  # pyright: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -95,10 +96,6 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
                     f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
                     f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
                 )
-
-
-def _shape_name(shape: Any) -> str:
-    return shape.__qualname__ if isinstance(shape, type) else repr(shape)
 
 
 @lru_cache(maxsize=256)
