@@ -307,7 +307,7 @@ function Editor({
 }
 
 /** A text field that saves on Enter (Mod+Enter when multiline) or when it loses focus; Esc puts the saved value back. */
-function Draft({
+export function Draft({
   id,
   current,
   placeholder,
@@ -328,7 +328,7 @@ function Draft({
   onCommit: (text: string) => void
   multiline?: boolean
   code?: boolean
-  type?: 'text' | 'number'
+  type?: 'text' | 'number' | 'password'
   min?: number
   max?: number
 }) {

@@ -24,7 +24,15 @@ from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
-from pydantic_clai2.builtin_plugins.web.protocol import CompletionInfo, PluginRow, Project, Transcript, dump
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    CompletionInfo,
+    MenuEdited,
+    MenuInfo,
+    PluginRow,
+    Project,
+    Transcript,
+    dump,
+)
 from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch
 
 STATIC = Path(__file__).with_name('static')
@@ -135,6 +143,18 @@ class PluginChanges(BaseModel):
     reset: list[str] = []
 
 
+class FieldValue(BaseModel):
+    """A settings menu row's new value, as typed in its menu; empty or `None` resets it."""
+
+    value: str | None = Field(default=None, max_length=100_000)
+
+
+class DialogAnswer(BaseModel):
+    """A dialog's answer: the chosen value, the typed text, or `yes`; `None` backs out."""
+
+    value: str | None = Field(default=None, max_length=100_000)
+
+
 class Forked(BaseModel):
     """The copy a fork saved."""
 
@@ -221,6 +241,10 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
         answers = None if body.answers is None else [_answer(answer) for answer in body.answers]
         _run(lambda: remote.answer(request_id, answers))
 
+    @app.post('/api/dialogs/{dialog_id}', status_code=204)
+    async def answer_dialog(dialog_id: str, body: DialogAnswer) -> None:
+        _run(lambda: remote.answer_dialog(dialog_id, body.value))
+
 
 def _answer(answer: Answer) -> AskUserAnswer:
     if answer.custom is not None:
@@ -275,6 +299,18 @@ def _plugins(app: FastAPI, remote: Remote) -> None:
     @app.post('/api/plugins/{name}/menu', status_code=204)
     async def menu(name: str) -> None:
         _run(lambda: remote.open_plugin_menu(name))
+
+    @app.get('/api/plugins/{name}/fields')
+    async def fields(name: str) -> MenuInfo:
+        return await _wait(remote.plugin_menu(name))
+
+    @app.post('/api/plugins/{name}/fields/{key}')
+    async def set_field(name: str, key: str, body: FieldValue) -> MenuEdited:
+        return await _wait(remote.edit_menu(name, key, body.value))
+
+    @app.post('/api/plugins/{name}/fields/{key}/action')
+    async def run_action(name: str, key: str) -> MenuEdited:
+        return await _wait(remote.run_menu_action(name, key))
 
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:

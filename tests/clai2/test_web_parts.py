@@ -4,6 +4,7 @@ import asyncio
 import io
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -41,6 +42,7 @@ from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2.builtin_plugins.web import WebPlugin, remote as remote_module, server as server_module
 from pydantic_clai2.builtin_plugins.web.app import Receive, Scope, Send
+from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
 from pydantic_clai2.builtin_plugins.web.protocol import (
     RESULT_CHARS,
@@ -75,6 +77,7 @@ from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime.repl_cells import ReplCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from tests.clai2.test_web import WIRE
@@ -519,3 +522,52 @@ def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
     monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db')])
     _cli.run()
+
+
+async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
+    published: list[ServerMessage] = []
+    dialogs = BrowserDialogs(publish=published.append)
+
+    async def forever(show: Callable[[str], None]) -> None:
+        show('code 1')
+        await asyncio.Event().wait()
+
+    async def fails(show: Callable[[str], None]) -> None:
+        raise ValueError('denied')
+
+    waiting: list[bool] = []
+    async with anyio.create_task_group() as group:
+
+        async def wait() -> None:
+            waiting.append(await dialogs.wait(title='Signing in', description='Finish it.', task=forever))
+
+        group.start_soon(wait)
+        await anyio.wait_all_tasks_blocked()
+        [dialog] = dialogs.dialogs
+        assert dialog.shown == 'code 1', 'a browser connecting now sees the latest text'
+        # Any answer cancels a wait, and it reports that it did not finish.
+        dialogs.answer(dialog.id, None)
+    assert waiting == [False]
+    with pytest.raises(ValueError, match='denied'):
+        await dialogs.wait(title='Signing in', description='Finish it.', task=fails)
+
+    answers: list[bool | str | None] = []
+    async with anyio.create_task_group() as group:
+
+        async def confirm() -> None:
+            answers.append(await dialogs.confirm(title='Sure?', yes='Yes', no='No'))
+
+        async def choose() -> None:
+            answers.append(await dialogs.choose(title='Pick', options=[Option(value='a', label='A')]))
+
+        group.start_soon(confirm)
+        group.start_soon(choose)
+        await anyio.wait_all_tasks_blocked()
+        first, second = dialogs.dialogs
+        dialogs.answer(first.id, 'no')
+        # One already answered is left as it is; the rest back out.
+        dialogs.cancel_all()
+        with pytest.raises(LookupError):
+            dialogs.answer(second.id, 'a')
+    assert sorted(answers, key=str) == [False, None]
+    assert [type(message).__name__ for message in published].count('DialogClosed') == 4

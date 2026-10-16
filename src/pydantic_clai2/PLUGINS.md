@@ -1216,15 +1216,26 @@ runs; reloading the page shows it at once.
 The **Plugins** panel (the puzzle button in the sidebar's footer, ⌘, or `/plugins` typed in the
 composer) is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
 status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
-`/plugins disable` do, without opening its settings menu. A plugin that is on shows a form for
-its settings model, built from the model's JSON Schema: a switch for each boolean, a list for
-each choice, fields for text and numbers, one line per item for a list of strings, and JSON for
-anything else. Each change is validated by the model and saved at once, then the plugin is
-loaded again with it, as its own settings menu does; a value the model rejects shows its error
-beside the field and is not saved. A plugin's own menu (`configure`), for sign-ins and `/keys`
-entries, opens in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to
-open it in. The panel cannot turn off, reload, or reconfigure `web` itself, which would end the
-page; change those from the terminal.
+`/plugins disable` do, without opening its settings menu. A plugin that is on shows its settings:
+
+- A plugin that [declares its settings menu](#offer-a-settings-menu-def-settings_menuself)
+  shows that menu's rows, as the terminal lists them: a switch for a yes/no row, a list for one
+  with choices, and a field for the rest. Each change is checked and saved at once, as the
+  terminal menu saves it, and the plugin loads again with it; a value the menu rejects shows its
+  reason beside the row and is not saved. A row that opens more, such as picking a `/keys`
+  entry or signing in, has a **Change…** button: what its action asks (`Dialogs`) opens as
+  dialogs in the page, only there, and the terminal is left alone. A secret typed into one goes
+  to the plugin alone, never to another browser.
+- Any other plugin with settings shows a form built from its settings model's JSON Schema: a
+  switch for each boolean, a list for each choice, fields for text and numbers, one line per item
+  for a list of strings, and JSON for anything else. Each change is validated by the model and
+  saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
+  in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+
+One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
+are open in the page, other edits to that plugin are refused until it closes. The panel cannot
+turn off, reload, or reconfigure `web` itself, which would end the page; change those from the
+terminal.
 
 While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
 terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
@@ -2240,8 +2251,12 @@ prompt the keyboard does:
   saved settings); `enable(NAME)`, `disable(NAME)`, and `reload(NAME)` act as the `/plugins`
   subcommands do, saved at once, but `enable` opens no settings menu; and
   `save_settings(NAME, SETTINGS)` saves a loaded plugin's settings, an instance of its own settings
-  model, as its menu would with `host.save_settings`, then loads it again if they changed. Adding
-  and removing declarations, and a plugin's own menu, go through the prompt:
+  model, as its menu would with `host.save_settings`, then loads it again if they changed.
+  `settings_menu(NAME)` is a loaded plugin's declared `SettingsMenu`, or `None`, and
+  `await edit_settings(NAME, edit)` runs `edit(menu)` (apply or reset a row through its
+  `source`, or run one of its `actions` with your own `Dialogs`), then loads the plugin again if
+  its settings changed; it refuses while that plugin's menu is open elsewhere. Adding and removing
+  declarations, and a menu a plugin did not declare, go through the prompt:
   `send_input('/plugins configure NAME')`.
 
 | | `send_input(text)` | `submit_prompt(text)` |

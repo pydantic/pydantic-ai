@@ -35,6 +35,7 @@ web UI, the REPL panel's input runs `/repl` too.
 
 <!-- From #10289 -->
 The Plugins panel (the puzzle button in the sidebar's footer, Cmd/Ctrl+, or `/plugins` in the
-composer) turns plugins on and off and edits their settings in a form, saved and applied at once,
-as `/plugins` does in the terminal. Sign-ins and keys stay in each plugin's own menu, which opens
-in the terminal.
+composer) turns plugins on and off and edits their settings, saved and applied at once, as
+`/plugins` does in the terminal. A plugin that declares its settings menu shows it there, sign-ins
+and `/keys` entries included, as dialogs in the page; any other plugin's own menu opens in the
+terminal.

@@ -33,6 +33,7 @@ from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
 DepsT = DefaultTypeVar('DepsT', default=None)
 ModelT = TypeVar('ModelT', bound=BaseModel)
+ResultT = TypeVar('ResultT')
 _SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
 SessionEndReason = Literal['exit', 'eof', 'error']
@@ -148,7 +149,9 @@ class PluginInfo:
     provides: str = ''
     """What it contributes while loaded, such as `2 commands, 1 capability`."""
     has_menu: bool = False
-    """Whether it overrides `Plugin.configure`, whose menu runs in the terminal."""
+    """Whether it has a settings menu: a declared one (`settings_menu`), or its own `configure`, which runs in the terminal."""
+    settings_menu: bool = False
+    """Whether it declares its settings menu, which `PluginCatalog.edit_settings` can edit from anywhere."""
     settings_model: type[BaseModel] | None = None
     """Its settings model while loaded, unless it takes none; validate new settings with it for `save_settings`."""
     settings: BaseModel | None = None
@@ -160,7 +163,7 @@ class PluginCatalog(Protocol):
 
     Each action applies at once and is saved, as the same `/plugins` action is; a running turn keeps
     the plugins it started with. Adding and removing declarations goes through the prompt, with
-    `PluginHost.send_input`, as does a plugin's own settings menu (`/plugins configure NAME`).
+    `PluginHost.send_input`, as does a settings menu that is not declared (`/plugins configure NAME`).
     Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
     own `on_session_start` or `on_session_end`, which a change runs.
     """
@@ -186,6 +189,20 @@ class PluginCatalog(Protocol):
 
         `settings` is an instance of `PluginInfo.settings_model`. Raises `ValueError` when the plugin is
         not loaded or takes no settings, and `TypeError` for another model.
+        """
+        ...
+
+    def settings_menu(self, name: str) -> SettingsMenu | None:
+        """A loaded plugin's declared settings menu, to show; `None` when it is not loaded or declares none."""
+        ...
+
+    async def edit_settings(self, name: str, edit: Callable[[SettingsMenu], Awaitable[ResultT]]) -> ResultT:
+        """Run `edit` on a loaded plugin's declared settings menu, then load the plugin again if its settings changed.
+
+        This is what closing the menu after an edit does, so call it once per edit: a value applied
+        or reset through the menu's `source`, or one of its `actions` run with your own `Dialogs`.
+        Raises `ValueError` when the plugin is not loaded, declares no menu, or its menu is already
+        open, in the terminal or for another edit.
         """
         ...
 
