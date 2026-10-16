@@ -1,6 +1,8 @@
-# Configuration for the scheduled docs link check (see link-check.yml).
-# Tuned to avoid false positives from sites that block bots or rate-limit, so the
-# issue it opens only lists genuinely broken links.
+# Configuration for the docs link check, shared by the PR gate in ci.yml (`docs-assets`,
+# run with `--offline` so only local files are checked) and the scheduled external-link
+# sweep in link-check.yml.
+# Tuned to avoid false positives from sites that block bots or rate-limit, so the issue
+# the scheduled sweep opens only lists genuinely broken links.
 
 # Some sites return 403/429 to non-browser clients even though the link is fine.
 accept = ["200..=299", "403", "429"]
@@ -17,9 +19,19 @@ timeout = 30
 exclude_all_private = true
 exclude_loopback = true
 
-# Relative doc links are resolved by mkdocs, not as filesystem paths; skip the
-# `file://` links lychee derives from them.
-scheme = ["https", "http"]
+# No `scheme` allowlist: relative links between doc pages resolve as filesystem paths, and skipping
+# them is how a page's worth of dead in-page anchors shipped unnoticed. The rule for keeping heading
+# anchors resolvable lives in `docs/AGENTS.md`, with the rest of the doc-authoring conventions.
+#
+# The PR gate adds `--include-fragments` on the command line rather than setting the key here: the
+# config key's type changed between lychee releases while the flag did not, and the gate is the only
+# consumer that wants it. The weekly sweep deliberately checks pages but not fragments -- roughly a
+# third of the docs' external anchors are rendered client-side or are GitHub line ranges, so remote
+# fragment checking reports them as broken and would bury the real hits in the issue it files.
+
+# `CONTRIBUTING.md` is a symlink to `docs/contributing.md`, so its relative links resolve from
+# `docs/` and not from the repository root. The file is checked at its real path.
+exclude_path = ["CONTRIBUTING.md"]
 
 # Login-gated or bot-blocking hosts that return non-2xx to automated checks even
 # though the links are valid in a browser; not worth failing the run over.

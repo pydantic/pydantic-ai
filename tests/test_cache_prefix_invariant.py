@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from vcr.record_mode import RecordMode
+from cassetter import Cassette, RecordMode
 
 from .cassette_utils import (
     canonical_prefix_blocks,
@@ -30,14 +31,16 @@ def prefix_moving_cassette(tmp_path: Path) -> Path:
                     'method': 'POST',
                     'uri': 'https://api.openai.com/v1/chat/completions',
                     'parsed_body': {'tools': [{'type': 'function', 'function': {'name': 'first'}}], 'messages': []},
-                }
+                },
+                'response': {'status': {'code': 200, 'message': 'OK'}},
             },
             {
                 'request': {
                     'method': 'POST',
                     'uri': 'https://api.openai.com/v1/chat/completions',
                     'parsed_body': {'tools': [{'type': 'function', 'function': {'name': 'changed'}}], 'messages': []},
-                }
+                },
+                'response': {'status': {'code': 200, 'message': 'OK'}},
             },
         ]
     }
@@ -69,6 +72,20 @@ def test_check_cache_prefix_stability_fails_unmarked(
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
 
+def test_check_cache_prefix_stability_reads_loaded_cassette(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    """Playback checks the interactions cassetter already parsed instead of reading the file again."""
+    cassette = Cassette(prefix_moving_cassette, record_mode=RecordMode.NONE)
+    cassette.load()
+    assert list(iter_cassette_prefix_violations(cassette)) == list(
+        iter_cassette_prefix_violations(prefix_moving_cassette)
+    )
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match=rf'{re.escape(str(prefix_moving_cassette))} \[openai-chat\]'):
+        check_cache_prefix_stability(node, cassette)
+
+
 @pytest.mark.moves_cache_prefix(reason='unit test covers the deliberate exemption')
 def test_check_cache_prefix_stability_allows_marked(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
@@ -93,9 +110,18 @@ def test_check_cache_prefix_stability_allows_clean(request: pytest.FixtureReques
 )
 def test_cache_prefix_fixture_skips_uncheckable_cassettes(call_report: Any, cassette_path: str) -> None:
     """Failed tests and missing cassette files must not produce a second teardown failure."""
-    node = SimpleNamespace(rep_setup=SimpleNamespace(skipped=False, failed=False), rep_call=call_report)
+
+    def get_closest_marker(name: str) -> None:
+        return None
+
+    node = SimpleNamespace(
+        rep_setup=SimpleNamespace(skipped=False, failed=False),
+        rep_call=call_report,
+        get_closest_marker=get_closest_marker,
+    )
     request = SimpleNamespace(node=node)
-    vcr = SimpleNamespace(record_mode=RecordMode.NONE, _path=cassette_path)
+    vcr = Cassette(cassette_path, record_mode=RecordMode.NONE)
+    vcr.load()
     fixture = cast(Callable[[Any, Any], Iterator[None]], getattr(fail_cache_prefix_violations, '__wrapped__'))
     iterator = fixture(cast(Any, request), cast(Any, vcr))
 
@@ -170,6 +196,44 @@ def test_canonical_prefix_blocks_bedrock() -> None:
     )
     assert shape_and_blocks is not None
     assert shape_and_blocks[0] == 'bedrock'
+
+
+def test_canonical_prefix_blocks_anthropic_excludes_deferred_tools() -> None:
+    """Deferred declarations are outside Anthropic's measured prompt-cache key."""
+    before = canonical_prefix_blocks(
+        {
+            'tools': [{'name': 'visible'}, {'name': 'searchable', 'defer_loading': True}],
+            'messages': [{'role': 'user', 'content': 'Hi'}],
+        },
+        'https://api.anthropic.com/v1/messages',
+    )
+    after = canonical_prefix_blocks(
+        {
+            'tools': [
+                {'name': 'visible'},
+                {'name': 'searchable', 'defer_loading': True},
+                {'name': 'revealed_later', 'defer_loading': True},
+            ],
+            'messages': [{'role': 'user', 'content': 'Hi'}],
+        },
+        'https://api.anthropic.com/v1/messages',
+    )
+    assert before is not None and after is not None
+    assert before == after
+
+
+def test_canonical_prefix_blocks_anthropic_keeps_visible_tools() -> None:
+    """A change to a visible Anthropic tool remains a cache-prefix violation."""
+    before = canonical_prefix_blocks(
+        {'tools': [{'name': 'visible'}], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+        'https://api.anthropic.com/v1/messages',
+    )
+    after = canonical_prefix_blocks(
+        {'tools': [{'name': 'changed'}], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+        'https://api.anthropic.com/v1/messages',
+    )
+    assert before is not None and after is not None
+    assert classify_prefix_pair(before[1], after[1]) == ('tools-divergent', 0)
 
 
 def test_classify_prefix_pair_non_object_message_blocks() -> None:
@@ -276,3 +340,86 @@ def test_iter_cassette_prefix_violations_skips_malformed_cassettes(tmp_path: Pat
         encoding='utf-8',
     )
     assert list(iter_cassette_prefix_violations(skipped_requests)) == []
+
+
+def _anthropic_cassette(tmp_path: Path, name: str, bodies: list[dict[str, Any]]) -> Path:
+    cassette_path = tmp_path / name
+    cassette = {
+        'interactions': [
+            {'request': {'method': 'POST', 'uri': 'https://api.anthropic.com/v1/messages', 'parsed_body': body}}
+            for body in bodies
+        ]
+    }
+    cassette_path.write_text(yaml.safe_dump(cassette), encoding='utf-8')
+    return cassette_path
+
+
+def test_anthropic_deferred_tail_must_be_append_only(tmp_path: Path) -> None:
+    """Deferred entries escape the cache-key model, but their wire contract is still checked.
+
+    Within a continuing conversation the `defer_loading: true` tail may only grow at the end, in
+    first-reveal order; a reorder, edit, or removal is flagged as a `deferred-tools` violation
+    even though Anthropic's cache key ignores those entries.
+    """
+    visible = {'name': 'visible'}
+    searchable = {'name': 'searchable', 'defer_loading': True}
+    revealed = {'name': 'revealed_later', 'defer_loading': True}
+    base_messages = [{'role': 'user', 'content': 'Hi'}]
+    grown = [*base_messages, {'role': 'assistant', 'content': 'ok'}, {'role': 'user', 'content': 'more'}]
+
+    append = _anthropic_cassette(
+        tmp_path,
+        'append.yaml',
+        [
+            {'tools': [visible, searchable], 'messages': base_messages},
+            {'tools': [visible, searchable, revealed], 'messages': grown},
+        ],
+    )
+    assert list(iter_cassette_prefix_violations(append)) == []
+
+    reorder = _anthropic_cassette(
+        tmp_path,
+        'reorder.yaml',
+        [
+            {'tools': [visible, searchable, revealed], 'messages': base_messages},
+            {'tools': [visible, revealed, searchable], 'messages': grown},
+        ],
+    )
+    [violation] = list(iter_cassette_prefix_violations(reorder))
+    assert (violation.level, violation.block_index) == ('deferred-tools', 0)
+
+    edited = _anthropic_cassette(
+        tmp_path,
+        'edited.yaml',
+        [
+            {'tools': [visible, searchable], 'messages': base_messages},
+            {
+                'tools': [visible, {'name': 'searchable', 'defer_loading': True, 'description': 'changed'}],
+                'messages': grown,
+            },
+        ],
+    )
+    [violation] = list(iter_cassette_prefix_violations(edited))
+    assert violation.level == 'deferred-tools'
+
+    removed = _anthropic_cassette(
+        tmp_path,
+        'removed.yaml',
+        [
+            {'tools': [visible, searchable, revealed], 'messages': base_messages},
+            {'tools': [visible, searchable], 'messages': grown},
+        ],
+    )
+    [violation] = list(iter_cassette_prefix_violations(removed))
+    assert (violation.level, violation.later_block) == ('deferred-tools', '<missing>')
+
+    # A genuinely new conversation resets the tail together with everything else.
+    new_conversation = _anthropic_cassette(
+        tmp_path,
+        'new-conversation.yaml',
+        [
+            {'tools': [visible, searchable, revealed], 'messages': base_messages},
+            {'tools': [visible, searchable], 'messages': [{'role': 'user', 'content': 'Different'}]},
+        ],
+    )
+    assert list(iter_cassette_prefix_violations(new_conversation)) == []

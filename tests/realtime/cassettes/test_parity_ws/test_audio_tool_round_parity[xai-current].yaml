@@ -1,0 +1,1043 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: e219fc15-42f2-4f70-ab72-b46cefde85f9
+    session:
+      id: 907746860f0f4ecf887090fa5be23f06
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-think-fast-2.0
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: f3ed5814-8083-4d92-a139-bd263175c0f2
+    conversation:
+      id: c5673312-2f32-4827-ab26-5a96e9668bb9
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: a79fad48-4470-4c96-9bca-a21dc67d7162
+    timestamp: 1789521510476
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      model: grok-voice-think-fast-2.0
+      tools:
+      - type: function
+        function:
+          name: get_weather
+          description: Look up the weather for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 172edb30-61d8-4ec7-8a1b-53ec1d1c9075
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 7//z//b/+v///wAABwAHAA4AEwASAB0AHgAjACoALAAw
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: DQHeALEAgwBYADQADgDq/8r/qP+N/2//Vf85/xr/AP/h
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: B+Qp5JvkYeV66GLsZvO/+u0FpA6GFWQYCRvqG4MdWh5X
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: WP9X/1z/WP9c/2D/Z/9t/4L/hv+Q/5r/rf+2/8j/1f/m
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: v/Y9+JH6kf2n/+UC6wRKBvYHeQiPCT8LRgypDPANWg7J
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: pgvWC5sLIwslC/gKuwpTCsMJbQk1Ce8IighxCLAIhwiL
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 0QLhAeMA4P/N/vX9Gv1f/M37O/uc+gv6dPno+IT4RvgW
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: /ATKAksAgvxm+En0mPFU8EPwffFB86L1IvjD+o7+3wJ4
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: yQXYBdYF1gXzBe8F6wXBBbcFiAURBecEhQQWBPADoAOC
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: ag8dDp8MhQuuCusJfAnaCDwISAdEBlQFOARnA6wC8gGB
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Fg6zEKUSZxPaEt0RDhGPEEoRAhKyEkcTVxPDE0UUoBSn
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: luZg5/fooOvb7+rtdews7K7p6Oqs7xb3kfsK/Tv8U/hi
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: uAIIAhgBsQBwAY0CbAMDBPUE0wSJBCgEZgNoAvcB/AFJ
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: cvup+8n76/sT/C38U/yH/L38CP1d/Z/91v0S/j3+av5+
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: ee3G67Hq0+wB7e/wlfZm+br+Uf4J+233OPR385b4tv5K
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: XRJeEmASfRKXEm8SURIBEpQRPxHYEIEQQRDrD4UP+w5V
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 3ASb/bkD5Pzb/JcAtvuxBtAF6PR8A4EEcPxm/rUCw/8M
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: XP4S/cb7NvpU+YP4Avi994n3Q/dH9oH1YfT98rnxMfAl
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: HQH5AV4CKwKGAQ0Avf5O/WX8xPsW+0L7vvsE/Ff8CvxU
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: s//dANkB2wLpAxEFhwYCCH4J5woCDOUMmg0VDp0OTw/2
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: d/zG/Cn8KPwF/Pb8Cf66/tf/bf+u/xcABwDR/2//fv4y
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 8//W/7b/gP8r/8n+WP7S/WX95fxy/Pf7gfsE+4f6+/lu
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 9QbuBboEbgMhArEAc/9F/mj95fy6/Af9mP1l/lX/PgAj
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: SP/x/r3+jP6H/oz+rP7V/g//R/+B/67/5P8NAEQAgADM
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 2/7v/hD/Fv8z/07/Vv9v/5T/pv/X/9z/4P/i/8f/4//h
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AQD//wAAAAAAAP//AAD8/wAA///9//7//f/9//z//f/7
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: FAAVABYAEwAWABUAFQAVABYAFQAWABYAFQAXABUAFwAW
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: IQAhACMAIAAiACMAIQAhACIAIgAiACIAIgAjACEAIgAi
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: GQAYABoAFgAZABoAGAAYABkAGQAYABkAGAAaABgAGQAZ
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: FwAXABgAFAAZABcAFgAYABUAGAAXABgAFwAYABcAGAAW
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: OAA/ADcAOQA6ADoAOwA0ADoAOQA5ADcAOQA6ADUAOwAx
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 1PoW/zADLgeMCLoJqgsxDKINSRAxEj8V5Bb4F9kZCxw0
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: rvJQ6ibkp/XP7QvmqewI9EXzsuUL7oXz6et/7xLwvOtn
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: ZRqUGyUcOhzEG4MbHhxmHGMdAh4IHjgenB7QHiMf8h7l
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: jgiNBuMEJQED+5X61Pvc/HD9yQAoBvUNlhJBDWQLdQNZ
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Vfbt93D5Y/vw/bv+HwCE//z9Ovxg+ej2wvQt8/HxafGU
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: WQqhCWwI+AZVBW8DTgEQ/8T8vvr2+Mj3Pfdu91f4ofn5
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 8P/F/5z/ov+4/9r/GQD9/wYA7P/Q/+P//f/x//v/CwAH
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: t/+3/7b/tf+2/7f/s/+z/7T/s/+z/7P/sv+z/7H/tf+x
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  data:
+    type: input_audio_buffer.speech_started
+    event_id: 4741e443-a4c2-4045-9ac8-cde217c4f391
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    audio_start_ms: 78
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 7ced448f-b747-476a-b705-60674a33ba91
+    item:
+      id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: user
+      content:
+      - type: input_audio
+        transcript: ''
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: 83feb01d-3dc3-47cb-86f7-af981c761b1d
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    transcript: What will the weather be
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: d6374209-bd9c-4886-84de-075be6111856
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    transcript: What will the weather be
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 5a5547e8-4f6e-4c92-ba86-9830a7c6863b
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    transcript: What will the weather be in Amsterdam tomorrow? Please look it up.
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 93406b16-3a3f-4de5-af70-be21e27c2df2
+    response:
+      id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: 1e566275-d2a6-4b6b-87fb-360f08431d5c
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    transcript: What will the weather be in Amsterdam tomorrow? Please look it up.
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: d1bc8593-97be-476c-a583-02d7ee3a15c8
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    transcript: What will the weather be in Amsterdam tomorrow? Please look it up.
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: input_audio_buffer.speech_stopped
+    event_id: 82bb62df-608b-425a-89ed-1aec9db7ff1c
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    audio_end_ms: 350
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: input_audio_buffer.committed
+    event_id: c381e413-3222-459d-990e-e311d1452b3b
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 48d636b6-aaf3-4f5d-b627-a866e5b3846e
+    item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+    transcript: What will the weather be in Amsterdam tomorrow? Please look it up.
+    content_index: 0
+    status: completed
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: 926721bc-e3b5-4f2a-94c1-f74205452ea7
+    item:
+      id: 62886bda-3804-41a7-894c-b89dd47e7988
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 3c872b0e-6984-4756-8466-71491d5e92c9
+    item:
+      id: 62886bda-3804-41a7-894c-b89dd47e7988
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: 842d8e69-3d23-4cc6-ab45-476d13a184a0
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: ff93f48a-9e9f-42f7-9fe0-18538fb32543
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 23d3b3f1-d87d-4fe0-b274-0b70c1bf2efb
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: DAASABQAEQALAAUAAwADAAYADQAUABYAFQAUABIAEAAO
+    content_index: 0
+    output_index: 0
+    rid: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    latency: '0.65'
+    audio_duration_ms: 245
+    ts: 1789521511611
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: I'll check the weather for Amsterdam.
+    content_index: 0
+    output_index: 0
+    rid: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 460057d6-865f-4759-93a0-c068af05eeb3
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: ngTqBDQFaQWOBcIF2AW6BaUFogWDBU0FGgXrBM4EvwSv
+    content_index: 0
+    output_index: 0
+    rid: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    audio_duration_ms: 642
+    ts: 1789521511746
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 04019beb-c276-4b1e-a29e-c81daf80f40a
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: yAR/AwcA3vv39xb29vXO9yf8pwG+B48MDA+aDx8OJAvx
+    content_index: 0
+    output_index: 0
+    rid: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    audio_duration_ms: 795
+    ts: 1789521511830
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 3ea3abe4-70da-4ec2-9487-03d7fb21a95d
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: mPsm/eb+qgC7AVkBcP+Z/OT5Dvgz9y73/PdM+eH6e/zq
+    content_index: 0
+    output_index: 0
+    rid: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    audio_duration_ms: 306
+    ts: 1789521511836
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 1c88a4f9-1f4e-4aa9-9a1a-bb106d2b8e91
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA///+
+    content_index: 0
+    output_index: 0
+    rid: be5f8bf9-851b-4ccf-afc6-6b3e6b068b29
+    audio_duration_ms: 82
+    ts: 1789521512302
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 0e637e69-68a0-4970-8b4b-b3c6cb2deaab
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    transcript: I'll check the weather for Amsterdam.
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: c16a3ea9-d610-40d4-a791-46f7a8967876
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: f4c1fa49-1489-4e4f-88b3-b769cae4f29a
+    item_id: 62886bda-3804-41a7-894c-b89dd47e7988
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: c26b3bb0-72ed-462c-b1f1-3953c0ef8b31
+    item:
+      id: 62886bda-3804-41a7-894c-b89dd47e7988
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: e083b870-3efe-4fec-a5fa-4f1efaf7016c
+    item:
+      id: 7564a8ca-db88-4c53-b70e-e6e379126175
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: f9941875-3a46-4845-b3e4-3f93b4d4a23b
+    item:
+      id: 7564a8ca-db88-4c53-b70e-e6e379126175
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: 6af9317d-612f-4e64-b986-dc8d6ed4f573
+    item_id: 7564a8ca-db88-4c53-b70e-e6e379126175
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    delta: '{"city":"Amsterdam"}'
+    call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.done
+    event_id: 13cb853d-0196-48b5-91f7-d19b5d022cf9
+    item_id: 7564a8ca-db88-4c53-b70e-e6e379126175
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    output_index: 0
+    call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+    name: get_weather
+    arguments: '{"city":"Amsterdam"}'
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 1ed214f9-a384-472d-89d2-d8d1814308a6
+    item:
+      id: 7564a8ca-db88-4c53-b70e-e6e379126175
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+      name: get_weather
+      arguments: '{"city":"Amsterdam"}'
+      replayed: false
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 26a329c8-d5f8-4ed0-a8ab-01ca21421348
+    response:
+      id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+      object: realtime.response
+      output:
+      - id: 62886bda-3804-41a7-894c-b89dd47e7988
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I'll check the weather for Amsterdam.
+        replayed: false
+      - id: 7564a8ca-db88-4c53-b70e-e6e379126175
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+        name: get_weather
+        arguments: '{"city":"Amsterdam"}'
+        replayed: false
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: 45ccd671-b643-48ee-96c1-80e14e897cf2
+    usage:
+      input_tokens: 221
+      input_token_details:
+        text_tokens: 17
+        audio_tokens: 204
+        grok_tokens: 0
+      output_tokens: 111
+      output_token_details:
+        text_tokens: 7
+        audio_tokens: 104
+        grok_tokens: 0
+      total_tokens: 332
+      output_audio_seconds: 2.0700000000000003
+      billable_audio_seconds: 5
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+      output: It is foggy and 12 degrees in Amsterdam.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 14bab68d-28d7-4298-b7cf-4ef06658eb51
+    item:
+      id: f5718efa-3489-4139-b9bb-c1fa365f4b3c
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-d2fd04c9-96a8-41a8-ac64-7b426bf2acd6-0
+      output: It is foggy and 12 degrees in Amsterdam.
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 28cc83f9-be34-4cbb-969c-fea6795bea3a
+    response:
+      id: 30e51618-15cc-435c-b829-ad8d15de62bc
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: e55953cc-e8fa-4de2-8bd7-ef6b3800d1bb
+    item:
+      id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: f8465448-97d9-4037-9a31-188b90693e04
+    item:
+      id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: f5718efa-3489-4139-b9bb-c1fa365f4b3c
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 71cd163f-d738-4893-ba59-a26ffc33b5f6
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 2a80fbd8-129a-4e4a-b895-af33e159d084
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: BgALABAADwAJAAQAAgACAAUADQATABUAEwAQAA0ACQAH
+    content_index: 0
+    output_index: 0
+    rid: f4110504-c3f7-4555-b3d0-dffc314bf1ed
+    latency: '0.42'
+    audio_duration_ms: 245
+    ts: 1789521512789
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: f4110504-c3f7-4555-b3d0-dffc314bf1ed
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: It is foggy and 12 degrees in
+    content_index: 0
+    output_index: 0
+    rid: f4110504-c3f7-4555-b3d0-dffc314bf1ed
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: dc9ef3ae-fe82-4b96-9def-c2ff5f66084f
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: ' Amsterdam.'
+    content_index: 0
+    output_index: 0
+    rid: dc9ef3ae-fe82-4b96-9def-c2ff5f66084f
+    start_time: 0.96
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 256001ef-3e24-49ae-a360-64e4e4531cc4
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: 9wspDRgOpQxxCvgK+Qs3Byj8uvFq8Pz3NPyI+Gb1dfgC
+    content_index: 0
+    output_index: 0
+    rid: f4110504-c3f7-4555-b3d0-dffc314bf1ed
+    audio_duration_ms: 642
+    ts: 1789521512876
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: c09d1a16-0022-47b4-b941-ba4c5b3b5e1c
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: Nf5uAHcBrQGMAekBYQLNAogDgwRCBhgHiQbHBasFwAYD
+    content_index: 0
+    output_index: 0
+    rid: f4110504-c3f7-4555-b3d0-dffc314bf1ed
+    audio_duration_ms: 245
+    ts: 1789521512931
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 13b94f32-4ad5-441e-b064-3831172c13ab
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: 8ARoBfEFdAbyBl0HuAcTCHMI1wguCXQJsQnqCQkKGgoi
+    content_index: 0
+    output_index: 0
+    rid: dc9ef3ae-fe82-4b96-9def-c2ff5f66084f
+    audio_duration_ms: 1315
+    ts: 1789521513131
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 8d30ba48-75cc-4122-8857-5b1b5c488cee
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: UQCyAOAA4wDLAMwA1wDUAM4A4QD1AOsAMQFSAXQBnQH3
+    content_index: 0
+    output_index: 0
+    rid: dc9ef3ae-fe82-4b96-9def-c2ff5f66084f
+    audio_duration_ms: 336
+    ts: 1789521513136
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: b0dfe673-9fcc-41f5-99df-75a2a22a77d1
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    delta: BAAFAAYAAgAFAAAA/P8BAAAABAADAAAA/f/2//f/9//6
+    content_index: 0
+    output_index: 0
+    rid: dc9ef3ae-fe82-4b96-9def-c2ff5f66084f
+    audio_duration_ms: 87
+    ts: 1789521513138
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 20cd049a-593f-4cb8-bc71-d2e78c2fea41
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    transcript: It is foggy and 12 degrees in Amsterdam.
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: 86a94517-a382-4dec-8dee-55a4788268a7
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 077c1284-330d-49a9-9627-af0513e2aba3
+    item_id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 0aaddbd0-a598-47a4-9943-9f9ea3ba4fa0
+    item:
+      id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 541aaa37-4d2d-4000-b847-3d98d9bc9460
+    response:
+      id: 30e51618-15cc-435c-b829-ad8d15de62bc
+      object: realtime.response
+      output:
+      - id: 08901461-2a74-4ba9-8ff8-0d67510a7d26
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: It is foggy and 12 degrees in Amsterdam.
+        replayed: false
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: 30e51618-15cc-435c-b829-ad8d15de62bc
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 155
+      output_token_details:
+        text_tokens: 11
+        audio_tokens: 144
+        grok_tokens: 0
+      total_tokens: 155
+      output_audio_seconds: 2.8698333333333332
+      billable_audio_seconds: 5
+    previous_item_id: null

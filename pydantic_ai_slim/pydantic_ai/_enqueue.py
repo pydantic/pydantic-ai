@@ -6,26 +6,33 @@ state for the pending message queue, not part of the wire-serializable message h
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeAlias
+import threading
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
+from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
 )
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .messages import UserContent
+    from .models import ModelRequestContext
 
 
 PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
@@ -64,7 +71,7 @@ respond to.
 """
 
 
-def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> tuple[list[ModelMessage], bool]:
+def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessage]:
     """Assemble enqueue items into a list of [`ModelMessage`][pydantic_ai.messages.ModelMessage]s.
 
     Adjacent [`UserContent`][pydantic_ai.messages.UserContent] items are gathered into one
@@ -73,16 +80,10 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> tuple[list[Model
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete `ModelMessage`s are emitted as-is.
     Order is preserved, so a `ModelResponse` followed by part-style items produces the response then
     a request built from those parts.
-
-    Also returns whether every item was part-style (no raw [`ModelMessage`][pydantic_ai.messages.ModelMessage]
-    passed through verbatim) — callers use this to decide whether the result is eligible for splicing
-    into an existing request rather than delivered as its own message; a passthrough `ModelRequest`
-    (which may carry its own `instructions` or other message-level fields) always stays a message.
     """
     messages: list[ModelMessage] = []
     parts: list[ModelRequestPart] = []
     content: list[UserContent] = []
-    all_parts_style = True
 
     def flush_content() -> None:
         if content:
@@ -100,18 +101,26 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> tuple[list[Model
 
     for item in items:
         if isinstance(item, (ModelRequest, ModelResponse)):
-            all_parts_style = False
             flush_request()
             messages.append(item)
         elif isinstance(
-            item, (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart, ToolSearchReturnPart)
+            item,
+            (
+                SystemPromptPart,
+                UserPromptPart,
+                ToolReturnPart,
+                RetryPromptPart,
+                ToolSearchReturnPart,
+                ToolAvailabilityDeltaPart,
+                SpeechPart,
+            ),
         ):
             flush_content()
             parts.append(item)
         else:
             content.append(item)
     flush_request()
-    return messages, all_parts_style
+    return messages
 
 
 @dataclass
@@ -141,22 +150,14 @@ class PendingMessage:
     are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
     tool_call_id: str | None = None
-    """The `tool_call_id` of the tool call this was enqueued from, or `None` if it wasn't enqueued
-    during a tool call (or was enqueued with `priority='when_idle'`).
+    """The tool call whose result this content is delivered next to, if any.
 
-    Set by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] so a `spliceable` `'asap'`
-    message enqueued from within a tool call — by the tool body itself, or by a capability hook
-    wrapping that call — can be delivered into the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]
-    as that tool's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], immediately after it,
-    rather than as a separate trailing request.
-    """
-
-    spliceable: bool = False
-    """Whether `messages` is eligible to be spliced into an existing tool-call request rather than
-    delivered as its own message: exactly one [`ModelRequest`][pydantic_ai.messages.ModelRequest],
-    built entirely from part-style items (user content / [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s)
-    rather than a passthrough `ModelMessage`, which may carry its own `instructions` or other
-    message-level fields and so always stays a separate message.
+    Set when the content was enqueued with `priority='asap'` during a tool call (from the tool body or a
+    capability hook wrapping it) and is made only of parts, so delivery puts those parts in the
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] carrying that call's
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Content holding a complete
+    `ModelRequest` or `ModelResponse` keeps its own message-level fields, so it's always delivered as its
+    own messages.
     """
 
     @classmethod
@@ -169,13 +170,15 @@ class PendingMessage:
         """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
 
         Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
+        `tool_call_id` is the tool call being executed, if any; it's kept only when the content can be
+        delivered next to that call's result (see `PendingMessage.tool_call_id`).
 
         Raises:
             UserError: If the assembled messages don't end in a
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] — e.g. a lone `ModelResponse` —
                 since the agent needs a request to respond to.
         """
-        messages, all_parts_style = _build_enqueue_messages(content)
+        messages = _build_enqueue_messages(content)
         if not messages:
             return None
         if not isinstance(messages[-1], ModelRequest):
@@ -183,5 +186,141 @@ class PendingMessage:
                 'Enqueued content must end with a `ModelRequest` (or user content / `ModelRequestPart` '
                 'items that form one), so the agent has a request to respond to.'
             )
-        spliceable = all_parts_style and len(messages) == 1
-        return cls(messages=messages, priority=priority, tool_call_id=tool_call_id, spliceable=spliceable)
+        if priority != 'asap' or any(isinstance(item, ModelRequest | ModelResponse) for item in content):
+            tool_call_id = None
+        return cls(messages=messages, priority=priority, tool_call_id=tool_call_id)
+
+
+class PendingMessageQueue(list[PendingMessage]):
+    """A run's pending messages with thread-safe append and drain operations."""
+
+    def __init__(self, messages: Iterable[PendingMessage] = ()) -> None:
+        super().__init__(messages)
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage]]]:
+        return PendingMessageQueue, (list(self),)
+
+    def append(self, pending: PendingMessage) -> None:
+        with self._lock:
+            if self._closed:
+                raise UserError('`enqueue` is not available because the agent run has ended.')
+            super().append(pending)
+
+    def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        with self._lock:
+            return self._pop_priority(priority)
+
+    def drain_at_end(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
+        """Drain both priorities, or atomically close an empty queue."""
+        with self._lock:
+            asap = self._pop_priority('asap')
+            when_idle = self._pop_priority('when_idle')
+            if not asap and not when_idle:
+                self._closed = True
+            return asap, when_idle
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+    def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        selected = [pending for pending in self if pending.priority == priority]
+        self[:] = [pending for pending in self if pending.priority != priority]
+        return selected
+
+
+def stamped_messages(
+    pending: PendingMessage,
+    *,
+    fallback_run_id: str | None,
+    fallback_conversation_id: str | None,
+) -> list[ModelMessage]:
+    """Stamp a pending message's messages' `timestamp` / `run_id` / `conversation_id` where unset.
+
+    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] carries one or more built
+    [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (assembled at enqueue time by
+    [`PendingMessage.from_content`][pydantic_ai._enqueue.PendingMessage.from_content]); this only
+    fills in framework-tracked metadata that the producer left unset, so producer-supplied values
+    are preserved.
+    """
+    messages: list[ModelMessage] = []
+    for message in pending.messages:
+        fill_run_metadata(message, run_id=fallback_run_id, conversation_id=fallback_conversation_id)
+        messages.append(message)
+    return messages
+
+
+def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
+    """The run's pending-message queue.
+
+    Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec guards,
+    synthetic contexts) never reach the code that drains it.
+    """
+    queue = ctx.pending_messages
+    assert isinstance(queue, PendingMessageQueue)
+    return queue
+
+
+def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+    """Deliver the queued `'asap'` messages into the request being prepared.
+
+    Content tied to a tool call (see [`PendingMessage.tool_call_id`][pydantic_ai._enqueue.PendingMessage.tool_call_id])
+    goes into the request that carries that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart],
+    right after it, when that request ends the history: several deliveries for the same call keep their
+    enqueue order, whatever other calls' content arrives in between. Everything else is appended as its own
+    messages. Either way it lands in both `request_context.messages` (so the model sees it this step) and
+    `ctx.messages` (so it persists in the agent's message history).
+
+    One [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
+    describing it exactly as delivered. A UI adapter streams them in that order and its client loads them
+    back in that order, so the client's history renders like the server's.
+    """
+    drained = run_queue(ctx).pop_priority('asap')
+    if not drained:
+        return request_context
+
+    # Only the request about to be sent, so content arriving later (say, from a task the tool started)
+    # never rewrites history the model has already seen. It's replaced rather than mutated, since
+    # instrumentation caches each message's serialized form, so it must be in both lists to be found again.
+    target = ctx.messages[-1] if ctx.messages else None
+    answered_calls: set[str] = set()
+    if isinstance(target, ModelRequest) and any(message is target for message in request_context.messages):
+        answered_calls = {part.tool_call_id for part in target.parts if isinstance(part, ToolReturnPart)}
+
+    spliced: dict[str, list[tuple[str, Sequence[ModelRequestPart]]]] = {}
+    appended: list[tuple[str, list[ModelMessage]]] = []
+    for pending in drained:
+        messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
+        if pending.tool_call_id in answered_calls:
+            # `from_content` only keeps `tool_call_id` for content made of parts, which is one request.
+            (request,) = messages
+            assert isinstance(request, ModelRequest)
+            spliced.setdefault(pending.tool_call_id, []).append((pending.enqueue_id, request.parts))
+        else:
+            appended.append((pending.enqueue_id, messages))
+
+    events: list[EnqueuedMessagesEvent] = []
+    if spliced:
+        assert isinstance(target, ModelRequest)
+        parts: list[ModelRequestPart] = []
+        for part in target.parts:
+            parts.append(part)
+            if isinstance(part, ToolReturnPart):
+                for enqueue_id, delivered in spliced.pop(part.tool_call_id, ()):
+                    parts.extend(delivered)
+                    events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, parts=tuple(delivered)))
+        spliced_target = replace(target, parts=parts)
+        ctx.messages[-1] = spliced_target
+        request_context.messages = [
+            spliced_target if message is target else message for message in request_context.messages
+        ]
+    for enqueue_id, messages in appended:
+        request_context.messages = [*request_context.messages, *messages]
+        ctx.messages.extend(messages)
+        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
+    for event in events:
+        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
+    return request_context

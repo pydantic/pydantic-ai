@@ -3,9 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from types import EllipsisType
-from typing import Literal, cast
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, cast
 
 from pydantic_ai.exceptions import ModelAPIError
 
@@ -27,10 +25,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -39,8 +39,15 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    check_allow_model_requests,
+)
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from cohere import (
@@ -62,12 +69,17 @@ try:
         V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
+    from cohere.core.request_options import RequestOptions
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
         'Please install `cohere` to use the Cohere model, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
@@ -201,6 +213,11 @@ class CohereModel(Model[AsyncClientV2]):
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                request_options=(
+                    None
+                    if (max_retries := model_settings.get('max_retries')) is None
+                    else RequestOptions(max_retries=max_retries)
+                ),
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
@@ -208,6 +225,9 @@ class CohereModel(Model[AsyncClientV2]):
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except httpx.TransportError as e:
+            # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
+            raise ModelAPIError(model_name=self.model_name, message=transport_error_message(e)) from e
 
     def _get_tool_choice(
         self,
@@ -222,7 +242,7 @@ class CohereModel(Model[AsyncClientV2]):
         via `tool_choice`, mirroring `MistralModel`.
         """
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         if isinstance(resolved, tuple):
             # Cohere can't target a tool by name, so restrict the tools to the chosen subset
@@ -257,7 +277,7 @@ class CohereModel(Model[AsyncClientV2]):
                 elif content.type == 'thinking':  # pragma: no branch
                     parts.append(ThinkingPart(content=content.thinking))
         for c in response.message.tool_calls or []:
-            if c.function and c.function.name and c.function.arguments:  # pragma: no branch
+            if c.function and c.function.name:
                 parts.append(
                     ToolCallPart(
                         tool_name=c.function.name,
@@ -281,7 +301,7 @@ class CohereModel(Model[AsyncClientV2]):
             provider_details=provider_details,
         )
 
-    def _map_messages(
+    def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
@@ -304,6 +324,9 @@ class CohereModel(Model[AsyncClientV2]):
                         item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
                     ):  # pragma: no cover
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
 
@@ -389,6 +412,11 @@ class CohereModel(Model[AsyncClientV2]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
 
@@ -417,6 +445,9 @@ def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model
                     tokens[key] = int(value)
         if isinstance(cached_tokens := usage_data.get('cached_tokens'), int | float):
             usage_data['cached_tokens'] = int(cached_tokens)
+
+        if not tokens and not cached_tokens:
+            return usage.RequestUsage(details=details)
 
         return usage.RequestUsage.extract(
             dict(model=model, usage=usage_data),

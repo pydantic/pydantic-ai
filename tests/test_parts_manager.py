@@ -1139,3 +1139,28 @@ def test_get_part_by_vendor_id():
     assert part == snapshot(TextPart(content='hello', part_kind='text'))
 
     assert manager.get_part_by_vendor_id('missing') is None
+
+
+def test_apply_event_preserves_stream_part_indexes():
+    """Incomplete tool calls do not emit events, but still occupy a stream-part index."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    assert manager.handle_tool_call_delta(vendor_part_id='tool', args='{"value":') is None
+
+    first_start_event = next(manager.handle_text_delta(vendor_part_id='first', content='hello '))
+    second_start_event = next(manager.handle_text_delta(vendor_part_id='second', content='goodbye '))
+    first_delta_event = next(manager.handle_text_delta(vendor_part_id='first', content='world'))
+    second_delta_event = next(manager.handle_text_delta(vendor_part_id='second', content='everyone'))
+    assert isinstance(first_start_event, PartStartEvent)
+    assert isinstance(second_start_event, PartStartEvent)
+    assert isinstance(first_delta_event, PartDeltaEvent)
+    assert isinstance(second_delta_event, PartDeltaEvent)
+
+    replay_manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    replay_manager.apply_event(first_start_event)
+    replay_manager.apply_event(second_start_event)
+    replay_manager.apply_event(first_delta_event)
+    replay_manager.apply_event(second_delta_event)
+
+    assert replay_manager.get_parts() == snapshot(
+        [TextPart(content='hello world'), TextPart(content='goodbye everyone')]
+    )

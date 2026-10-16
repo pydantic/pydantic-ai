@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -12,17 +12,36 @@ from temporalio.contrib.pydantic import (
 )
 from temporalio.converter import CompositePayloadConverter, DefaultPayloadConverter, JSONPlainPayloadConverter
 
+from pydantic_ai._event_registry import event_registry_version
 
-@lru_cache(maxsize=128)
-def _type_adapter(type_hint: Any) -> TypeAdapter[Any]:
-    """Build an adapter once for each recently used type hint.
 
-    The cache is replay-safe: a `TypeAdapter` is a pure function of its type hint, so cache hits and
-    misses validate identically and cannot change workflow history. The 128-entry bound comfortably
-    covers the code-defined set of hints used by a worker while preventing accidental growth if an
-    application constructs hints dynamically.
+@cache
+def _type_adapter(type_hint: Any, event_registry_version: int) -> TypeAdapter[Any]:
+    """Build an adapter once for each type hint, per event-registry version.
+
+    The cache is replay-safe: a `TypeAdapter` is a pure function of its type hint and of the event
+    registries at build time, and both are cache keys, so hits and misses validate identically and
+    cannot change workflow history. The registry version is a key because a hint containing
+    `AgentStreamEvent` embeds a snapshot of the registered `CustomEvent`/`CapabilityEvent` classes
+    (see `event_family_schema`): without it, a worker that built an adapter before the module
+    defining an event class was imported would decode that class's events as `Unknown*` for the rest
+    of its life, and two workers in one deployment could disagree based on import order alone.
+
+    It is deliberately unbounded. Hints reach it from workflow and activity signatures and from
+    explicit `result_type=` arguments, all of which are written in application code, so the key space
+    is fixed by the code rather than growing with traffic. Bounding it is the wrong tool: an LRU
+    smaller than the set of hints a worker cycles through has a 0% hit rate, because each lookup
+    evicts the entry needed next, so it pays the full `TypeAdapter` build on every payload — the
+    problem this cache exists to solve (#7027). An application that builds new type objects per
+    request should reuse them instead, as each distinct hint is retained for the life of the worker.
+    Event classes register at import time, so the version key adds entries only during startup.
     """
     return TypeAdapter(type_hint)
+
+
+def type_adapter(type_hint: Any) -> TypeAdapter[Any]:
+    """The cached adapter for `type_hint`, rebuilt if an event class registered since the last build."""
+    return _type_adapter(type_hint, event_registry_version())
 
 
 class PydanticAIJSONPlainPayloadConverter(PydanticJSONPlainPayloadConverter):
@@ -37,7 +56,7 @@ class PydanticAIJSONPlainPayloadConverter(PydanticJSONPlainPayloadConverter):
             # Pydantic accepts some unhashable hints; they remain valid but cannot be cached.
             adapter = TypeAdapter(hint)
         else:
-            adapter = _type_adapter(hint)
+            adapter = type_adapter(hint)
         return adapter.validate_json(payload.data)
 
 

@@ -5,11 +5,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, assert_never, cast, overload
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -34,6 +33,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -56,11 +56,16 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
 )
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
+from ._sdk_retries import with_max_retries
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
@@ -76,19 +81,40 @@ except ImportError as _import_error:
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
 
+# Below the guard on purpose: `groq` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
+
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            body: object | None = e.body
+            suggested_model_id = None
+            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
+                if error.get('code') == 'model_not_found':
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
+                status_code=status_code,
+                model_name=model_name,
+                body=body,
+                headers=dict(e.response.headers),
+                suggested_model_id=suggested_model_id,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except APIError as e:
+        # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
+        # been received, so there is no status code to report.
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx.TransportError as e:
+        # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx` error.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 ProductionGroqModelNames = Literal[
@@ -210,6 +236,11 @@ class GroqModel(Model[AsyncGroq]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters `search_settings` applies."""
+        # `WebSearchTool` is the only native tool Groq supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -247,7 +278,7 @@ class GroqModel(Model[AsyncGroq]):
                     finish_reason='error',
                 )
             raise
-        model_response = self._process_response(response)
+        model_response = self._process_response(check_json_response(self.model_name, response))
         return model_response
 
     @asynccontextmanager
@@ -375,8 +406,8 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
-        with _map_api_errors(self.model_name):
-            return await self.client.chat.completions.create(
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            return await with_max_retries(self.client, model_settings).chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,
@@ -447,7 +478,7 @@ class GroqModel(Model[AsyncGroq]):
         peekable_response: _utils.PeekableAsyncStream[
             chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -460,6 +491,7 @@ class GroqModel(Model[AsyncGroq]):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created),
         )
@@ -475,7 +507,7 @@ class GroqModel(Model[AsyncGroq]):
             A tuple of (filtered_tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: ChatCompletionToolChoiceOptionParam
         if resolved_tool_choice in ('auto', 'required', 'none'):
@@ -526,7 +558,7 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools, search_settings
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -555,6 +587,9 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -686,6 +721,7 @@ class GroqStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: _utils.PeekableAsyncStream[chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
@@ -694,14 +730,14 @@ class GroqStreamedResponse(StreamedResponse):
         await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             try:
                 executed_tool_call_id: str | None = None
                 reasoning_index = 0
                 reasoning = False
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
-                async for chunk in self._response:
+                async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                     self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
                     if chunk.id:  # pragma: no branch
@@ -762,8 +798,8 @@ class GroqStreamedResponse(StreamedResponse):
                     for dtc in choice.delta.tool_calls or []:
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc.index,
-                            tool_name=dtc.function and dtc.function.name,
-                            args=dtc.function and dtc.function.arguments,
+                            tool_name=dtc.function.name if dtc.function is not None else None,
+                            args=dtc.function.arguments if dtc.function is not None else None,
                             tool_call_id=dtc.id,
                         )
                         if maybe_event is not None:

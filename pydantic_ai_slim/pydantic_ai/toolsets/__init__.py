@@ -1,7 +1,7 @@
 from typing import Union
 
 from .._run_context import AgentDepsT
-from ._dynamic import ToolsetFunc
+from ._dynamic import DynamicToolset, ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
@@ -25,6 +25,7 @@ __all__ = (
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'DeferredLoadingToolset',
+    'DynamicToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',

@@ -24,6 +24,19 @@ pre-agent-steps:
   # and also reads $GITHUB_PATH entries added before the engine step.
   - name: Install tools for AWF sandbox (ripgrep)
     run: bash .github/scripts/install-sandbox-tools.sh
+  # `Checkout PR branch` shallow-fetches the head branch (`--depth=<PRcommits+1>`),
+  # grafting away the base checkout's tags. Without a reachable tag, `git describe`
+  # collapses the `uv-dynamic-versioning` version to `0.0.1.dev*`, which can't satisfy
+  # the shim runner's `pydantic-ai-harness` floor (`pydantic-ai-slim>=2.1.0`) and the
+  # agent then exits before logging (surfacing as `ERR_CONFIG`). Restore history + tags
+  # here (still on the open network) so the version resolves to the real `2.x`.
+  - name: Restore full history and tags for dynamic versioning
+    run: |
+      if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+        git fetch --unshallow --tags origin
+      else
+        git fetch --tags origin
+      fi
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
 ---

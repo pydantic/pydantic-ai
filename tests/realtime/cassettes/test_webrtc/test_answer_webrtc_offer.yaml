@@ -1,0 +1,69 @@
+interactions:
+- request:
+    body: "--0fc57194a143c0566fe29d0566f07aea\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\nv=0\r\no=-
+      3993840254 3993840254 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\na=msid-semantic:WMS *\r\nm=audio 51603
+      UDP/TLS/RTP/SAVPF 96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2
+      urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:993a573d-865c-4f89-b4d6-bf0023b36333 28299f45-cf21-4e7d-8945-3fc2846d1979\r\na=rtcp:9
+      IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:596951577 cname:54390b83-64d1-4178-a0ef-a2cafdb3f3a7\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:9
+      G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256
+      97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\nm=application
+      34376 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sctp-port:5000\r\na=max-message-size:65536\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256
+      97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\n\r\n--0fc57194a143c0566fe29d0566f07aea\r\nContent-Disposition:
+      form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{\"model\": \"gpt-realtime\", \"type\": \"realtime\",
+      \"instructions\": \"Answer in two words.\", \"output_modalities\": [\"audio\"], \"audio\": {\"input\": {\"format\":
+      {\"type\": \"audio/pcm\", \"rate\": 24000}, \"turn_detection\": {\"type\": \"server_vad\", \"create_response\": true,
+      \"interrupt_response\": true}, \"transcription\": {\"model\": \"gpt-realtime-whisper\"}}, \"output\": {\"format\": {\"type\":
+      \"audio/pcm\", \"rate\": 24000}, \"voice\": \"cedar\"}}}\r\n--0fc57194a143c0566fe29d0566f07aea--\r\n"
+    headers:
+      accept:
+      - application/sdp
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1745'
+      content-type:
+      - multipart/form-data; boundary=0fc57194a143c0566fe29d0566f07aea
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/realtime/calls
+  response:
+    body:
+      string: "v=0\r\no=- 4596005847736977740 1784852417 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256
+        7E:0E:04:43:C7:E7:91:E3:D3:9D:6B:B2:F5:83:27:62:AE:E0:8E:47:CC:8C:7B:71:04:F8:E3:36:39:1C:E8:D0\r\na=ice-lite\r\na=group:BUNDLE
+        0 1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:0\r\na=ice-ufrag:HqBApb/u2/3oMrw2\r\na=ice-pwd:y1UgIcaK8DKd7LDygYbnTV12DYsMEWCA\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96
+        opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:3830135120
+        cname:realtimeapi\r\na=ssrc:3830135120 msid:realtimeapi audio\r\na=ssrc:3830135120 mslabel:realtimeapi\r\na=ssrc:3830135120
+        label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:1352698770 1 udp 2130706431 68.155.152.41 3478
+        typ host ufrag HqBApb/u2/3oMrw2\r\na=candidate:2321888134 1 tcp 1671430143 68.155.152.41 443 typ host tcptype passive
+        ufrag HqBApb/u2/3oMrw2\r\na=candidate:727169150 1 udp 2130706431 4.151.200.38 3478 typ host ufrag HqBApb/u2/3oMrw2\r\na=candidate:1878291698
+        1 tcp 1671430143 4.151.200.38 443 typ host tcptype passive ufrag HqBApb/u2/3oMrw2\r\na=candidate:2832417414 1 udp
+        2130706431 20.168.48.117 3478 typ host ufrag HqBApb/u2/3oMrw2\r\na=candidate:3818869066 1 tcp 1671430143 20.168.48.117
+        443 typ host tcptype passive ufrag HqBApb/u2/3oMrw2\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4
+        0.0.0.0\r\na=setup:active\r\na=mid:1\r\na=sendrecv\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\na=ice-ufrag:HqBApb/u2/3oMrw2\r\na=ice-pwd:y1UgIcaK8DKd7LDygYbnTV12DYsMEWCA\r\n"
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - Location, X-Request-Id
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1538'
+      content-type:
+      - text/plain; charset=utf-8
+      location:
+      - /v1/realtime/calls/rtc_u2_E4xw9V7Wm6BbwNyTjXvsL
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - '*'
+    status:
+      code: 201
+      message: Created
+version: 1

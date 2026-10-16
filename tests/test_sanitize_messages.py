@@ -5,6 +5,7 @@ import warnings
 import pytest
 
 from pydantic_ai import (
+    CompactionPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -20,7 +21,8 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai.messages import sanitize_messages
+from pydantic_ai.messages import STANDING_PROMPT_PLANTED_KEY, sanitize_messages
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
@@ -93,10 +95,73 @@ def test_sanitize_messages_keeps_trailing_native_tool_calls():
         ModelResponse(parts=[NativeToolCallPart(tool_name='web_search', tool_call_id='native-2')]),
     ]
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        # Scoped to the warning these tests own rather than `simplefilter('error')`: that form
+        # overrode the suite's intentional `ResourceWarning` ignores, so delayed event-loop GC
+        # failed whichever test happened to collect it.
+        warnings.filterwarnings('always', message=r'Client-submitted history ended with unresolved tool call')
         assert sanitize_messages(paired) == paired
         assert sanitize_messages(lone) == lone
+    assert not caught_warnings
+
+
+def test_sanitize_messages_strips_compaction_provenance_stamp():
+    stamped = CompactionPart(
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'stamped-encrypted',
+            STANDING_PROMPT_PLANTED_KEY: True,
+        },
+    )
+    unstamped = CompactionPart(
+        provider_name='openai',
+        provider_details={'encrypted_content': 'unstamped-encrypted'},
+    )
+    text = TextPart(content='unaffected')
+    messages: list[ModelMessage] = [ModelResponse(parts=[stamped, unstamped, text])]
+
+    sanitized = sanitize_messages(messages)
+
+    response = message(sanitized, ModelResponse)
+    assert response.parts == snapshot(
+        [
+            CompactionPart(
+                provider_name='openai',
+                provider_details={'encrypted_content': 'stamped-encrypted'},
+            ),
+            unstamped,
+            text,
+        ]
+    )
+    assert response.parts[0] is not stamped
+    assert response.parts[1] is unstamped
+    assert response.parts[2] is text
+    assert stamped.provider_details == {
+        'encrypted_content': 'stamped-encrypted',
+        STANDING_PROMPT_PLANTED_KEY: True,
+    }
+
+
+def test_sanitize_messages_strips_compaction_parts_for_mixed_custody():
+    """`strip_compaction_parts=True` drops compaction parts so a client-supplied boundary can't
+    hide trusted server-side history the sanitized messages are combined with; a response left
+    with no parts is dropped entirely. Off by default: pure client custody honors the client's
+    boundaries."""
+    compaction_only = ModelResponse(
+        parts=[CompactionPart(content='Client summary.', provider_name='openai')],
+    )
+    mixed = ModelResponse(
+        parts=[CompactionPart(content='Another summary.', provider_name='openai'), TextPart(content='kept')],
+    )
+    messages: list[ModelMessage] = [compaction_only, ModelRequest.user_text_prompt('hi'), mixed]
+
+    stripped = sanitize_messages(messages, strip_compaction_parts=True)
+    assert not any(isinstance(part, CompactionPart) for message in stripped for part in message.parts)
+    assert message_part(stripped, TextPart, message_index=1).content == 'kept'
+    assert len(stripped) == 2  # the compaction-only response is dropped entirely
+
+    kept = sanitize_messages(messages)
+    assert sum(isinstance(part, CompactionPart) for message in kept for part in message.parts) == 2
 
 
 def test_sanitize_messages_strips_dangling_call_exposed_by_dropped_tail():
@@ -256,3 +321,31 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
     assert part.content == snapshot(
         ['summarize', UploadedFile(file_id='file-abc', provider_name='openai', media_type='application/pdf')]
     )
+
+
+def test_sanitize_messages_strips_workspace_ref():
+    """A client-supplied `ModelResponse.workspace_ref` is reset to `None`.
+
+    The most recent reference in history is offered to a capability's `get_workspace`, so a client
+    that can set it could point a reconnecting capability at an environment it attaches to with
+    server-side provider credentials. The response's parts are otherwise kept intact.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[TextPart(content='done')],
+            workspace_ref=WorkspaceRef(provider='modal', id='victim-env'),
+        ),
+    ]
+
+    response = message(sanitize_messages(messages), ModelResponse)
+    assert response.workspace_ref is None
+    assert response.parts == [TextPart(content='done')]
+
+
+def test_sanitize_messages_keeps_workspace_refs_when_asked():
+    """`strip_workspace_refs=False` keeps the reference, for history the application trusts."""
+    ref = WorkspaceRef(provider='modal', id='own-env')
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)]
+
+    response = message(sanitize_messages(messages, strip_workspace_refs=False), ModelResponse)
+    assert response.workspace_ref == ref

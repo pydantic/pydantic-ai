@@ -1,0 +1,1970 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: event_ERrxY5QNCY03QxZoVrhPy
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_ERrxYOLefLSbFawhtSY88
+      model: gpt-realtime-2.1
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1790314584
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 500
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: You are a voice assistant. Always call get_weather for a weather
+        question. Answer in one short sentence.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection: null
+          transcription:
+            model: whisper-1
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_ERrxYrMMdZbLcMbu9Ccua
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_ERrxYOLefLSbFawhtSY88
+      model: gpt-realtime-2.1
+      output_modalities:
+      - text
+      instructions: You are a voice assistant. Always call get_weather for a weather
+        question. Answer in one short sentence.
+      tools:
+      - type: function
+        name: get_weather
+        description: Look up the weather for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1790314584
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: whisper-1
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection: null
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AgACAAIAAQABAAEAAgABAAEAAQACAAIAAgACAAIAAgAC
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: sAT+A0sDmAL9AXMB+gChACgAkP9l/zD/7/64/pn+kf52
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 4BCdEEMQ0w9fEXITCxbFF58ZmRsgHZ8dFh21GvsX6BSf
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: kuLg42PlHOdz50PnjeY244nfhtt+2ZbYzthh2i7dN+GU
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: UPng+Gv48Pdy9/T2dfbj9VX1yvQ49KjzG/OG8ubxPfGc
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: IAuZBUIDHASvCOYOwRY8GPEX3xUbDgEIkQOyBL4HswwC
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: LQzeDAwOtQ/3EMoRLxLeEL8P0Q5UDiQOQA56DmYOBA4R
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: hutf7EXtN+4D78LvdfBD8S/yOfNJ9Hn1yvYS+Ff5mfrM
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Qv9j/4b/q//M/9//5v/X/8T/r/+6/8n/3v8DABkAIQAX
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 2gn6CPcH0gbMBc8E3AMVA00ChQFfAEj/Qf4I/fr7Gftc
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Jf6U/Rr9t/wq/OP74vt/+1z7efu0+kP6Jvo5+hX6uvmd
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: xfmhABQHHw22D5oQyw+pDK0J1wYSBjkGSgfxCawMfA8U
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: EfuW+jL65fnm+Q76Xfr4+qL7Wvwx/Rn+FP8hACwBNwIZ
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: LQPYA2YE2QQLBSMFIgW9BE8E1wPeAugB9wAKAET/pf4z
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: mQaWAcz/OQEBAYL/vPz5/SwAUwO2/0b/AwJZ/1f9/Pvr
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 7QiMAAb+XAFzAuQAsfx//0kBEAIF/WT/LQn0/1P9TAF7
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: cv97/4H/hP+K/5P/n//B/9L/0v/Y/9//5v/T/8r/yv/L
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.commit
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: input_audio_buffer.committed
+    event_id: event_ERrxYhguvcz9ZjfIhQiF4
+    previous_item_id: null
+    item_id: item_ERrxYn9tsg7Mvgojk9dw4
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxY30l4orBMilD9dGnJ
+    previous_item_id: null
+    item:
+      id: item_ERrxYn9tsg7Mvgojk9dw4
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_audio
+        transcript: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxYq2XSTZWXkkAVIkUI
+    previous_item_id: null
+    item:
+      id: item_ERrxYn9tsg7Mvgojk9dw4
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_audio
+        transcript: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_ERrxYDi0aGj9gbQSPTChF
+    response:
+      object: realtime.response
+      id: resp_ERrxY5OKhqiEW7DdGqR2B
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_ERrxZKv4E6TNrOiiNvqcM
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    output_index: 0
+    item:
+      id: item_ERrxY9ZdUGDsimr3IM8Do
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxZvyKmUZbxPHm7IGGS
+    previous_item_id: item_ERrxYn9tsg7Mvgojk9dw4
+    item:
+      id: item_ERrxY9ZdUGDsimr3IM8Do
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_ERrxZuJ7qDS35WcgBEJ7k
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZEofJJHGpPZBDqgqX
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: Hi
+    obfuscation: YV5BjGy0fSLhor
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZGopfb3al00WbFi7g
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' Alice'
+    obfuscation: X70V2RUWC4
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZGY8FsZmS9vGhr1S1
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: 6obg7FovF2S0NoR
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZCChm4FK7rtQoT1Xk
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' Lovely'
+    obfuscation: OwyVPguE0
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZk1VeDYZc64L3K9e3
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' to'
+    obfuscation: E9gTFaENTLXCc
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZ8BKJGaj5lA786pAH
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' meet'
+    obfuscation: Er3Ves0HBby
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZZISePSDN8Q6UVNQA
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' you'
+    obfuscation: JA4pLE8MwbAS
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZgys9bKlzKDYSodDz
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: —
+    obfuscation: PAdQxT2XtfSdccT
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZ4FWkbCHz6GxCXs5Y
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: what
+    obfuscation: bjozLb7ghRQ7
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZPu1h33ZI6GXXQSnC
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' can'
+    obfuscation: KVQyXS8k612f
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZFg6up3eOJIIZ890B
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' I'
+    obfuscation: 9bFtU7eiwJkB1b
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZw08IuXnyex0C04bo
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' help'
+    obfuscation: wIfS99fehLB
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZuUkc0Ha5rIaOoGBB
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' you'
+    obfuscation: MM5H2EZoFuOB
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZRU6I2SPeZEZcJo47
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' with'
+    obfuscation: H1ExjSoIjek
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZAok6xegmdFcVvsp3
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: ' today'
+    obfuscation: 8T6JkD4pyl
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZ1BcJOde0zpmAErKQ
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    delta: '?'
+    obfuscation: CCo6CnTQyqNvAS7
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_ERrxZddLKzJM0ktNR68xg
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    text: Hi Alice! Lovely to meet you—what can I help you with today?
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_ERrxZxor4WQ7YtZX55zSK
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: Hi Alice! Lovely to meet you—what can I help you with today?
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxZQEbtBDz88Weip7Nz
+    previous_item_id: null
+    item:
+      id: item_ERrxY9ZdUGDsimr3IM8Do
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Hi Alice! Lovely to meet you—what can I help you with today?
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_ERrxZzOOAb6oFQSTnyp8h
+    response_id: resp_ERrxY5OKhqiEW7DdGqR2B
+    output_index: 0
+    item:
+      id: item_ERrxY9ZdUGDsimr3IM8Do
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Hi Alice! Lovely to meet you—what can I help you with today?
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_ERrxZKNIOjQHh7FTkspl1
+    response:
+      object: realtime.response
+      id: resp_ERrxY5OKhqiEW7DdGqR2B
+      status: completed
+      status_details: null
+      output:
+      - id: item_ERrxY9ZdUGDsimr3IM8Do
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: Hi Alice! Lovely to meet you—what can I help you with today?
+        phase: final_answer
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage:
+        total_tokens: 385
+        input_tokens: 365
+        output_tokens: 20
+        input_token_details:
+          text_tokens: 349
+          audio_tokens: 16
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 20
+          audio_tokens: 0
+      metadata: null
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: BQAEAAQABAADAAQABgAEAAQABQAEAAMABAADAAQABgAF
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: jxyVHm4gGyIkI8ojDSTeImQhoR96HUMb+hjzFakSHg9a
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 7/zn/OH83fz6/BT9LP1F/V39dP2E/Zz9u/3e/fr9Df4C
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: UQJ3AH/+avw+AZ39hvHWANf+iOtS/3QC7vRp/ccABv/u
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: bAALALv/e/+C/4z/mf8UAH0A1QCeAKYA7QDBAOEATQGQ
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: aAguCPgHxQepB5AHewdwB2gHYwdsB3MHegeEB44Hlwec
+- kind: message
+  direction: received
+  data:
+    type: rate_limits.updated
+    event_id: event_ERrxZX4FYHLjQBqK8T2VN
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14998970
+      reset_seconds: 0.004
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: U/ac9eL0JvQT9Eb0vfR49U72QPcU97r2MfYh9Tb0cfO/
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: XftE+/X6cvq8+nv6r/kw+oX6rPr6+gz74/qX+lH6Efo8
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: QwaWBeMEKASpAxgDdALRAQoBHQCq/4H/o/+EAKwBGwOh
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 1vE789b0pfZL+D36e/yK/ogAdgIbBNMFnQfmCD4KpQt1
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: ggH6AJgBXQOpAxEDlQHp/jH8bfkV+Oj35vi7+0v/lgOr
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: H/4O/uv9t/2U/Wb9Lf0M/fP84/y8/Jv8gPxZ/Dz8Kvz9
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: ufzS/OT87vwJ/Rz9KP05/Uv9Xv2S/bP9wP28/b79xf3P
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: uQPuA2QEGwUFBN8CqgHYAW4CbQPcA/0D0gOgAzgDmQLO
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Nus26zjrPOtU62/rjeu/6+zrE+xW7JXs0OxJ7cntT+4N
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 7P/t/+3/7P/q/+n/6P/m/+X/5P/j/+P/5P/j/+T/5//k
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: dAE3AgcD5AOdAyUDegK/AmADXwRXBQkGdQZQBv0FfAX/
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: ygbZB+8IDAo9C0EMFg05Df0MYQwQC8IJdgi4B10HZgcV
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Ww6yDgUPUg98D2IPBQ/nDgQPXQ+wD9APuw8KECsQHRAB
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: LP0//v3+aP/r/S79Mv3vALX/hfm4/1gDZgT9/8P8uPq4
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: UhScFJkUSRQ/ExYSzxBiD9UNJgw0Cj0IQgarBGgDeQJf
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Xf+V/5X/Xv+d//L/WwCUAMsAAAHNAJQAVwApADkAiACn
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: SvIV8t/xp/Hu8VHy0PKd8w/0JfRW9BX0YPPX81j05fRN
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Rvn9+MP4l/iR+KH4xvjQ+PX4NPle+YX5qflz+TD54Pg6
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: EAAvAFEAdgCSALEA1ADiAO4A+ADfAMUAqQByADkA/f+w
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Vv9b/17/Yf9m/2r/bv9z/3j/ff98/3n/dv9z/3P/df90
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.commit
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: input_audio_buffer.committed
+    event_id: event_ERrxZuPtUlVuoFyOQn92F
+    previous_item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    item_id: item_ERrxZzQSQuuS4laWaioOy
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxZswXC1pSE9ez841cI
+    previous_item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    item:
+      id: item_ERrxZzQSQuuS4laWaioOy
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_audio
+        transcript: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxZr8qyqtb4hb3lIO3i
+    previous_item_id: item_ERrxY9ZdUGDsimr3IM8Do
+    item:
+      id: item_ERrxZzQSQuuS4laWaioOy
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_audio
+        transcript: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_ERrxZZyK5eQHcdhErzYdx
+    response:
+      object: realtime.response
+      id: resp_ERrxZZcbN4YbXohMocyQH
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_ERrxZSErFj4dIvOzOkqUp
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    output_index: 0
+    item:
+      id: item_ERrxZlIGfP2mPLDHZxLNN
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: commentary
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxZ6PNbVAI2V4gS73Tv
+    previous_item_id: item_ERrxZzQSQuuS4laWaioOy
+    item:
+      id: item_ERrxZlIGfP2mPLDHZxLNN
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: commentary
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_ERrxZ4pKH86nZksdXlcoD
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZG2z3ZZWaKkQLUgpP
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: Checking
+    obfuscation: y1eOAibQ
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZgYKHrgmfCol0zbNL
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: ' the'
+    obfuscation: CCz7Uw4pNN8G
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZ8vFQETys8cJXMJub
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: ' current'
+    obfuscation: 5fHXx8bH
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZCuRNKNQufpNCFZVi
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: ' weather'
+    obfuscation: M5W98oxY
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZuQwKUUz3g19hgdrC
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+    obfuscation: raRAI9ARPYEWg
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZf4hVN8isWyM8mIcU
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: ' Paris'
+    obfuscation: Iqfm8fFPQo
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZSLGXUjS5JphzvqMd
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: ' now'
+    obfuscation: BSmhj0LdyQHQ
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxZXTCrkSD0uMlDgdO9
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: tcfTQR9t4P6huKE
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_ERrxZSeT7pdDJebTY7omw
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    output_index: 1
+    item:
+      id: item_ERrxZszS3CDHaPaEOkYFU
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: call_IUK5lmjN43Pbs8Ip
+      arguments: ''
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxZMr0TM1g6xo0BhqLr
+    previous_item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    item:
+      id: item_ERrxZszS3CDHaPaEOkYFU
+      type: function_call
+      status: in_progress
+      name: get_weather
+      call_id: call_IUK5lmjN43Pbs8Ip
+      arguments: ''
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_ERrxZG40x3oWwzhjwkxRn
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZszS3CDHaPaEOkYFU
+    output_index: 1
+    call_id: call_IUK5lmjN43Pbs8Ip
+    delta: '{"'
+    obfuscation: OwQksGLP5SQFU8
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_ERrxZIoS0hF0mN6aWY6QX
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZszS3CDHaPaEOkYFU
+    output_index: 1
+    call_id: call_IUK5lmjN43Pbs8Ip
+    delta: city
+    obfuscation: PhtQYywjVdR0
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_ERrxZ3sIe9HYSh5yAaUO5
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZszS3CDHaPaEOkYFU
+    output_index: 1
+    call_id: call_IUK5lmjN43Pbs8Ip
+    delta: '":"'
+    obfuscation: OqDUwID4fUPoa
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_ERrxZN7juYgK9pqTEfPtF
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZszS3CDHaPaEOkYFU
+    output_index: 1
+    call_id: call_IUK5lmjN43Pbs8Ip
+    delta: Paris
+    obfuscation: jsOugFU1MEy
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_ERrxZVRWzcKgjLztUk6to
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZszS3CDHaPaEOkYFU
+    output_index: 1
+    call_id: call_IUK5lmjN43Pbs8Ip
+    delta: '"}'
+    obfuscation: sbcTyjvwnX8mQH
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_ERrxZDQnEweIyxxtxC4Lv
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    text: Checking the current weather in Paris now.
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_ERrxZB8cey15XBZ7rBPzH
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: Checking the current weather in Paris now.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxZkSJDqEEMQxPYi7Zu
+    previous_item_id: item_ERrxZzQSQuuS4laWaioOy
+    item:
+      id: item_ERrxZlIGfP2mPLDHZxLNN
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Checking the current weather in Paris now.
+      phase: commentary
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_ERrxZA1zPLCOS5vSxlJM2
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    output_index: 0
+    item:
+      id: item_ERrxZlIGfP2mPLDHZxLNN
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Checking the current weather in Paris now.
+      phase: commentary
+- kind: message
+  direction: received
+  data:
+    type: response.function_call_arguments.done
+    event_id: event_ERrxZYcm6X0UtIzJiSkKY
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    item_id: item_ERrxZszS3CDHaPaEOkYFU
+    output_index: 1
+    call_id: call_IUK5lmjN43Pbs8Ip
+    name: get_weather
+    arguments: '{"city":"Paris"}'
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxZwPgQlbMlpcEgZs1s
+    previous_item_id: item_ERrxZlIGfP2mPLDHZxLNN
+    item:
+      id: item_ERrxZszS3CDHaPaEOkYFU
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: call_IUK5lmjN43Pbs8Ip
+      arguments: '{"city":"Paris"}'
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_ERrxZLj8DHuzR0eAiOmKK
+    response_id: resp_ERrxZZcbN4YbXohMocyQH
+    output_index: 1
+    item:
+      id: item_ERrxZszS3CDHaPaEOkYFU
+      type: function_call
+      status: completed
+      name: get_weather
+      call_id: call_IUK5lmjN43Pbs8Ip
+      arguments: '{"city":"Paris"}'
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call_IUK5lmjN43Pbs8Ip
+      output: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_ERrxZcE6FNhFL08yZ0wfh
+    response:
+      object: realtime.response
+      id: resp_ERrxZZcbN4YbXohMocyQH
+      status: completed
+      status_details: null
+      output:
+      - id: item_ERrxZlIGfP2mPLDHZxLNN
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: Checking the current weather in Paris now.
+        phase: commentary
+      - id: item_ERrxZszS3CDHaPaEOkYFU
+        type: function_call
+        status: completed
+        name: get_weather
+        call_id: call_IUK5lmjN43Pbs8Ip
+        arguments: '{"city":"Paris"}'
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage:
+        total_tokens: 453
+        input_tokens: 420
+        output_tokens: 33
+        input_token_details:
+          text_tokens: 379
+          audio_tokens: 41
+          image_tokens: 0
+          cached_tokens: 256
+          cached_tokens_details:
+            text_tokens: 256
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 33
+          audio_tokens: 0
+      metadata: null
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: rate_limits.updated
+    event_id: event_ERrxZkzI6yJXeS4KPb7Iw
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14998957
+      reset_seconds: 0.004
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxa4C6jIQWizE03WSuj
+    previous_item_id: item_ERrxZszS3CDHaPaEOkYFU
+    item:
+      id: item_ERrxaxp8DHX8K6VEgMcI1
+      type: function_call_output
+      call_id: call_IUK5lmjN43Pbs8Ip
+      output: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxaG0kgs3kQ9HfnBTm3
+    previous_item_id: item_ERrxZszS3CDHaPaEOkYFU
+    item:
+      id: item_ERrxaxp8DHX8K6VEgMcI1
+      type: function_call_output
+      call_id: call_IUK5lmjN43Pbs8Ip
+      output: It is foggy and 12 degrees in Paris.
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_ERrxaMIqyfXWw3ab77DiC
+    response:
+      object: realtime.response
+      id: resp_ERrxaqKDOaacQ9VH5Efta
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.delta
+    event_id: event_ERrxaFSYlZJeYnstnxQ2M
+    item_id: item_ERrxYn9tsg7Mvgojk9dw4
+    content_index: 0
+    delta: My name is Alice.
+    obfuscation: PIz8Zx3xmyoI9TX
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: event_ERrxaJKTT5IjK7kpPafPV
+    item_id: item_ERrxYn9tsg7Mvgojk9dw4
+    content_index: 0
+    transcript: My name is Alice.
+    usage:
+      type: duration
+      seconds: 2
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_ERrxaVDGip8s71UTgzgLp
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    output_index: 0
+    item:
+      id: item_ERrxaR1UqouHhDKvW7CrA
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxaNIkVM4apupwZepNC
+    previous_item_id: item_ERrxaxp8DHX8K6VEgMcI1
+    item:
+      id: item_ERrxaR1UqouHhDKvW7CrA
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_ERrxakXWO4MjDiL9tIaoP
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaMGmnUX9ERldZVSa1
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: It
+    obfuscation: Fas2vicobRoFVZ
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxazPZX3E20ZSO52hPp
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ’s
+    obfuscation: Toqgavg6qYIrLw
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaTmix10TpohOFgZCu
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' fog'
+    obfuscation: HCzo38JihEaj
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaIIC335UBZdhaLo70
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: gy
+    obfuscation: A7OLSTGthz9BLH
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxalcx0QFEl6QPLSZ2t
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' and'
+    obfuscation: 2898O90Aa3RH
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaUqdYXSHi6H3GE3fh
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' '
+    obfuscation: EtHXfX32wyTkljR
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxajoeK6mhQuJLFLt9l
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: '12'
+    obfuscation: my2eHDb4RJG3HC
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaOGcxiUJdqFLYO7ll
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' degrees'
+    obfuscation: wvThgfN8
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxav0cUmkEGh7ZZYApq
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+    obfuscation: wWLZZVwObCg7K
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaZGX6NysVu9YT0KRB
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' Paris'
+    obfuscation: lOTFUzHmEu
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxa0pIgKjF6vSuQ66cn
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' right'
+    obfuscation: yH1BQYw2gk
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaGjhu7QqKcplWiBFA
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: ' now'
+    obfuscation: Uz6n9oqbGyQG
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxaSMtpCzHawW2HWOet
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: Yb6nLJIT2JxW84F
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_ERrxanfo5XQiVub07oGe5
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    text: It’s foggy and 12 degrees in Paris right now.
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_ERrxaRyZs6IXlH0JXIV8N
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    item_id: item_ERrxaR1UqouHhDKvW7CrA
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: It’s foggy and 12 degrees in Paris right now.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxa60Li4aA1d4sDEwHg
+    previous_item_id: item_ERrxaxp8DHX8K6VEgMcI1
+    item:
+      id: item_ERrxaR1UqouHhDKvW7CrA
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It’s foggy and 12 degrees in Paris right now.
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_ERrxap1Mzj6UDoS82RU73
+    response_id: resp_ERrxaqKDOaacQ9VH5Efta
+    output_index: 0
+    item:
+      id: item_ERrxaR1UqouHhDKvW7CrA
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: It’s foggy and 12 degrees in Paris right now.
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_ERrxakjsBhNG7h4KFvoES
+    response:
+      object: realtime.response
+      id: resp_ERrxaqKDOaacQ9VH5Efta
+      status: completed
+      status_details: null
+      output:
+      - id: item_ERrxaR1UqouHhDKvW7CrA
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: It’s foggy and 12 degrees in Paris right now.
+        phase: final_answer
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage:
+        total_tokens: 488
+        input_tokens: 471
+        output_tokens: 17
+        input_token_details:
+          text_tokens: 430
+          audio_tokens: 41
+          image_tokens: 0
+          cached_tokens: 384
+          cached_tokens_details:
+            text_tokens: 384
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 17
+          audio_tokens: 0
+      metadata: null
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: +f/4//f/9//2//j/+//3//b/9//2//f/+P/1//X/+P/2
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: MvkL/vv/BP/b/LL8iP6PAW0BIv7C//UAvAHV/1r+S/1J
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: O/aK8YDwH/My+RcCzw3oEBQSUhE1C/4Hrwe8CVcMfg/9
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: BwRCA4QCzQE2AZoA9/9G/4/+0v0K/U38mvvw+k76tfkd
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: lur56Wjp4+jP6LTokujf6NTocejq55HmaOQb5f/lFedb
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: cOcX55Lm4+Uy5ZHk/+MI5A/kFuTX5LXlsuZq6bjrne2u
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: AhDhD6sPYA/1DvwOdw9FEI8RVhMrFfsWyBjBGW4a0Rph
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: yRVQFeMUgxQtFM0TYhMvE/kSwhKREj4SyxFYEc4QKxB/
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: heOx48Djs+Ms4/TiDOO74yrkWeQY4yzhl94E3d/bJ9vq
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 1gXFB6QJcwsQDXcOpw+hEOMRbRPIFZwX6BjZGLQYeRjI
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: wf/IAMsByQLDA7YEowV3BkoHGwjWCJYJWgoRC8ILbAz3
+- kind: message
+  direction: received
+  data:
+    type: rate_limits.updated
+    event_id: event_ERrxaKQgYspUdnXPDgpv3
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14998973
+      reset_seconds: 0.004
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: 0xCyEJEQcRBPECgQ+w/OD6QPfg9ODycPCg8FD/YO3g60
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: EAKBAfsAfgDX/wb/Cv6z/IT7ffos+q35APkh+CD3/vVv
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: OQqLCe4JYgstDN0NcRCyEXUSuRIfEnIRsRDSER8TmBQ6
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: tfvC+9D74fvw+wH8Ffwk/DX8R/xW/Gj8fPyO/KL8t/zM
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: A/Ob8QnwTu6j7P7qXekE6L7mjeUe5ZPk7uMy5Ijk8ORp
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Fv8l/y//Mv87/zz/Nf81/zb/OP8+/03/ZP9v/3v/hv+R
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: E/34+hH5XvcC9672YfY29j72d/Ym97b3KPiD92D2vfSK
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: hAUkBcgEbwQPBK4DTAPfAnACAAKmAVsBHgH3ANMAsACB
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: qhYfE5cQEg9ODlYOKQ/eDogOJw4MDZYLwwn/B8kGIAbf
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: a/6S/sP+/P4r/1v/i/++//H/JgBDAGUAjAClALkAyQDE
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: PwKGAqcCowKNAnUCWwKQAtECHwN9A9MDIATeA5wDWQMJ
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: Iv9j/2D/Gf9C/2L/ef9Q/1D/ev+c/7L/u/+s/53/jP/H
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: LwM8Ac3/4f6vACf+Sff0AG3/tvIv/4MBsPk4/aX/9wAY
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.append
+    audio: egC1/2z/n/8W/0X/KwA+AOf/Jf+k/wAAOAAWACIAXACV
+- kind: message
+  direction: sent
+  data:
+    type: input_audio_buffer.commit
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: input_audio_buffer.committed
+    event_id: event_ERrxaQrYeC3njb2NgcWWW
+    previous_item_id: item_ERrxaR1UqouHhDKvW7CrA
+    item_id: item_ERrxaY0CNGNC7zNh6aayE
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxakantVRWBKqjp5f7G
+    previous_item_id: item_ERrxaR1UqouHhDKvW7CrA
+    item:
+      id: item_ERrxaY0CNGNC7zNh6aayE
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_audio
+        transcript: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxaTM7de2xmt0dttFbT
+    previous_item_id: item_ERrxaR1UqouHhDKvW7CrA
+    item:
+      id: item_ERrxaY0CNGNC7zNh6aayE
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_audio
+        transcript: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_ERrxaXp7c1tRQ59YkmUq1
+    response:
+      object: realtime.response
+      id: resp_ERrxa8y4IyNPbub1Ln9ws
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.delta
+    event_id: event_ERrxbFYND6Ibc6xmSdJJq
+    item_id: item_ERrxZzQSQuuS4laWaioOy
+    content_index: 0
+    delta: What's the weather like in Paris right now?
+    obfuscation: IaezW
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: event_ERrxb8HdUO5OnMpbB8lzR
+    item_id: item_ERrxZzQSQuuS4laWaioOy
+    content_index: 0
+    transcript: What's the weather like in Paris right now?
+    usage:
+      type: duration
+      seconds: 3
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_ERrxbWhb4XdsgM8lRZwnJ
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    output_index: 0
+    item:
+      id: item_ERrxa2O9Xtt4J9aFJp0eP
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_ERrxbDCBq0vR2Rj4CJCwZ
+    previous_item_id: item_ERrxaY0CNGNC7zNh6aayE
+    item:
+      id: item_ERrxa2O9Xtt4J9aFJp0eP
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_ERrxbbSIqBi8ESaRubaGY
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxbrDrz9MzYSIr6wvNR
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    delta: Your
+    obfuscation: bwQPqMUmeLs5
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxbNs32o7qqUjmTCSEt
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    delta: ' name'
+    obfuscation: jXnQ2mnJdVN
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxbMNp0yfh7fcAq3EsI
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+    obfuscation: nirKMbipoZ0SN
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxbDaWJFhmKhvyR5lCS
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    delta: ' Alice'
+    obfuscation: sGyawfj01L
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_ERrxbl0T0Ia4BjwqGCU0J
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: 0z1kSDqBR78oAZ6
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_ERrxbmm6xqCZMgVLenrQx
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    text: Your name is Alice.
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_ERrxb75frbynrw8I2RU3s
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    item_id: item_ERrxa2O9Xtt4J9aFJp0eP
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: Your name is Alice.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_ERrxbZUoqFi4iEnDYN0XT
+    previous_item_id: item_ERrxaY0CNGNC7zNh6aayE
+    item:
+      id: item_ERrxa2O9Xtt4J9aFJp0eP
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Your name is Alice.
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_ERrxbe7kqirnC1nlJt57Z
+    response_id: resp_ERrxa8y4IyNPbub1Ln9ws
+    output_index: 0
+    item:
+      id: item_ERrxa2O9Xtt4J9aFJp0eP
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Your name is Alice.
+      phase: final_answer
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_ERrxbpXwYwCaEUBAs4329
+    response:
+      object: realtime.response
+      id: resp_ERrxa8y4IyNPbub1Ln9ws
+      status: completed
+      status_details: null
+      output:
+      - id: item_ERrxa2O9Xtt4J9aFJp0eP
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: Your name is Alice.
+        phase: final_answer
+      conversation_id: conv_ERrxY2WIm37QABgN9zniG
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: marin
+      usage:
+        total_tokens: 548
+        input_tokens: 522
+        output_tokens: 26
+        input_token_details:
+          text_tokens: 457
+          audio_tokens: 65
+          image_tokens: 0
+          cached_tokens: 384
+          cached_tokens_details:
+            text_tokens: 384
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 26
+          audio_tokens: 0
+          reasoning_tokens: 17
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: rate_limits.updated
+    event_id: event_ERrxbr4E3vJkfVefLOkQf
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14998964
+      reset_seconds: 0.004
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.delta
+    event_id: event_ERrxbh740YI5zPZPQMsMN
+    item_id: item_ERrxaY0CNGNC7zNh6aayE
+    content_index: 0
+    delta: Can you remind me what my name is?
+    obfuscation: Hadfmig06QsQy3
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: event_ERrxbF4DZDvPp2pD9Qoll
+    item_id: item_ERrxaY0CNGNC7zNh6aayE
+    content_index: 0
+    transcript: Can you remind me what my name is?
+    usage:
+      type: duration
+      seconds: 3

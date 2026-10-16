@@ -1,0 +1,131 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "887"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Look up the 10-year Treasury duration, then add 2 and 2.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_use
+            name: add
+            input:
+              a: 2
+              b: 2
+        - role: user
+          content:
+          - tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_result
+            content:
+            - text: "4"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - text: It is 4.
+            type: text
+        - role: user
+          content:
+          - text: "In one sentence: does a longer duration mean more interest-rate risk?"
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: add
+          description: Add two numbers.
+          input_schema:
+            additionalProperties: false
+            properties:
+              a:
+                type: integer
+              b:
+                type: integer
+            required:
+            - a
+            - b
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-abfe67f1f22e85039ffc1da35c1d741f-7a54a871126f8412-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3ycUVNiW8gw4ifLKB7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":699,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Yes, longer"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" duration"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" means"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" more interest-rate risk because"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" bond's price will be more sensitive to"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" changes in interest rates."}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":699,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":28}             }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-29T16:32:53.560259+00:00

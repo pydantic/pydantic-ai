@@ -2,22 +2,13 @@
 
 from __future__ import annotations
 
-import dataclasses
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
-from pydantic_ai._utils import fill_run_metadata
+from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
-    EnqueuedMessagesEvent,
-    ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ToolReturnPart,
-)
+from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
 from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
@@ -27,71 +18,21 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
 
 
-def _drain_by_priority(
-    queue: list[PendingMessage],
-    priority: PendingMessagePriority,
-) -> list[PendingMessage]:
-    """Remove and return all messages with the given priority from the queue."""
-    drained: list[PendingMessage] = []
-    remaining: list[PendingMessage] = []
-    for msg in queue:
-        if msg.priority == priority:
-            drained.append(msg)
-        else:
-            remaining.append(msg)
-    queue[:] = remaining
-    return drained
-
-
-def _tool_return_index(parts: Sequence[ModelRequestPart], tool_call_id: str) -> int | None:
-    """Index right after the `ToolReturnPart` for `tool_call_id` in `parts`, or `None` if absent."""
-    return next(
-        (
-            i + 1
-            for i, part in enumerate(parts)
-            if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id
-        ),
-        None,
-    )
-
-
-def _stamped_messages(
-    pending: PendingMessage,
-    *,
-    fallback_run_id: str | None,
-    fallback_conversation_id: str | None,
-) -> list[ModelMessage]:
-    """Stamp a pending message's messages' `timestamp` / `run_id` / `conversation_id` where unset.
-
-    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] carries one or more built
-    [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (assembled at enqueue time by
-    [`PendingMessage.from_content`][pydantic_ai._enqueue.PendingMessage.from_content]); this only
-    fills in framework-tracked metadata that the producer left unset, so producer-supplied values
-    are preserved.
-    """
-    messages: list[ModelMessage] = []
-    for message in pending.messages:
-        fill_run_metadata(message, run_id=fallback_run_id, conversation_id=fallback_conversation_id)
-        messages.append(message)
-    return messages
-
-
 class PendingMessageDrainCapability(AbstractCapability[Any]):
     """Drains the pending message queue at appropriate times.
 
     - `'asap'` messages drain at the earliest opportunity: into the next
       [`ModelRequest`][pydantic_ai.messages.ModelRequest] via `before_model_request`,
       or — if the agent would otherwise terminate — redirected through a new
-      `ModelRequestNode` from `after_node_run`.
+      `ModelRequestNode` at the end of the run.
     - `'when_idle'` messages drain only when the agent would otherwise terminate
       and no `'asap'` messages remain, after any `'asap'` redirect.
 
     This capability is always auto-injected and placed outermost via
-    [`CapabilityOrdering`][pydantic_ai.capabilities.abstract.CapabilityOrdering]
-    so it wraps around other capabilities. This ensures `'asap'` messages are
-    drained into the model request before user capabilities see it, and the
-    end-of-run redirection runs after all other `after_node_run` hooks (which
-    run in reverse).
+    [`CapabilityOrdering`][pydantic_ai.capabilities.abstract.CapabilityOrdering].
+    Final draining happens at the graph-advancement seam after the full capability
+    hook chain, so user ordering constraints cannot make the queue close before a
+    hook has had a chance to redirect an apparent [`End`][pydantic_graph.End].
     """
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -108,134 +49,77 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         """Drain `'asap'` messages into the upcoming model request.
 
-        A drained message tied to a tool call (`tool_call_id` set — enqueued with the default
-        `priority='asap'` from within that call, by the tool body or a capability hook wrapping it)
-        whose content is a single [`ModelRequest`][pydantic_ai.messages.ModelRequest]'s worth of parts
-        is spliced into the existing `ModelRequest` that carries that tool call's
-        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (`ctx.messages[-1]` at the start of
-        this drain — this capability runs outermost, before any other `before_model_request` hook, so
-        that request hasn't been touched yet), immediately after it — the enqueued content is a side
-        effect of that call, and adjacency in history says so. That request's position is captured
-        once and reused for every splice in this drain, so a non-spliceable pending message (e.g. a
-        passthrough `ModelRequest`) appended in between doesn't shift where later same-call splices
-        land. Everything else is appended to both `request_context.messages`
-        (so the model sees it this step) and `ctx.messages` (so it persists in history), as before.
-        Stamps `timestamp`/`run_id`/`conversation_id` if the producer didn't — `ModelRequestNode.run()`
-        only stamps `self.request` (the current node's request), and capabilities downstream of us
-        might append more messages, so we can't rely on that fixup.
+        Each drained request is appended to both `request_context.messages` (so the model
+        sees it this step) and `ctx.messages` (so it persists in the agent's message
+        history). Stamps `timestamp`/`run_id`/`conversation_id` if the producer didn't —
+        `ModelRequestNode.run()` only stamps `self.request` (the current node's request),
+        and capabilities downstream of us might append more messages, so we can't rely on
+        that fixup.
 
         Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
-        content exactly as delivered here.
+        messages exactly as delivered here.
         """
-        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
-        drained = _drain_by_priority(ctx.pending_messages, 'asap')
+        return deliver_asap_messages(ctx, request_context)
 
-        # The request carrying this step's ToolReturnPart(s) — the only splice target, captured once
-        # since it stays at this index even if a non-spliceable pending message (e.g. a passthrough
-        # `ModelRequest`) gets appended after it later in this same loop.
-        base_index = len(ctx.messages) - 1 if ctx.messages else None
 
-        # Per tool_call_id, where the *next* enqueue from that same call should land — so a second
-        # `ctx.enqueue(...)` from one tool body lands after the first one's parts, not before them.
-        insert_at: dict[str, int] = {}
+def drain_pending_messages_at_end(
+    ctx: RunContext[Any],
+    result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
+) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
+    """Drain pending messages after all capability hooks if the agent would terminate.
 
-        for pending in drained:
-            messages = _stamped_messages(
-                pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
-            )
+    Drain `'asap'` messages first (anything that arrived after the most recent
+    `before_model_request` and would otherwise be lost), then `'when_idle'` messages.
+    Each priority is appended independently so the history keeps the priority split
+    visible (matches pi-mono's separate steering / follow-up turns). On the wire,
+    `_clean_message_history` re-merges adjacent requests with compatible instructions,
+    so the model still sees one turn.
 
-            base_request = ctx.messages[base_index] if base_index is not None else None
-            idx = None
-            if pending.tool_call_id is not None and pending.spliceable and isinstance(base_request, ModelRequest):
-                idx = insert_at.get(pending.tool_call_id)
-                if idx is None:
-                    idx = _tool_return_index(base_request.parts, pending.tool_call_id)
+    The last resulting request becomes the redirect
+    [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
+    earlier ones are appended to `ctx.messages` so they appear in history before the
+    redirect. Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
+    per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
+    """
+    if not isinstance(result, End):
+        return result
 
-            if idx is not None:
-                assert isinstance(base_request, ModelRequest) and isinstance(messages[0], ModelRequest)  # for pyright
-                assert base_index is not None
-                new_parts = list(messages[0].parts)
-                spliced = dataclasses.replace(
-                    base_request, parts=[*base_request.parts[:idx], *new_parts, *base_request.parts[idx:]]
-                )
-                ctx.messages[base_index] = spliced
-                request_context.messages[base_index] = spliced
-                insert_at[pending.tool_call_id] = idx + len(new_parts)  # pyright: ignore[reportArgumentType]
-                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, parts=tuple(new_parts))
-                )
-            else:
-                request_context.messages.extend(messages)
-                ctx.messages.extend(messages)
-                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages))
-                )
-        return request_context
+    # Pi-mono parity: drain `'asap'` first so anything that arrived during the
+    # final step (e.g. a background task completing while the model produced
+    # its final response) gets delivered before `'when_idle'` messages, and the
+    # agent gets another turn rather than terminating with the message lost.
+    leftover_asap, when_idle = run_queue(ctx).drain_at_end()
+    if not leftover_asap and not when_idle:
+        return result
 
-    async def after_node_run(
-        self,
-        ctx: RunContext[Any],
-        *,
-        node: _agent_graph.AgentNode[Any, Any],
-        result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
-    ) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
-        """Drain remaining `'asap'` and `'when_idle'` messages if the agent would terminate.
-
-        If the run is about to end, drain `'asap'` messages first (anything that arrived
-        after the most recent `before_model_request` and would otherwise be lost), then
-        `'when_idle'` messages. Each priority is appended independently so the history
-        keeps the priority split visible (matches pi-mono's separate steering / follow-up
-        turns). On the wire, `_clean_message_history` re-merges adjacent requests with
-        compatible instructions, so the model still sees one turn.
-
-        The last resulting request becomes the redirect
-        [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
-        earlier ones are appended to `ctx.messages` so they appear in history before the
-        redirect. Emits one
-        [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
-        [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
-        """
-        if not isinstance(result, End):
-            return result
-
-        assert ctx.pending_messages is not None, 'drain runs during an agent run, which always has a queue'
-        # Pi-mono parity: drain `'asap'` first so anything that arrived during the
-        # final step (e.g. a background task completing while the model produced
-        # its final response) gets delivered before `'when_idle'` messages, and the
-        # agent gets another turn rather than terminating with the message lost.
-        leftover_asap = _drain_by_priority(ctx.pending_messages, 'asap')
-        when_idle = _drain_by_priority(ctx.pending_messages, 'when_idle')
-        if not leftover_asap and not when_idle:
-            return result
-
-        drained = [*leftover_asap, *when_idle]
-        stamped = [
-            (
-                pending,
-                _stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
-            )
-            for pending in drained
-        ]
-        messages = [message for _, pending_messages in stamped for message in pending_messages]
-        # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
-        # will re-stamp it during the graph lifecycle. `_stamped_messages` already
-        # stamped it, which is harmless (the lifecycle stamp overwrites). `from_content`
-        # guarantees each `PendingMessage` ends in a `ModelRequest`, but a producer can
-        # construct `PendingMessage` (or mutate `RunContext.pending_messages`) directly, so
-        # we check rather than assert. Every message except `final` is appended to history
-        # before the redirect.
-        final = messages[-1]
-        if not isinstance(final, ModelRequest):
-            raise UserError(
-                'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
-                f'but the last queued message is a `{type(final).__name__}`.'
-            )
-        for pending, pending_messages in stamped:
-            for message in pending_messages:
-                if message is not final:
-                    ctx.messages.append(message)
-            ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
-            )
-        return ModelRequestNode(request=final)
+    drained = [*leftover_asap, *when_idle]
+    stamped = [
+        (
+            pending,
+            stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
+        )
+        for pending in drained
+    ]
+    messages = [message for _, pending_messages in stamped for message in pending_messages]
+    # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
+    # will re-stamp it during the graph lifecycle. `stamped_messages` already
+    # stamped it, which is harmless (the lifecycle stamp overwrites). `from_content`
+    # guarantees each `PendingMessage` ends in a `ModelRequest`, but a producer can
+    # construct `PendingMessage` (or mutate `RunContext.pending_messages`) directly, so
+    # we check rather than assert. Every message except `final` is appended to history
+    # before the redirect.
+    final = messages[-1]
+    if not isinstance(final, ModelRequest):
+        raise UserError(
+            'Enqueued content must end with a `ModelRequest` so the agent has a request to respond to, '
+            f'but the last queued message is a `{type(final).__name__}`.'
+        )
+    for pending, pending_messages in stamped:
+        for message in pending_messages:
+            if message is not final:
+                ctx.messages.append(message)
+        ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+            EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
+        )
+    return ModelRequestNode(request=final)

@@ -1,0 +1,72 @@
+name: Sandbox live nightly
+
+# Sandbox live tests run only in this workflow. The daily schedule runs every provider against
+# `main` to catch service or API drift and opens an issue when a run fails.
+#
+# A manual run tests any providers on the branch chosen in "Use workflow from". To run the
+# live tests for a fork's pull request, read its diff first, push its head to a branch in
+# this repository, and run this workflow from that branch. There is no ref input: checking
+# out another ref from a run on `main` would let untested code write to `main`'s cache.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      providers:
+        description: 'JSON list of providers, for example ["modal"], or `all`.'
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-live-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live:
+    uses: ./.github/workflows/sandbox-live.yml
+    with:
+      providers: ${{ inputs.providers || 'all' }}
+    secrets:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+      SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
+
+  report:
+    needs: [live]
+    # Only the scheduled run files an issue; a manual run's result is on its own page.
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the nightly failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='Sandbox live nightly is failing'
+          # `--search` matches words rather than the phrase, so it narrows the listing and
+          # the exact title is compared here.
+          number="$(gh issue list --state open --search "${title} in:title" \
+            --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: ${RUN_URL}"
+            exit 0
+          fi
+
+          cat > "${RUNNER_TEMP}/nightly.md" <<EOF
+          The scheduled \`pydantic-ai-harness\` sandbox live tests failed on \`main\`: ${RUN_URL}
+
+          Each provider runs as its own job, so the run page shows which provider failed. A failure with no recent change to that provider's code usually means the provider's service changed or had an outage.
+
+          Close this issue once a nightly run passes.
+          EOF
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md"

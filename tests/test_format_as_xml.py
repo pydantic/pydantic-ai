@@ -4,13 +4,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, Field, computed_field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self
 
 from pydantic_ai import format_as_xml
 
@@ -33,7 +32,7 @@ class ExampleEnum(Enum):
     BAR = 2
 
 
-class ExampleStrEnum(str, Enum):
+class ExampleStrEnum(str, Enum):  # noqa: UP042
     FOO = 'foo'
     BAR = 'bar'
 

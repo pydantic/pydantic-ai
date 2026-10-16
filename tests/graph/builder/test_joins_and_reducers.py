@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-import pytest
-
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import (
     ReduceFirstValue,
@@ -15,8 +13,6 @@ from pydantic_graph.join import (
     reduce_list_append,
     reduce_null,
 )
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass

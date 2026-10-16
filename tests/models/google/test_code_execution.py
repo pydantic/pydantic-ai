@@ -2,7 +2,8 @@
 
 from __future__ import annotations as _annotations
 
-from datetime import timezone
+from datetime import UTC
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings('ignore:.*is deprecated and will reach end-of-life.*:DeprecationWarning'),
 ]
@@ -82,7 +82,7 @@ async def test_code_execution_stream(
                     )
                 ],
                 instructions='Be concise and always use Python to do calculations no matter how small.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -128,6 +128,7 @@ print(result)\
                     output_reasoning_tokens=168,
                     input_tool_tokens=360,
                     input_text_tool_tokens=360,
+                    cost=Decimal('0.0010815'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -226,7 +227,7 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -306,6 +307,7 @@ print(datetime.datetime.now())
                     output_reasoning_tokens=773,
                     input_tool_tokens=1732,
                     input_text_tool_tokens=1732,
+                    cost=Decimal('0.0038235'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -325,7 +327,7 @@ print(datetime.datetime.now())
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -405,6 +407,7 @@ print(f"Time in Utrecht: {now}")
                     output_reasoning_tokens=1312,
                     input_tool_tokens=3056,
                     input_text_tool_tokens=3056,
+                    cost=Decimal('0.0062285'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),

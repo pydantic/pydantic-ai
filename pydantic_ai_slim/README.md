@@ -8,4 +8,4 @@
 
 Pydantic AI core logic with minimal required dependencies.
 
-For more information on how to use this package see [ai.pydantic.dev/install](https://ai.pydantic.dev/install/).
+For more information on how to use this package see [pydantic.dev/docs/ai/overview/install](https://pydantic.dev/docs/ai/overview/install/).

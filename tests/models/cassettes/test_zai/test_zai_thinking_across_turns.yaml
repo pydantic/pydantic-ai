@@ -1,0 +1,384 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '157'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      model: glm-5.1
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '3285'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 5bcfde47a4e2dec4dd62ee880faff5e4
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: "To find 17 * 19, you can use a few different mental math strategies. Here are two ways to think it through:\n\n**Method
+            1: Use a nearby round number**\nInstead of multiplying by 19, it's much easier to multiply by 20. Since 19 is
+            just 20 minus 1, we can rewrite the problem as:\n17 * (20 - 1)\n\nUsing the distributive property, this becomes:\n(17
+            * 20) - (17 * 1)\n\n*   17 * 20 = 340 (since 17 * 2 = 34, just add a zero)\n*   17 * 1 = 17\n\nNow, just subtract:\n340
+            - 17 = 323\n\n**Method 2: Difference of squares**\nNotice that 17 and 19 are equally spaced around 18. This means
+            we can rewrite the numbers as (18 - 1) and (18 + 1):\n(18 - 1) * (18 + 1)\n\nIn algebra, this is the format for
+            the difference of squares: (a - b)(a + b) = a2 - b2. \nSo, this becomes:\n182 - 12\n\n*   18 * 18 = 324\n*   1
+            * 1 = 1\n\nNow, subtract:\n324 - 1 = 323\n\nBoth methods give us the same result: **17 * 19 = 323**"
+          reasoning_content: |-
+            1.  **Analyze the Request:** The user is asking for the product of 17 and 19, and explicitly requested to "think it through".
+
+            2.  **Choose a Method:** There are several ways to calculate 17 * 19 mentally or on paper.
+                *   *Method 1: Standard algorithm.* (17 * 10 = 170, 17 * 9 = 153, 170 + 153 = 323).
+                *   *Method 2: Difference of squares (or close to it).* (17 * 19 = (18 - 1) * (18 + 1) = 18^2 - 1^2 = 324 - 1 = 323). This is very elegant and easy to explain.
+                *   *Method 3: Distributive property.* 17 * (20 - 1) = 340 - 17 = 323. Also very intuitive.
+
+            3.  **Draft the Steps (using Method 3 and/or Method 2 for variety and clarity):**
+                *   *Approach A (Subtracting from a round number):*
+                    *   19 is very close to 20. It's just 20 minus 1.
+                    *   So, 17 * 19 is the same as 17 * (20 - 1).
+                    *   Multiply 17 by 20: 17 * 2 = 34, so 17 * 20 = 340.
+                    *   Now subtract that 1 group of 17: 340 - 17 = 323.
+                *   *Approach B (Difference of squares - nice mathematical insight):*
+                    *   Notice that 17 and 19 are exactly 1 away from 18.
+                    *   So, 17 * 19 = (18 - 1) * (18 + 1).
+                    *   This is the format (a - b)(a + b), which equals a^2 - b^2.
+                    *   So, 18^2 - 1^2.
+                    *   18 * 18 = 324.
+                    *   324 - 1 = 323.
+
+            4.  **Format the Output:** Present the thought process clearly to the user, showing one or two logical ways to break it down. Showing both methods demonstrates thorough thinking.
+
+            5.  **Refine the Explanation:**
+                *   "Here are a couple of ways to think it through:"
+                *   *Method 1: Using nearby round numbers* (Explain 17 * (20 - 1))
+                *   *Method 2: Using the difference of squares* (Explain (18-1)(18+1))
+                *   Conclude with the final answer.
+
+            6.  **Final Polish:** Make sure the tone is helpful and the math is perfectly accurate. 18*18 = 324. 324 - 1 = 323. 340 - 17 = 323. All checks out.
+          role: assistant
+      created: 1788043278
+      id: 20260830064050fe00875d4340443e
+      model: glm-5.1
+      object: chat.completion
+      request_id: 20260830064050fe00875d4340443e
+      usage:
+        completion_tokens: 947
+        completion_tokens_details:
+          reasoning_tokens: 638
+        prompt_tokens: 17
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 964
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3119'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      - content: "To find 17 * 19, you can use a few different mental math strategies. Here are two ways to think it through:\n\n**Method
+          1: Use a nearby round number**\nInstead of multiplying by 19, it's much easier to multiply by 20. Since 19 is just
+          20 minus 1, we can rewrite the problem as:\n17 * (20 - 1)\n\nUsing the distributive property, this becomes:\n(17
+          * 20) - (17 * 1)\n\n*   17 * 20 = 340 (since 17 * 2 = 34, just add a zero)\n*   17 * 1 = 17\n\nNow, just subtract:\n340
+          - 17 = 323\n\n**Method 2: Difference of squares**\nNotice that 17 and 19 are equally spaced around 18. This means
+          we can rewrite the numbers as (18 - 1) and (18 + 1):\n(18 - 1) * (18 + 1)\n\nIn algebra, this is the format for
+          the difference of squares: (a - b)(a + b) = a2 - b2. \nSo, this becomes:\n182 - 12\n\n*   18 * 18 = 324\n*   1 *
+          1 = 1\n\nNow, subtract:\n324 - 1 = 323\n\nBoth methods give us the same result: **17 * 19 = 323**"
+        reasoning_content: |-
+          1.  **Analyze the Request:** The user is asking for the product of 17 and 19, and explicitly requested to "think it through".
+
+          2.  **Choose a Method:** There are several ways to calculate 17 * 19 mentally or on paper.
+              *   *Method 1: Standard algorithm.* (17 * 10 = 170, 17 * 9 = 153, 170 + 153 = 323).
+              *   *Method 2: Difference of squares (or close to it).* (17 * 19 = (18 - 1) * (18 + 1) = 18^2 - 1^2 = 324 - 1 = 323). This is very elegant and easy to explain.
+              *   *Method 3: Distributive property.* 17 * (20 - 1) = 340 - 17 = 323. Also very intuitive.
+
+          3.  **Draft the Steps (using Method 3 and/or Method 2 for variety and clarity):**
+              *   *Approach A (Subtracting from a round number):*
+                  *   19 is very close to 20. It's just 20 minus 1.
+                  *   So, 17 * 19 is the same as 17 * (20 - 1).
+                  *   Multiply 17 by 20: 17 * 2 = 34, so 17 * 20 = 340.
+                  *   Now subtract that 1 group of 17: 340 - 17 = 323.
+              *   *Approach B (Difference of squares - nice mathematical insight):*
+                  *   Notice that 17 and 19 are exactly 1 away from 18.
+                  *   So, 17 * 19 = (18 - 1) * (18 + 1).
+                  *   This is the format (a - b)(a + b), which equals a^2 - b^2.
+                  *   So, 18^2 - 1^2.
+                  *   18 * 18 = 324.
+                  *   324 - 1 = 323.
+
+          4.  **Format the Output:** Present the thought process clearly to the user, showing one or two logical ways to break it down. Showing both methods demonstrates thorough thinking.
+
+          5.  **Refine the Explanation:**
+              *   "Here are a couple of ways to think it through:"
+              *   *Method 1: Using nearby round numbers* (Explain 17 * (20 - 1))
+              *   *Method 2: Using the difference of squares* (Explain (18-1)(18+1))
+              *   Conclude with the final answer.
+
+          6.  **Final Polish:** Make sure the tone is helpful and the math is perfectly accurate. 18*18 = 324. 324 - 1 = 323. 340 - 17 = 323. All checks out.
+        role: assistant
+      - content: Now multiply that result by 2.
+        role: user
+      model: glm-5.1
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '1089'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - abb2f9d609186d255879d400898d3583
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            To multiply the previous result by 2, we just need to calculate:
+
+            323 * 2
+
+            Thinking it through:
+            * 300 * 2 = 600
+            * 20 * 2 = 40
+            * 3 * 2 = 6
+
+            Add those together:
+            600 + 40 + 6 = **646**
+          reasoning_content: |-
+            1.  **Analyze the Request:** The user wants to multiply the previous result (323) by 2.
+            2.  **Identify the previous result:** From the previous turn, 17 * 19 = 323.
+            3.  **Perform the calculation:** 323 * 2.
+                *   300 * 2 = 600
+                *   20 * 2 = 40
+                *   3 * 2 = 6
+                *   600 + 40 + 6 = 646
+            4.  **Format the Output:** Keep it clear and concise, showing the thought process briefly as established in the previous turns.
+          role: assistant
+      created: 1788043286
+      id: 20260830064118e056bf8517e34d75
+      model: glm-5.1
+      object: chat.completion
+      request_id: 20260830064118e056bf8517e34d75
+      usage:
+        completion_tokens: 216
+        completion_tokens_details:
+          reasoning_tokens: 144
+        prompt_tokens: 974
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 1190
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3901'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      - content: "To find 17 * 19, you can use a few different mental math strategies. Here are two ways to think it through:\n\n**Method
+          1: Use a nearby round number**\nInstead of multiplying by 19, it's much easier to multiply by 20. Since 19 is just
+          20 minus 1, we can rewrite the problem as:\n17 * (20 - 1)\n\nUsing the distributive property, this becomes:\n(17
+          * 20) - (17 * 1)\n\n*   17 * 20 = 340 (since 17 * 2 = 34, just add a zero)\n*   17 * 1 = 17\n\nNow, just subtract:\n340
+          - 17 = 323\n\n**Method 2: Difference of squares**\nNotice that 17 and 19 are equally spaced around 18. This means
+          we can rewrite the numbers as (18 - 1) and (18 + 1):\n(18 - 1) * (18 + 1)\n\nIn algebra, this is the format for
+          the difference of squares: (a - b)(a + b) = a2 - b2. \nSo, this becomes:\n182 - 12\n\n*   18 * 18 = 324\n*   1 *
+          1 = 1\n\nNow, subtract:\n324 - 1 = 323\n\nBoth methods give us the same result: **17 * 19 = 323**"
+        reasoning_content: |-
+          1.  **Analyze the Request:** The user is asking for the product of 17 and 19, and explicitly requested to "think it through".
+
+          2.  **Choose a Method:** There are several ways to calculate 17 * 19 mentally or on paper.
+              *   *Method 1: Standard algorithm.* (17 * 10 = 170, 17 * 9 = 153, 170 + 153 = 323).
+              *   *Method 2: Difference of squares (or close to it).* (17 * 19 = (18 - 1) * (18 + 1) = 18^2 - 1^2 = 324 - 1 = 323). This is very elegant and easy to explain.
+              *   *Method 3: Distributive property.* 17 * (20 - 1) = 340 - 17 = 323. Also very intuitive.
+
+          3.  **Draft the Steps (using Method 3 and/or Method 2 for variety and clarity):**
+              *   *Approach A (Subtracting from a round number):*
+                  *   19 is very close to 20. It's just 20 minus 1.
+                  *   So, 17 * 19 is the same as 17 * (20 - 1).
+                  *   Multiply 17 by 20: 17 * 2 = 34, so 17 * 20 = 340.
+                  *   Now subtract that 1 group of 17: 340 - 17 = 323.
+              *   *Approach B (Difference of squares - nice mathematical insight):*
+                  *   Notice that 17 and 19 are exactly 1 away from 18.
+                  *   So, 17 * 19 = (18 - 1) * (18 + 1).
+                  *   This is the format (a - b)(a + b), which equals a^2 - b^2.
+                  *   So, 18^2 - 1^2.
+                  *   18 * 18 = 324.
+                  *   324 - 1 = 323.
+
+          4.  **Format the Output:** Present the thought process clearly to the user, showing one or two logical ways to break it down. Showing both methods demonstrates thorough thinking.
+
+          5.  **Refine the Explanation:**
+              *   "Here are a couple of ways to think it through:"
+              *   *Method 1: Using nearby round numbers* (Explain 17 * (20 - 1))
+              *   *Method 2: Using the difference of squares* (Explain (18-1)(18+1))
+              *   Conclude with the final answer.
+
+          6.  **Final Polish:** Make sure the tone is helpful and the math is perfectly accurate. 18*18 = 324. 324 - 1 = 323. 340 - 17 = 323. All checks out.
+        role: assistant
+      - content: Now multiply that result by 2.
+        role: user
+      - content: |-
+          To multiply the previous result by 2, we just need to calculate:
+
+          323 * 2
+
+          Thinking it through:
+          * 300 * 2 = 600
+          * 20 * 2 = 40
+          * 3 * 2 = 6
+
+          Add those together:
+          600 + 40 + 6 = **646**
+        reasoning_content: |-
+          1.  **Analyze the Request:** The user wants to multiply the previous result (323) by 2.
+          2.  **Identify the previous result:** From the previous turn, 17 * 19 = 323.
+          3.  **Perform the calculation:** 323 * 2.
+              *   300 * 2 = 600
+              *   20 * 2 = 40
+              *   3 * 2 = 6
+              *   600 + 40 + 6 = 646
+          4.  **Format the Output:** Keep it clear and concise, showing the thought process briefly as established in the previous turns.
+        role: assistant
+      - content: And what was my first question?
+        role: user
+      model: glm-5.1
+      stream: false
+      thinking:
+        clear_thinking: true
+        type: disabled
+      user_id: pydantic-ai-test-user
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '504'
+      content-type:
+      - application/json; charset=UTF-8
+      ga-traceid:
+      - 428acaed2f3216b454ff0ec27ca8a989
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 'Your first question was: "What is 17 * 19? Think it through."'
+          role: assistant
+      created: 1788043290
+      id: 2026083006412652767a3b187c487b
+      model: glm-5.1
+      object: chat.completion
+      request_id: 2026083006412652767a3b187c487b
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 417
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 436
+    status:
+      code: 200
+      message: OK
+version: 1
