@@ -11843,7 +11843,23 @@ def test_enqueued_messages_keep_their_own_message_ids() -> None:
                 ),
                 TextUIPart(text='reply'),
             ],
-        )
+        ),
+        # Its text extends the previous response, which stays the target past the enqueued request after it.
+        UIMessage(
+            id='assistant-2',
+            role='assistant',
+            parts=[
+                TextUIPart(text='more'),
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [
+                            {'id': 'enqueued-later', 'role': 'user', 'parts': [{'type': 'text', 'text': 'later'}]}
+                        ]
+                    },
+                ),
+            ],
+        ),
     ]
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
@@ -11851,7 +11867,8 @@ def test_enqueued_messages_keep_their_own_message_ids() -> None:
         [
             ('response', {'ui_message_id': 'enqueued-assistant-0'}),
             ('request', {'ui_message_id': 'enqueued-user-1'}),
-            ('response', {'ui_message_id': 'assistant-1'}),
+            ('response', {'ui_message_id': 'assistant-2'}),
+            ('request', {'ui_message_id': 'enqueued-later'}),
         ]
     )
 

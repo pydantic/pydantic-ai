@@ -50,7 +50,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
-from .. import MessagesBuilder, UIAdapter
+from .. import BuilderCheckpoint, MessagesBuilder, UIAdapter
 from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
@@ -645,8 +645,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             # may also append a synthetic `ModelRequest` carrying tool-return parts, which we skip
             # via the type filter so they land on the response, not the tool returns.
             target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
-            # Enqueued messages carry their own id and metadata, so they're never the target.
-            if (target := builder.last_modified(checkpoint, of_type=target_type, exclude=enqueued)) is not None:
+            if (target := _metadata_target(builder, checkpoint, target_type, enqueued)) is not None:
                 apply_message_metadata(target, msg.metadata)
                 set_ui_message_id(target, msg.id)
 
@@ -1319,3 +1318,31 @@ def _enqueued_ui_messages(data: Any) -> list[UIMessage]:
         )
         for message in messages
     ]
+
+
+def _metadata_target(
+    builder: MessagesBuilder,
+    checkpoint: BuilderCheckpoint,
+    of_type: type[ModelRequest] | type[ModelResponse],
+    enqueued: Sequence[ModelMessage],
+) -> ModelMessage | None:
+    """The message a `UIMessage`'s id and metadata belong on: `MessagesBuilder.last_modified`, minus enqueued messages.
+
+    Enqueued messages loaded from a `data-enqueued-messages` part are appended whole and carry their own id
+    and metadata, so they're never the target, even when one lands before the message's own parts.
+    """
+    if not enqueued:
+        return builder.last_modified(checkpoint, of_type=of_type)
+    candidates: list[ModelMessage] = []
+    prev_last = checkpoint.last_message
+    if prev_last is not None and len(prev_last.parts) > checkpoint.last_message_part_count:
+        candidates.append(prev_last)
+    candidates.extend(builder.messages[checkpoint.message_count :])
+    return next(
+        (
+            message
+            for message in candidates
+            if isinstance(message, of_type) and not any(message is loaded for loaded in enqueued)
+        ),
+        None,
+    )

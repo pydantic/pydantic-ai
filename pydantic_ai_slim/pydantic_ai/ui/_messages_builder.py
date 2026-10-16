@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -59,7 +58,6 @@ class MessagesBuilder:
         checkpoint: BuilderCheckpoint,
         *,
         of_type: type[ModelRequest] | type[ModelResponse],
-        exclude: Sequence[ModelMessage] = (),
     ) -> ModelMessage | None:
         """Find the most recently created or extended `ModelMessage` of `of_type` since `checkpoint`.
 
@@ -67,20 +65,10 @@ class MessagesBuilder:
         part matches the tail's type) or append fresh messages (which can be more than one when
         e.g. tool-return parts follow a response). Callers that need to attribute side metadata to
         a logical "the message I just built" use this rather than re-deriving it from `messages`.
-
-        Messages in `exclude` (matched by identity) are skipped, for whole messages appended to
-        `messages` directly that carry metadata of their own.
         """
         candidates: list[ModelMessage] = []
         prev_last = checkpoint.last_message
         if prev_last is not None and len(prev_last.parts) > checkpoint.last_message_part_count:
             candidates.append(prev_last)
         candidates.extend(self.messages[checkpoint.message_count :])
-        return next(
-            (
-                message
-                for message in candidates
-                if isinstance(message, of_type) and not any(message is excluded for excluded in exclude)
-            ),
-            None,
-        )
+        return next((message for message in candidates if isinstance(message, of_type)), None)
