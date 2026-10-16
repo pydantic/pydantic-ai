@@ -128,7 +128,8 @@ export function App() {
     }
     // A reconnect watches the shown session again, in order with the messages, so the default session's snapshot
     // that every connection starts with waits aside.
-    const opened = connect(queue, setConnection, () => watching.current, (id) => queue({ type: 'show', id, reconnect: true }))
+    const rewatch = (id: string) => queue({ type: 'show', id, reconnect: true })
+    const opened = connect(queue, setConnection, () => watching.current, rewatch)
     socket.current = opened
     return () => {
       socket.current = null
@@ -146,8 +147,16 @@ export function App() {
   const lostSession = shown === null && state.version !== null
   const liveCount = Object.keys(state.live).length
   useEffect(() => {
-    if (lostSession && connection === 'open' && liveCount > 0) void api.state().then(dispatch, () => undefined)
+    if (!lostSession || connection !== 'open' || liveCount === 0) return
+    void api.state().then((snapshot) => dispatch({ type: 'fallback', snapshot }), () => undefined)
   }, [lostSession, connection, liveCount])
+  // A session that never answers, as one that closed before any `live` listed it, is not waited for forever.
+  const awaiting = state.awaiting
+  useEffect(() => {
+    if (awaiting === null) return
+    const timer = window.setTimeout(() => dispatch({ type: 'give_up', id: awaiting }), 15000)
+    return () => window.clearTimeout(timer)
+  }, [awaiting])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
@@ -271,16 +280,26 @@ export function App() {
     dispatch({ type: 'show', id, reconnect: false })
   }, [])
 
+  // The session shown when a new one was asked for. With `/web` from a terminal, `new` answers that session's ID while
+  // it switches to the new conversation, whose snapshot follows by itself.
+  const newFrom = useRef<string | null>(null)
+  const showNew = useCallback(
+    (id: string) => {
+      if (id !== newFrom.current) show(id)
+    },
+    [show],
+  )
   const followsWorkspace = state.followsWorkspace
   const newSession = useCallback(() => {
     setPane('session')
+    newFrom.current = shown
     if (followsWorkspace) setChoosing(true)
     else
       void api
         .newSession()
-        .then(({ id }) => show(id))
+        .then(({ id }) => showNew(id))
         .catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
-  }, [followsWorkspace, show, showError])
+  }, [followsWorkspace, shown, showNew, showError])
 
   // Closing the preview also drops a transcript still on its way, so it cannot reopen it.
   const closePreview = useCallback(() => {
@@ -437,6 +456,7 @@ export function App() {
           tasks={chat.tasks}
           worker={workerTask?.id ?? null}
           onWorker={openWorker}
+          onShow={show}
         />
       )}
       <main className="main">
@@ -633,7 +653,7 @@ export function App() {
         />
       )}
       {choosing && chat.session && (
-        <NewSessionDialog current={chat.session.workspace} onOpened={show} onClose={() => setChoosing(false)} />
+        <NewSessionDialog current={chat.session.workspace} onOpened={showNew} onClose={() => setChoosing(false)} />
       )}
       <DialogLayer dialogs={state.dialogs} onError={showError} />
     </div>

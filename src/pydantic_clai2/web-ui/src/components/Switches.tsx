@@ -16,7 +16,9 @@ export function Switches({
   const session = useContext(SessionContext)
   if (status?.code_mode == null || status.speculation == null) return null
   const flip = (key: Switch, on: boolean) =>
-    void session.setSwitch(key, on).catch((error: unknown) => onError(error instanceof Error ? error.message : String(error)))
+    void session
+      .setSwitch(key, on)
+      .catch((error: unknown) => onError(error instanceof Error ? error.message : String(error)))
   const later = running ? ' The running turn keeps its tools; this applies from the next prompt.' : ''
   const codeOn = status.code_mode || status.speculation
   return (

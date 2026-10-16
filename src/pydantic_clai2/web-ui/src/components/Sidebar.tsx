@@ -56,6 +56,8 @@ interface Props {
   /** The worker open in the main pane. */
   worker: string | null
   onWorker: (id: string) => void
+  /** Show a live session, such as a fork just made, by conversation ID. */
+  onShow: (id: string) => void
 }
 
 export function ago(iso: string): string {
@@ -132,6 +134,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     tasks,
     worker,
     onWorker,
+    onShow,
   },
   ref,
 ) {
@@ -256,7 +259,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         {menu === session.id && (
           <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
             <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
-            <button onClick={() => void act(() => api.fork(session.id))}>Fork</button>
+            <button onClick={() => void act(async () => onShow((await api.fork(session.id)).id))}>Fork</button>
             {session.archived ? (
               <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
             ) : (
@@ -276,8 +279,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             )}
             <button
               className="danger"
-              disabled={current || working}
-              title={current ? 'The open session cannot be deleted' : working ? 'A running session cannot be deleted' : undefined}
+              disabled={session.id in live || current}
+              title={session.id in live || current ? 'A session open in CLAI cannot be deleted' : undefined}
               onClick={() =>
                 window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
                 void act(() => api.remove(session.id))

@@ -512,6 +512,7 @@ pre {
   background: var(--lithium);
   outline: 1.5px solid var(--lithium);
   outline-offset: 1.5px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
   animation: pulse 1.6s ease-out infinite;
 }
 

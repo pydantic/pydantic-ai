@@ -121,8 +121,15 @@ export const initial: State = {
   update: null,
 }
 
-/** What the page does itself: show a session, after asking the server to watch it, again when `reconnect`ing. */
-export type Action = ServerMessage | { type: 'show'; id: string; reconnect: boolean }
+/**
+ * What the page does itself: show a session, after asking the server to watch it, again when `reconnect`ing; stop waiting
+ * for one that never answered; or show the default session's snapshot when nothing shows.
+ */
+export type Action =
+  | ServerMessage
+  | { type: 'show'; id: string; reconnect: boolean }
+  | { type: 'give_up'; id: string }
+  | { type: 'fallback'; snapshot: Snapshot }
 
 /** The chat of the session the main pane shows, empty while it is on its way. */
 export function shownChat(state: State): Chat {
@@ -302,10 +309,19 @@ function applySnapshot(state: State, message: Snapshot): State {
   }
 }
 
+/** The awaited session will not answer: show what came instead, or what showed before if it is live, or nothing. */
+function giveUp(state: State): State {
+  if (state.stray) return applySnapshot(state, state.stray)
+  const back = state.previous !== null && state.previous in state.live ? state.previous : null
+  return { ...state, shown: back, awaiting: null, confirmed: false, previous: null }
+}
+
 /** Apply one server message or page action to the page's state. */
 export function reduce(state: State, action: Action): State {
   switch (action.type) {
     case 'show': {
+      // Shown and watched already: no new snapshot answers, so there is nothing to wait for.
+      if (!action.reconnect && action.id === state.shown && state.awaiting === null) return state
       // A reconnect's first `live` is current, so a session missing from it has closed.
       const confirmed = action.reconnect || action.id in state.live
       const previous = state.previous ?? state.shown
@@ -325,11 +341,14 @@ export function reduce(state: State, action: Action): State {
       if (state.awaiting in live) return { ...next, confirmed: true }
       // Sent before the awaited session opened: its answer is still to come.
       if (!state.confirmed) return next
-      // The awaited session closed, so no answer comes: show what came instead, or what showed before.
-      if (state.stray) return applySnapshot(next, state.stray)
-      const back = state.previous !== null && state.previous in live ? state.previous : null
-      return { ...next, shown: back, awaiting: null, confirmed: false, previous: null }
+      // The awaited session closed, so no answer comes.
+      return giveUp(next)
     }
+    case 'give_up':
+      return state.awaiting === action.id ? giveUp(state) : state
+    case 'fallback':
+      // Only while nothing shows or is on its way: a session picked meanwhile wins.
+      return state.shown === null && state.awaiting === null ? applySnapshot(state, action.snapshot) : state
     case 'dialog':
       return { ...state, dialogs: [...state.dialogs.filter((d) => d.id !== action.dialog.id), action.dialog] }
     case 'dialog_shown':

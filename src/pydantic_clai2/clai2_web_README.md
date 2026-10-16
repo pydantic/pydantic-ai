@@ -29,16 +29,15 @@ stays under its project, marked removed; an older session from a removed folder 
 where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
 run turns: each session you open stays live and keeps working while you look at another. A dot by
 a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
-waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or
-delete it. Archiving hides a session from the sidebar and `/resume`
-without deleting anything; the archive button beside the search lists archived sessions too, muted,
-and searches them, each with **Unarchive** in its menu. The shown session and running ones cannot
-be archived or deleted, and resuming an archived one, or a new turn in it, unarchives it. A session whose
-directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
-terminal, a session saved in another directory, since the terminal works where it started.
-Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn, and only
-its turn, Cmd/Ctrl+K searches sessions,
-Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
+it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
+button beside the search lists archived sessions too, muted, and searches them, each with
+**Unarchive** in its menu. The shown session and running ones cannot be archived, and resuming an
+archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A
+session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
+from a terminal, a session saved in another directory, since the terminal works where it started.
+Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
+other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
