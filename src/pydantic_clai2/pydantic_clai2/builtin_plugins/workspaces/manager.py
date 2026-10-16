@@ -1,6 +1,6 @@
 """`Workspaces`: make, start, stop, and destroy workspaces of the configured kinds, keeping the registry current.
 
-This is what the `/workspaces` command and the `orchestrator` plugin's tools both call. No token leaves it
+This is what the `/workspaces` command and the web UI's orchestrator both call. No token leaves it
 but through `token`, for a client that talks to a workspace's CLAI.
 """
 
