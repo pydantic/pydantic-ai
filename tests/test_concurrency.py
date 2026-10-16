@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 import anyio
-import anyio.lowlevel
 import pytest
 
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
@@ -150,12 +149,9 @@ class TestConcurrencyLimiter:
 
             for _ in range(3):
                 tg.start_soon(waiter)
-            # Registering as waiting takes each waiter a few turns of the event loop, not any time: yield turns, so a
-            # runner too loaded to schedule this process for a while can't time the test out.
-            for _ in range(100):  # pragma: no branch
-                if limiter.waiting_count >= 3:
-                    break
-                await anyio.lowlevel.checkpoint()
+            # Each waiter registers, then parks on the limiter: once every task is blocked, all three have. (No clock, so
+            # a runner too loaded to schedule this process for a while can't time the test out.)
+            await anyio.wait_all_tasks_blocked()
             assert limiter.waiting_count == 3
 
             release.set()
