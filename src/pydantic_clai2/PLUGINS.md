@@ -1244,10 +1244,10 @@ gone opens read-only, and so does, with `/web` from a terminal, a session saved 
 directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, `/spinner`, or
 `/mcp`, opens that menu in the page instead and runs nothing: `/set` and `/settings` open the
-Settings window's General section, `/mcp` its MCP servers section, the others a dialog. Its edits go through the menu's own source, as in
-the terminal, which prints what each one saved. Any other bare command that opens a terminal
-menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
-`/model NAME` instead.
+Settings window's General section, `/mcp` its MCP servers section, the others a dialog. Its
+edits go through the menu's own source, as in the terminal, which prints what each one saved.
+Any other bare command that opens a terminal menu, such as `/model`, opens it in the terminal;
+the browser's model picker selects with `/model NAME` instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its

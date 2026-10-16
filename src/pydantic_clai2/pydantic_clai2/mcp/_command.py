@@ -84,7 +84,7 @@ class MCPCommand:
     async def __call__(self, args: list[str]) -> str:
         """Bare `/mcp` shows the dashboard, like Code Puppy; forms and sign-ins open in the terminal."""
         # A form is several widgets: the live panel stays off the screen between them, as in any settings menu.
-        with full_terminal() if args[:1] in (['install'], ['edit']) else nullcontext():
+        with full_terminal() if args and args[0].lower() in ('install', 'edit') else nullcontext():
             return await self.run(args, dialogs=TerminalDialogs(self.runners), editor=self.editor)
 
     async def run(self, args: list[str], *, dialogs: Dialogs, editor: Editor | None) -> str:

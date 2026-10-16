@@ -198,6 +198,9 @@ class ServersSource:
         )
         if picked is None:
             return []
+        if picked == 'accept' and await to_thread.run_sync(review) != files:
+            # Trust covers the bytes on disk, which must be the ones the user just read.
+            return ['A project MCP file changed while you reviewed it; review it again.']
         return [await self._command.run(['trust', picked], dialogs=dialogs, editor=None)]
 
     async def add(self, dialogs: Dialogs) -> list[str]:

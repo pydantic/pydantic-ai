@@ -1,7 +1,7 @@
 """`/mcp`'s declared menu: each server with its state, managed through `Dialogs`, as the web UI shows it."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -23,9 +23,9 @@ from pydantic_clai2.mcp import (
 )
 from pydantic_clai2.mcp._runtime import ServerEntry, State
 from pydantic_clai2.mcp._settings import Servers
-from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+from pydantic_clai2.plugins.menus import FieldRow, Option, SettingsMenu
 from tests.clai2.conftest import stored_accounts
-from tests.clai2.dialog_script import Back, Confirm, Finish, Pick, ScriptedDialogs, Type
+from tests.clai2.dialog_script import Answer, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 
 DEAD = 'http://127.0.0.1:9/mcp'
 """A loopback port nothing listens on: connecting fails at once, without the network."""
@@ -230,6 +230,32 @@ async def test_project_servers_are_trusted_from_the_menu(tmp_path: Path) -> None
     assert await menu.actions['trust'](ScriptedDialogs([Pick(value='revoke')])) == [
         f'Revoked trust in {project.resolve()}.'
     ]
+
+
+class EditedWhileOpen(ScriptedDialogs):
+    """Rewrites `path` while the first list is open, as an agent's turn or a `git pull` could."""
+
+    def __init__(self, answers: Sequence[Answer], *, path: Path) -> None:
+        super().__init__(answers)
+        self._path = path
+
+    async def choose(
+        self, *, title: str, options: Sequence[Option], current: str | None = None, description: str = ''
+    ) -> str | None:
+        self._path.write_text(json.dumps({'servers': {'team': {'type': 'stdio', 'command': 'other'}}}))
+        return await super().choose(title=title, options=options, current=current, description=description)
+
+
+async def test_trust_covers_only_what_the_user_reviewed(tmp_path: Path) -> None:
+    _, store, menu = make(tmp_path)
+    project = tmp_path / 'repo' / PROJECT_MCP_FILE
+    project.parent.mkdir()
+    project.write_text(json.dumps({'servers': {'team': {'type': 'stdio', 'command': 'team-server'}}}))
+    dialogs = EditedWhileOpen([Pick(value='accept')], path=project)
+    assert await menu.actions['trust'](dialogs) == [
+        'A project MCP file changed while you reviewed it; review it again.'
+    ]
+    assert store.trust_state(project.resolve()) == 'untrusted'
 
 
 def test_review_reads_only_regular_files(tmp_path: Path) -> None:

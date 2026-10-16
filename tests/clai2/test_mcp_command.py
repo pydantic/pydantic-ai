@@ -222,8 +222,9 @@ async def test_form_cancel_paths(tmp_path: Path) -> None:
 
 
 async def test_install_cancelled(tmp_path: Path) -> None:
-    command, store = make(tmp_path, Script(lists=[], choices=[pick('cancel')], texts=[]))
+    command, store = make(tmp_path, Script(lists=[], choices=[pick('cancel'), pick('cancel')], texts=[]))
     assert await command(['install']) == 'Exited custom server form.'
+    assert await command(['INSTALL']) == 'Exited custom server form.', 'subcommands ignore case'
     assert store.load().servers == {}
 
 
