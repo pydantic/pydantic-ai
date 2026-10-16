@@ -9111,9 +9111,7 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
     )
     loaded = reloaded.sanitize_messages(reloaded.messages)
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
+    expected = sanitize_messages(server_history, strip_system_prompts=manage_system_prompt == 'server')
     assert _model_visible(loaded) == _model_visible(expected)
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),
