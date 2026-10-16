@@ -161,14 +161,22 @@ These are small, backward-compatible additions. Today's `delegate_task` path sta
    async def start(self, *, name: str, agent_name: str, prompt: str, conversation_id: str,
                    model: str | None = None) -> DelegationTask: ...   # never waits
 
-   def member_run(self, record: DelegationTask) -> MemberRun: ...
+   def member_run(self, record: DelegationTask, *, self_agent: AbstractAgent[Any, Any]) -> MemberRun: ...
    ```
    `MemberRun` bundles what `SubAgents._run_delegation` sets up for today's children, so hosts don't copy
    private logic: the resolved agent, capabilities, event stream handler, and run keyword arguments.
    - **Agent resolution:** a member runs outside any tool `RunContext`, so it can't use the per-run `SubAgents`
-     roster. `member_run` resolves `record.agent_name` against `owner.agents`. The host registers its own agent
-     there as the general-purpose type, plus any specialist teammate types. `member_run` applies the resolved
-     `SubAgent`'s `read_only` (`ReadOnlyWorkspace`) and model, as `_run_delegation` does.
+     roster.
+     - **General-purpose type:** `self` (the `general-purpose` alias) resolves to the `self_agent` the runner
+       passes. In `clai2` that is the Session's *current* agent, read when the member runs, so plugins and
+       guardrails added later apply. `_resolve_agent` handles `include_self` the same way.
+     - **Specialist types:** resolve against `owner.agents`, which stays specialists-only. That keeps the lead's
+       `delegate_task` instructions and cache-stable prompt unchanged for every non-team user.
+     - **`read_only`:** `member_run` applies the resolved `SubAgent`'s `read_only` (`ReadOnlyWorkspace`), as
+       `_run_delegation` does.
+   - **Model:** a member's `model` is a **model id**, not a `SubAgents` model-menu key. The owner has no menu,
+     and `clai2`'s stock agent configures none. The host runner resolves the id; `clai2` uses the Session's
+     model resolution. `None` means the lead's current model.
    - **v1 limit:** types defined on disk (`.claude/agents`, `.agents`) are loaded per run into the `SubAgents`
      roster today. They are available to teams only once the host loads them into `owner.agents`. PR 2 adds a
      public helper that loads them from the workspace.
@@ -347,7 +355,7 @@ primitives, which is why its home is a question for maintainers.
 
 | Tool | Lead | Member | Notes |
 |---|---|---|---|
-| `spawn_teammate(name, agent, prompt, model?)` | ✓ | — | Agent types are the non-one-shot entries of `owner.agents` (§3.1); no nested teams |
+| `spawn_teammate(name, agent, prompt, model?)` | ✓ | — | Agent types are `self` plus the non-one-shot entries of `owner.agents` (§3.1); `model` is a model id; no nested teams |
 | `send_message(to: list[str], text)` | ✓ | ✓ | `to=['lead']` works; no implicit broadcast; one `DelegationTasks.send` per recipient (§3.1) |
 | `board_add(content, depends_on?) / board_list / board_get` | ✓ | ✓ | Team board tools over the `ClaimablePlanStore`; planning's `write_plan` and status tools are not exposed |
 | `claim_task(id?)` | ✓ (assign via `owner=`) | ✓ | `claim`; `None` = next available |
@@ -604,7 +612,7 @@ REST routes call `host.team`:
   - per-member `UsageLimits` and a team usage total;
   - lead wake batching;
   - a visible spend segment;
-  - cheaper member models through the `SubAgents` model menu.
+  - cheaper member models, by passing a model id to `spawn_teammate`.
 - **Coordination failure modes:**
   - Stale claims are released when a member fails or stops.
   - Message loops need a per-member message rate limit and a team-wide turn budget.
