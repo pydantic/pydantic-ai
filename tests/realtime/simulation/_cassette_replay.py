@@ -32,6 +32,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 from pydantic_ai.realtime.openai_live import OpenAILiveConnection
 from pydantic_ai.realtime.xai import XaiRealtimeConnection
 
+from ...realtime_connections import lifecycle_events
 from ..ws_cassettes import CassetteClose, RealtimeCassette
 
 Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'gemini', 'openai-live']
@@ -228,7 +229,7 @@ async def replay_lifecycle_events(path: Path) -> list[tuple[list[RealtimeCodecEv
         connection = _connection(protocol, frames, close)
         socket_events: list[RealtimeCodecEvent | LifecycleEvent] = []
         try:
-            async for event in connection._lifecycle_events():  # pyright: ignore[reportPrivateUsage]
+            async for event in lifecycle_events(connection):
                 socket_events.append(event)
         except ConnectionClosedError:
             # GPT-Live, with no reconnect policy, raises an abnormal close for the session to handle.
