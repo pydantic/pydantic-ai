@@ -11,7 +11,13 @@ from typing import Any, Final, Literal, Required
 from typing_extensions import TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from ...messages import (
+    ThinkingPart,
+    ToolPartKind,
+    _tool_return_text,  # pyright: ignore[reportPrivateUsage]
+    parse_tool_kind,
+    tool_return_content_ta,
+)
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
@@ -303,13 +309,18 @@ def dump_tool_return_content(content: Any) -> str:
     - A mapping or sequence — structured returns and anything carrying files at any depth — is dumped
       through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
       that the loader restores to their subclasses.
-    - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only.
+    - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only. A
+      scalar whose JSON form is a string (a `datetime`, say) is emitted as the same unquoted text the model
+      sees, so the reloaded `str` renders to the model exactly as the original value did.
     """
     if isinstance(content, str):
         return content
     if content is None:
         return ''
-    return tool_return_content_ta.dump_json(content).decode()
+    dumped = tool_return_content_ta.dump_json(content)
+    if dumped.startswith(b'"'):
+        return _tool_return_text(content)
+    return dumped.decode()
 
 
 def rehydrate_tool_return_content(content: Any) -> Any:

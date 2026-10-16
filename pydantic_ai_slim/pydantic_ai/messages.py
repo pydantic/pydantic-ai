@@ -1251,6 +1251,20 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
 )
 
 
+def _tool_return_text(value: Any) -> str:
+    """The model-facing text of a non-`str` tool return value: its JSON form, decoded when that form is a JSON string.
+
+    A JSON round trip of the message history turns a value that serializes to a JSON string (`datetime`,
+    `UUID`, `Decimal`, a str-returning serializer, ...) into that plain `str`, which is sent as-is. Sending
+    the decoded string from the start keeps the text the model sees, and the prompt-cache prefix, identical
+    before and after the history is persisted and restored.
+    """
+    dumped = tool_return_ta.dump_json(value, by_alias=True)
+    if dumped.startswith(b'"'):
+        return pydantic_core.from_json(dumped)
+    return dumped.decode()
+
+
 class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
@@ -1581,7 +1595,8 @@ class BaseToolReturnPart:
         Args:
             mode: Controls serialization of non-file items:
                 - `'raw'`: No serialization. Returns items as-is.
-                - `'str'`: Non-file items are serialized to strings via `tool_return_ta`.
+                - `'str'`: Non-file items are serialized to JSON text via `tool_return_ta`; an item whose
+                  JSON form is a string (e.g. a `datetime`) becomes that string, unquoted.
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
@@ -1611,7 +1626,7 @@ class BaseToolReturnPart:
             elif isinstance(item, str):
                 result.append(item)
             elif mode == 'str':
-                result.append(tool_return_ta.dump_json(item, by_alias=True).decode())
+                result.append(_tool_return_text(item))
             else:
                 result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
         return result
@@ -1631,7 +1646,7 @@ class BaseToolReturnPart:
         elif isinstance(value, str):
             response = value
         else:
-            response = tool_return_ta.dump_json(value, by_alias=True).decode()
+            response = _tool_return_text(value)
 
         if wrap_if_error and self.outcome == 'failed':
             return tool_return_ta.dump_json({'error': response}).decode()
