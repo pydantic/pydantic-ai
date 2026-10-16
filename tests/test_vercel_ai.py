@@ -111,6 +111,7 @@ with try_import() as starlette_import_successful:
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
+        StepStartUIPart,
         SubmitMessage,
         TextUIPart,
         ToolApprovalRequested,
@@ -11655,47 +11656,13 @@ async def test_tool_availability_delta_stream_matches_dumped_data_part() -> None
     assert chunk == {'type': data_part.type, 'data': data_part.data}
 
 
-def _reduce_stream_to_assistant_message(events: list[dict[str, Any]], message_id: str) -> UIMessage:
-    """Rebuild the assistant `UIMessage` a frontend holds after the stream, like the AI SDK's `processUIMessageStream`.
-
-    Covers only the chunk types the tests using it emit: steps, text, tool input/output and data parts.
-    """
-    parts: list[dict[str, Any]] = []
-    texts: dict[str, dict[str, Any]] = {}
-    tools: dict[str, dict[str, Any]] = {}
-    for event in events:
-        event_type = event['type']
-        if event_type == 'start-step':
-            parts.append({'type': 'step-start'})
-        elif event_type == 'text-start':
-            texts[event['id']] = {'type': 'text', 'text': '', 'state': 'streaming'}
-            parts.append(texts[event['id']])
-        elif event_type == 'text-delta':
-            texts[event['id']]['text'] += event['delta']
-        elif event_type == 'text-end':
-            texts[event['id']]['state'] = 'done'
-        elif event_type == 'tool-input-start':
-            tools[event['toolCallId']] = {
-                'type': f'tool-{event["toolName"]}',
-                'toolCallId': event['toolCallId'],
-                'state': 'input-streaming',
-            }
-            parts.append(tools[event['toolCallId']])
-        elif event_type == 'tool-input-available':
-            tools[event['toolCallId']].update(state='input-available', input=event['input'])
-        elif event_type == 'tool-output-available':
-            tools[event['toolCallId']].update(state='output-available', output=event['output'])
-        elif event_type.startswith('data-'):
-            parts.append({'type': event_type, 'data': event['data']})
-    return UIMessage.model_validate({'id': message_id, 'role': 'assistant', 'parts': parts})
-
-
 async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream() -> None:
     """A reveal survives the next turn when the client rebuilds history from the event stream.
 
-    The stream emits `data-tool-availability-delta` after the tool result, so the AI SDK keeps it on
-    the assistant message. Loading it back must restore the delta next to the tool return that caused
-    it, as in the server-side history, so the revealed tool stays available.
+    The stream emits `data-tool-availability-delta` after the tool result, so the AI SDK's
+    `processUIMessageStream` keeps it on the assistant message, after the tool part. Loading that
+    message back must restore the delta next to the tool return that caused it, as in the server-side
+    history, so the revealed tool stays available.
     """
 
     async def stream_function(
@@ -11723,7 +11690,24 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
         if '[DONE]' not in encoded
     ]
 
-    assistant_message = _reduce_stream_to_assistant_message(events, 'assistant-1')
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    delta_chunk = next(event for event in events if event['type'] == 'data-tool-availability-delta')
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    # The assistant message the AI SDK builds from these chunks: one step per model response.
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-reveal', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=delta_chunk['type'], data=delta_chunk['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
     loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
 
     assert [[part.part_kind for part in message.parts] for message in loaded] == [
