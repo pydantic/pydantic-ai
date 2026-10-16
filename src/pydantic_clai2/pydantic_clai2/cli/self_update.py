@@ -4,7 +4,8 @@
 sdists built from each `main` commit that changes CLAI or a package it pins. It installs CLAI with the harness
 and core sdists from the same commit, whose exact dev pins are not on PyPI. Release downloads are not GitHub
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
-source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation.
+source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation,
+serving its web UI again on the same port with the same token when one ran.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 CLAI exits.
 """

@@ -171,6 +171,11 @@ takes the launch's token from a file only you can read, instead of making one, f
 starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
 leaves the token out, and no browser opens.
 
+`/update` works from the page as it does in the terminal: the page shows uv's progress, then
+"Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
+same session, and says which version it updated to. A failed install, or nothing to install,
+says so and nothing restarts. A terminal session with `/web` running comes back with it running.
+
 ## Workspaces
 
 The `workspaces` plugin makes workspaces: a checkout of a repository on its own branch, with its

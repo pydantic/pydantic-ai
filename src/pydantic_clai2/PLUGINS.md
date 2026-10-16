@@ -1319,6 +1319,17 @@ The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship
 package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
 commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
 
+`/update`, typed in the browser or the terminal, shows in the page: uv's latest line while it
+installs (`on_update_progress`), then all it printed and the command's result. A failed install,
+or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
+new build serving the web UI again on the same port with the same token, and resumes the session;
+the page says it is restarting, reconnects by itself, and names the new version. That holds for
+`clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
+restarts as a terminal session with the web UI running, though the browser does not open again.
+The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
+you can read and CLAI removes before anything else runs, never on its command line, which `ps`
+shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
+
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
 by you alone (mode 0600), and hold one URL-safe token of at least 32 characters. That is for a
@@ -2249,7 +2260,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` / `on_update_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2257,9 +2268,9 @@ saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
 saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
 
-Eight `async` methods fire outside the agent run, in the shell:
+Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2271,6 +2282,7 @@ Eight `async` methods fire outside the agent run, in the shell:
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_update_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2308,6 +2320,15 @@ it started or finished. These events never reach the main run's hooks: they are 
 shows. It fires for every stream event of every running task, down to each text and thinking
 delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
 elsewhere. A failure is printed and the task goes on.
+
+`on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
+uv: `target` is the version, or on the `main` channel the short commit, being installed, and
+`stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
+line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
+or `restarting` when CLAI is about to exit and start the new build in its place, and
+`on_session_end` follows. While a loaded plugin handles it, CLAI reads uv's output to pass it on
+and still prints each line, as plain lines; otherwise uv draws on the terminal itself. Nothing
+fires when there is nothing to install, or on Windows, where the install runs after CLAI exits.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
