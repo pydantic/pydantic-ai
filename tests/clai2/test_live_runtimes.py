@@ -245,12 +245,30 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
                 await anyio.lowlevel.checkpoint()
                 # Closing, it still holds the conversation: nothing else may resume it yet.
                 assert fleet.live.holding(saved.id) is first
-                reopened = await fleet.live.open(saved.id)
+                opened.append(await fleet.live.open(saved.id))
+                reopened = opened[-1]
                 assert reopened is not first and fleet.built == ['a', 'home', 'a']
                 with pytest.raises(LookupError):
                     fleet.live.get(first.id)
                 assert fleet.runtimes[reopened.id].session.messages == history
-    assert Recorder.ended.count(('a', 'exit')) == 2
+
+            # While a session switches away from a conversation, `open` waits, then opens it anew.
+            reopened = opened[-1]
+            third = await fleet.process.conversations.save(
+                summary=ConversationSummary(workspace=str(fleet.folder('a').resolve()), title='Third'),
+                messages=history,
+            )
+            async with anyio.create_task_group() as group:
+                with fleet.live.claim(third.id, holder=reopened):
+                    with pytest.raises(ValueError, match='already switching'):
+                        fleet.live.claim('x', holder=reopened).__enter__()
+                    group.start_soon(open_it, saved.id)
+                    await anyio.wait_all_tasks_blocked()
+                    assert len(opened) == 4
+                    await fleet.runtimes[reopened.id].session.resume(third.id)
+            assert opened[4] is not reopened and opened[4].conversation.conversation_id == saved.id
+            assert fleet.live.holding(third.id) is reopened
+    assert Recorder.ended.count(('a', 'exit')) == 3
 
 
 async def test_opening_and_closing_refuse_what_they_cannot_do(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -468,7 +486,9 @@ async def test_the_idle_check_runs_on_its_own(tmp_path: Path) -> None:
     assert Recorder.ended == [('brief', 'exit')]
 
 
-async def test_settings_other_than_the_model_and_run_reach_every_live_session(tmp_path: Path) -> None:
+async def test_settings_other_than_the_model_and_run_reach_every_live_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     """`/set` in one session applies `display.*` and the like everywhere, except where a project file sets it."""
     fleet = Fleet(tmp_path, builtin=())
     fleet.projects['pinned'] = ProjectSettings(overrides={'display.thinking': True})
@@ -484,6 +504,15 @@ async def test_settings_other_than_the_model_and_run_reach_every_live_session(tm
     origin.context.reset_setting('display.thinking')
     assert 'thinking' not in other.context.settings.model_fields_set
     assert other.context.settings.thinking == Settings().thinking
+
+    # A session that fails to follow is logged; the setting stays saved, and the others still follow.
+    def broken(key: str, source: Settings) -> None:
+        raise RuntimeError('cannot follow')
+
+    monkeypatch.setattr(other.context, 'adopt', broken)
+    assert origin.context.set_setting(['display.grep_lines', '7']).startswith('Saved display.grep_lines.')
+    assert pinned.context.settings.grep_lines == 7 and 'did not follow display.grep_lines' in caplog.text
+    monkeypatch.undo()
 
     await origin.close('exit')
     assert origin.live_session not in fleet.live.listing()

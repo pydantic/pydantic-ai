@@ -95,6 +95,9 @@ class LiveRuntimes(JoinedSessions):
         """The session the terminal shows, never closed for being idle; `None` under `clai2 --web`."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
+        """Conversations being opened or resumed, set once that is done."""
+        self._switching: dict[str, Event] = {}
+        """Sessions resuming another conversation, by ID, set once they have."""
         self._building = False
 
     def listing(self) -> list[LiveSession]:
@@ -156,9 +159,14 @@ class LiveRuntimes(JoinedSessions):
     async def open(self, conversation_id: str, /) -> LiveSession:
         while True:
             live = self._holder(conversation_id)
-            if live is not None and live.ready and not live.closing:
+            switching = self._switching.get(live.runtime.live_session.id) if live is not None else None
+            if live is not None and live.ready and not live.closing and switching is None:
                 return live.runtime.live_session
-            waiting = self._opening.get(conversation_id) or (live.done if live is not None and live.closing else None)
+            waiting = (
+                self._opening.get(conversation_id)
+                or switching
+                or (live.done if live is not None and live.closing else None)
+            )
             if waiting is None:
                 break
             await waiting.wait()
@@ -177,16 +185,19 @@ class LiveRuntimes(JoinedSessions):
     def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:
         """Reserve `conversation_id` while `holder` resumes it, so `open` waits and no other session resumes it.
 
-        Raises `ValueError` when another live session holds it, or is opening or resuming it.
+        Raises `ValueError` when another live session holds it, or is opening or resuming it, or when
+        `holder` is already resuming one.
         """
+        if holder.id in self._switching:
+            raise ValueError('This session is already switching to another conversation.')
         held = self.holding(conversation_id)
         if (held is not None and held is not holder) or conversation_id in self._opening:
             raise ValueError(f'Session {conversation_id} is open in another live session of this CLAI.')
-        claimed = self._opening[conversation_id] = Event()
+        claimed = self._opening[conversation_id] = self._switching[holder.id] = Event()
         try:
             yield
         finally:
-            del self._opening[conversation_id]
+            del self._opening[conversation_id], self._switching[holder.id]
             claimed.set()
 
     async def close(self, live_id: str, /) -> None:
@@ -252,4 +263,8 @@ class LiveRuntimes(JoinedSessions):
             return
         for live in list(self._live.values()):
             if live.runtime is not origin:
-                live.runtime.context.adopt(key, origin.context.settings)
+                try:
+                    live.runtime.context.adopt(key, origin.context.settings)
+                except Exception:
+                    # Saved and applied where it was set; one session failing to follow must not undo that.
+                    _LOGGER.exception('Live session %s did not follow %s', live.runtime.live_session.id, key)
