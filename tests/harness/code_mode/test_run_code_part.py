@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+import pytest
+
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
-from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    HandleDeferredToolCalls,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -19,13 +26,33 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import RunCodeCallPart
 
 
 class LookupCallPart(ToolCallPart, namespace='code_mode_test', tool_kind='lookup'):
     """Registers a non-core kind, like a capability's typed tool part would."""
+
+
+@dataclass
+class RecordExecutedCalls(AbstractCapability[Any]):
+    """Records the call part every tool execution hook sees."""
+
+    calls: list[ToolCallPart]
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        self.calls.append(call)
+        return await handler(args)
 
 
 @dataclass
@@ -59,7 +86,10 @@ def _run_code_then_answer(code: str) -> Callable[[list[ModelMessage], AgentInfo]
 
 
 class TestRunCodeCallPart:
-    async def test_a_tool_with_a_registered_non_core_kind_is_sandboxed(self) -> None:
+    @pytest.mark.parametrize('speculate', [None, ['lookup']], ids=['cold', 'speculated'])
+    async def test_a_tool_with_a_registered_non_core_kind_is_sandboxed(self, speculate: list[str] | None) -> None:
+        """Hooks see the same typed part for a sandboxed call as for a direct one, so kind-keyed guards apply."""
+
         async def with_lookup_kind(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
             return replace(tool_def, tool_kind=LookupCallPart.tool_kind)
 
@@ -68,19 +98,62 @@ class TestRunCodeCallPart:
             return item
 
         tool_defs: list[ToolDefinition] = []
+        code = "await lookup(item='widget')"
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_defs.extend(info.function_tools)
-            return _run_code_then_answer("await lookup(item='widget')")(messages, info)
+            return _run_code_then_answer(code)(messages, info)
 
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            # Speculation launches calls from streamed `run_code` arguments, so it needs a streamed run.
+            tool_defs.extend(info.function_tools)
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='run_code', json_args=json.dumps({'code': code}), tool_call_id='c1')}
+            else:
+                yield 'done'
+
+        executed: list[ToolCallPart] = []
+        code_mode = CodeMode[object](speculate=speculate)
         agent = Agent(
-            FunctionModel(model_fn), tools=[Tool(lookup, prepare=with_lookup_kind)], capabilities=[CodeMode[object]()]
+            FunctionModel(model_fn, stream_function=stream_fn),
+            tools=[Tool(lookup, prepare=with_lookup_kind)],
+            capabilities=[code_mode, RecordExecutedCalls(executed)],
         )
         result = await agent.run('hi')
 
         assert {tool_def.name for tool_def in tool_defs} == {'run_code'}
+        assert code_mode.speculation_stats.adopted == (1 if speculate else 0)
+        lookup_call = next(call for call in executed if call.tool_name == 'lookup')
+        assert isinstance(lookup_call, LookupCallPart)
         tool_return = result.all_messages()[2].parts[0]
         assert isinstance(tool_return, ToolReturnPart) and tool_return.content == 'widget'
+        (nested_call,) = tool_return.metadata['tool_calls'].values()
+        assert isinstance(nested_call, LookupCallPart)
+        (nested_return,) = tool_return.metadata['tool_returns'].values()
+        assert nested_return.tool_kind == LookupCallPart.tool_kind
+
+    async def test_approval_inside_the_sandbox_sees_the_typed_part(self) -> None:
+        def lookup(item: str) -> str:
+            """Look up an item."""
+            return item  # pragma: no cover - the handler denies it
+
+        requested: list[ToolCallPart] = []
+
+        async def deny_all(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+            requested.extend(requests.approvals)
+            return DeferredToolResults(
+                approvals={call.tool_call_id: ToolDenied(message='nope') for call in requests.approvals}
+            )
+
+        agent = Agent(
+            FunctionModel(_run_code_then_answer("await lookup(item='widget')")),
+            tools=[Tool(lookup, requires_approval=True, tool_kind=LookupCallPart.tool_kind)],
+            capabilities=[CodeMode[object](), HandleDeferredToolCalls(handler=deny_all)],
+        )
+        await agent.run('hi')
+
+        (call,) = requested
+        assert isinstance(call, LookupCallPart)
 
     async def test_run_code_tool_declares_its_kind(self) -> None:
         tool_defs: list[ToolDefinition] = []

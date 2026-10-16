@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     InstructionPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
@@ -634,9 +635,14 @@ class NestedCallOutcome:
     denied_message: str | None = None
     """Set when a handler denied the call, so the history records `outcome='denied'`."""
 
+    tool_kind: ToolPartKind | None = None
+    """The called tool's `tool_kind`, so the history records the same typed parts a direct call would."""
+
 
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
+    tool_def = tool_manager.get_tool_def(call_part.tool_name)
+    tool_kind = tool_def.tool_kind if tool_def is not None else None
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
     except (CallDeferred, ApprovalRequired) as e:
@@ -649,9 +655,9 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
             'be resolved inline.'
         )
         error.__cause__ = e
-        return NestedCallOutcome(error=error)
+        return NestedCallOutcome(error=error, tool_kind=tool_kind)
     except Exception as e:
-        return NestedCallOutcome(error=e)
+        return NestedCallOutcome(error=e, tool_kind=tool_kind)
 
     if isinstance(result, ToolDenied):
         # Surfacing `ToolDenied` to the user's script would let it masquerade as a string tool
@@ -659,13 +665,14 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         return NestedCallOutcome(
             error=RuntimeError(f'Tool {call_part.tool_name!r} call denied: {result.message}'),
             denied_message=result.message,
+            tool_kind=tool_kind,
         )
 
     metadata: Any = None
     if isinstance(result, ToolReturn):
         metadata = result.metadata
         result = result.return_value
-    return NestedCallOutcome(content=result, metadata=metadata)
+    return NestedCallOutcome(content=result, metadata=metadata, tool_kind=tool_kind)
 
 
 @dataclass
@@ -698,20 +705,26 @@ class RunCodeExecution:
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
         tool_call_id = call_part.tool_call_id
+        tool_kind = outcome.tool_kind
+        self.nested_calls[tool_call_id] = ToolCallPart.narrow_type(call_part, tool_kind=tool_kind)
         if outcome.denied_message is not None:
             self.nested_returns[tool_call_id] = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=outcome.denied_message,
                 tool_call_id=tool_call_id,
                 outcome='denied',
+                tool_kind=tool_kind,
             )
         if outcome.error is not None:
             raise outcome.error
-        self.nested_returns[tool_call_id] = ToolReturnPart(
-            tool_name=call_part.tool_name,
-            content=outcome.content,
-            tool_call_id=tool_call_id,
-            metadata=outcome.metadata,
+        self.nested_returns[tool_call_id] = ToolReturnPart.narrow_type(
+            ToolReturnPart(
+                tool_name=call_part.tool_name,
+                content=outcome.content,
+                tool_call_id=tool_call_id,
+                metadata=outcome.metadata,
+                tool_kind=tool_kind,
+            )
         )
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))

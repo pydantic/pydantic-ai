@@ -15,7 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, TypedArgs, TypedContent
 from pydantic_ai._event_registry import set_replay_isolation_guard
-from pydantic_ai.capabilities import Capability
+from pydantic_ai.capabilities import AbstractCapability, Capability, ValidatedToolArgs, WrapToolExecuteHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -40,8 +40,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RunUsage
 
 
 class LookupArgs(TypedDict):
@@ -551,6 +553,37 @@ async def test_a_kind_without_a_declared_shape_accepts_any_parameters() -> None:
     agent = Agent(TestModel(), tools=[Tool(audit, tool_kind=AuditCallPart)])
     result = await agent.run('go')
     assert isinstance(result.all_messages()[1].parts[0], AuditCallPart)
+
+
+@dataclass
+class _RecordExecutedCalls(AbstractCapability[None]):
+    calls: list[ToolCallPart]
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        self.calls.append(call)
+        return await handler(args)
+
+
+async def test_a_call_built_without_its_kind_reaches_hooks_typed() -> None:
+    """A dispatcher (like code mode's sandbox) that builds a bare call still hands hooks the typed part."""
+    executed: list[ToolCallPart] = []
+    toolset = FunctionToolset[None]([Tool(_lookup, name='lookup', tool_kind=LookupCallPart)])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    manager = await ToolManager[None](toolset=toolset, root_capability=_RecordExecutedCalls(executed)).for_run_step(ctx)
+
+    result = await manager.handle_call(ToolCallPart('lookup', {'sku': 'A-1'}, tool_call_id='c1'))
+
+    assert result == {'in_stock': True}
+    (call,) = executed
+    assert isinstance(call, LookupCallPart) and call.sku == 'A-1'
 
 
 async def test_a_kind_registered_only_by_a_return_part_is_not_checked() -> None:

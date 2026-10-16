@@ -626,6 +626,22 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool_result
 
+    def _with_tool_kind(self, call: ToolCallPart) -> ToolCallPart:
+        """Give a call its tool's `tool_kind` when it lacks one, promoted to the typed part registered for it.
+
+        Calls the model issues are promoted from the same `ToolDefinition.tool_kind` before they get here;
+        this covers calls a dispatcher builds itself, like code mode's sandboxed calls, so hooks and
+        deferred-call handlers see the same typed part however the tool was called.
+        """
+        if (
+            call.tool_kind is not None
+            or self.tools is None
+            or (tool := self.tools.get(call.tool_name)) is None
+            or (kind := tool.tool_def.tool_kind) is None
+        ):
+            return call
+        return ToolCallPart.narrow_type(call, tool_kind=kind)
+
     def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
         """Resolve tool name to ResolvedTool, raising ModelRetry for unknown or unavailable tools."""
         if self.tools is None or self.ctx is None:
@@ -785,6 +801,7 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         ctx = self.ctx
         tool: ToolsetTool[AgentDepsT] | None = None
+        call = self._with_tool_kind(call)
 
         try:
             _name, tool = self._resolve_tool(call)
@@ -1216,6 +1233,7 @@ class ToolManager(Generic[AgentDepsT]):
             CallDeferred / ApprovalRequired: No handler resolved the call, or the
                 approved tool re-raised a deferral.
         """
+        call = self._with_tool_kind(call)
         try:
             validated = await self.validate_tool_call(
                 call,
