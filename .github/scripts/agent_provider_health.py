@@ -537,8 +537,12 @@ class GitHubClient:
             jobs = data.get('jobs') if data is not None else None
             if not isinstance(jobs, list):
                 raise ValueError('GitHub returned an invalid attempt-jobs response')
-            found.extend(job for item in jobs if (job := _mapping(item)) is not None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
-            if len(jobs) < 100:
+            job_entries: list[object] = []
+            entry: object
+            for entry in jobs:  # pyright: ignore[reportUnknownVariableType]
+                job_entries.append(entry)  # pyright: ignore[reportUnknownArgumentType]
+            found.extend(job for item in job_entries if (job := _mapping(item)) is not None)
+            if len(job_entries) < 100:
                 return found
             page += 1
 

@@ -1775,7 +1775,7 @@ def test_failed_execution_step_is_inference(name: str) -> None:
 def test_attempt_jobs_paginates_exact_attempt_and_uses_raw_page_length(monkeypatch: pytest.MonkeyPatch) -> None:
     """Attempt jobs include later pages and stop on a short raw jobs page."""
     requests: list[health.urllib.request.Request] = []
-    pages = [
+    pages: list[dict[str, object]] = [
         {'jobs': [{'id': index} for index in range(100)]},
         {'jobs': [{'id': 100, 'conclusion': 'failure'}]},
     ]
@@ -1804,7 +1804,7 @@ def test_attempt_jobs_paginates_exact_attempt_and_uses_raw_page_length(monkeypat
 
 def test_attempt_jobs_rejects_malformed_later_page(monkeypatch: pytest.MonkeyPatch) -> None:
     """A malformed later page fails closed instead of returning partial jobs."""
-    pages = [{'jobs': [{'id': index} for index in range(100)]}, {'jobs': None}]
+    pages: list[dict[str, object]] = [{'jobs': [{'id': index} for index in range(100)]}, {'jobs': None}]
 
     def open_url(
         _opener: health.urllib.request.OpenerDirector,
