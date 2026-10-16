@@ -193,20 +193,21 @@ pre {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--lithium);
-  box-shadow: 0 0 16px rgba(229, 32, 233, 0.35);
-  color: white;
-  font: 600 11px/1 ui-monospace, 'SF Mono', monospace;
+.logo {
+  display: block;
+  flex: none;
+  color: var(--text);
+}
+
+.brand-product {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  font: 600 10.5px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.06em;
 }
 
 .connection {

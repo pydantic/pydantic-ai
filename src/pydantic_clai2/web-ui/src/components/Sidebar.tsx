@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
+import { Logo } from './Logo'
 import type { Project, SessionEntry } from '../protocol'
 import { ChevronIcon, ComposeIcon, FolderIcon, MoonIcon, MoreIcon, SearchIcon, SidebarIcon, SunIcon } from './icons'
 
@@ -99,8 +100,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     <aside className="sidebar">
       <div className="sidebar-top">
         <div className="brand">
-          <span className="brand-mark">›_</span>
-          <span>CLAI</span>
+          <Logo />
+          <span className="brand-product">CLAI</span>
           <span className={`connection ${connected ? 'on' : ''}`} title={connected ? 'Connected' : 'Reconnecting…'} />
         </div>
         <button className="icon-button" onClick={onCollapse} title="Hide sidebar">
