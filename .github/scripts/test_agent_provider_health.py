@@ -85,6 +85,8 @@ def _issue(number: int, marker: health.IncidentMarker, *, body_prefix: str = '')
             'kind': marker.kind,
             'run_id': marker.run_id,
             'reset_at': marker.reset_at,
+            **({'stage': marker.stage} if marker.stage is not None else {}),
+            **({'run_attempt': marker.run_attempt} if marker.run_attempt is not None else {}),
         },
         separators=(',', ':'),
     )
@@ -108,6 +110,18 @@ class FakeGitHub(health.GitHubClient):
         self.issues = list(issues or [])
         self.posts: list[object] = []
         self.closed: list[int] = []
+        self.source_event = 'workflow_dispatch'
+        self.source_status = 'completed'
+        self.source_conclusion = 'success'
+        self.source_workflow_id = 5
+        self.source_workflow_path = '.github/workflows/nightly-sweep.md'
+        self.original_workflow_id = 5
+        self.source_name = 'nightly-sweep'
+        self.comments: list[tuple[int, str]] = []
+        self.jobs: dict[tuple[str, int], list[dict[str, object]]] = {}
+        self.pull_requests: dict[int, dict[str, object]] = {}
+        self.commit_pulls: dict[str, list[dict[str, object]]] = {}
+        self.reviews: dict[int, list[dict[str, object]]] = {}
 
     def request(self, method: str, path: str, payload: object | None = None) -> object:
         if method == 'GET':
@@ -143,6 +157,12 @@ class FakeGitHub(health.GitHubClient):
             self.closed.append(int(path.split('/')[-1]))
             return {}
         raise AssertionError(f'unexpected request {method} {path}')
+
+    def attempt_jobs(self, run_id: str, attempt: int) -> list[dict[str, object]]:
+        return self.jobs.get((run_id, attempt), [])
+
+    def default_branch(self) -> str | None:
+        return 'main'
 
     def open_incidents(self) -> list[health.Issue]:
         return self.issues
@@ -412,6 +432,7 @@ def test_zai_quota_probe_does_not_request_without_api_key(monkeypatch: pytest.Mo
 def test_zai_quota_probe_does_not_forward_authorization_on_cross_origin_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The quota probe never forwards credentials across origins."""
     source_authorization: list[str | None] = []
     target_authorization: list[str | None] = []
 
@@ -462,6 +483,7 @@ def test_zai_quota_probe_does_not_forward_authorization_on_cross_origin_redirect
 
 
 def test_zai_quota_probe_returns_unknown_on_oversized_json_integer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Oversized response integers produce an unknown quota diagnostic."""
     response = FakeHTTPResponse(b'{"code":' + b'9' * 5000 + b'}')
 
     def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
@@ -545,6 +567,28 @@ def test_workflow_and_task_incidents_match_only_their_scope() -> None:
     assert not health.check_health(*context, quota, [provider_issue]).ready
 
 
+def test_health_recovery_bypasses_only_the_selected_single_non_provider_incident() -> None:
+    """A healthy gate passes one explicitly selected workflow/task incident only."""
+    incident = _issue(7, health.IncidentMarker('workflow', 'nightly-sweep', 'execution', '8', None))
+    selected = health.Health(
+        'nightly-sweep',
+        'task-1',
+        'workflow_dispatch',
+        1,
+        True,
+        '',
+        '2026-10-01T12:00:00Z',
+        health.Quota('healthy'),
+        recovery_issue=7,
+    )
+
+    assert health._health_decision(selected, [incident]).ready  # pyright: ignore[reportPrivateUsage]
+    other_incident = _issue(8, health.IncidentMarker('workflow', 'nightly-sweep', 'execution', '9', None))
+    assert not health._health_decision(selected, [incident, other_incident]).ready  # pyright: ignore[reportPrivateUsage]
+    provider = _issue(7, health.IncidentMarker('provider', 'zai', 'rate_limit', '8', None))
+    assert not health._health_decision(selected, [provider]).ready  # pyright: ignore[reportPrivateUsage]
+
+
 def test_health_artifact_round_trips_versioned_gate_dto(tmp_path: Path) -> None:
     """The runner gate artifact round-trips its versioned validated DTO."""
     original = health.Health(
@@ -564,6 +608,8 @@ def test_health_artifact_round_trips_versioned_gate_dto(tmp_path: Path) -> None:
             diagnostic='invalid_json',
             http_status=200,
         ),
+        '45',
+        13,
     )
     path = tmp_path / 'provider-health.json'
 
@@ -685,6 +731,48 @@ def test_result_parser_reads_shim_terminal_jsonl_at_root(tmp_path: Path) -> None
     assert health.parse_run_result(result_file) == health.RunResult(
         'nightly-sweep', 'task-1', 'schedule', 1, health.Failure('rate_limit', 429, None)
     )
+
+
+def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None:
+    """Two distinct terminal records from matched artifact names do not select an authority."""
+    for name, attempt in [('agent/one.json', 1), ('c84aadcc-agent/two.json', 2)]:
+        result_file = tmp_path / name
+        result_file.parent.mkdir(parents=True, exist_ok=True)
+        result_file.write_text(
+            json.dumps(
+                {
+                    'type': 'result',
+                    'provider_health': {
+                        'workflow': 'nightly-sweep',
+                        'task_key': 'task-1',
+                        'trigger_event': 'schedule',
+                        'run_attempt': attempt,
+                    },
+                }
+            )
+        )
+
+    assert health.parse_run_result(tmp_path) is None
+
+
+def test_result_parser_does_not_treat_session_result_as_terminal_authority(tmp_path: Path) -> None:
+    """An engine session result cannot stand in for the authenticated wrapper terminal record."""
+    session_result = tmp_path / 'session.result'
+    session_result.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'nightly-sweep',
+                    'task_key': 'task-1',
+                    'trigger_event': 'schedule',
+                    'run_attempt': 1,
+                },
+            }
+        )
+    )
+
+    assert health.parse_run_result(session_result) is None
 
 
 def test_result_parser_rejects_retired_balance_failure_kind() -> None:
@@ -815,7 +903,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert len(client.posts) == 1
     issue = client.issues[0]
     marker = _marker_from_body(issue.body)
-    assert marker == health.IncidentMarker('provider', 'zai', 'rate_limit', '70', None)
+    assert marker == health.IncidentMarker('provider', 'zai', 'rate_limit', '70', None, run_attempt=1)
     assert 'private provider detail' not in issue.body
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Another workflow')
@@ -880,7 +968,7 @@ def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
 
     [issue] = client.issues
     assert _marker_from_body(issue.body) == health.IncidentMarker(
-        'task', f'{workflow}:{task_key}', 'time_limit', '70', None
+        'task', f'{workflow}:{task_key}', 'time_limit', '70', None, run_attempt=1
     )
     assert issue.body.startswith('## Operational failure\n\nThe agent reached its per-run time limit\n\n')
     assert 'The run stopped at its own limit, not on a provider error.' in issue.body
@@ -1162,6 +1250,35 @@ def test_check_command_reads_zai_quota_and_writes_secret_free_artifact(
         assert 'weekly: 84% remaining; resets at 2026-10-08T14:54:29Z' in summary.read_text()
     else:
         assert 'interval: ' not in summary.read_text()
+
+
+@pytest.mark.parametrize(('ref', 'selected'), [('refs/heads/main', 7), ('refs/heads/topic', None)])
+def test_check_command_accepts_recovery_issue_only_on_default_dispatch_ref(
+    ref: str, selected: int | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recovery issue is carried into the artifact only for a default-branch dispatch."""
+    issue = _issue(7, health.IncidentMarker('workflow', 'nightly-sweep', 'inference', '90', None, 'inference'))
+    client = FakeGitHub([issue])
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'nightly-sweep')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_dispatch')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', ref)
+    monkeypatch.setenv('GITHUB_RUN_ID', '101')
+    monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', '7')
+    output = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(output)]) == 0
+    decision = _health_from_json(json.loads(output.read_text()))
+    assert decision.recovery_issue == selected
+    assert decision.run_id == '101'
+    assert decision.ready is (selected is not None)
 
 
 def test_check_and_incident_outputs_keep_hostile_provider_data_out(
@@ -1464,12 +1581,110 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
     repeated_scheduled_timeout = health.RunResult(
         'w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None)
     )
-    assert _scope_for(scheduled_timeout) == ('workflow', 'w', 'timeout')
+    assert _scope_for(scheduled_timeout) == ('task', 'w:target-head-a1b2', 'timeout')
     assert _scope_for(repeated_scheduled_timeout) == _scope_for(scheduled_timeout)
     assert _scope_for(
         health.RunResult('w', 'target-head-a1b2', 'workflow_dispatch', 1, health.Failure('timeout', None, None))
     ) == ('task', 'w:target-head-a1b2', 'timeout')
     assert _scope_for(health.RunResult('w', 't', 'schedule', 1, None)) == ('workflow', 'w', 'execution')
+
+
+def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trusted failed validation steps remain distinct from absent model terminal data."""
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        artifact,
+        health.Health(
+            'Attention',
+            'issue-42',
+            'issues',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    log = tmp_path / 'agent-stdio.log'
+    log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'Attention',
+                    'task_key': 'issue-42',
+                    'trigger_event': 'issues',
+                    'run_attempt': 1,
+                },
+            }
+        )
+    )
+    client = FakeGitHub()
+    client.jobs[('42', 1)] = [
+        {
+            'name': 'safe_outputs',
+            'conclusion': 'failure',
+            'steps': [{'name': 'Apply validated maintainer attention', 'conclusion': 'failure'}],
+        }
+    ]
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=42,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=artifact,
+            agent_artifact=log,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    marker = _marker_from_payload(client.posts[0])
+    assert marker == health.IncidentMarker('task', 'Attention:issue-42', 'validation', '42', None, 'validation', 1)
+
+
+@pytest.mark.parametrize(
+    ('jobs', 'expected'),
+    [  # pyright: ignore[reportUnknownArgumentType]
+        (
+            [
+                {
+                    'name': 'agent',
+                    'conclusion': 'failure',
+                    'steps': [
+                        {'name': 'Execute Claude Code CLI', 'conclusion': 'success'},
+                        {'name': 'Restore full history and tags for dynamic versioning', 'conclusion': 'failure'},
+                    ],
+                }
+            ],
+            'setup',
+        ),
+        ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
+        ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),
+        (
+            [
+                {
+                    'name': 'safe_outputs',
+                    'conclusion': 'failure',
+                    'steps': [{'name': 'Restore exact candidate allowlist', 'conclusion': 'failure'}],
+                }
+            ],
+            'setup',
+        ),
+    ],
+)
+def test_attempt_stage_uses_real_setup_and_no_step_job_shapes(
+    jobs: list[dict[str, object]], expected: health.Stage | None
+) -> None:
+    """Moved-tag setup failures are distinct from queued and pre-execution no-step failures."""
+    assert health._stage_from_attempt_jobs(jobs) == expected  # pyright: ignore[reportPrivateUsage]
 
 
 def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1481,7 +1696,7 @@ def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest
     client = FakeGitHub([elapsed, future, unknown, retired])
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == [1]
@@ -1565,7 +1780,7 @@ def test_manual_recovery_rejects_retired_provider_incident(monkeypatch: pytest.M
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_quota)
 
-    with pytest.raises(ValueError, match='not a Z.ai provider-health incident'):
+    with pytest.raises(ValueError, match=r'not a Z\.ai provider-health incident'):
         _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=14))
 
     assert checked == []
@@ -1576,7 +1791,7 @@ def test_named_recovery_without_provider_key_stays_unknown(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Missing provider credentials stay unknown even when the fetch stub is healthy."""
-    issue = _issue(4, health.IncidentMarker('workflow', 'nightly-sweep', 'timeout', '4', None))
+    issue = _issue(4, health.IncidentMarker('provider', 'zai', 'authentication', '4', None))
     client = FakeGitHub([issue])
     monkeypatch.delenv('ZAI_API_KEY', raising=False)
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
@@ -1587,25 +1802,21 @@ def test_named_recovery_without_provider_key_stays_unknown(
     assert 'quota diagnostic: missing_api_key' in capsys.readouterr().out
 
 
-def test_named_workflow_and_task_recovery_also_requires_healthy_quota(
+def test_named_workflow_and_task_recovery_refuses_quota_only_closure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every selected issue stays latched until a fresh quota check is healthy."""
+    """Workflow and task incidents require operator verification and manual closure."""
     workflow_issue = _issue(7, health.IncidentMarker('workflow', 'nightly-sweep', 'timeout', '7', None))
     task_issue = _issue(8, health.IncidentMarker('task', 'nightly-sweep:task-1', 'timeout', '8', None))
     client = FakeGitHub([workflow_issue, task_issue])
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
-    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('unknown'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', '7')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
     _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=7))
     _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=8))
     assert client.closed == []
-
-    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=7))
-    assert client.closed == [7]
-    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=8))
-    assert client.closed == [7, 8]
 
 
 def test_marker_from_body_rejects_deeply_nested_json() -> None:
@@ -1679,6 +1890,14 @@ def test_monitor_handles_missing_terminal_log(
     assert not missing_agent_log.exists()
 
     client = FakeGitHub()
+    if conclusion == 'failure':
+        client.jobs[('45', 1)] = [
+            {
+                'name': 'agent',
+                'conclusion': 'failure',
+                'steps': [{'name': 'Run agent', 'conclusion': 'failure'}],
+            }
+        ]
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
@@ -1701,7 +1920,7 @@ def test_monitor_handles_missing_terminal_log(
     if creates_incident:
         payload: object = client.posts[0]
         assert _marker_from_payload(payload) == health.IncidentMarker(
-            'workflow', 'nightly-sweep', 'execution', '45', None
+            'workflow', 'nightly-sweep', 'inference', '45', None, 'inference', 1
         )
 
 
@@ -1748,7 +1967,7 @@ def test_blocked_run_without_agent_artifact_creates_provider_incident(
     assert issue_marker == health.IncidentMarker('provider', 'zai', 'quota_exhausted', '43', '2026-10-01T11:00:00Z')
 
 
-def test_monitor_uses_trusted_context_when_terminal_metadata_mismatches(
+def test_monitor_does_not_classify_untrusted_terminal_metadata_without_host_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Uncorrelated shim metadata falls back to workflow scope from the trusted DTO."""
@@ -1799,5 +2018,4 @@ def test_monitor_uses_trusted_context_when_terminal_metadata_mismatches(
         )
     )
 
-    payload: object = client.posts[0]
-    assert _marker_from_payload(payload) == health.IncidentMarker('workflow', 'nightly-sweep', 'execution', '44', None)
+    assert client.posts == []

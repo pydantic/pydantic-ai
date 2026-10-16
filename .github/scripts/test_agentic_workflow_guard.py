@@ -34,6 +34,7 @@ from agentic_workflow_guard import (
     check_provider_engine_config,
     check_provider_health_identity,
     check_provider_health_monitor,
+    check_provider_health_recovery_wiring,
     check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
@@ -1314,6 +1315,41 @@ jobs:
     assert all(violation.path in (str(source), str(lock)) for violation in violations)
 
 
+def test_provider_health_recovery_wiring_requires_incident_bound_dispatch(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+---
+Prompt
+""",
+    )
+    health = _write(
+        workflows / 'shared' / 'provider-health.md',
+        "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
+    )
+
+    assert check_provider_health_recovery_wiring(workflows) == []
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace('required: false', 'required: true', 1), encoding='utf-8'
+    )
+    health.write_text('job: {}\n', encoding='utf-8')
+    assert {violation.path for violation in check_provider_health_recovery_wiring(workflows)} == {
+        str(source),
+        str(health),
+    }
+
+
 def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
@@ -1493,7 +1529,9 @@ on:
     workflows: [Agent A, Agent B, Agent Provider Health]
     types: [completed]
   schedule: [{cron: '0 */6 * * *'}]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      recover_issue: {type: number, required: true}
 concurrency:
   group: provider-health
   cancel-in-progress: false
@@ -1522,6 +1560,7 @@ jobs:
         uses: actions/download-artifact@sha
         with:
           name: agent
+          run-id: ${{ github.event.workflow_run.id }}
       - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
         run: |
           mkdir -p agent
@@ -1532,17 +1571,26 @@ jobs:
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$RUN_ID"
           --run-attempt "$RUN_ATTEMPT"
-          --agent-artifact agent/agent-stdio.log
+          --conclusion "$CONCLUSION"
+          --health-artifact provider-health/provider-health.json
+          --agent-artifact agent
       - if: github.event_name == 'schedule'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor
       - if: github.event_name == 'workflow_dispatch'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        run: python3 .github/scripts/agent_provider_health.py monitor --recover-issue 1
-""",
+          ISSUE_NUMBER: ${{ inputs.recover_issue }}
+        run: |
+          python3 .github/scripts/agent_provider_health.py monitor \
+            --repository "$GITHUB_REPOSITORY" \
+            --recover-issue "$ISSUE_NUMBER"
+  """,
     )
 
     violations = check_provider_health_monitor(workflows)
@@ -1591,10 +1639,15 @@ jobs:
     _write(
         monitor,
         trusted_config.replace(
-            'python3 .github/scripts/agent_provider_health.py monitor\n'
+            '        run: >-\n'
+            '          python3 .github/scripts/agent_provider_health.py monitor\n'
+            '          --repository "$GITHUB_REPOSITORY"\n'
+            '          --run-id "$RUN_ID"\n'
             '          --run-attempt "$RUN_ATTEMPT"\n'
-            '          --agent-artifact agent/agent-stdio.log',
-            'bash ./agent/payload',
+            '          --conclusion "$CONCLUSION"\n'
+            '          --health-artifact provider-health/provider-health.json\n'
+            '          --agent-artifact agent',
+            '        run: bash ./agent/payload',
             1,
         ),
     )

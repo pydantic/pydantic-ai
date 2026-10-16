@@ -55,10 +55,11 @@ from mcp.shared.exceptions import McpError
 from pydantic import TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
+from triage_models import snapshot_candidates
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -218,7 +219,45 @@ def safe_output_pending() -> bool:
 
 def require_safe_output(output: str) -> str:
     """Send the model back to work when it ends the run before emitting any safe output."""
-    if not safe_output_pending():
+    output_pending = safe_output_pending()
+    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+        workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+        snapshot_path = workspace / 'attention-candidates.json'
+        sink_env = os.environ.get('GH_AW_SAFE_OUTPUTS')
+        if sink_env and snapshot_path.is_file():
+            sink_path = pathlib.Path(sink_env)
+        else:
+            sink_path = None
+        if sink_path is not None and sink_path.is_file():
+            candidates = snapshot_candidates(str(snapshot_path), limit=10)
+            if candidates:
+                recorded: set[int] = set()
+                entry_adapter = TypeAdapter(dict[str, object])
+                for line in sink_path.read_text(encoding='utf-8').splitlines():
+                    try:
+                        entry = entry_adapter.validate_json(line)
+                    except ValidationError:
+                        continue
+                    item_number = entry.get('item_number')
+                    if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
+                        try:
+                            parsed_number = int(item_number)
+                        except ValueError:
+                            continue
+                        if parsed_number > 0 and str(parsed_number) == item_number:
+                            recorded.add(parsed_number)
+                missing = sorted(candidates.keys() - recorded)
+                if missing:
+                    missing_ids = ', '.join(str(number) for number in missing)
+                    logger.warning(
+                        'attention decisions missing for candidate IDs %s; requesting completion', missing_ids
+                    )
+                    raise ModelRetry(
+                        'Record an attention decision for each missing candidate ID: '
+                        f'{missing_ids}. Keep the decisions already recorded and call '
+                        '`record_attention_decision` only for these missing IDs.'
+                    )
+    if not output_pending:
         return output
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
@@ -969,6 +1008,8 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
     elif isinstance(error, RunTimeLimitExceeded):
         kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+        kind = 'timeout'
+    elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, httpx2.TimeoutException):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code

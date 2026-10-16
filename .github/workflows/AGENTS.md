@@ -246,15 +246,22 @@ request headers, URL, credential, or exception message. Version 1 artifacts with
 diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
 change gate or recovery policy.
 
-To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
-and enter the incident's number as `recover_issue`. The controller finds that one
-open, marked incident whose provider key matches the currently configured provider.
-It never closes another incident in the same run. A fresh health check must pass
-before the controller closes the named incident. A scheduled run automatically closes
-only provider rate-limit or quota-exhaustion incidents with a known, elapsed reset time
-after a fresh healthy check. Unknown or malformed quota, missing reset time,
-credentials/configuration incidents, and workflow/task incidents need operator
-attention rather than automatic recovery.
+For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
+and enter the incident number as `recover_issue`. A fresh healthy quota check must
+pass before the controller closes that provider incident. Scheduled recovery closes
+only provider rate-limit or quota-exhaustion incidents after a known reset time elapses.
+
+For workflow or task recovery, dispatch the affected workflow from the repository's
+default branch. Set `recovery_issue` to the incident number. Provide `aw_context` for
+PR-targeted workflows such as `CI Review` and `Pydantic AI UI Security Review`.
+Verify the fresh run executed the agent and model. Inspect the affected host stage and
+output. Link that evidence to the incident and close it manually. A green run that skips
+the model or affected stage is not proof. Resolve closed-PR tasks as retired only after
+API verification and representative workflow recovery. Record why each task is retired.
+Do not describe retired tasks as same-target recoveries.
+
+Unknown or malformed quota, missing reset time, and credential or configuration
+incidents need operator attention rather than automatic recovery.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.

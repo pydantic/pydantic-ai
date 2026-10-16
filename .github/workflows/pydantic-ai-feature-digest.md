@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '20 9 * * 3'
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow or task incident to verify with this run'
 if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai') }}
 permissions:
   contents: read

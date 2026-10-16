@@ -14,6 +14,11 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow or task incident to verify with this run'
   # Fork-PR safety: only trigger when the actor has admin/maintainer/write
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
