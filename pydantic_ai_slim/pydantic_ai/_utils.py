@@ -337,12 +337,12 @@ def in_cancelled_anyio_scope() -> bool:
 
 
 class ScopedTask(Generic[T]):
-    """An `asyncio` task that runs an awaitable under an `anyio` cancel scope it owns.
+    """An `asyncio` task that takes its awaiter's cancellation in the form it arrived, so `anyio` shields in it hold.
 
-    The task runs outside its awaiter's `anyio` cancel scopes, and a plain `await task` forwards each cancellation of
-    the awaiter into it natively. On asyncio a native cancellation goes through `anyio` shields, and a cancelled `anyio`
-    scope re-cancels the awaiter every loop iteration, so shielded work in the task would be cut short. Wait for the
-    task with `wait()` or `result()` instead, which pass the awaiter's cancellation on in the form it arrived.
+    The task runs its awaitable under an `anyio` cancel scope it owns, outside the awaiter's `anyio` cancel scopes. A
+    plain `await task` would forward each cancellation of the awaiter into it natively, and on asyncio a native
+    cancellation goes through `anyio` shields: a cancelled `anyio` scope re-cancels the awaiter every loop iteration,
+    so shielded work in the task would be cut short. Wait for the task with `wait()` or `result()` instead.
     """
 
     def __init__(self, awaitable: Awaitable[T]):
