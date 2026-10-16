@@ -230,9 +230,10 @@ class BatchModel(WrapperModel):
     Batch APIs cost less, typically half, but a result can take up to a day. The agent runs as usual: each request is
     queued with other requests made in the same process, submitted in a batch, and checked on until its result arrives.
     Meanwhile the run's message history ends in a suspended response that records the batch, so a run resumed from
-    that history, in this process or another, waits for the same batch instead of submitting the request again.
+    that history, in this process or another, waits for the same batch instead of submitting the request again. See
+    [Batch processing](../../batch.md) for a guide.
 
-    Under [durable execution](../durable_execution/overview.md), submitting a request and every check on its batch run
+    Under [durable execution](../../durable_execution/overview.md), submitting a request and every check on its batch run
     as separate durable steps, so an interrupted run continues from the same batch when it's recovered.
 
     Requests can't be streamed, and the model needs an `asyncio` event loop.
