@@ -18,6 +18,11 @@ navigation:
           - "installation"
           - "install"
           - "quickstart"
+      - page: "The Pydantic Stack"
+        path: "stack.md"
+        slug: "overview/stack"
+        aliases:
+          - "stack"
       - page: "Coding Agent Skills"
         path: "coding-agent-skills.md"
         slug: "overview/coding-agent-skills"
