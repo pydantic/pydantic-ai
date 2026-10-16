@@ -1835,7 +1835,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
             _handler_request_context = req_ctx
-            baseline = self._capture_attempt_baseline(ctx, run_context, req_ctx)
+            baseline = _AttemptBaseline.capture(req_ctx, self._step_model_settings)
             try:
                 async with AsyncExitStack() as stream_stack:
                     sr, req_ctx, request_start = await self._open_stream(
@@ -2176,7 +2176,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         starts empty: a response a hook rejected must not survive into history, though its usage, already
         committed at the provider boundary, stays counted.
         """
-        baseline = self._capture_attempt_baseline(ctx, run_context, request_context)
+        baseline = _AttemptBaseline.capture(request_context, self._step_model_settings)
         failed = _FailedAttempts()
         state.described_attempts = failed.log.attempts
         while True:
@@ -2321,14 +2321,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings = self._step_model_settings.merged or ModelSettings()
         run_context.model_settings = model_settings
         return model_settings
-
-    def _capture_attempt_baseline(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        run_context: RunContext[DepsT],
-        request_context: ModelRequestContext,
-    ) -> _AttemptBaseline:
-        return _AttemptBaseline.capture(request_context, self._step_model_settings)
 
     async def _prepare_resume_request(
         self,
