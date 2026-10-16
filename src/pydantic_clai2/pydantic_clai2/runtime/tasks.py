@@ -199,6 +199,9 @@ class TaskRouter:
             self.started[record.id] = view
         elif view is not None:
             self.started.setdefault(record.id, view)
+        if record.status == 'finished':
+            # Resuming it starts it again, and records its session anew.
+            self.started.pop(record.id, None)
         if view is not None:
             await view.deliver(update)
 

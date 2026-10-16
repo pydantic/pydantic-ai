@@ -48,7 +48,7 @@ ResultT = TypeVar('ResultT')
 
 
 class Sessions(Generic[DepsT, OutputT]):
-    """One application's services. No worker, registration, or selection is global."""
+    """One session's services, over the naming worker its process shares; nothing is module-global."""
 
     def __init__(
         self,

@@ -175,10 +175,13 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     assert woken == ['b']
     assert [event.task.id for event in fired['b']] == [record.id] and not fired['a']
     assert 'failed' in outputs['b'].getvalue() and not outputs['a'].getvalue()
-    assert router.started == {record.id: b}
+    # A finished task is no session's any more.
+    assert not router.started
 
     # A session that moves to another conversation keeps the tasks it started counted as its own.
     record.status, record.outcome = 'running', None
+    await router.observe(DelegationTaskEvent(task=record))
+    assert router.started == {record.id: b}
     held['b'] = 'b2'
     assert b.running() and not b.records() and not a.running()
     # A session that takes the conversation over does not take over B's task, until it resumes the task.
