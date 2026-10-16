@@ -709,7 +709,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def run(self) -> SessionEndReason:
         try:
-            async with self.process.tasks.opened(self.tasks) as owner:
+            async with self.process.tasks.opened(view=self.tasks) as owner:
                 if isinstance(self.agent, StockAgent):
                     self.session.delegations = owner
                 return await self._run()

@@ -188,25 +188,29 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     await router.observe(DelegationTaskEvent(task=record, event=start))
     assert router.started == {record.id: a}
     assert a.running() and not b.running()
+    # With no session holding its conversation, a task's events reach none, and its progress is still kept.
     held['a'] = 'a'
-    router.started[record.id] = b
-    router.detach(b)
-    assert router.views == [a] and not router.started
+    router.progress.clear()
     await a.observe(DelegationTaskEvent(task=record))
     assert woken == ['b'] and record.id in router.progress
 
 
 async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path) -> None:
     router = TaskRouter(directory=tmp_path / 'tasks')
-    async with router.opened() as owner:
+    first, second = (
+        Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: name, router=router)
+        for name in ('root', 'other')
+    )
+    async with router.opened(view=first) as owner:
         record = task()
         owner.records[record.id] = record
-        async with router.opened() as again:
+        async with router.opened(view=second) as again:
             assert again is owner
+        # The session that left first ran none of it.
         assert record.status == 'running'
     assert (record.status, record.outcome) == ('finished', 'cancelled')
     assert (tmp_path / 'tasks' / f'{record.id}.json').exists()
-    async with router.opened() as reopened:
+    async with router.opened(view=first) as reopened:
         assert reopened.records[record.id].outcome == 'cancelled'
 
 

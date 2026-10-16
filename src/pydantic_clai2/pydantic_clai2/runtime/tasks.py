@@ -143,14 +143,9 @@ class TaskRouter:
         """The live session's `Tasks` holding `conversation_id`, if one does."""
         return next((view for view in self.views if view.conversation_id() == conversation_id), None)
 
-    def detach(self, view: 'Tasks') -> None:
-        """Stop routing to a session that closed."""
-        self.views.remove(view)
-        self.started = {task_id: owner for task_id, owner in self.started.items() if owner is not view}
-
     @asynccontextmanager
-    async def opened(self, view: 'Tasks | None' = None) -> AsyncGenerator[DelegationTasks]:
-        """Open the owner for the first caller and close it after the last, cancelling the tasks still running.
+    async def opened(self, *, view: 'Tasks') -> AsyncGenerator[DelegationTasks]:
+        """Open the owner for the first session and close it after the last, cancelling the tasks still running.
 
         A session's `view` that leaves before the others cancels its own tasks, which run with its plugins.
         """
@@ -167,7 +162,7 @@ class TaskRouter:
                     last = not self._users
                     if last:
                         await self._stack.aclose()
-                if not last and view is not None:
+                if not last:
                     for record in [record for record in self.owner.records.values() if view.runs(record)]:
                         await self.owner.cancel(record.id, user=False)
 
