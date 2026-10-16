@@ -140,7 +140,7 @@ In `run_stream()`, `ContextVar` values set by an async `before_model_request` ho
 Changing what the model sees from `before_model_request`:
 
 - Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
-- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once the turn is over; other providers get it with its own request only. It stays in history either way.
+- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
 - State the model should track (todo list, notes): instructions, via `get_instructions` returning a callable. Each change re-sends everything after the instructions uncached.
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
