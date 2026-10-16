@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
-from cassetter import Cassette, RecordMode
+from cassetter import Cassette
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-from pydantic_ai.models import Model
 from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest
 from pydantic_ai.settings import ModelSettings
+from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
 from tests.conftest import IsStr, try_import
 
 with try_import() as imports_successful:
@@ -26,18 +25,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
 MODEL_NAME = 'gemini-2.5-flash-lite'
-
-
-def _poll_interval(vcr: Cassette) -> timedelta:
-    """Wait between checks while recording a real batch; replay the recorded checks without waiting."""
-    return timedelta(seconds=15) if vcr.record_mode != RecordMode.NONE else timedelta(milliseconds=1)
-
-
-async def _wait(model: Model, batch: Batch, vcr: Cassette) -> Batch:
-    while batch.status != 'ended':
-        await asyncio.sleep(_poll_interval(vcr).total_seconds())
-        batch = await model.batch_status(batch)
-    return batch
 
 
 def _request(custom_id: str, settings: ModelSettings | None = None) -> BatchRequest:
@@ -60,7 +47,7 @@ async def test_gemini_batch_roundtrip(allow_model_requests: None, gemini_api_key
     with pytest.raises(Exception, match='has not ended yet'):
         await model.batch_results(batch)
 
-    batch = await _wait(model, batch, vcr)
+    batch = await wait_for_batch(model, batch, vcr)
     assert batch.provider_details is not None and batch.provider_details['state'] == 'JOB_STATE_SUCCEEDED'
     results = {result.custom_id: result for result in await model.batch_results(batch)}
     assert set(results) == {'pydantic-ai-batch-one', 'pydantic-ai-batch-two'}
@@ -90,7 +77,7 @@ async def test_gemini_batch_item_error(allow_model_requests: None, gemini_api_ke
     """A request that fails on its own is an errored result, raising the error `generateContent` would have."""
     model = GoogleModel(MODEL_NAME, provider=GoogleProvider(api_key=gemini_api_key))
     request = _request('batch-error', GoogleModelSettings(google_cached_content='cachedContents/does-not-exist'))
-    batch = await _wait(model, await model.batch_create([await model.batch_encode(request)]), vcr)
+    batch = await wait_for_batch(model, await model.batch_create([await model.batch_encode(request)]), vcr)
     [result] = await model.batch_results(batch)
     assert result.status == 'errored'
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -107,7 +94,7 @@ async def test_gemini_batch_cancellation(allow_model_requests: None, gemini_api_
     batch = await model.batch_create([await model.batch_encode(request)])
     batch = await model.batch_cancel(batch)
     assert batch.status in ('canceling', 'ended')
-    batch = await _wait(model, batch, vcr)
+    batch = await wait_for_batch(model, batch, vcr)
     assert batch.provider_details is not None and batch.provider_details['state'] == 'JOB_STATE_CANCELLED'
     assert await model.batch_results(batch) == []
 
@@ -128,8 +115,8 @@ async def test_gemini_batch_model_agent_run(allow_model_requests: None, gemini_a
         GoogleModel(MODEL_NAME, provider=GoogleProvider(api_key=gemini_api_key)),
         batch_settings={
             'max_requests': 1,
-            'poll_interval': _poll_interval(vcr),
-            'max_poll_interval': _poll_interval(vcr),
+            'poll_interval': batch_poll_interval(vcr),
+            'max_poll_interval': batch_poll_interval(vcr),
         },
     )
     result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
@@ -149,7 +136,7 @@ async def test_gemini_model_request_batch(allow_model_requests: None, gemini_api
     responses = await model_request_batch(
         model,
         [_request('one'), _request('two', {'max_tokens': 8, 'stop_sequences': ['OK']})],
-        batch_settings={'poll_interval': _poll_interval(vcr), 'max_poll_interval': _poll_interval(vcr)},
+        batch_settings={'poll_interval': batch_poll_interval(vcr), 'max_poll_interval': batch_poll_interval(vcr)},
     )
     assert [response.text if isinstance(response, ModelResponse) else response for response in responses] == [
         'OK',

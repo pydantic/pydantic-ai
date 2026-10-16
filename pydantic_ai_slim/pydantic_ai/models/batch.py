@@ -168,21 +168,21 @@ class BatchSettings(TypedDict, total=False):
 
 
 @dataclass(frozen=True)
-class _ResolvedBatchSettings:
+class ResolvedBatchSettings:
     max_requests: int
     max_wait: timedelta | None
     poll_interval: timedelta
     max_poll_interval: timedelta
 
 
-def _resolve_settings(
+def resolve_batch_settings(
     model: Model, settings: BatchSettings | None, *, max_requests: int | None
-) -> _ResolvedBatchSettings:
+) -> ResolvedBatchSettings:
     """Fill in the defaults of `settings` and validate them, defaulting to `max_requests` or else the provider limit."""
     if (provider_limit := model.batch_max_requests) is None:
         raise UserError(f'`{type(model).__name__}` {model.model_name!r} has no batch API.')
     settings = settings or {}
-    resolved = _ResolvedBatchSettings(
+    resolved = ResolvedBatchSettings(
         max_requests=settings.get('max_requests', max_requests or provider_limit),
         max_wait=settings.get('max_wait', timedelta(seconds=30)),
         poll_interval=settings.get('poll_interval', timedelta(seconds=30)),
@@ -292,7 +292,7 @@ class BatchModel(WrapperModel):
             batch_settings: When to submit queued requests and how often to check on submitted batches.
         """
         super().__init__(wrapped)
-        settings = _resolve_settings(self.wrapped, batch_settings, max_requests=100)
+        settings = resolve_batch_settings(self.wrapped, batch_settings, max_requests=100)
         self.max_requests = settings.max_requests
         self.max_wait = settings.max_wait
         self.poll_interval = settings.poll_interval

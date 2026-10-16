@@ -159,9 +159,7 @@ async def model_request_batch(
             [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with.
     """
     model_instance = models.infer_model(model)
-    resolved = batch_models._resolve_settings(  # pyright: ignore[reportPrivateUsage]
-        model_instance, batch_settings, max_requests=None
-    )
+    resolved = batch_models.resolve_batch_settings(model_instance, batch_settings, max_requests=None)
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
 

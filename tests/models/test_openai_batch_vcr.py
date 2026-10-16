@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import asyncio
-from datetime import timedelta
-
 import pytest
-from cassetter import Cassette, RecordMode
+from cassetter import Cassette
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-from pydantic_ai.models import Model
-from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest
+from pydantic_ai.models.batch import BatchModel, BatchRequest
 from pydantic_ai.settings import ModelSettings
+from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
 from tests.conftest import IsStr, try_import
 
 with try_import() as imports_successful:
@@ -22,18 +19,6 @@ with try_import() as imports_successful:
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
-
-
-def _poll_interval(vcr: Cassette) -> timedelta:
-    """Wait between checks while recording a real batch; replay the recorded checks without waiting."""
-    return timedelta(seconds=15) if vcr.record_mode != RecordMode.NONE else timedelta(milliseconds=1)
-
-
-async def _wait(model: Model, batch: Batch, vcr: Cassette) -> Batch:
-    while batch.status != 'ended':
-        await asyncio.sleep(_poll_interval(vcr).total_seconds())
-        batch = await model.batch_status(batch)
-    return batch
 
 
 def _request(custom_id: str, settings: ModelSettings | None = None) -> BatchRequest:
@@ -56,7 +41,7 @@ async def test_openai_batch_roundtrip(allow_model_requests: None, openai_api_key
     with pytest.raises(Exception, match='has not ended yet'):
         await model.batch_results(batch)
 
-    batch = await _wait(model, batch, vcr)
+    batch = await wait_for_batch(model, batch, vcr)
     assert batch.provider_details is not None and batch.provider_details['status'] == 'completed'
     results = {result.custom_id: result for result in await model.batch_results(batch)}
     assert set(results) == {'pydantic-ai-batch-one', 'pydantic-ai-batch-two'}
@@ -88,7 +73,9 @@ async def test_openai_batch_item_error(allow_model_requests: None, openai_api_ke
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key))
     ok, invalid = _request('batch-ok'), _request('batch-error', {'max_tokens': 1})
     batch = await model.batch_create([await model.batch_encode(ok), await model.batch_encode(invalid)])
-    results = {result.custom_id: result for result in await model.batch_results(await _wait(model, batch, vcr))}
+    results = {
+        result.custom_id: result for result in await model.batch_results(await wait_for_batch(model, batch, vcr))
+    }
     assert {custom_id: result.status for custom_id, result in results.items()} == {
         'batch-ok': 'succeeded',
         'batch-error': 'errored',
@@ -114,7 +101,7 @@ async def test_openai_batch_unknown_model(allow_model_requests: None, openai_api
     """A batch whose input file fails validation runs none of its requests, and each raises the batch's errors."""
     model = OpenAIResponsesModel('not-a-real-openai-model', provider=OpenAIProvider(api_key=openai_api_key))
     request = _request('batch-error')
-    batch = await _wait(model, await model.batch_create([await model.batch_encode(request)]), vcr)
+    batch = await wait_for_batch(model, await model.batch_create([await model.batch_encode(request)]), vcr)
     assert batch.provider_details is not None and batch.provider_details['status'] == 'failed'
     [result] = await model.batch_results(batch)
     assert result.status == 'errored'
@@ -142,7 +129,7 @@ async def test_openai_batch_cancellation(allow_model_requests: None, openai_api_
     batch = await model.batch_create([await model.batch_encode(request)])
     batch = await model.batch_cancel(batch)
     assert batch.status == 'canceling'
-    [result] = await model.batch_results(await _wait(model, batch, vcr))
+    [result] = await model.batch_results(await wait_for_batch(model, batch, vcr))
     assert result.status == 'canceled'
     with pytest.raises(ModelAPIError, match='canceled before the model ran it'):
         model.batch_decode(result, request)
@@ -164,8 +151,8 @@ async def test_openai_batch_model_agent_run(allow_model_requests: None, openai_a
         OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key)),
         batch_settings={
             'max_requests': 1,
-            'poll_interval': _poll_interval(vcr),
-            'max_poll_interval': _poll_interval(vcr),
+            'poll_interval': batch_poll_interval(vcr),
+            'max_poll_interval': batch_poll_interval(vcr),
         },
     )
     result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
