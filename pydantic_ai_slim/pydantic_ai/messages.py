@@ -1841,9 +1841,10 @@ class RetryPromptPart:
             # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
             # so the model sees what arguments it sent alongside the error.
             if self.tool_name is None:
-                exclude = {
-                    i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
-                }
+                # NativeOutput retries already include the invalid native JSON in the preceding
+                # model response, so every validation error's input is redundant and can multiply
+                # the retry prompt by the size of the generated object.
+                exclude = {i: {'ctx', 'input'} for i, _ in enumerate(self.content)}
             else:
                 exclude = {'__all__': {'ctx'}}
             json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
