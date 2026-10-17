@@ -946,11 +946,12 @@ def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id:
     if marker.run_attempt is not None:
         marker_data['run_attempt'] = marker.run_attempt
     run_url = f'https://github.com/{repo}/actions/runs/{urllib.parse.quote(run_id)}'
-    check = (
-        'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
-        if marker.kind in ('request_limit', 'time_limit')
-        else 'Confirm provider credentials, configuration, and quota health.'
-    )
+    if marker.kind in ('request_limit', 'time_limit'):
+        check = 'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
+    elif marker.stage in ('setup', 'validation', 'publication', 'queue'):
+        check = f'Inspect the trusted {marker.stage} stage logs and correct the host-side failure.'
+    else:
+        check = 'Confirm provider credentials, configuration, and quota health.'
     return (
         f'## Operational failure\n\n{reason}\n\n'
         f'- Workflow: `{workflow}`\n- Task: `{task_key}`\n- First failing run: {run_url}\n\n'

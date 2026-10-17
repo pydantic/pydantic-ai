@@ -109,6 +109,18 @@ def _marker_from_payload(payload: object) -> health.IncidentMarker | None:
     return _marker_from_body(body)
 
 
+@pytest.mark.parametrize('stage', ['setup', 'validation', 'publication', 'queue'])
+def test_host_stage_incident_body_points_to_stage_logs(stage: health.Stage):
+    """Point trusted host-stage incidents to their logs without changing recovery metadata."""
+    marker = health.IncidentMarker('task', 'nightly-sweep:pr-45', 'host_failure', '43', None, stage, 2)
+
+    body = health._incident_body(marker, 'nightly-sweep', 'pr-45', '43', 'org/repo', 'Host stage failed')  # pyright: ignore[reportPrivateUsage]
+
+    assert f'Inspect the trusted {stage} stage logs and correct the host-side failure.' in body
+    assert 'Close this incident after the cause is fixed and the required recovery check passes.' in body
+    assert _marker_from_body(body) == marker
+
+
 class FakeGitHub(health.GitHubClient):
     """Capture issue requests in memory for reconciler boundary tests."""
 

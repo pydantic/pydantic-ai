@@ -211,6 +211,8 @@ def _safe_output_status() -> tuple[bool, list[int] | None]:
     """Return whether the sink is empty and any Attention candidate IDs still missing decisions."""
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
+        if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+            raise ValueError('Attention safe-output sink is not configured')
         return False, None
     sink = pathlib.Path(path)
     sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
@@ -220,7 +222,7 @@ def _safe_output_status() -> tuple[bool, list[int] | None]:
     workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
     snapshot_path = workspace / 'attention-candidates.json'
     if not snapshot_path.is_file():
-        return sink_empty, None
+        raise ValueError('Attention candidate snapshot is missing')
 
     snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
     candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])

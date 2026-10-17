@@ -1167,6 +1167,56 @@ def test_attention_completion_requests_only_missing_candidate_decisions(
     assert shim.require_safe_output('done') == 'done'
 
 
+def test_attention_validator_fails_when_candidate_snapshot_is_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'noop', 'message': 'complete'}) + '\n', encoding='utf-8')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    assert shim.safe_output_pending()
+    with pytest.raises(ValueError, match='Attention candidate snapshot is missing'):
+        shim.require_safe_output('done')
+
+
+def test_attention_validator_fails_when_safe_output_sink_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+
+    assert shim.safe_output_pending()
+    with pytest.raises(ValueError, match='Attention safe-output sink is not configured'):
+        shim.require_safe_output('done')
+
+
+@pytest.mark.parametrize('sink_configured', [True, False])
+def test_attention_run_fails_when_immutable_completion_artifact_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sink_configured: bool
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'noop', 'message': 'complete'}) + '\n', encoding='utf-8')
+    if sink_configured:
+        monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    else:
+        monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    requests = 0
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 1
+    assert requests == 1
+    assert any(e.get('type') == 'result' and e.get('is_error') is True for e in emitted)
+
+
 def test_attention_safe_output_pending_tracks_missing_decisions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
