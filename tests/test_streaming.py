@@ -6084,11 +6084,13 @@ async def test_run_stream_records_response_returned_after_absorbing_cancellation
     as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
     """
     cleanup_started = anyio.Event()
+    run_usages: list[RunUsage] = []
 
     class AbsorbCancellation(AbstractCapability[None]):
         async def wrap_model_request(
             self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
+            run_usages.append(ctx.usage)
             response = await handler(request_context)
             cleanup_started.set()
             try:
@@ -6123,6 +6125,9 @@ async def test_run_stream_records_response_returned_after_absorbing_cancellation
         task.result()
         assert scope.cancelled_caught
     assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
+    # The run's live usage counts the response's tokens once (the stream handler recorded them) and the request once
+    # (recording the response counted it).
+    assert run_usages == snapshot([RunUsage(output_tokens=4, input_tokens=51, requests=1)])
 
 
 @pytest.mark.parametrize('delta', [True, False])
