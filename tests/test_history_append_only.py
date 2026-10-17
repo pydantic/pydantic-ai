@@ -187,8 +187,9 @@ CAPABILITIES = DISCOVERED.capabilities
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
-    stale = (FIXTURES.keys() | EXEMPT.keys()) - CAPABILITIES.keys() - DISCOVERED.not_installed
-    assert not stale, f'`FIXTURES`/`EXEMPT` entries for capabilities that no longer exist: {sorted(stale)}'
+    tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
+    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys() - DISCOVERED.not_installed
+    assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
